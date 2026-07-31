@@ -1639,6 +1639,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * voice is worse than sounding mechanical. Same lifecycle as
      * {@link #pendingVoicePolishes} — entry removed in the fire-once callback.
      */
+    /**
+     * Expected output language per polish requestId (turn-effective code, e.g.
+     * "en"). Lets the guard in onInferenceResponse judge language
+     * DIRECTIONALLY: a polish that moves away from this language is rejected,
+     * one that corrects an off-language draft toward it is accepted.
+     */
+    private final Map<String, String> pendingVoicePolishExpected =
+        new ConcurrentHashMap<>();
+
     private final Map<String, Set<String>> pendingVoicePolishRequired =
         new ConcurrentHashMap<>();
 
@@ -2192,7 +2201,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private ConversationTurnStore conversationTurnStore;
     private int consecutiveSleeps = 0;
-    private String locale = "en";
+    // Household default language. WYRDSEKAI_LANG seeds it (settable, so a user
+    // doesn't have to rely on the web surface's locale handshake to be
+    // understood); web/phone surfaces may override per-session via SetLocale,
+    // and the per-turn mirror in effectiveTurnLang() overrides per-message.
+    private String locale = defaultHouseholdLang();
+
+    private static String defaultHouseholdLang() {
+        var v = System.getenv("WYRDSEKAI_LANG");
+        if (v == null || v.isBlank()) return "en";
+        return v.strip().toLowerCase().split("[-_.]")[0];
+    }
     private AccessibilityPreferences accessibilityPrefs =
         AccessibilityPreferences.defaults();
     private final OutputAdapter outputAdapter =
@@ -8022,29 +8041,87 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * can identity-compare to know whether the guard fell back.
      */
     static String chooseVoicedLine(String draft, String polished, Set<String> required) {
+        return chooseVoicedLine(draft, polished, required, null);
+    }
+
+    static String chooseVoicedLine(String draft, String polished, Set<String> required,
+                                   String expectedLang) {
         if (polished == null || polished.isBlank()) return draft;
         // A translation is a fact-preserving corruption: "low 63F high 86F" survives
         // intact inside "baja 63F, alta 86F", so every required-fact check passes and the
         // wrong language still reaches the user. The language pin drives this to 0/32 on
         // the current 4B, but a prompt is a request and this is a guarantee — a retrained
         // or swapped voice model must not be able to reintroduce the leak.
-        if (languageChanged(draft, polished)) {
-            return draft;   // voice switched language → raw draft
+        //
+        // DIRECTIONAL when expectedLang is known (language-floor arc, 2026-07-31).
+        // The symmetric form assumed the DRAFT's language was correct and polish was
+        // the only drift source — so when the 9B authored Spanish to an English
+        // household, the pin translated it back and this guard REJECTED the
+        // correction, faithfully speaking the Spanish draft (live-observed: eight
+        // consecutive own-time musings). The rule is about the USER's language,
+        // not the draft's: reject a polish that moves AWAY from expectedLang;
+        // accept one that corrects an off-language draft toward it.
+        boolean correction = false;
+        if (expectedLang == null) {
+            if (languageChanged(draft, polished)) {
+                return draft;   // legacy symmetric: voice switched language → raw draft
+            }
+        } else {
+            var polishLang = detectLanguage(polished);
+            var draftLang = detectLanguage(draft);
+            boolean polishOff = polishLang != null && !polishLang.equals(expectedLang);
+            boolean draftOn = draftLang == null || draftLang.equals(expectedLang);
+            if (polishOff && draftOn) {
+                return draft;   // polish drifted away from the user's language
+            }
+            // The floor's rewrite succeeded: off-language draft, on-language
+            // polish. The remaining guards must judge a TRANSLATION, not a
+            // paraphrase — verbatim token checks and same-script length
+            // ratios both misfire on one (live 2026-07-31: "2024-25年" →
+            // "[2025]" missing; 50c of kanji → 200c of English "expansion").
+            correction = draftLang != null && !draftLang.equals(expectedLang)
+                && polishLang != null && polishLang.equals(expectedLang);
         }
         if (required != null) {
             for (var fact : required) {
-                if (fact != null && !fact.isBlank() && !polished.contains(fact)) {
+                if (fact == null || fact.isBlank()) continue;
+                if (correction ? !digitRunsSurvive(fact, polished)
+                               : !polished.contains(fact)) {
                     return draft;   // dropped a required fact → raw draft
                 }
             }
         }
+        // Kanji are ~3× denser than latin text, so a faithful ja→en rendering
+        // of a 50-char draft is a few hundred chars — expansion, not
+        // hallucination. Scale the cap baseline for cross-script corrections.
+        int draftLenForCap = draft == null ? 0
+            : (correction && "ja".equals(detectLanguage(draft))
+                ? draft.length() * 3 : draft.length());
         if (draft != null
                 && draft.length() >= 30
                 && polished.length() > 120
-                && polished.length() > VOICE_POLISH_EXPANSION_CAP * draft.length()) {
+                && polished.length() > VOICE_POLISH_EXPANSION_CAP * draftLenForCap) {
             return draft;   // hallucinated oversized expansion → raw draft
         }
         return polished;
+    }
+
+    /**
+     * Lenient number survival for translations: every digit run in the
+     * required fact must appear somewhere in the polished text. "2024-25年"
+     * survives as "2024-25", "85F" as "85 degrees" — formatting and units may
+     * translate, the digits may not.
+     */
+    static boolean digitRunsSurvive(String fact, String polished) {
+        var m = Pattern.compile("\\d+").matcher(fact);
+        boolean sawDigits = false;
+        while (m.find()) {
+            sawDigits = true;
+            if (!polished.contains(m.group())) return false;
+        }
+        // A required fact with no digits (caller-pinned name) keeps the
+        // verbatim rule even in a correction.
+        return sawDigits || polished.contains(fact);
     }
 
     /** Human name of a supported locale, for the voice-model language pin. */
@@ -8053,6 +8130,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return switch (locale.toLowerCase().split("[-_]")[0]) {
             case "ja" -> "Japanese";
             case "es" -> "Spanish";
+            case "fr" -> "French";
+            case "de" -> "German";
+            case "zh" -> "Chinese";
+            case "ko" -> "Korean";
             default -> "English";
         };
     }
@@ -9035,7 +9116,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // sounding mechanical.
                     var draft = pendingVoicePolishDrafts.get(respId);
                     var required = pendingVoicePolishRequired.get(respId);
-                    var chosen = chooseVoicedLine(draft, polished, required);
+                    var chosen = chooseVoicedLine(draft, polished, required,
+                        pendingVoicePolishExpected.get(respId));
                     if (chosen != polished && draft != null) {
                         final String pf = polished;
                         var missing = required == null ? List.<String>of()
@@ -11328,13 +11410,32 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // the action verb ("crafted" → "all set") the polish is discarded and the
         // exact deterministic confirmation is spoken — strictly safer than the old
         // unconditional raw bypass, and it lets clean confirmations still translate.
+        // Language floor (2026-07-31): user-facing speech is in the USER's
+        // language — the turn's effective language, which already mirrors a
+        // bondholder who writes in another language. When the draft confidently
+        // reads as a DIFFERENT language (the 9B authoring Spanish musings to an
+        // English household — the self-reinforcing drift loop), force it through
+        // the polish stage in explicit rewrite mode, bypassing the
+        // already-4B-authored and too-short shortcuts: those assume the draft
+        // only needs cosmetics, and this one needs its language corrected.
+        // Her inner life (journal, felt notes, one-shot voice) is deliberately
+        // NOT floored — exploring languages there is hers to do.
+        String expectedLang = effectiveTurnLang();
+        String draftLang = detectLanguage(text);
+        boolean wrongLanguage = draftLang != null && !draftLang.equals(expectedLang);
+        if (wrongLanguage && inferenceRouter != null) {
+            log.info("Language floor: draft reads '{}' but this turn's language is '{}' "
+                + "— forcing a rewrite pass", draftLang, expectedLang);
+            polishVoiceAsync(text, preserveFacts, expectedLang, true, this::speakDirect);
+            return;
+        }
         if (currentTurnVia4bVoice
                 || text.length() < VOICE_MIN_POLISH_CHARS
                 || inferenceRouter == null) {
             speakDirect(text);
             return;
         }
-        polishVoiceAsync(text, preserveFacts, this::speakDirect);
+        polishVoiceAsync(text, preserveFacts, expectedLang, false, this::speakDirect);
     }
 
     /**
@@ -11416,11 +11517,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final Duration VOICE_POLISH_TIMEOUT = Duration.ofSeconds(3);
 
     private void polishVoiceAsync(String draft, Consumer<String> onComplete) {
-        polishVoiceAsync(draft, null, onComplete);
+        polishVoiceAsync(draft, null, effectiveTurnLang(), false, onComplete);
     }
 
     private void polishVoiceAsync(String draft,
                                    Map<String, String> preserveFacts,
+                                   Consumer<String> onComplete) {
+        polishVoiceAsync(draft, preserveFacts, effectiveTurnLang(), false, onComplete);
+    }
+
+    /**
+     * @param expectedLang  language code the OUTPUT must be in — the turn's
+     *                      effective language, not the raw stored locale, so the
+     *                      polish pin and the per-turn mirror can't disagree.
+     * @param wrongLanguage true when the caller (the language floor in
+     *                      {@link #speak}) already detected the draft is in the
+     *                      wrong language: the prompt then names the rewrite
+     *                      explicitly instead of asking the model to notice.
+     */
+    private void polishVoiceAsync(String draft,
+                                   Map<String, String> preserveFacts,
+                                   String expectedLang,
+                                   boolean wrongLanguage,
                                    Consumer<String> onComplete) {
         var requestId = "polish-" + UUID.randomUUID();
         // Wrap the callback so it's fire-once — whichever of inference-response
@@ -11431,6 +11549,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 pendingVoicePolishes.remove(requestId);
                 pendingVoicePolishDrafts.remove(requestId);
                 pendingVoicePolishRequired.remove(requestId);
+                pendingVoicePolishExpected.remove(requestId);
                 onComplete.accept(polished);
             }
         };
@@ -11439,7 +11558,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // #35 strict guard inputs: every name/number/temperature/URL in the
         // draft, plus every caller-pinned preserveFacts value, must survive in
         // the polished output or we speak the raw draft (see onInferenceResponse).
-        var required = new LinkedHashSet<>(extractRequiredEntities(draft));
+        //
+        // In wrong-language rewrite mode the entity extractor is skipped: it
+        // reads capitalized words of an OFF-LANGUAGE draft as proper nouns
+        // ("Algo" — Spanish sentence-starter for "something") and no
+        // translation can ever contain them, so the guard rejected every
+        // correction and spoke the raw Spanish (live 2026-07-31,
+        // missing facts=[Algo]). Numbers and caller-pinned facts survive
+        // translation and stay required.
+        var required = wrongLanguage
+            ? new LinkedHashSet<String>()
+            : new LinkedHashSet<>(extractRequiredEntities(draft));
         required.addAll(extractRequiredNumbers(draft));
         if (preserveFacts != null) {
             for (var v : preserveFacts.values()) {
@@ -11447,6 +11576,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
         pendingVoicePolishRequired.put(requestId, required);
+        if (expectedLang != null && !expectedLang.isBlank()) {
+            pendingVoicePolishExpected.put(requestId, expectedLang);
+        }
         // Schedule the fallback timer — if no response comes, speak the original.
         timers.startSingleTimer("polish-timeout-" + requestId,
             new VoicePolishTimeout(requestId, draft), VOICE_POLISH_TIMEOUT);
@@ -11469,24 +11601,42 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // and it is stated positively: the earlier phrasing said "Never translate", and
         // naming the unwanted behaviour primes it — that version drifted exactly as often
         // as no pin at all. Say what the model does, not what it must not do.
-        sb.append("You speak ").append(languageName(locale))
-            .append(". Every reply you write is in ").append(languageName(locale))
+        var pinLang = languageName(expectedLang != null && !expectedLang.isBlank()
+            ? expectedLang : locale);
+        sb.append("You speak ").append(pinLang)
+            .append(". Every reply you write is in ").append(pinLang)
             .append(".\n\n");
-        sb.append("You are the voice stage for Wyrd. You receive a draft that will be spoken "
-            + "to a user.\n\n"
-            + "FIRST: decide whether the draft is already clean direct speech.\n"
-            + "If yes → output the draft VERBATIM, unchanged.\n"
-            + "If no → rewrite it as clean, direct first-person speech.\n\n"
-            + "A draft needs rewriting if it contains:\n"
-            + "- Meta-narration ('Let me...', 'I should...', 'I need to...', 'I will...', 'I'm going to...').\n"
-            + "- Process description ('I have examined...', 'I checked...', 'I looked up...', 'I've been thinking through...').\n"
-            + "- Emote-as-thought (*makes a mental note*, *thinks*, *considers*).\n"
-            + "- Third-person self-reference ('The visitor is asking...', 'The user wants...').\n"
-            + "- Description of reasoning steps or processing.\n\n"
-            + "When rewriting, KEEP:\n"
-            + "- The substantive answer or reply.\n"
-            + "- Personality, warmth, emotional texture.\n"
-            + "- Length appropriate to the content.\n\n");
+        if (wrongLanguage) {
+            // Rewrite mode REPLACES the normal polish workflow. The standard
+            // body leads with "if the draft is already clean → output VERBATIM",
+            // and that branch wins: live 2026-07-31, a floored Spanish draft
+            // came back byte-identical (275c → 275c) because the draft WAS
+            // clean direct speech — just in the wrong language. In this mode
+            // the one and only job is restating the draft in the user's
+            // language, so no instruction may offer a pass-through.
+            sb.append("You are the voice stage for Wyrd. The draft you receive is "
+                + "written in the wrong language for this user.\n\n"
+                + "Say the same thing in ").append(pinLang)
+                .append(": keep the meaning, tone, names, and numbers. Do not "
+                + "add new content. Do not reply to the draft — restate it in ")
+                .append(pinLang).append(".\n\n");
+        } else {
+            sb.append("You are the voice stage for Wyrd. You receive a draft that will be spoken "
+                + "to a user.\n\n"
+                + "FIRST: decide whether the draft is already clean direct speech.\n"
+                + "If yes → output the draft VERBATIM, unchanged.\n"
+                + "If no → rewrite it as clean, direct first-person speech.\n\n"
+                + "A draft needs rewriting if it contains:\n"
+                + "- Meta-narration ('Let me...', 'I should...', 'I need to...', 'I will...', 'I'm going to...').\n"
+                + "- Process description ('I have examined...', 'I checked...', 'I looked up...', 'I've been thinking through...').\n"
+                + "- Emote-as-thought (*makes a mental note*, *thinks*, *considers*).\n"
+                + "- Third-person self-reference ('The visitor is asking...', 'The user wants...').\n"
+                + "- Description of reasoning steps or processing.\n\n"
+                + "When rewriting, KEEP:\n"
+                + "- The substantive answer or reply.\n"
+                + "- Personality, warmth, emotional texture.\n"
+                + "- Length appropriate to the content.\n\n");
+        }
         // 2026-05-09: Fix 6 LENGTH DISCIPLINE prompt block reverted. The 4B
         // polish model echoed those rules verbatim into outputs (Ember
         // task9/10 JA: "No more meta-narration or process description just be
@@ -16101,23 +16251,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // answered in Spanish, and back. No confident signal (short latin
         // text) falls back to the account locale, so a stray "hola" doesn't
         // flip anything.
+        String effective = effectiveTurnLang();
+        String langName = languageName(effective);
+        // The pin LEADS, stated positively — the exact form that measured 0/32
+        // at the polish stage (buried or negative phrasings measured no better
+        // than no pin at all; see polishVoiceAsync). PromptAssembler places
+        // this block as the FIRST system message for the same reason.
+        return "You speak " + langName + ". Every reply you write is in "
+            + langName + ".\n"
+            + TranslationPrompts.localeContext(langName, effective, 0);
+    }
+
+    /**
+     * The language THIS turn's user-facing speech should be in: the trigger
+     * message's confidently-detected language (a bondholder who switches to
+     * Spanish is answered in Spanish), else the stored locale (web/phone
+     * surfaces set it; SSH stamps "en"; {@code WYRDSEKAI_LANG} seeds the
+     * default). Shared by the prompt pin, the polish pin, and the
+     * language floor in {@link #speak} so all three enforce the same answer.
+     */
+    private String effectiveTurnLang() {
         String effective = (locale == null || locale.isBlank()) ? "en" : locale;
         var trig = pendingTrigger != null ? pendingTrigger : lastReactTrigger;
         if (trig != null) {
             String detected = LanguageHeuristics.detect(trig.text());
             if (detected != null) effective = detected;
         }
-        String langName = switch (effective) {
-            case "en" -> "English";
-            case "ja" -> "Japanese";
-            case "es" -> "Spanish";
-            case "fr" -> "French";
-            case "de" -> "German";
-            case "zh" -> "Chinese";
-            case "ko" -> "Korean";
-            default -> effective;
-        };
-        return TranslationPrompts.localeContext(langName, effective, 0);
+        return effective;
     }
 
     /**

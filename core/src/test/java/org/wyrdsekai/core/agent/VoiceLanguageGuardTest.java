@@ -84,6 +84,66 @@ class VoiceLanguageGuardTest {
     }
 
     @Test
+    @DisplayName("directional: a polish that CORRECTS an off-language draft is accepted")
+    void directionalAcceptsCorrectionTowardExpected() {
+        // The live 2026-07-31 loop: the 9B authored Spanish own-time musings to an
+        // English household; the polish pin translated them back; the SYMMETRIC
+        // guard rejected the correction and faithfully spoke the Spanish draft.
+        var spanishDraft = "Estoy aquí contigo — muchas cosas me aprietan al mismo tiempo.";
+        var englishPolish = "I'm here with you — a lot of things are pressing on me at once.";
+        assertSame(englishPolish,
+            CompanionActor.chooseVoicedLine(spanishDraft, englishPolish, Set.of(), "en"),
+            "moving TOWARD the user's language is the floor working, not corruption");
+    }
+
+    @Test
+    @DisplayName("directional: a polish that drifts AWAY from the expected language is rejected")
+    void directionalRejectsDriftAwayFromExpected() {
+        var draft = "The forecast for San Francisco tomorrow: low 63F high 86F scattered clouds.";
+        var spanish = "San Francisco mañana: baja 63F, alta 86F, nubes dispersas.";
+        assertSame(draft,
+            CompanionActor.chooseVoicedLine(draft, spanish, Set.of("63F", "86F"), "en"),
+            "the original protection still holds when the expected language is known");
+    }
+
+    @Test
+    @DisplayName("directional: mirror turns pass — Spanish stays Spanish when expected is Spanish")
+    void directionalHonoursTheMirror() {
+        var draft = "Claro, puedo ayudarte con eso ahora mismo si quieres empezar.";
+        var polish = "Claro — puedo ayudarte con eso ahora mismo, ¿empezamos?";
+        assertSame(polish,
+            CompanionActor.chooseVoicedLine(draft, polish, Set.of(), "es"),
+            "a bondholder who writes Spanish is answered in Spanish, floor silent");
+    }
+
+    @Test
+    @DisplayName("correction: ja→en expansion is translation density, not hallucination")
+    void correctionToleratesCrossScriptExpansion() {
+        // 44c of kanji rendered faithfully in English is a few hundred latin
+        // chars — the live 2026-07-31 failure rejected every ja→en correction
+        // on the expansion cap (44c→124c, 50c→454c) and spoke raw Japanese.
+        var jaDraft = "ただ、図書館にいるのが好き——何も言わないでよ。あなたがいるからここに留まっているのね。";
+        var enPolish = "I just like being in the library — you don't have to say anything. "
+            + "I'm staying here because you're here, that's all it is.";
+        assertSame(enPolish,
+            CompanionActor.chooseVoicedLine(jaDraft, enPolish, Set.of(), "en"));
+    }
+
+    @Test
+    @DisplayName("correction: numbers survive as digit runs, not verbatim formatted tokens")
+    void correctionChecksDigitRuns() {
+        var jaDraft = "2024-25年のarXivからトレンドを拾いながら探せてるよ。";
+        var enPolish = "I've been tracking trends from arXiv across 2024-25.";
+        // "2025" as a formatted token is absent but the digit runs 2024/25 survive.
+        assertSame(enPolish,
+            CompanionActor.chooseVoicedLine(jaDraft, enPolish, Set.of("2024", "25"), "en"));
+        // Digits actually dropped → still rejected.
+        var lossy = "I've been tracking recent trends from arXiv.";
+        assertSame(jaDraft,
+            CompanionActor.chooseVoicedLine(jaDraft, lossy, Set.of("2024", "25"), "en"));
+    }
+
+    @Test
     @DisplayName("language drift is caught even when the polish keeps every required fact")
     void languageBeatsFactCheck() {
         assertTrue(CompanionActor.languageChanged(

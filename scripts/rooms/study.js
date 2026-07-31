@@ -486,6 +486,7 @@ function doNostrSigil(entityId, target) {
 var SCROLL_GROUPS = [
   { id: "identity", title: "identity & world", keys: [
     ["WYRDSEKAI_NODE_NAME", "this node's display name", "(hostname)"],
+    ["WYRDSEKAI_LANG", "household language companions speak to users (en/ja/es); per-message language still mirrors the user", "en"],
     ["WYRDSEKAI_ZONE_ID", "the zone label (the @name in your prompt)", "home"],
     ["WYRDSEKAI_ZONE_NAME", "human-readable zone name", "Home Zone"],
     ["WYRDSEKAI_ZONE_THEME", "aesthetic theme applied to room descriptions", "(from hostname)"],

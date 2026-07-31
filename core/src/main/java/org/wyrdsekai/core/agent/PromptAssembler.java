@@ -240,6 +240,15 @@ public final class PromptAssembler {
 
         var messages = new ArrayList<ChatMessage>();
 
+        // L0 — language pin, FIRST tokens of the request. Position is
+        // load-bearing: the same instruction measured 0/32 drift leading the
+        // prompt and no-effect buried mid-prompt (see the polish-stage
+        // measurements in CompanionActor.polishVoiceAsync). Emitted for
+        // English too — the multilingual voice model code-switches without it.
+        if (localeContext != null && !localeContext.isBlank()) {
+            messages.add(new ChatMessage("system", localeContext));
+        }
+
         // L1 — system prompt (identity, never trimmed)
         messages.add(new ChatMessage("system", profile.systemPrompt()));
 
@@ -287,11 +296,9 @@ public final class PromptAssembler {
             messages.add(new ChatMessage("system", situationalContext));
         }
 
-        // L2.6 — locale (only when non-trivial; English speakers don't need
-        // a "speak English" instruction).
-        if (localeContext != null && !localeContext.isBlank()) {
-            messages.add(new ChatMessage("system", localeContext));
-        }
+        // (locale moved to L0 — leading position is what makes the pin work;
+        // "English speakers don't need a 'speak English' instruction" was the
+        // exact assumption the live drift disproved.)
 
         // L6 — conversation history, capped at last 4 said events. Voice replies
         // are in-the-moment; deeper history belongs on the skills tier where
@@ -462,6 +469,13 @@ public final class PromptAssembler {
         var messages = new ArrayList<ChatMessage>();
 
         // --- Primacy zone (beginning of context — high LLM attention) ---
+
+        // Layer 0: language pin — the FIRST tokens of the request, never
+        // trimmed. See the voice tier's L0 note and the measurements in
+        // CompanionActor.polishVoiceAsync: leading = 0/32 drift, buried = none.
+        if (localeContext != null && !localeContext.isBlank()) {
+            messages.add(new ChatMessage("system", localeContext));
+        }
 
         // Layer 1: System prompt (identity, never trimmed)
         messages.add(new ChatMessage("system", profile.systemPrompt()));
@@ -644,15 +658,10 @@ public final class PromptAssembler {
             }
         }
 
-        // Layer 2.6: Locale context (primacy zone, trimmable)
-        // Injected when entity locale != "en" — guides agent to respond in user's language
-        if (localeContext != null && !localeContext.isBlank()) {
-            int localeTokens = estimateTokens(localeContext);
-            if (localeTokens <= remainingBudget) {
-                messages.add(new ChatMessage("system", localeContext));
-                remainingBudget -= localeTokens;
-            }
-        }
+        // (Layer 2.6 locale moved to Layer 0 — inserted as the FIRST system
+        // message below, before identity. Leading position is what makes the
+        // pin work: the same instruction measured 0/32 drift leading and
+        // no-effect buried, and it is emitted for English too.)
 
         // Layer 2.7: Capability context (available tools, MCP services, zone resources)
         if (capabilityContext != null && !capabilityContext.isBlank()) {

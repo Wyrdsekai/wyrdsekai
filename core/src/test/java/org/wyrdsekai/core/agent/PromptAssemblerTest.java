@@ -359,7 +359,10 @@ class PromptAssemblerTest {
             if (messages.get(i).content().contains("Japanese")) localeIdx = i;
             if (firstConvIdx == -1 && !messages.get(i).role().equals("system")) firstConvIdx = i;
         }
-        assertThat(localeIdx).isGreaterThan(0);
+        // Language-floor arc (2026-07-31): the locale block LEADS the prompt —
+        // position is load-bearing (leading pin measured 0/32 drift, buried
+        // measured no better than absent).
+        assertThat(localeIdx).isEqualTo(0);
         assertThat(localeIdx).isLessThan(firstConvIdx);
     }
 

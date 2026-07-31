@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated from scripts/rooms/study.js SCROLL_GROUPS. Single source for the in-world Scroll of Settings and the config catalog shown by `wyrd config list --all` on every platform. ScrollOfSettingsCatalogTest pins this file against the scroll so they cannot drift.",
+  "_comment": "GENERATED from SCROLL_GROUPS in scripts/rooms/study.js — regenerate with the one-liner in ConfigCatalogParityTest; do not edit by hand.",
   "groups": [
     {
       "id": "identity",
@@ -9,6 +9,11 @@
           "key": "WYRDSEKAI_NODE_NAME",
           "description": "this node's display name",
           "default": "(hostname)"
+        },
+        {
+          "key": "WYRDSEKAI_LANG",
+          "description": "household language companions speak to users (en/ja/es); per-message language still mirrors the user",
+          "default": "en"
         },
         {
           "key": "WYRDSEKAI_ZONE_ID",

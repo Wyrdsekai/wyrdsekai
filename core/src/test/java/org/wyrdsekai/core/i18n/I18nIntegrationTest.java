@@ -557,9 +557,13 @@ class I18nIntegrationTest {
                 profile, room, history, trigger,
                 null, List.of(), null, localeCtx);
 
-            // Layer 1: system prompt
+            // Layer 0 (language-floor arc 2026-07-31): the locale block LEADS —
+            // the pin only works in leading position. Identity follows at L1.
             assertEquals("system", messages.getFirst().role());
-            assertTrue(messages.getFirst().content().contains("Hana"));
+            assertTrue(messages.getFirst().content().contains("Japanese"),
+                "locale pin must be the first tokens of the request");
+            assertEquals("system", messages.get(1).role());
+            assertTrue(messages.get(1).content().contains("Hana"));
 
             // Layer 2.6: locale context present
             boolean hasLocale = messages.stream()
