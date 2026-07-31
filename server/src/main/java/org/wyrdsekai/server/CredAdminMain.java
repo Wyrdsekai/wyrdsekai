@@ -2,6 +2,15 @@ package org.wyrdsekai.server;
 
 import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.common.system.SystemPaths;
+import org.wyrdsekai.core.external.ExternalAdapterRegistry;
+import org.wyrdsekai.core.external.o.PhaseOAdaptersBootstrap;
+import org.wyrdsekai.core.external.p.PhasePAdaptersBootstrap;
+import org.wyrdsekai.core.external.q.PhaseQAdaptersBootstrap;
+import org.wyrdsekai.core.external.r.PhaseRAdaptersBootstrap;
+import org.wyrdsekai.core.external.s.PhaseSAdaptersBootstrap;
+import org.wyrdsekai.core.external.u.PhaseUAdaptersBootstrap;
+import org.wyrdsekai.core.external.v.PhaseVAdaptersBootstrap;
+import org.wyrdsekai.core.external.w.PhaseWAdaptersBootstrap;
 import org.wyrdsekai.core.room.TheSafe;
 
 import java.io.BufferedReader;
@@ -90,7 +99,7 @@ public final class CredAdminMain {
             return switch (args[0]) {
                 case "set"   -> doSet(safe, encrypted, stdin, out, err, args);
                 case "get"   -> doGet(safe, out, err, args);
-                case "list"  -> doList(safe, out);
+                case "list"  -> doList(safe, out, args);
                 case "unset" -> doUnset(safe, out, err, args);
                 default -> {
                     err.println("[wyrd] unknown cred command: " + args[0]);
@@ -208,15 +217,62 @@ public final class CredAdminMain {
         return 1;
     }
 
-    // wyrd cred list — slot ids only, never values.
-    private static int doList(TheSafe safe, PrintStream out) {
-        var slots = safe.listSlots();
-        if (slots.isEmpty()) {
-            out.println("(no credentials stored)");
+    // wyrd cred list [--all] — slot ids only, never values.
+    private static int doList(TheSafe safe, PrintStream out, String[] args) {
+        boolean all = args.length > 1
+            && ("--all".equals(args[1]) || "all".equals(args[1]) || "-a".equals(args[1]));
+        var stored = safe.listSlots();
+
+        if (!all) {
+            if (stored.isEmpty()) {
+                out.println("(no credentials stored)");
+            } else {
+                stored.stream().sorted().forEach(out::println);
+            }
+            // Discoverability (2026-07-31): listing only what is SET left no
+            // way to learn which slots exist at all.
+            out.println();
+            out.println("(`wyrd cred list --all` shows every slot this build understands)");
             return 0;
         }
-        slots.stream().sorted().forEach(out::println);
+
+        // Every slot the registered adapters declare. The bootstraps are
+        // idempotent and side-effect-free, so priming them here just to read
+        // the inventory is safe in a short-lived CLI process.
+        primeAdapters();
+        var known = ExternalAdapterRegistry.get().credentialSlots();
+        if (known.isEmpty()) {
+            out.println("(no adapters registered — is this build complete?)");
+            return 0;
+        }
+        int width = known.keySet().stream().mapToInt(String::length).max().orElse(20);
+        out.printf("%-" + width + "s  %-6s  %s%n", "SLOT", "STATE", "USED BY");
+        for (var e : known.entrySet()) {
+            var state = stored.contains(e.getKey()) ? "SET" : "unset";
+            out.printf("%-" + width + "s  %-6s  %s%n", e.getKey(), state, e.getValue());
+        }
+        out.println();
+        out.println("Set one with:  wyrd cred set <slot>     (value read from a hidden prompt)");
+        out.println("A slot can also be supplied as WYRDSEKAI_CRED_<SLOT> in the environment");
+        out.println("(uppercased, '.' and '-' become '_').");
         return 0;
+    }
+
+    /**
+     * Register the built-in external adapters so their credential slots can be
+     * enumerated. Each phase bootstrap is idempotent, needs no DB/network, and
+     * only constructs adapter objects — Phase T is skipped because it requires
+     * runtime wiring and declares no credential slot anyway.
+     */
+    private static void primeAdapters() {
+        PhaseOAdaptersBootstrap.init();
+        PhasePAdaptersBootstrap.init();
+        PhaseQAdaptersBootstrap.init();
+        PhaseRAdaptersBootstrap.init();
+        PhaseSAdaptersBootstrap.register();
+        PhaseUAdaptersBootstrap.init();
+        PhaseVAdaptersBootstrap.init();
+        PhaseWAdaptersBootstrap.init();
     }
 
     // wyrd cred unset <slot>
@@ -246,6 +302,8 @@ public final class CredAdminMain {
         out.println("                 hidden prompt (never from argv). e.g. wyrd cred set github.token");
         out.println("  get <slot>     prints SET or (not set) — never the value");
         out.println("  list           list stored slot names (never values)");
+        out.println("  list --all     every slot this build understands, SET or unset,");
+        out.println("                 with the adapter that uses it");
         out.println("  unset <slot>   remove a slot");
         out.println();
         out.println("Changes take effect on next `wyrd restart` (the scroll's cred verbs are immediate).");

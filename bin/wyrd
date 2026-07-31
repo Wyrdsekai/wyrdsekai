@@ -250,6 +250,22 @@ _resolve_wyrd_i18n_dir() {
 }
 WYRD_I18N_DIR="$(_resolve_wyrd_i18n_dir)"
 
+# Config catalog (scripts/config-catalog.json) — every WYRDSEKAI_* key this
+# build understands, with a one-line description + default. Generated from the
+# in-world Scroll of Settings so `wyrd config list --all`, the scroll, and the
+# Windows CLI all read ONE inventory (2026-07-31: `config list` could only show
+# keys already written to the conf, so there was no way to discover the rest).
+_resolve_wyrd_config_catalog() {
+    for f in \
+        "$PROJECT_ROOT/scripts/config-catalog.json" \
+        "/usr/local/wyrdsekai/scripts/config-catalog.json" \
+        "/opt/wyrdsekai/scripts/config-catalog.json"; do
+        [[ -f "$f" ]] && { echo "$f"; return; }
+    done
+    echo ""
+}
+WYRD_CONFIG_CATALOG="$(_resolve_wyrd_config_catalog)"
+
 # _t KEY [arg1 arg2 ...]
 # Returns the translated string for KEY in the current locale, with {0}, {1},
 # ... substitutions filled from the positional args. On any error (catalog
@@ -5081,6 +5097,48 @@ do_config() {
             ;;
         list|show)
             _ensure_config
+            # --all (or a group name) shows the CATALOG — every key this build
+            # understands, its description, default, and current value —
+            # instead of only what happens to be written in the conf.
+            local list_arg="${2:-}"
+            if [[ -n "$list_arg" ]]; then
+                if [[ -z "$WYRD_CONFIG_CATALOG" ]]; then
+                    err "config catalog not found (scripts/config-catalog.json)"
+                    return 1
+                fi
+                local cur_conf=""
+                if [[ -r "$target_conf" ]]; then cur_conf=$(cat "$target_conf" 2>/dev/null); \
+                else cur_conf=$(sudo cat "$target_conf" 2>/dev/null); fi
+                WYRD_CAT="$WYRD_CONFIG_CATALOG" WYRD_CONF_TEXT="$cur_conf" \
+                WYRD_LIST_ARG="$list_arg" python3 - <<'CATPY'
+import json, os, re
+cat = json.load(open(os.environ["WYRD_CAT"]))
+arg = os.environ.get("WYRD_LIST_ARG", "").strip()
+conf = os.environ.get("WYRD_CONF_TEXT", "")
+set_keys = dict(re.findall(r'^([A-Z_]+)=(.*)$', conf, re.M))
+groups = cat["groups"]
+want_all = arg in ("--all", "-a", "all")
+if not want_all:
+    groups = [g for g in groups if g["id"] == arg]
+    if not groups:
+        print("no such group: " + arg)
+        print("groups: " + ", ".join(g["id"] for g in cat["groups"]))
+        raise SystemExit(1)
+for g in groups:
+    print("\n== %s — %s" % (g["id"], g["title"]))
+    for k in g["keys"]:
+        name = k["key"]
+        cur = set_keys.get(name)
+        state = ("= " + cur) if cur is not None else ("(unset, default: %s)" % (k["default"] or "\u2014"))
+        print("  %-44s %s" % (name, state))
+        print("  %-44s   %s" % ("", k["description"]))
+if want_all:
+    print("\nSet one with:  wyrd config set KEY=VALUE   then   wyrd config apply")
+    print("One group at a time:  wyrd config list <group>   (%s)"
+          % ", ".join(g["id"] for g in cat["groups"]))
+CATPY
+                return $?
+            fi
             echo "$(_t config.list.header "$target_conf")"
             echo ""
             if [[ -r "$target_conf" ]]; then
@@ -5088,6 +5146,8 @@ do_config() {
             else
                 sudo cat "$target_conf" | grep -E '^[A-Z_]+=.*' | sort
             fi
+            echo ""
+            echo "(\`wyrd config list --all\` shows every key this build understands)"
             ;;
         edit)
             _ensure_config

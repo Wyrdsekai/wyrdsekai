@@ -1869,7 +1869,7 @@ public class WyrdShellCommand implements Command {
      *   /notify list
      *   /notify add telegram botToken=123 chatId=456
      *   /notify add ntfy topic=wyrdsekai-operator [server=https://ntfy.sh]
-     *   /notify add email address=me@example.com smtpUser=me smtpPassword=xxx
+     *   /notify add email address=me@example.com password=app-pass [user=smtp-login]
      *   /notify add discord webhookUrl=https://...
      *   /notify add webhook url=https://... [label=myhook]
      *   /notify remove telegram

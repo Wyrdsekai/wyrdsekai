@@ -1,0 +1,832 @@
+{
+  "_comment": "Generated from scripts/rooms/study.js SCROLL_GROUPS. Single source for the in-world Scroll of Settings and the config catalog shown by `wyrd config list --all` on every platform. ScrollOfSettingsCatalogTest pins this file against the scroll so they cannot drift.",
+  "groups": [
+    {
+      "id": "identity",
+      "title": "identity & world",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_NODE_NAME",
+          "description": "this node's display name",
+          "default": "(hostname)"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_ID",
+          "description": "the zone label (the @name in your prompt)",
+          "default": "home"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_NAME",
+          "description": "human-readable zone name",
+          "default": "Home Zone"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_THEME",
+          "description": "aesthetic theme applied to room descriptions",
+          "default": "(from hostname)"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_AESTHETIC",
+          "description": "path to a custom zone-aesthetic file",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_THEMED_ROOM_DESCRIPTIONS",
+          "description": "LLM-rewrite rooms in the theme's voice (true/false)",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_BIRTH_MODE",
+          "description": "how new companions are born (particular/neutral)",
+          "default": "particular"
+        },
+        {
+          "key": "WYRDSEKAI_COMPANION_NAME",
+          "description": "first companion's name (read at first boot)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_COMPANION_NAME_2",
+          "description": "second companion's name",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_LOCALE",
+          "description": "UI/CLI language (en/es/ja) — canonical; WYRDSEKAI_LANG accepted",
+          "default": "en"
+        },
+        {
+          "key": "WYRDSEKAI_LATITUDE",
+          "description": "latitude for weather/context features",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_LONGITUDE",
+          "description": "longitude for weather/context features",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_EMERGENCY_JURISDICTION",
+          "description": "jurisdiction code for emergency resources",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "id": "network",
+      "title": "network & doors",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_PORT",
+          "description": "HTTP + WebSocket port (ONE port serves both)",
+          "default": "7070"
+        },
+        {
+          "key": "WYRDSEKAI_HOSTNAME",
+          "description": "hostname for WebAuthn/CORS",
+          "default": "localhost"
+        },
+        {
+          "key": "WYRDSEKAI_PUBLIC_HOST",
+          "description": "externally-advertised host (OAuth callbacks)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_LAN_IP",
+          "description": "override the detected LAN IP for the mesh",
+          "default": "(auto)"
+        },
+        {
+          "key": "WYRDSEKAI_MAX_CONNECTIONS",
+          "description": "max concurrent WebSocket connections",
+          "default": "100"
+        },
+        {
+          "key": "WYRDSEKAI_SSH_ENABLED",
+          "description": "in-world SSH door (true/false)",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_SSH_PORT",
+          "description": "SSH door port",
+          "default": "7022"
+        },
+        {
+          "key": "WYRDSEKAI_TELNET_ENABLED",
+          "description": "classic telnet door — cleartext, opt-in only",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_TELNET_PORT",
+          "description": "telnet port",
+          "default": "7071"
+        },
+        {
+          "key": "WYRDSEKAI_TELNET_BIND",
+          "description": "telnet bind address (0.0.0.0 exposes to LAN)",
+          "default": "127.0.0.1"
+        },
+        {
+          "key": "WYRDSEKAI_SEARXNG_URL",
+          "description": "SearXNG metasearch endpoint for web_search",
+          "default": "http://localhost:8888"
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "title": "security & privacy",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_OFFLINE",
+          "description": "hard offline switch — no outbound network at all",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ALLOW_MODEL_DOWNLOAD",
+          "description": "permit pulling model weights from the net",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ALLOW_ANONYMOUS",
+          "description": "let un-authenticated guests into the Nexus",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_WEB_APP",
+          "description": "serve the browser client at /app",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_MDNS_ENABLED",
+          "description": "announce this node on the LAN via mDNS",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_TLS_ENABLED",
+          "description": "serve HTTPS directly (prefer a reverse proxy)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_TLS_PORT",
+          "description": "HTTPS port",
+          "default": "7443"
+        },
+        {
+          "key": "WYRDSEKAI_TLS_KEYSTORE",
+          "description": "path to JKS keystore",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_TLS_AUTO_GENERATE",
+          "description": "self-sign a cert when keystore is missing",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_PRIVACY_FLOOR",
+          "description": "minimum privacy tier enforced zone-wide",
+          "default": "private"
+        },
+        {
+          "key": "WYRDSEKAI_ALLOW_PUBLIC_LEG",
+          "description": "allow a public relay leg under a private floor",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ENVELOPE_VERIFY",
+          "description": "federation envelope verification (off/soft/hard)",
+          "default": "soft"
+        },
+        {
+          "key": "WYRDSEKAI_RATE_LIMIT_ENABLED",
+          "description": "per-IP HTTP rate limiting",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_EGRESS_GATE",
+          "description": "scrub credentials from coding-backend subprocesses",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_MCP_STRICT_GRANTS",
+          "description": "strict MCP grant enforcement",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ACTION_STRICT_GRANTS",
+          "description": "CONSENT-tier autonomous actions need an owner grant",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_MCP_DAILY_SPEND_CAP",
+          "description": "hard per-agent daily USD cap on metered MCP services",
+          "default": "10.0"
+        },
+        {
+          "key": "WYRDSEKAI_HOST_APPS",
+          "description": "allowlist of host apps agents may launch",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_HOST_OPEN_ROOTS",
+          "description": "allowlisted host filesystem roots",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "title": "skills & external tools",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_SKILLS_OPENCLAW_URL",
+          "description": "OpenClaw gateway WebSocket URL (wyrd openclaw setup)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_KIWIX_URL",
+          "description": "Kiwix offline-knowledge server (library.kiwix skills)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_HA_URL",
+          "description": "Home Assistant URL (hearth.ha skills)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_CALDAV_URL",
+          "description": "CalDAV calendar server (scriptorium.caldav skills)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_WHISPER_URL",
+          "description": "Whisper STT endpoint (voice.stt skills)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_OBSIDIAN_VAULT",
+          "description": "Obsidian vault path (vault.obsidian skills)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_SIGNAL_PHONE",
+          "description": "Signal phone number (herald.signal skills)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SKILLS_EMERGENCY_CONTACTS",
+          "description": "emergency contact book: Name:phone[:relation],...",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_CRED_TWILIO_ACCOUNT_SID",
+          "description": "Twilio SID for real emergency/telephony calls",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_CRED_TWILIO_AUTH_TOKEN",
+          "description": "Twilio auth token (prefer The Safe over this)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_CRED_TWILIO_FROM_NUMBER",
+          "description": "Twilio caller-ID number (E.164)",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "title": "storage & backups",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_STORAGE_BACKEND",
+          "description": "sqlite (single-node) or postgresql (community)",
+          "default": "sqlite"
+        },
+        {
+          "key": "WYRDSEKAI_PG_URL",
+          "description": "PostgreSQL JDBC URL",
+          "default": "jdbc:postgresql://localhost:5432/wyrdsekai"
+        },
+        {
+          "key": "WYRDSEKAI_PG_USER",
+          "description": "PostgreSQL user",
+          "default": "wyrdsekai"
+        },
+        {
+          "key": "WYRDSEKAI_PG_PASSWORD",
+          "description": "PostgreSQL password",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_BACKUP_ENABLED",
+          "description": "periodic DB snapshots",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_BACKUP_INTERVAL_HOURS",
+          "description": "snapshot cadence (hours)",
+          "default": "24"
+        },
+        {
+          "key": "WYRDSEKAI_ENTITY_TTL_DAYS",
+          "description": "memory-entity time-to-live (days)",
+          "default": "90"
+        },
+        {
+          "key": "WYRDSEKAI_CONVERSATION_TURNS_RETENTION_DAYS",
+          "description": "conversation-turn retention (days)",
+          "default": "180"
+        }
+      ]
+    },
+    {
+      "id": "inference",
+      "title": "inference & models",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_INFERENCE_MODE",
+          "description": "where the brain runs: local / cloud / zone",
+          "default": "local"
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_URL",
+          "description": "primary model endpoint (http/mlx/nats)",
+          "default": "http://127.0.0.1:8200"
+        },
+        {
+          "key": "WYRDSEKAI_LLAMA_ENABLED",
+          "description": "run the bundled llama-server (false = local kill-switch; alias WYRDSEKAI_INFERENCE_ENABLED)",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_MODEL_PATH",
+          "description": "GGUF model file the local server loads",
+          "default": "(setup-chosen)"
+        },
+        {
+          "key": "WYRDSEKAI_GPU_LAYERS",
+          "description": "layers offloaded to GPU (-ngl)",
+          "default": "99"
+        },
+        {
+          "key": "WYRDSEKAI_MODEL",
+          "description": "default model id sent in API requests",
+          "default": "default"
+        },
+        {
+          "key": "WYRDSEKAI_MODEL_ROUTINE",
+          "description": "small/fast model for routine turns",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_MODEL_COMPLEX",
+          "description": "most-capable model for complex turns",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_TIMEOUT",
+          "description": "per-request timeout (seconds)",
+          "default": "120"
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_CONCURRENCY",
+          "description": "router-wide in-flight cap — raise for vLLM/SGLang",
+          "default": "1"
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_MAX_CONCURRENT",
+          "description": "per-backend concurrent limit (a DIFFERENT knob)",
+          "default": "4"
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_HOUSEHOLD_SHARE",
+          "description": "offer this node's GPU to the household",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_HOUSEHOLD_BORROW",
+          "description": "borrow a household GPU when local is weak",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_OLLAMA_ENABLED",
+          "description": "Ollama backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_OLLAMA_URL",
+          "description": "Ollama endpoint",
+          "default": "http://localhost:11434"
+        },
+        {
+          "key": "WYRDSEKAI_SGLANG_ENABLED",
+          "description": "SGLang backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_VLLM_ENABLED",
+          "description": "vLLM backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_OPENAI_ENABLED",
+          "description": "OpenAI-compatible cloud backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ANTHROPIC_ENABLED",
+          "description": "Anthropic cloud backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_OPENROUTER_ENABLED",
+          "description": "OpenRouter cloud backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CLAUDE_CLI_ENABLED",
+          "description": "Claude CLI backend (OAuth, no API key)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_EMBEDDING_URL",
+          "description": "embedding-server URL",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_EMBEDDING_MODEL",
+          "description": "retrieval embedding model id",
+          "default": "(registry default)"
+        },
+        {
+          "key": "WYRDSEKAI_PREDICTION_MODEL",
+          "description": "model id for the prediction subsystem",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "title": "voice",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_VOICE_ENABLED",
+          "description": "register the distinct voice/prose model backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_VOICE_URL",
+          "description": "voice model endpoint",
+          "default": "http://127.0.0.1:8201"
+        },
+        {
+          "key": "WYRDSEKAI_VOICE_BACKEND",
+          "description": "voice backend kind (mlx/llamacpp/ollama/sglang)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_VOICE_PASS",
+          "description": "re-voice drive output through the voice model",
+          "default": "(= voice enabled)"
+        },
+        {
+          "key": "WYRDSEKAI_VOICE_ROUTE_BY_TASK",
+          "description": "route the voice pass by task type",
+          "default": "true"
+        }
+      ]
+    },
+    {
+      "id": "coding",
+      "title": "coding backends",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_CODING_DEFAULT_BACKEND",
+          "description": "last-ditch fallback coding backend",
+          "default": "goose"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_GOOSE_ENABLED",
+          "description": "Goose (default backend)",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_GOOSE_PROVIDER",
+          "description": "Goose provider (openai = local llama-server)",
+          "default": "openai"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_GOOSE_MODEL",
+          "description": "Goose model",
+          "default": "(local 9B)"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_PI_ENABLED",
+          "description": "Pi backend",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_CODEPLANE_ENABLED",
+          "description": "CodePlane in-world workflow",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_OPENCODE_ENABLED",
+          "description": "OpenCode backend",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_AIDER_ENABLED",
+          "description": "Aider backend",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_OPENHANDS_ENABLED",
+          "description": "OpenHands backend (Docker, heavy)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_CLAUDE_SDK_ENABLED",
+          "description": "Claude Code SDK backend (needs key/OAuth)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_CODEX_ENABLED",
+          "description": "Codex CLI backend (paid)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_GEMINI_CLI_ENABLED",
+          "description": "Gemini CLI backend (paid)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CODING_DEVIN_ENABLED",
+          "description": "Devin backend (async cloud, $$)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_CODE_MODE_ENABLED",
+          "description": "master code-mode switch",
+          "default": "false"
+        }
+      ]
+    },
+    {
+      "id": "relay",
+      "title": "relay & federation",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_BETWEEN_ENABLED",
+          "description": "inter-node networking layer",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_NATS_URL",
+          "description": "local/household NATS URL",
+          "default": "nats://127.0.0.1:4222"
+        },
+        {
+          "key": "WYRDSEKAI_NATS_AUTO_START",
+          "description": "auto-start an embedded nats-server",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_ENABLED",
+          "description": "connect out to a relay",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_URL",
+          "description": "the relay this zone reaches the world through",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_USER",
+          "description": "relay auth user",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_TOKEN",
+          "description": "relay auth token",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_FINGERPRINT",
+          "description": "pinned relay TLS fingerprint",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_VISIBILITY",
+          "description": "relay listing (public/hidden/private)",
+          "default": "private"
+        },
+        {
+          "key": "WYRDSEKAI_RELAY_USE_NKEY",
+          "description": "NKey relay auth instead of password",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_PUBLIC_URL",
+          "description": "the address others reach this zone at",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_FEDERATION_AUTO_ACCEPT",
+          "description": "auto-accept federation proposals",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_RENDEZVOUS_URLS",
+          "description": "rendezvous server URLs",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_DIRECTORY_PEERS",
+          "description": "directory peer list (CSV)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_SSH_TUNNEL_ENABLED",
+          "description": "SSH reverse tunnel to a relay host",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_SSH_TUNNEL_RELAY_HOST",
+          "description": "SSH tunnel relay host",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_TAGLINE",
+          "description": "zone tagline shown in the directory",
+          "default": "A Wyrdsekai zone"
+        },
+        {
+          "key": "WYRDSEKAI_ZONE_TAGS",
+          "description": "zone tags for the directory (CSV)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_NOSTR_ENABLED",
+          "description": "Nostr bridge (or use the nostr sigil)",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_NOSTR_RELAYS",
+          "description": "Nostr relay URLs (CSV)",
+          "default": "(damus/nos.lol/snort)"
+        }
+      ]
+    },
+    {
+      "id": "recipes",
+      "title": "recipes & training",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_RECIPES_SCHEDULER_ENABLED",
+          "description": "recipe scheduler (self-evolution)",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_RECIPES_GPU_DAILY_HOURS",
+          "description": "daily GPU budget for recipes (hours)",
+          "default": "6"
+        },
+        {
+          "key": "WYRDSEKAI_RECIPES_MONTHLY_CAP",
+          "description": "monthly recipe-run cap",
+          "default": "100"
+        },
+        {
+          "key": "WYRDSEKAI_RECIPES_REQUEST_MIN_TIER",
+          "description": "min autonomy tier to request recipe runs",
+          "default": "companion"
+        },
+        {
+          "key": "WYRDSEKAI_TRAINING_POLICY",
+          "description": "deep-sleep training policy (aggressive/conservative)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_FORGE_ENABLED",
+          "description": "forge subsystem",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_ORACLE_ENABLED",
+          "description": "oracle bridge",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_LIBRARY_STARTER",
+          "description": "install the starter library",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_LIBRARY_LANGS",
+          "description": "starter-library languages",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_LIBRARY_RELEVANCE_FLOOR",
+          "description": "library retrieval relevance floor",
+          "default": "0.35"
+        }
+      ]
+    },
+    {
+      "id": "updates",
+      "title": "updates",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_UPDATE_CHANNEL",
+          "description": "update channel",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_UPDATE_POLICY",
+          "description": "prompt or auto updates",
+          "default": "prompt"
+        },
+        {
+          "key": "WYRDSEKAI_UPDATE_INTERVAL",
+          "description": "update-check interval",
+          "default": "6h"
+        },
+        {
+          "key": "WYRDSEKAI_UPDATE_WINDOW",
+          "description": "allowed update time window",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_UPDATE_PIN",
+          "description": "pin to a specific version",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_VERSION_CACHE",
+          "description": "cached versions kept for rollback",
+          "default": "3"
+        }
+      ]
+    },
+    {
+      "id": "tuning",
+      "title": "tuning (advanced)",
+      "keys": [
+        {
+          "key": "WYRDSEKAI_AUTONOMY_INTERVAL_MS",
+          "description": "autonomy tick interval (ms)",
+          "default": "600000"
+        },
+        {
+          "key": "WYRDSEKAI_TICK_ENERGY_RECOVERY",
+          "description": "per-tick energy delta",
+          "default": "-0.0002"
+        },
+        {
+          "key": "WYRDSEKAI_SLEEP_THRESHOLD",
+          "description": "energy level triggering sleep",
+          "default": "0.15"
+        },
+        {
+          "key": "WYRDSEKAI_SLEEP_RECOVERY",
+          "description": "energy recovered by sleep",
+          "default": "0.3"
+        },
+        {
+          "key": "WYRDSEKAI_ENERGY_DRAIN",
+          "description": "activity energy drain rate",
+          "default": "0.08"
+        },
+        {
+          "key": "WYRDSEKAI_CONSOLIDATION_INTERVAL_MINUTES",
+          "description": "memory-consolidation interval",
+          "default": "30"
+        },
+        {
+          "key": "WYRDSEKAI_PRESENCE_SILENCE_SEC",
+          "description": "co-presence silence window (sec)",
+          "default": "300"
+        },
+        {
+          "key": "WYRDSEKAI_AGENTS_QUIET_WHEN_HUMAN_PRESENT",
+          "description": "hush agent chatter around humans",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_SESSION_IDLE_REAP_MINUTES",
+          "description": "idle client-session reaping",
+          "default": "240"
+        },
+        {
+          "key": "WYRDSEKAI_INFERENCE_MAX_QUEUE",
+          "description": "resilience-layer inference queue depth",
+          "default": "20"
+        }
+      ]
+    }
+  ]
+}

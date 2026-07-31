@@ -33,7 +33,7 @@ Write-Host ""
 
 # --- Version ---
 if (-not $Version) {
-    $Version = "0.1.0"
+    $Version = "0.1.1"
     Write-Host "[info] No version specified, using default: $Version"
 }
 Write-Host "[info] Building Wyrdsekai v$Version"
@@ -167,6 +167,8 @@ function Stage-File($src, $dstRel) {
 
 # Room scripts
 Stage-Tree "scripts\rooms" "rooms"
+# Config catalog — `wyrd config list --all` reads it (parity with bin/wyrd).
+Stage-File "scripts\config-catalog.json" "scripts\config-catalog.json"
 # core source-relative resources recipes load by path (classifier seeds/anchors + embedding ONNX)
 Stage-Tree "core\src\main\resources\classifier" "core\src\main\resources\classifier"
 Stage-Tree "core\src\main\resources\models"     "core\src\main\resources\models"

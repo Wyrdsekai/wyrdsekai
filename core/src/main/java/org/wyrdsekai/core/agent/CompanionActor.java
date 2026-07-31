@@ -139,6 +139,7 @@ import org.wyrdsekai.core.companion.PersonalProjectStore;
 import org.wyrdsekai.core.companion.SafetyMonitorService;
 import org.wyrdsekai.core.companion.VisitsLog;
 import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.util.LanguageHeuristics;
 import org.wyrdsekai.core.context.PersonalContextAggregator;
 import org.wyrdsekai.core.crypto.ZoneSecrets;
 import org.wyrdsekai.core.economy.AgentReputation;
@@ -16087,17 +16088,36 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     private String buildLocaleContext() {
-        if ("en".equals(locale)) return null;
-        String langName = switch (locale) {
+        // ALWAYS emit language guidance — English included. The old
+        // `if ("en") return null` assumed the voice model defaults to
+        // English; the multilingual V10 doesn't, and with no instruction it
+        // code-switches (live-observed 2026-07-31: a companion answered English
+        // input in Spanish — same drift ThemedDescriptionService already guards,
+        // whose fix note reads "State it explicitly for English too").
+        //
+        // Per-turn mirroring: if the trigger message confidently reads as a
+        // supported language, follow the bondholder INTO that language for
+        // this turn — a bondholder who switches to Spanish should be
+        // answered in Spanish, and back. No confident signal (short latin
+        // text) falls back to the account locale, so a stray "hola" doesn't
+        // flip anything.
+        String effective = (locale == null || locale.isBlank()) ? "en" : locale;
+        var trig = pendingTrigger != null ? pendingTrigger : lastReactTrigger;
+        if (trig != null) {
+            String detected = LanguageHeuristics.detect(trig.text());
+            if (detected != null) effective = detected;
+        }
+        String langName = switch (effective) {
+            case "en" -> "English";
             case "ja" -> "Japanese";
             case "es" -> "Spanish";
             case "fr" -> "French";
             case "de" -> "German";
             case "zh" -> "Chinese";
             case "ko" -> "Korean";
-            default -> locale;
+            default -> effective;
         };
-        return TranslationPrompts.localeContext(langName, locale, 0);
+        return TranslationPrompts.localeContext(langName, effective, 0);
     }
 
     /**
@@ -25401,6 +25421,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         notificationService.notify(target, action.message(), action.priority(), profile.entityId());
         log.info("Companion '{}' sent notification to '{}': '{}'",
             profile.name(), target, truncate(action.message(), 80));
+
+        // External channels too (email/etc. from notify.* worldKnowledge).
+        // NotificationService is WebSocket-only by design; before this
+        // (2026-07-31) fanOutExternal's ONLY caller was the tell-offline-
+        // player branch, so a companion's `notify` never reached a
+        // configured email channel — the channel config existed, the verb
+        // silently didn't use it. Quiet hours + priority filtering apply
+        // inside fanOutExternal.
+        fanOutExternal(action.message(),
+            action.priority() != null ? action.priority() : "normal");
 
         if (pendingDelegateActions != null) {
             pendingDelegateActions.add(new DelegationAction.Notification(

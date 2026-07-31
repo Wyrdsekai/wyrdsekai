@@ -8,6 +8,7 @@ import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.inference.ApiProvider;
 import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.core.soul.JsonAtomicWriter;
+import org.wyrdsekai.core.util.LanguageHeuristics;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -192,34 +193,11 @@ public final class ThemedDescriptionService {
      * en→es drift is strict) so we never reject a legitimately-themed rewrite.
      */
     static boolean matchesLanguage(String text, String lang) {
-        if (text == null || text.isBlank()) return true;
-        boolean hasCjk = text.codePoints().anyMatch(c ->
-            (c >= 0x3040 && c <= 0x30FF)      // hiragana + katakana
-            || (c >= 0x4E00 && c <= 0x9FFF)   // CJK ideographs
-            || (c >= 0xFF66 && c <= 0xFF9D));  // half-width katakana
-        boolean hasSpanishChar = text.indexOf('ñ') >= 0 || text.indexOf('Ñ') >= 0
-            || text.indexOf('¿') >= 0 || text.indexOf('¡') >= 0;
-        var padded = (" " + text.toLowerCase(Locale.ROOT) + " ")
-            .replaceAll("[^\\p{L}]", " ");   // non-letters → spaces so markers match near punctuation
-        int esHits = 0;
-        for (var m : SPANISH_MARKERS) {
-            if (padded.contains(m)) { esHits++; if (esHits >= 2) break; }
-        }
-        boolean looksSpanish = hasSpanishChar || esHits >= 2;
-        return switch (lang == null ? "en" : lang.toLowerCase(Locale.ROOT)) {
-            case "ja" -> hasCjk;                       // Japanese must be in Japanese script
-            case "es" -> !hasCjk;                      // Spanish: only reject a Japanese drift
-            default   -> !hasCjk && !looksSpanish;     // English: reject Japanese or Spanish drift
-        };
+        // Logic lives in LanguageHeuristics (2026-07-31) so the CONVERSATION
+        // path can share the same drift signal; this delegate keeps the
+        // original call sites and tests intact.
+        return LanguageHeuristics.matches(text, lang);
     }
-
-    /** Space-padded Spanish function words that don't collide with English words. */
-    private static final String[] SPANISH_MARKERS = {
-        " el ", " la ", " los ", " las ", " un ", " una ", " unos ", " unas ",
-        " con ", " que ", " para ", " por ", " del ", " está ", " están ",
-        " su ", " sus ", " tus ", " más ", " muy ", " en el ", " en la ",
-        " de la ", " de los ", " contra ", " frente ", " junto ", " al ",
-    };
 
     static String buildSystemPrompt(ZoneAesthetic aesthetic, String lang) {
         // Always anchor the output language — the voice 4B is multilingual-steered and

@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.1.0}"
+VERSION="${WYRDSEKAI_VERSION:-0.1.1}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -393,6 +393,10 @@ fi
 
 # Operational scripts
 mkdir -p "$DIST_DIR/scripts"
+# Config catalog — read by `wyrd config list --all` on every platform, and
+# generated from the in-world Scroll of Settings (ConfigCatalogParityTest pins
+# the two together). Without it the CLI can only list keys already written.
+cp "$PROJECT_DIR/scripts/config-catalog.json" "$DIST_DIR/scripts/" 2>/dev/null || true
 cp "$PROJECT_DIR/scripts/run-node.sh" "$DIST_DIR/scripts/" 2>/dev/null || true
 cp "$PROJECT_DIR/scripts/setup-daemon.sh" "$DIST_DIR/scripts/" 2>/dev/null || true
 

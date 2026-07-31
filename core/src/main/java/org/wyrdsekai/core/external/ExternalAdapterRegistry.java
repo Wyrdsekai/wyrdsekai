@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -55,6 +57,25 @@ public final class ExternalAdapterRegistry {
 
     public Set<String> namespaces() {
         return Set.copyOf(adapters.keySet());
+    }
+
+    /**
+     * Every credential slot the registered adapters declare, as
+     * {@code slot → namespace} (2026-07-31). {@code wyrd cred list} could
+     * previously only show slots already SET, so there was no way to learn
+     * that e.g. {@code github.token} is a thing the system understands —
+     * this makes the inventory derive from the adapters themselves rather
+     * than a hand-maintained list that would rot. Adapters that need no
+     * credential (blank/null slot) are omitted.
+     */
+    public Map<String, String> credentialSlots() {
+        var out = new TreeMap<String, String>();
+        for (var a : adapters.values()) {
+            var slot = a.credentialSlot();
+            if (slot == null || slot.isBlank()) continue;
+            out.put(slot, a.namespace());
+        }
+        return out;
     }
 
     /** Dispatch — returns the normalized response (or a fail-shaped placeholder). */

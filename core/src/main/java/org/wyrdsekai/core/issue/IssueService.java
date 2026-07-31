@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.model.AppVersion;
 import org.wyrdsekai.core.agent.DriveSnapshotRegistry;
 import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.observability.RedactingLayout;
 import org.wyrdsekai.core.persistence.ConversationTurnStore;
 
 import java.io.IOException;
@@ -52,6 +53,7 @@ public final class IssueService {
     private final Path file;
     private final String jdbcUrl;   // nullable — no conversation capture without it
     private final Path logFile;     // nullable — no log tail without it
+    private final RedactingLayout redactor = new RedactingLayout();
     private final List<Issue> issues = new ArrayList<>();
 
     private IssueService(Path dataRoot, String jdbcUrl, Path logFile) {
@@ -240,6 +242,12 @@ public final class IssueService {
             var window = all.subList(Math.max(0, all.size() - LOG_SCAN_LINES), all.size());
             var hits = window.stream()
                 .filter(l -> l.contains("WARN") || l.contains("ERROR"))
+                // Redact at CAPTURE, not export (2026-07-31): the raw log is
+                // not credential-safe (RedactingLayout was never wired into
+                // logback), and an issue row lives in issues.jsonl + travels
+                // in exports the steward hands to strangers. Scrub tokens,
+                // keys, and PII patterns before the line is ever stored.
+                .map(l -> redactor.redact(l).redactedText())
                 .toList();
             if (hits.isEmpty()) return null;
             return hits.subList(Math.max(0, hits.size() - MAX_LOG_LINES), hits.size());

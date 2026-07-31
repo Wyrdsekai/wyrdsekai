@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $Version) { $Version = "0.1.0" }
+if (-not $Version) { $Version = "0.1.1" }
 
 $proj = Join-Path $PSScriptRoot "tray\Wyrdsekai.Tray.csproj"
 $out  = Join-Path $PSScriptRoot "tray\out"

@@ -29,6 +29,7 @@ public final class IssueRoutes {
 
     private static final Logger log = LoggerFactory.getLogger(IssueRoutes.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String ADMIN_HEADER = "X-Wyrdsekai-Admin-Token";
 
     public void register(JavalinDefaultRoutingApi app) {
         app.post("/api/issues", this::handleFile);
@@ -38,7 +39,37 @@ public final class IssueRoutes {
         app.post("/api/issues/{id}/close", this::handleClose);
     }
 
+    /**
+     * Steward-auth gate (matches RecipeAuthorRoutes / RecipeTuneRoutes):
+     * loopback callers pass; anything else needs WYRDSEKAI_ADMIN_TOKEN.
+     * Added 2026-07-31 — a `kind=issue` capture embeds the last ten
+     * conversation turns verbatim, and these routes previously had NO auth,
+     * so any LAN peer that could reach the HTTP port could read household
+     * conversation via GET /api/issues/{id}/export. The CLI and in-session
+     * surfaces all call over loopback, so nothing legitimate changes.
+     */
+    private static boolean authorised(Context ctx) {
+        String expected = System.getenv("WYRDSEKAI_ADMIN_TOKEN");
+        if (expected == null || expected.isBlank()) {
+            String remote = ctx.ip();
+            boolean local = "127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote)
+                || "::1".equals(remote);
+            if (!local) {
+                ctx.status(403).json(Map.of("error", "admin_token_required"));
+                return false;
+            }
+            return true;
+        }
+        String got = ctx.header(ADMIN_HEADER);
+        if (!expected.equals(got)) {
+            ctx.status(403).json(Map.of("error", "invalid_admin_token"));
+            return false;
+        }
+        return true;
+    }
+
     private IssueService serviceOr503(Context ctx) {
+        if (!authorised(ctx)) return null;
         var svc = IssueService.get();
         if (svc == null) {
             ctx.status(503).json(Map.of("error", "issue capture not initialized"));

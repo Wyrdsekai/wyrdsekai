@@ -461,7 +461,14 @@ public final class ToolItemStarterKit {
                 new ToolParam("username", "string", "Username (keybase)", false, null),
                 new ToolParam("webhookUrl", "string", "Webhook URL (discord/webhook)", false, null),
                 new ToolParam("topic", "string", "Topic (ntfy)", false, null),
-                new ToolParam("address", "string", "Email address", false, null)
+                new ToolParam("address", "string", "Email address", false, null),
+                // The schema and parser always accepted these; the tool just
+                // never advertised them, so an email channel configured via
+                // the stone came out silently password-less (2026-07-31).
+                new ToolParam("password", "string",
+                    "Email/app password (email channel; stored in the soul manifest)", false, null),
+                new ToolParam("user", "string",
+                    "SMTP login when it differs from the address (email channel)", false, null)
             ));
     }
 

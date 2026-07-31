@@ -1643,12 +1643,61 @@ function Invoke-Status {
     }
 }
 
+# Locate the shipped config catalog (scripts/config-catalog.json): every
+# WYRDSEKAI_* key this build understands, with description + default.
+# Generated from the in-world Scroll of Settings, so bash, PowerShell and the
+# scroll all read ONE inventory (parity pass 2026-07-31).
+function Resolve-ConfigCatalog {
+    foreach ($p in @(
+        (Join-Path $InstallDir "app\scripts\config-catalog.json"),
+        (Join-Path $InstallDir "scripts\config-catalog.json"),
+        (Join-Path $AppDir "scripts\config-catalog.json"))) {
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
 function Invoke-Config {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
     switch ($sub) {
         "list" {
+            # `config list --all` / `config list <group>` shows the CATALOG —
+            # every key, its meaning, default, and current value. Bare `list`
+            # keeps showing what is actually written in the conf.
+            $arg = if ($Rest.Count -ge 2) { $Rest[1] } else { "" }
+            if ($arg) {
+                $catPath = Resolve-ConfigCatalog
+                if (-not $catPath) { Write-Err2 "config catalog not found (scripts\config-catalog.json)"; exit 1 }
+                $cat = Get-Content $catPath -Raw | ConvertFrom-Json
+                $conf = Get-Conf
+                $wantAll = @('--all','-a','all') -contains $arg
+                $groups = if ($wantAll) { $cat.groups } else { $cat.groups | Where-Object { $_.id -eq $arg } }
+                if (-not $groups) {
+                    Write-Err2 "no such group: $arg"
+                    Write-Host ("groups: " + (($cat.groups | ForEach-Object { $_.id }) -join ', '))
+                    exit 1
+                }
+                foreach ($g in $groups) {
+                    Write-Host ""
+                    Write-Host ("== {0} - {1}" -f $g.id, $g.title)
+                    foreach ($k in $g.keys) {
+                        $cur = if ($conf.Contains($k.key)) { "= " + $conf[$k.key] }
+                               else { "(unset, default: {0})" -f $(if ($k.default) { $k.default } else { '-' }) }
+                        Write-Host ("  {0,-44} {1}" -f $k.key, $cur)
+                        Write-Host ("  {0,-44}   {1}" -f "", $k.description)
+                    }
+                }
+                if ($wantAll) {
+                    Write-Host ""
+                    Write-Host "Set one with:  wyrd config set KEY VALUE   then   wyrd restart"
+                    Write-Host ("One group at a time:  wyrd config list <group>   ({0})" -f (($cat.groups | ForEach-Object { $_.id }) -join ', '))
+                }
+                return
+            }
             if (-not (Test-Path $ConfFile)) { Write-Warn2 "No config. Run 'wyrd setup'."; return }
             Get-Content $ConfFile | ForEach-Object { Write-Host $_ }
+            Write-Host ""
+            Write-Host "(`wyrd config list --all` shows every key this build understands)"
         }
         "get" {
             if ($Rest.Count -lt 2) { Write-Err2 "usage: wyrd config get <KEY>"; exit 2 }
@@ -1661,8 +1710,47 @@ function Invoke-Config {
             Set-ConfKey -Key $Rest[1] -Value ($Rest[2..($Rest.Count-1)] -join ' ')
             Write-Ok "$($Rest[1]) set. Restart for it to take effect: wyrd restart"
         }
-        default { Write-Err2 "usage: wyrd config [list|get <KEY>|set <KEY> <VALUE>]"; exit 2 }
+        "unset" {
+            # Parity with bin/wyrd (2026-07-31) — Windows had get/set only.
+            if ($Rest.Count -lt 2) { Write-Err2 "usage: wyrd config unset <KEY>"; exit 2 }
+            if (-not (Test-Path $ConfFile)) { Write-Warn2 "No config. Run 'wyrd setup'."; return }
+            $k = $Rest[1]
+            $kept = Get-Content $ConfFile | Where-Object { $_ -notmatch ("^\s*" + [regex]::Escape($k) + "\s*=") }
+            Set-Content -Path $ConfFile -Value $kept -Encoding ASCII
+            Write-Ok "$k removed from $ConfFile. Restart for it to take effect: wyrd restart"
+        }
+        "path" {
+            Write-Host $ConfFile
+        }
+        "edit" {
+            if (-not (Test-Path $ConfFile)) { Write-Warn2 "No config. Run 'wyrd setup'."; return }
+            $editor = if ($env:EDITOR) { $env:EDITOR } else { "notepad" }
+            & $editor $ConfFile
+        }
+        "apply" {
+            # The conf is read at process start, so applying = restarting.
+            Write-Info "Applying configuration (restarting the node)..."
+            Invoke-Stop; Start-Sleep -Seconds 1; Invoke-Start
+        }
+        default {
+            Write-Err2 "usage: wyrd config [list [--all|<group>]|get <KEY>|set <KEY> <VALUE>|unset <KEY>|path|edit|apply]"
+            exit 2
+        }
     }
+}
+
+# Steward credential slots for external adapters — parity with `wyrd cred`
+# (2026-07-31: Windows had NO cred command at all, so a Windows household
+# could not store an API token for an item script). Forwards to the same
+# CredAdminMain the bash CLI uses; the value is never passed on the command
+# line, it is read from a hidden prompt inside that tool.
+function Invoke-Cred {
+    $rc = Invoke-WyrdJavaClassStream -Class "org.wyrdsekai.server.CredAdminMain" -JavaArgs $Rest
+    if ($rc -ne 0 -and $Rest.Count -eq 0) {
+        Write-Host "usage: wyrd cred <set|get|list|unset> [slot]"
+        Write-Host "       wyrd cred list --all    every slot this build understands"
+    }
+    return $rc
 }
 
 function Invoke-Inference {
@@ -3043,6 +3131,7 @@ switch ($Command.ToLower()) {
     "status"    { Invoke-Status }
     "log"       { Invoke-Log }
     "config"    { Invoke-Config }
+    "cred"      { Invoke-Cred | Out-Null }
     "inference" { Invoke-Inference }
     "model"     { Invoke-Model }
     "relay"     { Invoke-Relay }
