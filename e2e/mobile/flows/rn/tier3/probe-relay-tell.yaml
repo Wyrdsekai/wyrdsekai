@@ -1,0 +1,45 @@
+# Relay probe: from a phone seeded with WYRD_SERVER_URL=https://<relay-node>, exercise
+# three server-routed commands through the public-relay HTTPS chain:
+#   1. `tell beta.probe-beta ...`  → POST /api/mcp/tell          → CrossZoneTellService → β
+#   2. `library search rivers`     → GET  /api/library/search?q= → WyrdLuceneStore (logs `[Library] search …`)
+#   3. `/journal field note`       → POST /api/study/journal     → StudyService (logs `[Study] journal write …`)
+#
+# Proof of arrival is checked from shell tails of α + β journalctl, not inside
+# the flow itself. The flow only drives the UI; correctness is verified by the
+# wrapper script `e2e/mobile/scripts/run_probe_relay.sh`.
+#
+# "Enter sends" is toggled on by default in the standalone room → pressKey Enter
+# submits the input without needing to fight the soft keyboard for the send
+# button (which gets visibility-flaked in the bottom inset on small devices).
+appId: org.wyrdsekai.rn
+---
+- extendedWaitUntil:
+    visible:
+      id: "standalone-input"
+    timeout: 60000
+
+# 1. Cross-zone tell
+- tapOn:
+    id: "standalone-input"
+- inputText: "tell beta.probe-beta hello from phone via relay-node"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 2. Library search via Study script — `library search <q>` is one of the
+#    `studyCommandText` recognised prefixes; routes to POST /api/mcp/do.
+- tapOn:
+    id: "standalone-input"
+- inputText: "library search rivers"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 3. Journal entry via slash command — `/journal <text>` → studyCommandText
+#    strips the slash, server's Study script appends to the user's journal.
+- tapOn:
+    id: "standalone-input"
+- inputText: "/journal field note from phone relay test"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000

@@ -1,0 +1,29 @@
+# Quick: RN Welcome wizard — "Just explore on my own" path (no server, no API)
+# Time: ~15s
+appId: org.wyrdsekai.rn
+---
+# Step 0: Welcome
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Skip server question
+- tapOn:
+    id: "welcome-no-server"
+
+# Step 1: pick standalone (no server, no API key)
+- extendedWaitUntil:
+    visible:
+      id: "welcome-standalone"
+    timeout: 5000
+- tapOn:
+    id: "welcome-standalone"
+
+# Should go to birth screen (companion booting standalone PhoneNode)
+- extendedWaitUntil:
+    visible:
+      id: "birth-screen"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: rn_quick_first_run_skip

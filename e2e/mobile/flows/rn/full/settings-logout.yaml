@@ -1,0 +1,23 @@
+# Full: RN — Settings dialog "Switch to remote server" returns to FirstRunScreen
+# Local-mode equivalent of the legacy logout-to-connect-screen flow.
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "standalone-settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+
+- tapOn:
+    id: "switch-mode-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "first-run-screen"
+    timeout: 10000
+
+- takeScreenshot: rn_full_settings_logout

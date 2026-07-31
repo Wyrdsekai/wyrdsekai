@@ -1,0 +1,27 @@
+# RN Quick Suite — Core flows (~2min)
+appId: org.wyrdsekai.rn
+env:
+  SERVER_URL: "http://192.0.2.105:7099"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "30000"
+---
+# Smoke
+- runFlow: ../flows/rn/smoke/app-launches.yaml
+- runFlow: ../flows/rn/smoke/mode-selection.yaml
+
+# First-run wizard — three paths: server, api-key, standalone
+- runFlow: ../flows/rn/quick/first-run-local.yaml
+- runFlow: ../flows/rn/quick/first-run-api-key.yaml
+- runFlow: ../flows/rn/quick/first-run-skip.yaml
+
+# Connection
+- runFlow: ../flows/rn/quick/connect-register.yaml
+
+# Room interaction
+- runFlow: ../flows/rn/quick/room-say.yaml
+- runFlow: ../flows/rn/quick/room-navigation.yaml
+- runFlow: ../flows/rn/quick/room-inventory.yaml
+- runFlow: ../flows/rn/quick/room-settings.yaml

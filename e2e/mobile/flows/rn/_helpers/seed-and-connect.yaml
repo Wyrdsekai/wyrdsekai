@@ -1,0 +1,30 @@
+# Helper: RN — seed AsyncStorage with server creds + URLs, launch app,
+# wait for connected Standalone room.
+#
+# Replaces register-and-connect.yaml for Tier 3 server-backed flows.
+# Welcome wizard can't be used here because the routing logic gates on
+# `hasServer && isLoggedIn` — without a pre-existing auth token, we land on
+# LoginScreen which has no automatable invite/login form. Instead the
+# suite caller (run-all.sh or the operator) is responsible for seeding
+# AsyncStorage BEFORE this flow runs, via the seed_phone_session.sh
+# script. Required env keys at seed time:
+#   @wyrd_app_mode               = "local"
+#   @wyrd_companion_name         = "Wyrd"
+#   @wyrd_first_run_complete     = "true"
+#   @wyrd_inference_url          = ${LLAMA_URL}    e.g. http://home-server:8200
+#   @wyrd_server_url             = ${SERVER_URL}   e.g. http://home-server:7070
+#   @wyrd_mcp_username           = pre-created user
+#   @wyrd_mcp_password           = pre-created password
+#   @wyrd_auth_token             = MCP login token (so LoginScreen is skipped)
+#   @wyrd_user_id                = matching userId
+#   @wyrd_user_role              = "member"
+#
+# After seed + launch the app routes appMode=local + isLoggedIn=true →
+# Birth → Standalone, ServerClient probes @wyrd_server_url and authenticates
+# via saved-creds path, then prose-logs "Connected to your server".
+appId: org.wyrdsekai.rn
+---
+- extendedWaitUntil:
+    visible:
+      id: "standalone-send-button"
+    timeout: ${CONNECT_TIMEOUT}

@@ -1,0 +1,100 @@
+# soul-fragment re-embedding recipe (#1131).
+#
+# Re-embeds soul_fragments rows whose stored vector was produced by an older
+# encoder than the current bundled retrieval encoder
+# (EmbeddingModel.PARAPHRASE_L12). The governed, agent-callable equivalent of
+# the boot-time `wyrd embed-migrate` — scoped to the soul_fragments SQL store.
+#
+# Why a dedicated recipe: when the bundled retrieval encoder version bumps,
+# every fragment embedded under the old version sits in a stale vector space.
+# Cosine retrieval over a MIX of old + new vectors silently degrades — the
+# exact failure surfaced by the 2026-05-29 SetFit decouple, which forced a
+# manual `wyrd embed-migrate` on home-server + mac-node. compact-library-index already
+# re-embeds version-mismatched *Lucene* chunks; soul_fragments are SQL rows
+# with their own embedding BLOB and had no equivalent. This lets the household
+# self-heal the migration tail on a schedule instead of needing a human.
+#
+# NOT ship-default-enrolled: like compact-library-index, it's only meaningful
+# after an encoder version bump, so it runs on-demand (steward / Forge gap)
+# rather than on a daily cron. The default target_model below pins the current
+# stock retrieval version; bump it in lockstep with
+# EmbeddingModel.PARAPHRASE_L12.version() (or override at dispatch).
+#
+# Cost: CPU forward passes only, ~minutes for a few-thousand-fragment store.
+recipe: reembed-soul-fragments
+version: 0.1.0
+description: >
+  Re-embed soul fragments whose embedding_model lags the current stock
+  retrieval encoder, in place, using the stock (non-SetFit) encoder.
+  Welfare-gated against fragment loss and against an incoherent re-embed.
+deploys: true
+ownership: run
+
+params:
+  jdbc_url:
+    type: string
+    default: ""
+  agent_did:
+    type: string
+    required: true
+  # MUST match EmbeddingModel.PARAPHRASE_L12.version() in core. Bump together.
+  target_model:
+    type: string
+    default: "multilingual-MiniLM-L12-v2-2026-04-30"
+  # Stock retrieval encoder ONNX. Blank → script resolves it from
+  # $WYRDSEKAI_DATA_DIR/models, ~/.wyrdsekai/models, then the source tree.
+  embedding_onnx:
+    type: string
+    default: ""
+  batch_size:
+    type: number
+    default: 64
+
+steps:
+  - id: snapshot
+    kind: SHELL
+    command: |-
+      python3 scripts/soul/reembed_fragments.py snapshot \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --target-model '{{target_model}}'
+
+  - id: reembed
+    kind: SHELL
+    timeout: 30m
+    command: |-
+      python3 scripts/soul/reembed_fragments.py reembed \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --target-model '{{target_model}}' \
+        --embedding-onnx '{{embedding_onnx}}' \
+        --batch-size {{batch_size}}
+
+  - id: verify
+    kind: SHELL
+    timeout: 5m
+    command: |-
+      python3 scripts/soul/reembed_fragments.py verify \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --target-model '{{target_model}}' \
+        --embedding-onnx '{{embedding_onnx}}'
+
+  - id: gate-no-loss
+    kind: GATE
+    # Re-embedding only rewrites two columns; it must never change the row
+    # count. post != pre means a bug deleted a fragment — STOP. Both operands
+    # are step-output context vars (pre from snapshot, post from verify), so
+    # they're bare names, not {{param}} templates.
+    condition: "post_fragment_count == pre_fragment_count"
+    on_fail: STOP
+    welfare: permanent   # never lose a fragment during migration (PERMANENT)
+
+  - id: gate-coherent
+    kind: GATE
+    # Sampled fragments must retrieve themselves top-1 against the freshly
+    # written embeddings. 0 = a corrupt / wrong-shape re-embed; STOP rather
+    # than ship a degraded retrieval space.
+    condition: "self_retrieval_ok == 1"
+    on_fail: STOP
+    welfare: permanent   # re-embed produced a coherent vector space (PERMANENT)

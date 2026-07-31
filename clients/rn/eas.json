@@ -1,0 +1,55 @@
+{
+  "cli": {
+    "version": ">= 5.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "local": {
+      "distribution": "internal",
+      "env": {
+        "WYRD_SERVER_URL": "ws://192.0.2.163:8080/ws",
+        "WYRD_DEBUG": "true"
+      },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "ios": {
+        "simulator": false
+      }
+    },
+    "local-simulator": {
+      "distribution": "internal",
+      "env": {
+        "WYRD_SERVER_URL": "ws://localhost:8080/ws",
+        "WYRD_DEBUG": "true"
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "WYRD_DEBUG": "false"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      }
+    },
+    "production": {
+      "env": {
+        "WYRD_DEBUG": "false"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "autoIncrement": true
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+# KMP Smoke Suite (~20s)
+appId: org.wyrdsekai.kmp
+env:
+  SERVER_URL: "http://192.0.2.105:7099"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "15000"
+  INFERENCE_TIMEOUT: "30000"
+---
+- runFlow: ../flows/kmp/smoke/app-launches.yaml
+- runFlow: ../flows/kmp/smoke/mode-selection.yaml

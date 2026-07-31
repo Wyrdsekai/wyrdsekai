@@ -1,0 +1,40 @@
+# Quick: RN Welcome wizard — server URL path → "Use my server" → Birth
+# Time: ~20s
+appId: org.wyrdsekai.rn
+---
+# Step 0: Welcome
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Enter server URL + tap Connect.
+# `hideKeyboard` is required after `inputText` because the IME covers the
+# Connect button — without it maestro's tap lands on the keyboard, not the
+# button, and the wizard never advances.
+- tapOn:
+    id: "welcome-server-url"
+- inputText: ${SERVER_URL}
+- hideKeyboard
+- takeScreenshot: rn_quick_wizard_step0
+- tapOn:
+    id: "welcome-connect"
+
+# Step 1: "Use my server" appears once Connect fires
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-server"
+    timeout: 5000
+- takeScreenshot: rn_quick_wizard_step1
+- tapOn:
+    id: "welcome-use-server"
+
+# Birth flashes through quickly when inferenceUrl is set (server mode skips
+# the local-model download). Anchor on Send button — clickable elements are
+# reliably matched by Maestro on RN Fabric.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-send-button"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: rn_quick_wizard_complete

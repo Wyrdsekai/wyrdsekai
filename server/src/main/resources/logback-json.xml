@@ -1,0 +1,18 @@
+<configuration>
+  <!-- Structured JSON output for production (ELK/Loki compatible) -->
+  <!-- Use with: -Dlogback.configurationFile=logback-json.xml -->
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="ch.qos.logback.classic.encoder.JsonEncoder" />
+  </appender>
+
+  <!-- Suppress noisy libraries -->
+  <logger name="org.eclipse.jetty" level="WARN" />
+  <logger name="io.javalin" level="INFO" />
+  <logger name="slick" level="WARN" />
+  <logger name="com.zaxxer.hikari" level="WARN" />
+  <logger name="org.apache.pekko" level="WARN" />
+
+  <root level="INFO">
+    <appender-ref ref="JSON" />
+  </root>
+</configuration>

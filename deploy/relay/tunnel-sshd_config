@@ -1,0 +1,74 @@
+# Wyrdsekai relay — tunnel sshd.
+#
+# A DEDICATED, forwarding-ONLY sshd. It exists for ONE purpose: let a NAT'd
+# zone hold an outbound reverse tunnel (`ssh -R 0.0.0.0:<port>:127.0.0.1:7022`)
+# so a bare `ssh -p <port> name@relay` reaches the zone's own invite-only MUD
+# sshd. It NEVER grants a shell, NEVER terminates the inner SSH (raw bytes pass
+# through, so SSH stays end-to-end encrypted and the relay can't read it), and
+# each zone key is welded to exactly one public bind port via `permitlisten`.
+#
+# This is a SEPARATE sshd INSTANCE with its own config + host key + port. It
+# does NOT touch the host's login sshd. Never run it as the system sshd.
+
+Port 2222
+ListenAddress 0.0.0.0
+Protocol 2
+
+# Host key in PERSISTENT relay state so clients keep pinning the same
+# fingerprint across redeploys (a rotated key would look like a MITM).
+HostKey /var/lib/wyrd-relay/ssh/tunnel_host_ed25519_key
+
+# --- Auth: public-key ONLY. No password to brute-force. ---
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+UsePAM no
+
+# One unprivileged tunnel account; per-zone isolation is per-KEY, not per-user.
+AllowUsers wyrd-tunnel
+AuthorizedKeysFile /var/lib/wyrd-relay/ssh/authorized_keys
+
+# --- No shell, no session, no subsystems. ---
+ForceCommand /usr/sbin/nologin
+PermitTTY no
+X11Forwarding no
+AllowAgentForwarding no
+PermitUserEnvironment no
+Subsystem sftp /bin/false
+AllowStreamLocalForwarding no
+
+# --- Forwarding: ONLY remote (-R), only to the per-key-pinned bind port. ---
+# `AllowTcpForwarding remote` blocks -L/-D, so a valid tunnel key can NOT turn
+# the relay into an outbound SOCKS proxy / internal-network pivot. This is the
+# single most important pivot-prevention line.
+AllowTcpForwarding remote
+# Honour the 0.0.0.0: bind address the client requests in -R (and that the
+# per-key `permitlisten` grants) so the forwarded port is publicly reachable.
+GatewayPorts clientspecified
+# Per-key enforcement, NOT global default-deny. Each authorized_keys line is
+# `restrict,port-forwarding,permitlisten="0.0.0.0:<port>"` (port topology) or adds
+# `permitopen=` (jump topology), welding every key to exactly one bind/target.
+#
+# DO NOT set `PermitListen none` / `PermitOpen none` here: those are GLOBAL caps that
+# a per-key `permitlisten`/`permitopen` can only NARROW, never re-grant past. With a
+# global `none`, sshd answers every tcpip-forward with "port forwarding refused" even
+# when the per-key option matches — it silently breaks all reverse tunnels. The real
+# constraints are (a) per-key permitlisten/permitopen and (b) `AllowTcpForwarding`
+# (remote-only in `port` topology blocks -L/-D server-side; `yes` in `jump` topology
+# is reined back per-key). `restrict` also disables forwarding outright, so each key
+# MUST re-add `port-forwarding`; registration.py always emits it.
+
+# --- Flood / DoS hardening (key-only, so this is the real attack surface). ---
+MaxStartups 10:50:30
+MaxSessions 1
+MaxAuthTries 3
+LoginGraceTime 20
+ClientAliveInterval 30
+ClientAliveCountMax 3
+TCPKeepAlive yes
+# VERBOSE so the operator gets an audit trail of which key bound which port.
+LogLevel VERBOSE

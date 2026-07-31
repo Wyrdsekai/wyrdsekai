@@ -1,0 +1,31 @@
+# iOS: KMP Welcome wizard — "Just explore on my own" path (no server, no API).
+# Exercises the standalone-node runtime on iOS: NodeManager.ios start →
+# PhoneNode RUNNING → LocalRoomScreen (Study i18n from the bundled
+# i18n/study_*.json) with LlamatikBridge/Onnx degrading gracefully.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-standalone"
+    timeout: 5000
+
+- tapOn:
+    id: "welcome-standalone"
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: kmp_ios_first_run_skip

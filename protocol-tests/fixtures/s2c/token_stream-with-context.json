@@ -1,0 +1,8 @@
+{
+  "type": "token_stream",
+  "seq": 17,
+  "source": "CodeAgent",
+  "token": "Refactoring the",
+  "done": false,
+  "context": "board-7"
+}

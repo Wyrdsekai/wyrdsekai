@@ -1,0 +1,167 @@
+# Gradle
+.gradle/
+build/
+
+# Packaging — platform-specific binaries (fetched during packaging, not checked in).
+# Regenerate with scripts in packaging/ before building .deb/.pkg/.tar.gz.
+packaging/nats-server
+packaging/metasearch
+# llama.cpp bundle — packaging/fetch-llama-cpu.sh downloads and stages these
+packaging/llama-server
+packaging/libggml*.so*
+packaging/libllama*.so*
+packaging/libmtmd*.so*
+# Embedding-model assets — fetched by packaging/fetch-embedding-models.sh
+packaging/embedding-models/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# Gradle wrapper jar must be checked in (override *.jar above)
+!gradle/wrapper/gradle-wrapper.jar
+hs_err_pid*
+replay_pid*
+
+# GraalVM / GraalJS
+*.bgv
+graal_dumps/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data — ignore models/runtime but keep training corpora
+data/*
+!data/training/
+data/training/*
+!data/training/*.jsonl
+# Coding-CLI bundle: track the hand-authored manifest (source), ignore downloaded binaries
+!data/coding-cli-bundle/
+data/coding-cli-bundle/*
+!data/coding-cli-bundle/manifest.json
+# Docker volume data (models, lora, huggingface cache)
+docker/data/
+logs/
+*.log
+
+# NATS
+nats-data/
+
+# libSQL / SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Milvus
+milvus-data/
+
+# Secrets / credentials
+*.pem
+*.key
+*.p12
+*.jks
+.env
+.env.*
+# Defense-in-depth for API-key drop files: real keys belong in $HOME or a
+# secret store, never under the repo tree. These patterns catch common
+# accidental drops (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.).
+claudeapi*.txt
+anthropic_key*
+.anthropic_key
+*_api_key*.txt
+*api_token*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Node/TypeScript
+node_modules/
+dist/
+package-lock.json
+
+# Rust
+sdks/rust/target/
+Cargo.lock
+
+# Go
+sdks/go/go.sum
+
+# ML training artifacts — large model weights
+*.gguf
+*.safetensors
+*.bin
+*.pth
+scripts/kokoro-core/models/
+scripts/kokoro-core/corpus/generation.log
+scripts/rwkv-soul/states/
+scripts/rwkv-soul/lora/
+scripts/diffusion-soul/models/
+
+# ML experiment artifacts — generated/cache
+**/unsloth_compiled_cache/
+scripts/*/models/
+scripts/*/lora/
+scripts/*/uv.lock
+scripts/pcl-selfplay/scripts/
+scripts/persona-moe/scripts/
+
+# Keep small experiment data (override *.gguf for steering vectors)
+!scripts/steering-vectors/vectors/**/*.gguf
+!scripts/steering-vectors/vectors/**/*.json
+
+# Embedding model assets — fetched at install time via `wyrd embedding-model
+# download <id>` (or auto via `wyrd setup --auto-yes`). NOT checked in: the
+# multilingual L12 ONNX is 113MB and its tokenizer is 17MB. Keep `models/`
+# itself tracked (other small fixtures live there) but exclude binary weights
+# and the giant multilingual tokenizer.
+core/src/main/resources/models/*.onnx
+core/src/main/resources/models/*.onnx.bak
+core/src/main/resources/models/paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json
+
+# Build artifacts (APK, IPA, provisioning profiles, certs)
+*.apk
+*.ipa
+*.mobileprovision
+*.cer
+
+# Claude Code
+.claude/
+fastlane/certs/
+
+# Maestro E2E
+e2e/mobile/reports/
+e2e/mobile/*.png
+e2e/mobile/config.yaml
+.server.pid
+.venv-home-server
+
+# training venvs + caches (never commit)
+scripts/training/.venv*
+**/__pycache__/
+*.pyc
+
+# Machine-local Android SDK path — must never be committed.
+**/local.properties
+
+# Relay identity backups carry the household CA private key + invite key —
+# never commit them; keep them on offline media.
+relay-*identity*.tgz

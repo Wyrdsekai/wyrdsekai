@@ -1,0 +1,20 @@
+# Smoke (iOS): KMP app launches and shows welcome screen (step 0: server question)
+# Same assertions as kmp/smoke/app-launches.yaml; bundle id differs on iOS.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- assertVisible:
+    id: "welcome-server-url"
+- assertVisible:
+    id: "welcome-connect"
+- assertVisible:
+    id: "welcome-no-server"
+
+- takeScreenshot: kmp_ios_smoke_app_launches

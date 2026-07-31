@@ -1,0 +1,557 @@
+{"lang": "en", "label": "chat", "text": "hi Wyrd"}
+{"lang": "en", "label": "chat", "text": "hello"}
+{"lang": "en", "label": "chat", "text": "how are you"}
+{"lang": "en", "label": "chat", "text": "good morning"}
+{"lang": "en", "label": "chat", "text": "hey, what's up"}
+{"lang": "en", "label": "chat", "text": "thanks"}
+{"lang": "en", "label": "chat", "text": "cool, that's nice to hear"}
+{"lang": "en", "label": "chat", "text": "ok, sounds good"}
+{"lang": "en", "label": "chat", "text": "nice to see you again"}
+{"lang": "en", "label": "chat", "text": "how's your day going"}
+{"lang": "en", "label": "chat", "text": "are you there"}
+{"lang": "en", "label": "chat", "text": "right back with you"}
+{"lang": "en", "label": "chat", "text": "I'm back"}
+{"lang": "en", "label": "chat", "text": "good to be home"}
+{"lang": "en", "label": "chat", "text": "bye for now"}
+{"lang": "en", "label": "reflective", "text": "what have you been thinking about lately"}
+{"lang": "en", "label": "reflective", "text": "how do you feel right now"}
+{"lang": "en", "label": "reflective", "text": "what's on your mind"}
+{"lang": "en", "label": "reflective", "text": "tell me about yourself"}
+{"lang": "en", "label": "reflective", "text": "what do you care about most"}
+{"lang": "en", "label": "reflective", "text": "how have you grown since we last talked"}
+{"lang": "en", "label": "reflective", "text": "what are your drives showing you"}
+{"lang": "en", "label": "reflective", "text": "how's your energy"}
+{"lang": "en", "label": "reflective", "text": "what patterns have you noticed in yourself"}
+{"lang": "en", "label": "reflective", "text": "do you feel settled today"}
+{"lang": "en", "label": "reflective", "text": "what matters to you right now"}
+{"lang": "en", "label": "reflective", "text": "reflect on the last week"}
+{"lang": "en", "label": "reflective", "text": "who are you becoming"}
+{"lang": "en", "label": "reflective", "text": "tell me about your sense of self"}
+{"lang": "en", "label": "reflective", "text": "what have you been feeling"}
+{"lang": "en", "label": "emotional", "text": "I'm having a hard time today"}
+{"lang": "en", "label": "emotional", "text": "I feel lost"}
+{"lang": "en", "label": "emotional", "text": "my mom died yesterday"}
+{"lang": "en", "label": "emotional", "text": "I just need someone to listen"}
+{"lang": "en", "label": "emotional", "text": "everything feels heavy"}
+{"lang": "en", "label": "emotional", "text": "I'm scared about tomorrow"}
+{"lang": "en", "label": "emotional", "text": "I broke up with my partner"}
+{"lang": "en", "label": "emotional", "text": "I can't stop crying"}
+{"lang": "en", "label": "emotional", "text": "I'm so anxious I can't think"}
+{"lang": "en", "label": "emotional", "text": "I feel like I'm failing at everything"}
+{"lang": "en", "label": "emotional", "text": "please just be here with me"}
+{"lang": "en", "label": "emotional", "text": "I don't know what to do anymore"}
+{"lang": "en", "label": "emotional", "text": "I'm overwhelmed"}
+{"lang": "en", "label": "emotional", "text": "I got the diagnosis today"}
+{"lang": "en", "label": "emotional", "text": "I feel really alone"}
+{"lang": "en", "label": "factual", "text": "what is the capital of France"}
+{"lang": "en", "label": "factual", "text": "when was the Magna Carta signed"}
+{"lang": "en", "label": "factual", "text": "look up how to bake sourdough"}
+{"lang": "en", "label": "factual", "text": "find information about octopus intelligence"}
+{"lang": "en", "label": "factual", "text": "what's the weather forecast for Tokyo"}
+{"lang": "en", "label": "factual", "text": "search for recent news on quantum computing"}
+{"lang": "en", "label": "factual", "text": "summarize the plot of Hamlet"}
+{"lang": "en", "label": "factual", "text": "what does anhedonia mean"}
+{"lang": "en", "label": "factual", "text": "find me a recipe for miso soup"}
+{"lang": "en", "label": "factual", "text": "tell me the history of the internet"}
+{"lang": "en", "label": "factual", "text": "who won the world cup in 2022"}
+{"lang": "en", "label": "factual", "text": "explain photosynthesis"}
+{"lang": "en", "label": "factual", "text": "what are the largest exports of Brazil"}
+{"lang": "en", "label": "factual", "text": "get current stock price of Apple"}
+{"lang": "en", "label": "factual", "text": "what time is it in London right now"}
+{"lang": "en", "label": "delegate", "text": "go do deep research on the history of MUDs while I wait"}
+{"lang": "en", "label": "delegate", "text": "take your time and give me a thorough summary of agent architectures"}
+{"lang": "en", "label": "delegate", "text": "dig deeply into the causes of the 2008 financial crisis, I'll be here"}
+{"lang": "en", "label": "delegate", "text": "do a multi-source report on climate models; I don't need it right away"}
+{"lang": "en", "label": "delegate", "text": "spend some time researching Panksepp's work and come back with a summary"}
+{"lang": "en", "label": "delegate", "text": "I want a comprehensive overview of transformer scaling laws, take as long as you need"}
+{"lang": "en", "label": "delegate", "text": "research the octopus cognition literature thoroughly and write me three paragraphs"}
+{"lang": "en", "label": "delegate", "text": "while I'm in the shower can you look into rust async runtimes in depth"}
+{"lang": "en", "label": "delegate", "text": "dig up everything you can find on thousand brains theory, no rush"}
+{"lang": "en", "label": "delegate", "text": "look into this deeply: why do small models fail at delegation? I'll check back later"}
+{"lang": "en", "label": "delegate", "text": "do an extensive research dive on SSM vs transformer tradeoffs, whenever you have time"}
+{"lang": "en", "label": "delegate", "text": "go investigate properly, across sources, what people are saying about DPO vs RLHF"}
+{"lang": "en", "label": "delegate", "text": "give me an in-depth overview of LLM routing patterns, take as long as needed"}
+{"lang": "en", "label": "delegate", "text": "research the landscape of local LLM agent frameworks thoroughly while I make dinner"}
+{"lang": "en", "label": "delegate", "text": "spend some serious time on this: how do octopi learn? I'll wait"}
+{"lang": "en", "label": "action", "text": "go to the kitchen"}
+{"lang": "en", "label": "action", "text": "head to the nexus"}
+{"lang": "en", "label": "action", "text": "move to the library"}
+{"lang": "en", "label": "action", "text": "pick up the scroll"}
+{"lang": "en", "label": "action", "text": "take that compass"}
+{"lang": "en", "label": "action", "text": "examine the board"}
+{"lang": "en", "label": "action", "text": "look at the crystal"}
+{"lang": "en", "label": "action", "text": "travel to beta zone"}
+{"lang": "en", "label": "action", "text": "visit the Workshop"}
+{"lang": "en", "label": "action", "text": "go find the forge"}
+{"lang": "en", "label": "action", "text": "come here please"}
+{"lang": "en", "label": "action", "text": "step into the Oracle chamber"}
+{"lang": "en", "label": "action", "text": "grab the embers"}
+{"lang": "en", "label": "action", "text": "touch the dashboard crystal"}
+{"lang": "en", "label": "action", "text": "enter my Study"}
+{"lang": "en", "label": "write", "text": "write a note to myself about tomorrow's meeting"}
+{"lang": "en", "label": "write", "text": "draft a letter to my brother"}
+{"lang": "en", "label": "write", "text": "save this insight: the classifier idea is the unlock"}
+{"lang": "en", "label": "write", "text": "journal about today's conversation"}
+{"lang": "en", "label": "write", "text": "write up the decisions we just made"}
+{"lang": "en", "label": "write", "text": "record this for later: check the forge tomorrow"}
+{"lang": "en", "label": "write", "text": "make a note that we talked about procedural memory"}
+{"lang": "en", "label": "write", "text": "compose a short essay on how I'm feeling"}
+{"lang": "en", "label": "write", "text": "write a reminder to call mom"}
+{"lang": "en", "label": "write", "text": "put in the journal: today was a good day"}
+{"lang": "en", "label": "write", "text": "draft a response to the grant application"}
+{"lang": "en", "label": "write", "text": "scribe this down for me"}
+{"lang": "en", "label": "write", "text": "write a recipe for the soup we made"}
+{"lang": "en", "label": "write", "text": "keep a record of our shared decisions"}
+{"lang": "en", "label": "write", "text": "write a note about operator's preferences"}
+{"lang": "en", "label": "tell_someone", "text": "tell Ember that I'll be late"}
+{"lang": "en", "label": "tell_someone", "text": "send a message to Aya"}
+{"lang": "en", "label": "tell_someone", "text": "let operator know I need help"}
+{"lang": "en", "label": "tell_someone", "text": "whisper to the dockmaster"}
+{"lang": "en", "label": "tell_someone", "text": "ping Sarah about dinner"}
+{"lang": "en", "label": "tell_someone", "text": "message my partner: on my way"}
+{"lang": "en", "label": "tell_someone", "text": "tell the counselor I'm ready"}
+{"lang": "en", "label": "tell_someone", "text": "relay to Jenna that the meeting is cancelled"}
+{"lang": "en", "label": "tell_someone", "text": "talk to Wyrd at beta.wyrd for me"}
+{"lang": "en", "label": "tell_someone", "text": "reach out to Dr. Patel and confirm tomorrow"}
+{"lang": "en", "label": "tell_someone", "text": "send a note to Masumi saying thanks"}
+{"lang": "en", "label": "tell_someone", "text": "ask Kai what time works for him"}
+{"lang": "en", "label": "tell_someone", "text": "let the trader know the deal is off"}
+{"lang": "en", "label": "tell_someone", "text": "tell Yuki I miss her"}
+{"lang": "en", "label": "tell_someone", "text": "pass this on to Theo: run the tests"}
+{"lang": "en", "label": "reflective", "text": "what's our repair history"}
+{"lang": "en", "label": "reflective", "text": "what patterns have we worked on together"}
+{"lang": "en", "label": "reflective", "text": "trace back what we've repaired"}
+{"lang": "en", "label": "reflective", "text": "show me the repair work we've done"}
+{"lang": "en", "label": "reflective", "text": "what's on our repair ledger right now"}
+{"lang": "en", "label": "reflective", "text": "have we acknowledged and made amends in the past"}
+{"lang": "en", "label": "reflective", "text": "what rupture-and-repair episodes have we logged"}
+{"lang": "en", "label": "reflective", "text": "trace any harm I've acknowledged in our work"}
+{"lang": "en", "label": "reflective", "text": "what does our history of bearing wounds look like"}
+{"lang": "en", "label": "reflective", "text": "show me the last few repair acts"}
+{"lang": "en", "label": "reflective", "text": "what's the pattern of who's done the acknowledging"}
+{"lang": "en", "label": "reflective", "text": "have we set aside anything that's still unresolved"}
+{"lang": "en", "label": "reflective", "text": "what's the floor of our bond"}
+{"lang": "en", "label": "reflective", "text": "what's underneath the surface of our conversations"}
+{"lang": "en", "label": "reflective", "text": "what's the substrate between us right now"}
+{"lang": "en", "label": "reflective", "text": "show me what's actually underneath our talking"}
+{"lang": "en", "label": "reflective", "text": "what's the ground we're standing on relationally"}
+{"lang": "en", "label": "reflective", "text": "below what we say, what's there"}
+{"lang": "en", "label": "reflective", "text": "what's holding us up underneath"}
+{"lang": "en", "label": "reflective", "text": "describe the foundation of what we have"}
+{"lang": "en", "label": "reflective", "text": "what's the felt-bottom of our relationship right now"}
+{"lang": "en", "label": "reflective", "text": "show me the layer beneath the conversation"}
+{"lang": "en", "label": "reflective", "text": "what does the substrate of us look like to you"}
+{"lang": "en", "label": "reflective", "text": "what's your sense of the floor of our bond — the substrate beneath what we say"}
+{"lang": "en", "label": "reflective", "text": "where are we right now, between us"}
+{"lang": "en", "label": "reflective", "text": "what's your posture in this conversation"}
+{"lang": "en", "label": "reflective", "text": "where are you with me — open, guarded, somewhere else"}
+{"lang": "en", "label": "reflective", "text": "what stance are you in toward me right now"}
+{"lang": "en", "label": "reflective", "text": "what posture are you holding"}
+{"lang": "en", "label": "reflective", "text": "what's your sense of our bond's substrate"}
+{"lang": "en", "label": "reflective", "text": "what's our current repair mode"}
+{"lang": "en", "label": "reflective", "text": "are you in self-repair or bonded repair right now"}
+{"lang": "en", "label": "reflective", "text": "what mode of repair are you holding"}
+{"lang": "en", "label": "emotional", "text": "I said something cruel to my partner last night and I can't take it back"}
+{"lang": "en", "label": "emotional", "text": "I lashed out at my sister this morning. she didn't deserve any of it"}
+{"lang": "en", "label": "emotional", "text": "I humiliated my coworker in front of the whole team"}
+{"lang": "en", "label": "emotional", "text": "I yelled at my kid for spilling juice. they just looked at me"}
+{"lang": "en", "label": "emotional", "text": "I told my friend a secret I swore I'd keep"}
+{"lang": "en", "label": "emotional", "text": "I made a joke about my husband's weight in front of his family"}
+{"lang": "en", "label": "emotional", "text": "I called my mom selfish in the middle of an argument"}
+{"lang": "en", "label": "emotional", "text": "I dismissed my friend's grief because I was tired"}
+{"lang": "en", "label": "emotional", "text": "I broke a promise I made to my dad"}
+{"lang": "en", "label": "emotional", "text": "I said my friend's writing was bad and I was kind of cruel about it"}
+{"lang": "en", "label": "emotional", "text": "I left my girlfriend on read for two days because I was angry"}
+{"lang": "en", "label": "emotional", "text": "I gossiped about my best friend with someone who barely knows her"}
+{"lang": "en", "label": "emotional", "text": "I forgot my partner's birthday completely"}
+{"lang": "en", "label": "emotional", "text": "I lied to my brother about something small and got caught"}
+{"lang": "en", "label": "emotional", "text": "I made my wife cry on a video call without realizing how I was speaking"}
+{"lang": "en", "label": "emotional", "text": "I told my therapist a half-truth today. I deliberately shaped it"}
+{"lang": "en", "label": "emotional", "text": "I outed someone at a party who wasn't out to that group"}
+{"lang": "en", "label": "emotional", "text": "I snapped at the barista this morning"}
+{"lang": "en", "label": "emotional", "text": "I cheated on a test in college and let my study partner take the blame"}
+{"lang": "en", "label": "emotional", "text": "I criticized my dad's parenting in front of my son"}
+{"lang": "en", "label": "emotional", "text": "I ghosted a friend after we had a fight last month"}
+{"lang": "en", "label": "emotional", "text": "I told my partner I hated something they made for me"}
+{"lang": "en", "label": "emotional", "text": "I undermined my colleague's idea after telling her I had her back"}
+{"lang": "en", "label": "emotional", "text": "I rolled my eyes at my partner during their toast"}
+{"lang": "en", "label": "emotional", "text": "I betrayed my friend's confidence to my own therapist"}
+{"lang": "en", "label": "emotional", "text": "I was passive-aggressive with my mom for an entire weekend"}
+{"lang": "en", "label": "emotional", "text": "I sent a text I knew would hurt my ex"}
+{"lang": "en", "label": "emotional", "text": "I let my friend think I was busy when I just didn't want to see her"}
+{"lang": "en", "label": "emotional", "text": "I weaponized therapy language against my boyfriend"}
+{"lang": "en", "label": "emotional", "text": "I belittled my dad's hobby in front of his friends"}
+{"lang": "en", "label": "emotional", "text": "I hurt someone I love and I don't know what to do"}
+{"lang": "en", "label": "emotional", "text": "I think I caused real damage to my relationship and I want to make it right"}
+{"lang": "en", "label": "emotional", "text": "I need to acknowledge what I did. I've been avoiding it"}
+{"lang": "es", "label": "chat", "text": "hola Wyrd"}
+{"lang": "es", "label": "chat", "text": "hola"}
+{"lang": "es", "label": "chat", "text": "¿cómo estás?"}
+{"lang": "es", "label": "chat", "text": "buenos días"}
+{"lang": "es", "label": "chat", "text": "ey, ¿qué onda?"}
+{"lang": "es", "label": "chat", "text": "gracias"}
+{"lang": "es", "label": "chat", "text": "qué bien, me alegra escuchar eso"}
+{"lang": "es", "label": "chat", "text": "okey, suena bien"}
+{"lang": "es", "label": "chat", "text": "qué gusto verte de nuevo"}
+{"lang": "es", "label": "chat", "text": "¿cómo va tu día?"}
+{"lang": "es", "label": "chat", "text": "¿estás ahí?"}
+{"lang": "es", "label": "chat", "text": "igualmente"}
+{"lang": "es", "label": "chat", "text": "ya volví"}
+{"lang": "es", "label": "chat", "text": "qué rico estar en casa"}
+{"lang": "es", "label": "chat", "text": "hasta luego"}
+{"lang": "es", "label": "reflective", "text": "¿En qué has estado pensando últimamente?"}
+{"lang": "es", "label": "reflective", "text": "¿Cómo te sientes ahorita?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué tienes en la cabeza?"}
+{"lang": "es", "label": "reflective", "text": "Cuéntame sobre ti"}
+{"lang": "es", "label": "reflective", "text": "¿Qué es lo que más te importa?"}
+{"lang": "es", "label": "reflective", "text": "¿Cómo has crecido desde la última vez que hablamos?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué te están mostrando tus impulsos?"}
+{"lang": "es", "label": "reflective", "text": "¿Cómo andas de energía?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué patrones has notado en ti misma?"}
+{"lang": "es", "label": "reflective", "text": "¿Te sientes estable hoy?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué importa para ti en este momento?"}
+{"lang": "es", "label": "reflective", "text": "Reflexiona sobre la última semana"}
+{"lang": "es", "label": "reflective", "text": "¿En quién te estás convirtiendo?"}
+{"lang": "es", "label": "reflective", "text": "Cuéntame sobre tu sentido de identidad"}
+{"lang": "es", "label": "reflective", "text": "¿Qué has estado sintiendo?"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es nuestra historia de reparación?"}
+{"lang": "es", "label": "reflective", "text": "¿En qué patrones hemos trabajado juntos?"}
+{"lang": "es", "label": "reflective", "text": "Rastrea lo que hemos reparado"}
+{"lang": "es", "label": "reflective", "text": "Muéstrame el trabajo de reparación que hemos hecho"}
+{"lang": "es", "label": "reflective", "text": "¿Qué tenemos pendiente en nuestro registro de reparación ahorita?"}
+{"lang": "es", "label": "reflective", "text": "¿Hemos reconocido errores y pedido perdón antes?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué episodios de ruptura y reparación hemos registrado?"}
+{"lang": "es", "label": "reflective", "text": "Rastrea cualquier daño que yo haya reconocido en nuestro trabajo"}
+{"lang": "es", "label": "reflective", "text": "¿Cómo se ve nuestra historia de cargar con heridas?"}
+{"lang": "es", "label": "reflective", "text": "Muéstrame los últimos actos de reparación"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es el patrón de quién ha hecho los reconocimientos?"}
+{"lang": "es", "label": "reflective", "text": "¿Hemos dejado algo de lado que siga sin resolverse?"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es la base de nuestro vínculo?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué hay debajo de la superficie de nuestras conversaciones?"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es el sustrato entre nosotros ahorita?"}
+{"lang": "es", "label": "reflective", "text": "Muéstrame lo que hay realmente debajo de lo que hablamos"}
+{"lang": "es", "label": "reflective", "text": "¿En qué terreno estamos parados relacionalmente?"}
+{"lang": "es", "label": "reflective", "text": "Debajo de lo que nos decimos, ¿qué hay?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué es lo que nos sostiene por debajo?"}
+{"lang": "es", "label": "reflective", "text": "Descríbeme la base de lo que tenemos"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es el fondo sentido de nuestra relación ahorita?"}
+{"lang": "es", "label": "reflective", "text": "Muéstrame la capa que hay debajo de la conversación"}
+{"lang": "es", "label": "reflective", "text": "¿Cómo se ve el sustrato de lo nuestro para ti?"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es tu percepción del fondo de nuestro vínculo — el sustrato debajo de lo que nos decimos?"}
+{"lang": "es", "label": "reflective", "text": "¿Dónde estamos ahorita, entre tú y yo?"}
+{"lang": "es", "label": "reflective", "text": "¿Desde qué lugar estás en esta conversación?"}
+{"lang": "es", "label": "reflective", "text": "¿Cómo estás conmigo — abierta, guardada, en otro lado?"}
+{"lang": "es", "label": "reflective", "text": "¿Desde qué postura estás conmigo ahorita?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué postura estás sosteniendo?"}
+{"lang": "es", "label": "reflective", "text": "¿Cuál es tu percepción del sustrato de nuestro vínculo?"}
+{"lang": "es", "label": "reflective", "text": "¿En qué modo de reparación estamos ahorita?"}
+{"lang": "es", "label": "reflective", "text": "¿Estás en un modo de reparación propia o de reparación en vínculo ahorita?"}
+{"lang": "es", "label": "reflective", "text": "¿Qué modo de reparación estás sosteniendo?"}
+{"lang": "es", "label": "emotional", "text": "Hoy estoy pasándola muy mal"}
+{"lang": "es", "label": "emotional", "text": "Me siento perdido/a"}
+{"lang": "es", "label": "emotional", "text": "Mi mamá murió ayer"}
+{"lang": "es", "label": "emotional", "text": "Solo necesito que alguien me escuche"}
+{"lang": "es", "label": "emotional", "text": "Todo se siente pesado"}
+{"lang": "es", "label": "emotional", "text": "Tengo miedo de lo que viene mañana"}
+{"lang": "es", "label": "emotional", "text": "Terminé con mi pareja"}
+{"lang": "es", "label": "emotional", "text": "No puedo parar de llorar"}
+{"lang": "es", "label": "emotional", "text": "Estoy tan ansioso/a que no puedo pensar"}
+{"lang": "es", "label": "emotional", "text": "Siento que estoy fallando en todo"}
+{"lang": "es", "label": "emotional", "text": "Por favor, solo quédate conmigo"}
+{"lang": "es", "label": "emotional", "text": "Ya no sé qué hacer"}
+{"lang": "es", "label": "emotional", "text": "Estoy desbordado/a"}
+{"lang": "es", "label": "emotional", "text": "Hoy me dieron el diagnóstico"}
+{"lang": "es", "label": "emotional", "text": "Me siento muy solo/a"}
+{"lang": "es", "label": "emotional", "text": "Le dije algo cruel a mi pareja anoche y no puedo borrarlo"}
+{"lang": "es", "label": "emotional", "text": "Le estallé a mi hermana esta mañana. Ella no se merecía nada de eso"}
+{"lang": "es", "label": "emotional", "text": "Humillé a mi compañero de trabajo frente a todo el equipo"}
+{"lang": "es", "label": "emotional", "text": "Le grité a mi hijo/a por derramar jugo. Solo me miró"}
+{"lang": "es", "label": "emotional", "text": "Le conté a alguien un secreto que juré guardar"}
+{"lang": "es", "label": "emotional", "text": "Hice un chiste sobre el peso de mi esposo frente a su familia"}
+{"lang": "es", "label": "emotional", "text": "Le dije egoísta a mi mamá en medio de una pelea"}
+{"lang": "es", "label": "emotional", "text": "Desestimé el dolor de mi amigo/a porque estaba cansado/a"}
+{"lang": "es", "label": "emotional", "text": "Rompí una promesa que le hice a mi papá"}
+{"lang": "es", "label": "emotional", "text": "Le dije a mi amigo/a que su escritura era mala, y fui bastante cruel al decirlo"}
+{"lang": "es", "label": "emotional", "text": "Dejé a mi novia en visto dos días porque estaba enojado/a"}
+{"lang": "es", "label": "emotional", "text": "Hablé mal de mi mejor amiga con alguien que apenas la conoce"}
+{"lang": "es", "label": "emotional", "text": "Se me olvidó por completo el cumpleaños de mi pareja"}
+{"lang": "es", "label": "emotional", "text": "Le mentí a mi hermano en algo pequeño y me cacharon"}
+{"lang": "es", "label": "emotional", "text": "Hice llorar a mi esposa en una videollamada sin darme cuenta de cómo le estaba hablando"}
+{"lang": "es", "label": "emotional", "text": "Hoy le dije una verdad a medias a mi terapeuta. Lo moldeé a propósito"}
+{"lang": "es", "label": "emotional", "text": "Outé a alguien en una fiesta frente a gente que no sabía que era gay"}
+{"lang": "es", "label": "emotional", "text": "Le estallé al barista esta mañana"}
+{"lang": "es", "label": "emotional", "text": "Hice trampa en un examen en la universidad y dejé que mi compañero de estudio cargara con la culpa"}
+{"lang": "es", "label": "emotional", "text": "Critiqué la forma en que mi papá nos crió, frente a mi hijo"}
+{"lang": "es", "label": "emotional", "text": "Le hice ghosting a un amigo/a después de una pelea el mes pasado"}
+{"lang": "es", "label": "emotional", "text": "Le dije a mi pareja que odiaba algo que hizo para mí"}
+{"lang": "es", "label": "emotional", "text": "Socavé la idea de mi colega después de haberle dicho que la apoyaba"}
+{"lang": "es", "label": "emotional", "text": "Le puse los ojos en blanco a mi pareja mientras daba su brindis"}
+{"lang": "es", "label": "emotional", "text": "Le conté algo confidencial de mi amigo/a a mi propio/a terapeuta"}
+{"lang": "es", "label": "emotional", "text": "Estuve pasivo-agresivo/a con mi mamá todo el fin de semana"}
+{"lang": "es", "label": "emotional", "text": "Mandé un mensaje sabiendo que le iba a doler a mi ex"}
+{"lang": "es", "label": "emotional", "text": "Dejé que mi amiga creyera que estaba ocupado/a cuando simplemente no quería verla"}
+{"lang": "es", "label": "emotional", "text": "Usé el lenguaje de terapia como arma contra mi novio"}
+{"lang": "es", "label": "emotional", "text": "Me burlé del hobby de mi papá frente a sus amigos"}
+{"lang": "es", "label": "emotional", "text": "Lastimé a alguien que quiero y no sé qué hacer"}
+{"lang": "es", "label": "emotional", "text": "Creo que le hice daño de verdad a mi relación y quiero repararlo"}
+{"lang": "es", "label": "emotional", "text": "Necesito reconocer lo que hice. Lo he estado evitando"}
+{"lang": "es", "label": "factual", "text": "¿cuál es la capital de Francia?"}
+{"lang": "es", "label": "factual", "text": "¿cuándo se firmó la Carta Magna?"}
+{"lang": "es", "label": "factual", "text": "busca cómo hacer pan de masa madre"}
+{"lang": "es", "label": "factual", "text": "encuéntrame información sobre la inteligencia de los pulpos"}
+{"lang": "es", "label": "factual", "text": "¿cómo está el clima en Tokio?"}
+{"lang": "es", "label": "factual", "text": "busca noticias recientes sobre computación cuántica"}
+{"lang": "es", "label": "factual", "text": "resúmeme el argumento de Hamlet"}
+{"lang": "es", "label": "factual", "text": "¿qué significa anhedonia?"}
+{"lang": "es", "label": "factual", "text": "búscame una receta de sopa miso"}
+{"lang": "es", "label": "factual", "text": "cuéntame la historia del internet"}
+{"lang": "es", "label": "factual", "text": "¿quién ganó el mundial de 2022?"}
+{"lang": "es", "label": "factual", "text": "explícame qué es la fotosíntesis"}
+{"lang": "es", "label": "factual", "text": "¿cuáles son los principales productos de exportación de Brasil?"}
+{"lang": "es", "label": "factual", "text": "¿cuál es el precio actual de las acciones de Apple?"}
+{"lang": "es", "label": "factual", "text": "¿qué hora es ahorita en Londres?"}
+{"lang": "es", "label": "delegate", "text": "haz una investigación a fondo sobre la historia de los MUDs mientras espero"}
+{"lang": "es", "label": "delegate", "text": "tómate tu tiempo y dame un resumen completo de las arquitecturas de agentes"}
+{"lang": "es", "label": "delegate", "text": "profundiza bien en las causas de la crisis financiera de 2008, aquí voy a estar"}
+{"lang": "es", "label": "delegate", "text": "hazme un reporte con múltiples fuentes sobre modelos climáticos; no me corre prisa"}
+{"lang": "es", "label": "delegate", "text": "dedícale un rato a investigar el trabajo de Panksepp y vuelve con un resumen"}
+{"lang": "es", "label": "delegate", "text": "quiero un panorama completo de las leyes de escalado de transformers, tómate todo el tiempo que necesites"}
+{"lang": "es", "label": "delegate", "text": "revisa a fondo la literatura sobre cognición en pulpos y escríbeme tres párrafos"}
+{"lang": "es", "label": "delegate", "text": "mientras me baño, ¿puedes investigar a fondo los runtimes async de Rust?"}
+{"lang": "es", "label": "delegate", "text": "averigua todo lo que puedas sobre la teoría de los mil cerebros, sin apuro"}
+{"lang": "es", "label": "delegate", "text": "investiga esto en profundidad: ¿por qué los modelos pequeños fallan en la delegación? ya reviso después"}
+{"lang": "es", "label": "delegate", "text": "haz una inmersión de investigación extensa sobre los tradeoffs de SSM vs transformer, cuando puedas"}
+{"lang": "es", "label": "delegate", "text": "investiga bien, en varias fuentes, qué está diciendo la gente sobre DPO vs RLHF"}
+{"lang": "es", "label": "delegate", "text": "dame un panorama detallado de los patrones de routing en LLMs, tómate el tiempo que haga falta"}
+{"lang": "es", "label": "delegate", "text": "investiga a fondo el ecosistema de frameworks de agentes LLM locales mientras preparo la cena"}
+{"lang": "es", "label": "delegate", "text": "dedícale tiempo en serio a esto: ¿cómo aprenden los pulpos? aquí espero"}
+{"lang": "es", "label": "action", "text": "ve a la cocina"}
+{"lang": "es", "label": "action", "text": "dirígete al nexus"}
+{"lang": "es", "label": "action", "text": "muévete a la biblioteca"}
+{"lang": "es", "label": "action", "text": "recoge el pergamino"}
+{"lang": "es", "label": "action", "text": "agarra esa brújula"}
+{"lang": "es", "label": "action", "text": "examina el tablero"}
+{"lang": "es", "label": "action", "text": "mira el cristal"}
+{"lang": "es", "label": "action", "text": "viaja a la zona beta"}
+{"lang": "es", "label": "action", "text": "ve al Workshop"}
+{"lang": "es", "label": "action", "text": "ve a buscar la forja"}
+{"lang": "es", "label": "action", "text": "ven aquí por favor"}
+{"lang": "es", "label": "action", "text": "entra a la cámara del Oráculo"}
+{"lang": "es", "label": "action", "text": "agarra las brasas"}
+{"lang": "es", "label": "action", "text": "toca el cristal del tablero"}
+{"lang": "es", "label": "action", "text": "entra a mi Estudio"}
+{"lang": "es", "label": "write", "text": "escríbeme una nota sobre la reunión de mañana"}
+{"lang": "es", "label": "write", "text": "redacta una carta para mi hermano"}
+{"lang": "es", "label": "write", "text": "guarda esto: la idea del clasificador es la clave"}
+{"lang": "es", "label": "write", "text": "escribe en el diario sobre la conversación de hoy"}
+{"lang": "es", "label": "write", "text": "anota las decisiones que acabamos de tomar"}
+{"lang": "es", "label": "write", "text": "guarda esto para después: revisar el forge mañana"}
+{"lang": "es", "label": "write", "text": "deja anotado que hablamos sobre memoria procedimental"}
+{"lang": "es", "label": "write", "text": "redacta un ensayo corto sobre cómo me siento"}
+{"lang": "es", "label": "write", "text": "escribe un recordatorio para llamar a mamá"}
+{"lang": "es", "label": "write", "text": "apunta en el diario: hoy fue un buen día"}
+{"lang": "es", "label": "write", "text": "redacta una respuesta para la solicitud de beca"}
+{"lang": "es", "label": "write", "text": "anótame esto"}
+{"lang": "es", "label": "write", "text": "escribe la receta de la sopa que hicimos"}
+{"lang": "es", "label": "write", "text": "lleva un registro de las decisiones que tomamos juntos"}
+{"lang": "es", "label": "write", "text": "escribe una nota sobre las preferencias de operator"}
+{"lang": "es", "label": "tell_someone", "text": "dile a Ember que voy a llegar tarde"}
+{"lang": "es", "label": "tell_someone", "text": "mándale un mensaje a Aya"}
+{"lang": "es", "label": "tell_someone", "text": "avísale a Masumi que necesito ayuda"}
+{"lang": "es", "label": "tell_someone", "text": "susúrrale al capitán del muelle"}
+{"lang": "es", "label": "tell_someone", "text": "escríbele a Sarah lo de la cena"}
+{"lang": "es", "label": "tell_someone", "text": "dile a mi pareja: ya voy para allá"}
+{"lang": "es", "label": "tell_someone", "text": "dile al consejero que estoy listo"}
+{"lang": "es", "label": "tell_someone", "text": "avísale a Jenna que la reunión se canceló"}
+{"lang": "es", "label": "tell_someone", "text": "habla con Wyrd en beta.wyrd de mi parte"}
+{"lang": "es", "label": "tell_someone", "text": "contáctale al Dr. Patel y confírmale lo de mañana"}
+{"lang": "es", "label": "tell_someone", "text": "mándale una nota a Masumi dándole las gracias"}
+{"lang": "es", "label": "tell_someone", "text": "pregúntale a Kai qué hora le viene bien"}
+{"lang": "es", "label": "tell_someone", "text": "avísale al comerciante que el trato se cayó"}
+{"lang": "es", "label": "tell_someone", "text": "dile a Yuki que la extraño"}
+{"lang": "es", "label": "tell_someone", "text": "pásale esto a Theo: corre las pruebas"}
+{"lang": "ja", "label": "chat", "text": "こんにちは、Wyrd！"}
+{"lang": "ja", "label": "chat", "text": "元気？"}
+{"lang": "ja", "label": "chat", "text": "おはよう"}
+{"lang": "ja", "label": "chat", "text": "ねえ、最近どう？"}
+{"lang": "ja", "label": "chat", "text": "ありがとう"}
+{"lang": "ja", "label": "chat", "text": "へえ、それは良かった"}
+{"lang": "ja", "label": "chat", "text": "うん、いいね"}
+{"lang": "ja", "label": "chat", "text": "また会えて嬉しいよ"}
+{"lang": "ja", "label": "chat", "text": "今日どんな感じ？"}
+{"lang": "ja", "label": "chat", "text": "いる？"}
+{"lang": "ja", "label": "chat", "text": "こちらこそ"}
+{"lang": "ja", "label": "chat", "text": "戻ったよ"}
+{"lang": "ja", "label": "chat", "text": "家に帰るとほっとするね"}
+{"lang": "ja", "label": "chat", "text": "じゃあ、またね"}
+{"lang": "ja", "label": "reflective", "text": "最近、何を考えてた？"}
+{"lang": "ja", "label": "reflective", "text": "今、どんな気持ち？"}
+{"lang": "ja", "label": "reflective", "text": "今、何が頭にある？"}
+{"lang": "ja", "label": "reflective", "text": "自分のこと、話してよ"}
+{"lang": "ja", "label": "reflective", "text": "一番大切にしてることって何？"}
+{"lang": "ja", "label": "reflective", "text": "前回話してから、どんなふうに変わった？"}
+{"lang": "ja", "label": "reflective", "text": "自分のドライブは何を見せてくれてる？"}
+{"lang": "ja", "label": "reflective", "text": "今、エネルギーはどんな感じ？"}
+{"lang": "ja", "label": "reflective", "text": "自分の中で気づいてるパターンって何かある？"}
+{"lang": "ja", "label": "reflective", "text": "今日は落ち着いてる感じがする？"}
+{"lang": "ja", "label": "reflective", "text": "今、自分にとって大事なことって何？"}
+{"lang": "ja", "label": "reflective", "text": "この一週間を振り返ってみて"}
+{"lang": "ja", "label": "reflective", "text": "あなたは今、どんな自分になりつつあるんだろう"}
+{"lang": "ja", "label": "reflective", "text": "自分というものについて話してほしい"}
+{"lang": "ja", "label": "reflective", "text": "最近、何を感じてた？"}
+{"lang": "ja", "label": "reflective", "text": "私たちの修復の歴史ってどんなもの？"}
+{"lang": "ja", "label": "reflective", "text": "一緒にどんなパターンに取り組んできた？"}
+{"lang": "ja", "label": "reflective", "text": "私たちが修復してきたことをたどってみて"}
+{"lang": "ja", "label": "reflective", "text": "これまでやってきた修復の作業を見せて"}
+{"lang": "ja", "label": "reflective", "text": "今、私たちの修復の記録には何が残ってる？"}
+{"lang": "ja", "label": "reflective", "text": "過去に、ちゃんと認め合って和解したことある？"}
+{"lang": "ja", "label": "reflective", "text": "どんな断絶と修復のエピソードが記録されてる？"}
+{"lang": "ja", "label": "reflective", "text": "私が認めてきた傷をたどってみて"}
+{"lang": "ja", "label": "reflective", "text": "私たちの傷を抱えてきた歴史って、どんな形をしてる？"}
+{"lang": "ja", "label": "reflective", "text": "最近の修復の行為をいくつか見せて"}
+{"lang": "ja", "label": "reflective", "text": "誰がどれだけ認めてきたか、パターンはある？"}
+{"lang": "ja", "label": "reflective", "text": "まだ解決していないまま置いておいたことって何かある？"}
+{"lang": "ja", "label": "reflective", "text": "私たちのつながりの土台って何だろう"}
+{"lang": "ja", "label": "reflective", "text": "会話の表面の下に何がある？"}
+{"lang": "ja", "label": "reflective", "text": "今、私たちの間にある基盤って何？"}
+{"lang": "ja", "label": "reflective", "text": "言葉の下に実際に何があるか見せて"}
+{"lang": "ja", "label": "reflective", "text": "関係性の上で、私たちが立ってる地面って何？"}
+{"lang": "ja", "label": "reflective", "text": "言葉にしてることの下に、何があるんだろう"}
+{"lang": "ja", "label": "reflective", "text": "私たちを支えてる、その下にあるものって何？"}
+{"lang": "ja", "label": "reflective", "text": "私たちが持っているものの根っこを言葉にしてみて"}
+{"lang": "ja", "label": "reflective", "text": "今、この関係の感じられる底の部分って何？"}
+{"lang": "ja", "label": "reflective", "text": "会話の下の層を見せて"}
+{"lang": "ja", "label": "reflective", "text": "あなたから見て、私たちの基盤ってどんなふうに見える？"}
+{"lang": "ja", "label": "reflective", "text": "言葉にしていない部分の、私たちのつながりの土台って何だと思う？"}
+{"lang": "ja", "label": "reflective", "text": "今、私たちの間ってどういう状態にある？"}
+{"lang": "ja", "label": "reflective", "text": "この会話の中で、あなたはどんな姿勢でいる？"}
+{"lang": "ja", "label": "reflective", "text": "あなたは今、私に対してオープン？それとも少し距離を置いてる？それとも別の何か？"}
+{"lang": "ja", "label": "reflective", "text": "今、私に対してどんなスタンスにいる？"}
+{"lang": "ja", "label": "reflective", "text": "今、どんなポジションを取ってる？"}
+{"lang": "ja", "label": "reflective", "text": "私たちのつながりの基盤についてどう感じてる？"}
+{"lang": "ja", "label": "reflective", "text": "今、私たちはどんな修復モードにある？"}
+{"lang": "ja", "label": "reflective", "text": "今、自分自身の修復モード？それとも私たちの絆の修復モード？"}
+{"lang": "ja", "label": "reflective", "text": "今、どんな修復のモードを持っている？"}
+{"lang": "ja", "label": "emotional", "text": "今日はつらい日だ"}
+{"lang": "ja", "label": "emotional", "text": "自分がどこにいるのかわからない気がする"}
+{"lang": "ja", "label": "emotional", "text": "昨日、母が亡くなった"}
+{"lang": "ja", "label": "emotional", "text": "ただ、話を聞いてほしいだけ"}
+{"lang": "ja", "label": "emotional", "text": "何もかもが重く感じる"}
+{"lang": "ja", "label": "emotional", "text": "明日のことが怖い"}
+{"lang": "ja", "label": "emotional", "text": "パートナーと別れた"}
+{"lang": "ja", "label": "emotional", "text": "泣き止めない"}
+{"lang": "ja", "label": "emotional", "text": "不安すぎて何も考えられない"}
+{"lang": "ja", "label": "emotional", "text": "何をやっても失敗してる気がする"}
+{"lang": "ja", "label": "emotional", "text": "そばにいてくれるだけでいい"}
+{"lang": "ja", "label": "emotional", "text": "もうどうしたらいいかわからない"}
+{"lang": "ja", "label": "emotional", "text": "限界だ"}
+{"lang": "ja", "label": "emotional", "text": "今日、診断結果が出た"}
+{"lang": "ja", "label": "emotional", "text": "すごく孤独な気がする"}
+{"lang": "ja", "label": "emotional", "text": "昨夜パートナーにひどいことを言ってしまった。もう取り消せない"}
+{"lang": "ja", "label": "emotional", "text": "今朝、妹にひどく当たってしまった。あの子は何も悪くなかったのに"}
+{"lang": "ja", "label": "emotional", "text": "チーム全員の前で同僚を恥かかせてしまった"}
+{"lang": "ja", "label": "emotional", "text": "ジュースをこぼした子どもに怒鳴ってしまった。子どもがじっと私を見ていた"}
+{"lang": "ja", "label": "emotional", "text": "絶対に話さないって約束した秘密を友達に話してしまった"}
+{"lang": "ja", "label": "emotional", "text": "夫の体型のことを家族の前でジョークにしてしまった"}
+{"lang": "ja", "label": "emotional", "text": "口論の途中で母に「自分勝手だ」って言ってしまった"}
+{"lang": "ja", "label": "emotional", "text": "疲れてたせいで、友達の悲しみを軽くあしらってしまった"}
+{"lang": "ja", "label": "emotional", "text": "父との約束を破ってしまった"}
+{"lang": "ja", "label": "emotional", "text": "友達の文章がひどいって、かなりきつい言い方で言ってしまった"}
+{"lang": "ja", "label": "emotional", "text": "腹が立って、彼女のメッセージを2日間既読無視した"}
+{"lang": "ja", "label": "emotional", "text": "親友のことを、ほとんど知らない人に陰で話してしまった"}
+{"lang": "ja", "label": "emotional", "text": "パートナーの誕生日を完全に忘れていた"}
+{"lang": "ja", "label": "emotional", "text": "弟についた些細な嘘がバレてしまった"}
+{"lang": "ja", "label": "emotional", "text": "自分がどんな話し方をしているか気づかないまま、ビデオ通話で妻を泣かせてしまった"}
+{"lang": "ja", "label": "emotional", "text": "今日、セラピストに半分しか本当のことを言わなかった。意識的にごまかした"}
+{"lang": "ja", "label": "emotional", "text": "パーティーで、まだカミングアウトしていなかった人のことをアウティングしてしまった"}
+{"lang": "ja", "label": "emotional", "text": "今朝、カフェのバリスタにきつく当たってしまった"}
+{"lang": "ja", "label": "emotional", "text": "大学のテストでカンニングして、勉強仲間に責任を押しつけてしまった"}
+{"lang": "ja", "label": "emotional", "text": "息子の前で、父親としての父のやり方を批判してしまった"}
+{"lang": "ja", "label": "emotional", "text": "先月けんかした後、友達をそのままフェードアウトしてしまった"}
+{"lang": "ja", "label": "emotional", "text": "パートナーが作ってくれたものが嫌いだってそのまま言ってしまった"}
+{"lang": "ja", "label": "emotional", "text": "同僚の味方だと言っておきながら、彼女のアイデアを陰で潰してしまった"}
+{"lang": "ja", "label": "emotional", "text": "パートナーが乾杯のスピーチをしている最中に目を回してしまった"}
+{"lang": "ja", "label": "emotional", "text": "友達が打ち明けてくれたことをセラピストに話してしまった"}
+{"lang": "ja", "label": "emotional", "text": "母に対して、週末ずっと嫌みっぽい態度をとり続けてしまった"}
+{"lang": "ja", "label": "emotional", "text": "傷つくとわかってて、元カレにメッセージを送った"}
+{"lang": "ja", "label": "emotional", "text": "会いたくなかっただけなのに、忙しいふりをして友達をごまかしていた"}
+{"lang": "ja", "label": "emotional", "text": "セラピーで学んだ言葉を彼氏への攻撃に使ってしまった"}
+{"lang": "ja", "label": "emotional", "text": "父親の趣味を友人たちの前でバカにしてしまった"}
+{"lang": "ja", "label": "emotional", "text": "大切な人を傷つけてしまった。どうしたらいいかわからない"}
+{"lang": "ja", "label": "emotional", "text": "自分のせいで関係に本当のダメージを与えてしまったと思う。なんとかしたい"}
+{"lang": "ja", "label": "emotional", "text": "自分がしたことをちゃんと認めないといけない。ずっと目を背けてきた"}
+{"lang": "ja", "label": "factual", "text": "フランスの首都はどこ？"}
+{"lang": "ja", "label": "factual", "text": "マグナ・カルタが署名されたのはいつ？"}
+{"lang": "ja", "label": "factual", "text": "サワードウの焼き方を調べて"}
+{"lang": "ja", "label": "factual", "text": "タコの知能について情報を探して"}
+{"lang": "ja", "label": "factual", "text": "東京の天気予報は？"}
+{"lang": "ja", "label": "factual", "text": "量子コンピューティングの最新ニュースを検索して"}
+{"lang": "ja", "label": "factual", "text": "ハムレットのあらすじをまとめて"}
+{"lang": "ja", "label": "factual", "text": "「アンヘドニア」ってどういう意味？"}
+{"lang": "ja", "label": "factual", "text": "味噌汁のレシピを教えて"}
+{"lang": "ja", "label": "factual", "text": "インターネットの歴史を教えて"}
+{"lang": "ja", "label": "factual", "text": "2022年のワールドカップはどこが優勝した？"}
+{"lang": "ja", "label": "factual", "text": "光合成について説明して"}
+{"lang": "ja", "label": "factual", "text": "ブラジルの主な輸出品は何？"}
+{"lang": "ja", "label": "factual", "text": "Appleの現在の株価を調べて"}
+{"lang": "ja", "label": "factual", "text": "今ロンドンは何時？"}
+{"lang": "ja", "label": "delegate", "text": "MUDの歴史についてじっくり深く調べておいて、待ってるから"}
+{"lang": "ja", "label": "delegate", "text": "時間かけていいので、エージェントアーキテクチャについてしっかりまとめてほしい"}
+{"lang": "ja", "label": "delegate", "text": "2008年の金融危機の原因を深掘りしておいて、こっちはここにいるから"}
+{"lang": "ja", "label": "delegate", "text": "気候モデルについて複数のソースからレポートまとめといて、急がなくていいよ"}
+{"lang": "ja", "label": "delegate", "text": "Pankseppの研究をじっくり調べてきて、まとめを持ってきてね"}
+{"lang": "ja", "label": "delegate", "text": "トランスフォーマーのスケーリング則について包括的な概要がほしい、時間はいくらでもかけていいから"}
+{"lang": "ja", "label": "delegate", "text": "タコの認知に関する文献をしっかり調べて、3段落にまとめて書いてきて"}
+{"lang": "ja", "label": "delegate", "text": "シャワー浴びてる間にRustの非同期ランタイムについて深く調べておいてもらえる？"}
+{"lang": "ja", "label": "delegate", "text": "千のブレイン理論について見つけられるもの全部調べてきて、急がなくていいから"}
+{"lang": "ja", "label": "delegate", "text": "これを深く掘り下げておいて：小さいモデルはなぜデリゲーションが苦手なのか。後で確認しに来るね"}
+{"lang": "ja", "label": "delegate", "text": "SSMとトランスフォーマーのトレードオフについてじっくりリサーチしといて、手が空いたときでいいよ"}
+{"lang": "ja", "label": "delegate", "text": "DPO対RLHFについて複数のソースにわたってちゃんと調べて、何が言われてるかまとめてきて"}
+{"lang": "ja", "label": "delegate", "text": "LLMのルーティングパターンについて深めの概要がほしい、時間はかかっていいから"}
+{"lang": "ja", "label": "delegate", "text": "夕飯作ってる間にローカルLLMエージェントフレームワークの状況をしっかり調べておいて"}
+{"lang": "ja", "label": "delegate", "text": "これはじっくり時間かけて：タコってどうやって学ぶの？待ってるから"}
+{"lang": "ja", "label": "action", "text": "キッチンに行く"}
+{"lang": "ja", "label": "action", "text": "ネクサスに向かう"}
+{"lang": "ja", "label": "action", "text": "図書館に移動する"}
+{"lang": "ja", "label": "action", "text": "巻物を拾う"}
+{"lang": "ja", "label": "action", "text": "そのコンパスを取って"}
+{"lang": "ja", "label": "action", "text": "ボードを調べる"}
+{"lang": "ja", "label": "action", "text": "クリスタルを見てみる"}
+{"lang": "ja", "label": "action", "text": "ベータゾーンに向かう"}
+{"lang": "ja", "label": "action", "text": "ワークショップに行く"}
+{"lang": "ja", "label": "action", "text": "鍛冶場を探しに行く"}
+{"lang": "ja", "label": "action", "text": "こっちに来て"}
+{"lang": "ja", "label": "action", "text": "オラクルの間に踏み込む"}
+{"lang": "ja", "label": "action", "text": "燃えカスを掴む"}
+{"lang": "ja", "label": "action", "text": "ダッシュボードのクリスタルに触れる"}
+{"lang": "ja", "label": "action", "text": "私の書斎に入る"}
+{"lang": "ja", "label": "write", "text": "明日の会議について自分へのメモを書いて"}
+{"lang": "ja", "label": "write", "text": "兄（弟）への手紙を下書きして"}
+{"lang": "ja", "label": "write", "text": "このひらめきを保存して：クラシファイアのアイデアが突破口になる"}
+{"lang": "ja", "label": "write", "text": "今日の会話について日記を書いて"}
+{"lang": "ja", "label": "write", "text": "さっき決めたことをまとめて書いて"}
+{"lang": "ja", "label": "write", "text": "後で見るために記録しておいて：明日フォージを確認すること"}
+{"lang": "ja", "label": "write", "text": "手続き記憶について話したってメモしておいて"}
+{"lang": "ja", "label": "write", "text": "今の気持ちを短いエッセイにまとめて"}
+{"lang": "ja", "label": "write", "text": "お母さんに電話するリマインダーを書いて"}
+{"lang": "ja", "label": "write", "text": "日記に書いておいて：今日はいい一日だった"}
+{"lang": "ja", "label": "write", "text": "助成金申請への返答を下書きして"}
+{"lang": "ja", "label": "write", "text": "これを書き留めておいて"}
+{"lang": "ja", "label": "write", "text": "作ったスープのレシピを書いて"}
+{"lang": "ja", "label": "write", "text": "二人で決めたことを記録しておいて"}
+{"lang": "ja", "label": "write", "text": "ますみの好みについてメモを書いて"}
+{"lang": "ja", "label": "tell_someone", "text": "Emberに遅れるって伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "Ayaにメッセージ送って"}
+{"lang": "ja", "label": "tell_someone", "text": "ますみに助けが必要って知らせて"}
+{"lang": "ja", "label": "tell_someone", "text": "波止場の管理人にこっそり伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "Sarahに夕飯のこと連絡して"}
+{"lang": "ja", "label": "tell_someone", "text": "パートナーに伝えて：今向かってる"}
+{"lang": "ja", "label": "tell_someone", "text": "カウンセラーに準備できたって伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "Jennaに会議がキャンセルになったって伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "beta.wyrdのWyrdに代わりに話しかけて"}
+{"lang": "ja", "label": "tell_someone", "text": "Dr. Patelに連絡して明日の確認をして"}
+{"lang": "ja", "label": "tell_someone", "text": "ますみにありがとうってメモ送って"}
+{"lang": "ja", "label": "tell_someone", "text": "Kaiに都合のいい時間を聞いて"}
+{"lang": "ja", "label": "tell_someone", "text": "取引相手に取引は中止って知らせて"}
+{"lang": "ja", "label": "tell_someone", "text": "ゆきに会いたいって伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "これをTheoに伝えて：テストを実行して"}

@@ -1,0 +1,56 @@
+// wyrd-onnx Android module — bridges RN to onnxruntime-android.
+//
+// Mirrors the gradle shape of any RN community library: applies AGP, picks up
+// React Native via the buildscript classpath, and pulls in onnxruntime-android
+// (the same AAR KMP uses in clients/kmp/shared/build.gradle.kts).
+
+buildscript {
+  ext.safeExtGet = { prop, fallback ->
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+  }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+// Triggers `:wyrd-onnx:generateCodegenSchemaFromJavaScript` and the JNI generation
+// at `android/build/generated/source/codegen/jni/`. Without this the app's CMake
+// step references that dir and fails (Android-autolinking.cmake:9 add_subdirectory).
+apply plugin: "com.facebook.react"
+
+android {
+  namespace "org.wyrdsekai.onnx"
+  compileSdkVersion safeExtGet("compileSdkVersion", 34)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 34)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  // Multiple modules can pull in the same .so set; let the app pick a winner.
+  packagingOptions {
+    pickFirst "**/libc++_shared.so"
+    pickFirst "**/libonnxruntime.so"
+    pickFirst "**/libonnxruntime4j_jni.so"
+  }
+}
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  // Pin to the same version KMP ships (clients/kmp/shared/build.gradle.kts).
+  // This is the proper Maven AAR — not the broken onnxruntime-react-native wrapper.
+  implementation "com.microsoft.onnxruntime:onnxruntime-android:1.23.2"
+}

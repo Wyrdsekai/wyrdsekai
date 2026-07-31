@@ -1,0 +1,20 @@
+# Docker Compose for Apple Silicon E2E tests (macOS arm64).
+# Used INSTEAD OF docker-compose.e2e.yml (not as an override) because
+# Docker Compose deep-merges deploy.resources and cannot remove NVIDIA GPU reservations.
+# Only NATS runs in Docker. Inference (chat + embeddings) handled by vllm-mlx natively.
+
+services:
+  # ─── NATS — Between messaging ────────────────────────────────────────────
+  nats:
+    image: nats:2-alpine
+    container_name: wyrdsekai-e2e-nats
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    command: ["-js", "-m", "8222"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

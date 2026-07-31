@@ -1,0 +1,50 @@
+# Helper: RN — Welcome → "I have an API key" → Anthropic → land in standalone
+#
+# Cloud-API onboarding path (no server, with Claude API key). Drives the
+# Welcome wizard's step-2 provider picker, pastes the Anthropic key passed
+# via ${ANTHROPIC_API_KEY}, and waits for Birth → Standalone.
+#
+# The phone's inference router posts to ${baseUrl}/v1/chat/completions
+# with x-api-key auth — Anthropic supports OpenAI-compat at this path
+# (verified live). Real inference happens when the user types non-command
+# text in the room; the helper itself only validates the onboarding path.
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-api"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-provider-anthropic"
+    timeout: 5000
+- tapOn:
+    id: "welcome-provider-anthropic"
+
+- tapOn:
+    id: "welcome-api-key"
+- inputText: ${ANTHROPIC_API_KEY}
+- hideKeyboard
+
+- tapOn:
+    id: "welcome-api-done"
+
+# Birth boots PhoneNode then routes to Standalone.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}

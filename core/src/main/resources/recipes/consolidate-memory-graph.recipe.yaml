@@ -1,0 +1,102 @@
+# memory-graph consolidation recipe (#1026).
+#
+# Housekeeping operation on memory_entities + memory_edges tables
+# ( schema). Without this, a household running
+# for 6 months accumulates thousands of duplicate
+# Person("John") / Person("john") / Person("Johnny") entries from
+# extraction-call jitter — retrieval quality degrades silently.
+#
+# Cheap: ~30s on a 5K-entity household, CPU-only. WARMUP daily by
+# default; no quiet-hours preference needed since the load is trivial.
+recipe: consolidate-memory-graph
+version: 0.1.0
+description: >
+  Dedupe entities by (type, normalized_label) cosine-similarity, prune
+  edges past TTL with low confidence, preserve any entity referenced
+  by an active bond or pinned soul-fragment. Welfare-gated against
+  catastrophic prune.
+deploys: true
+ownership: run
+
+# No prefers_hours — operation is light enough to run anytime.
+
+params:
+  jdbc_url:
+    type: string
+    default: ""    # zone server's JDBC; recipe gets it from env if blank
+  agent_did:
+    type: string
+    required: true
+  # PERMANENT welfare gate: never prune more than this fraction of the
+  # graph in one pass. Catches dedup runaway (a cosine-threshold typo
+  # accidentally collapsing all Persons into one).
+  max_entity_delta_pct:
+    type: number
+    default: 50
+  # Tunable thresholds — defaults are conservative.
+  dedup_cosine_threshold:
+    type: number
+    default: 0.92
+  edge_ttl_days:
+    type: number
+    default: 90
+  edge_confidence_min:
+    type: number
+    default: 0.5
+
+steps:
+  - id: snapshot
+    kind: SHELL
+    command: |-
+      python3 scripts/memory/consolidate_graph.py snapshot \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+
+  - id: dedup-entities
+    kind: SHELL
+    timeout: 5m
+    command: |-
+      python3 scripts/memory/consolidate_graph.py dedup \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --cosine-threshold {{dedup_cosine_threshold}}
+
+  - id: prune-edges
+    kind: SHELL
+    timeout: 5m
+    command: |-
+      python3 scripts/memory/consolidate_graph.py prune-edges \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --ttl-days {{edge_ttl_days}} \
+        --min-confidence {{edge_confidence_min}}
+
+  - id: gate-delta
+    kind: GATE
+    # Compares post-snapshot entity count against pre-snapshot. Hard floor
+    # against runaway dedup; "delta" here is the percentage of entities
+    # the run REMOVED. A reasonable consolidation is 1-10%; >50% is the
+    # cosine-threshold-typo failure case.
+    condition: "entity_delta_pct <= {{max_entity_delta_pct}}"
+    on_fail: STOP
+    welfare: permanent   # catches dedup runaway (PERMANENT)
+
+  - id: gate-critical-preserved
+    kind: GATE
+    # Every entity referenced by an active bond or pinned soul-fragment
+    # is in the "critical" set; the consolidate script asserts the set
+    # is fully preserved. critical_entities_preserved is bool-as-int (0|1).
+    condition: "critical_entities_preserved == 1"
+    on_fail: STOP
+    welfare: permanent   # bonds + pinned fragments never lose referents (PERMANENT)
+
+  - id: commit
+    kind: SHELL
+    command: |-
+      python3 scripts/memory/consolidate_graph.py commit \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+    rollback: |-
+      python3 scripts/memory/consolidate_graph.py rollback \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'

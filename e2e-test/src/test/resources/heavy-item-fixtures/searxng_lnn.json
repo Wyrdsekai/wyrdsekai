@@ -1,0 +1,29 @@
+{
+  "query": "liquid neural networks",
+  "number_of_results": 3,
+  "results": [
+    {
+      "title": "Liquid Time-constant Networks (Hasani et al., 2020)",
+      "url": "http://STUB_HOST/arxiv_2006_04439",
+      "content": "Liquid time-constant networks (LTC) are continuous-time recurrent neural networks whose neurons are described by ODEs with input-dependent time constants. The 2020 paper by Hasani, Lechner et al. shows LTC networks are universal approximators on time-series and provably more expressive than fixed-time-constant RNNs."
+    },
+    {
+      "title": "MIT CSAIL — Liquid Networks Generalize From Less Data",
+      "url": "http://STUB_HOST/mit_csail_lnn",
+      "content": "MIT CSAIL researchers describe Liquid Neural Networks: small (sometimes 19-neuron) continuous-time models that adapt their parameters online while running. The networks were demoed steering autonomous drones in unseen forests with only ~20K training trajectories — orders of magnitude less data than the convolutional baselines."
+    },
+    {
+      "title": "ncps — Neural Circuit Policies (GitHub)",
+      "url": "http://STUB_HOST/github_ncps_readme",
+      "content": "ncps is the reference Python library for Liquid Time-constant (LTC) networks and Closed-form Continuous-time (CfC) networks. Provides PyTorch and TensorFlow modules with named-cell wirings inspired by the C. elegans connectome. README covers installation, the LTCCell vs CfCCell tradeoff, and the AutonomousDriving notebook."
+    }
+  ],
+  "answers": [],
+  "corrections": [],
+  "infoboxes": [],
+  "suggestions": [
+    "liquid time constant networks",
+    "ncps library tutorial"
+  ],
+  "unresponsive_engines": []
+}

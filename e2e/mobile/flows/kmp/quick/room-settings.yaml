@@ -1,0 +1,16 @@
+# Quick: KMP — open node settings dialog
+# LocalRoomScreen surfaces a Settings dialog with `switch-mode-button` near the
+# top so it's visible without scrolling.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "standalone-settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+
+- takeScreenshot: kmp_quick_room_settings

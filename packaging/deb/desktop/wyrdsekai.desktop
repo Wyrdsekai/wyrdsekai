@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Wyrdsekai
+GenericName=Text-native world
+Comment=Enter your text-native world — companions and you in a shared world
+Exec=wyrdsekai-desktop
+Icon=applications-internet
+Terminal=false
+Categories=Network;Game;Utility;
+Keywords=wyrdsekai;companion;world;agent;
+StartupNotify=false

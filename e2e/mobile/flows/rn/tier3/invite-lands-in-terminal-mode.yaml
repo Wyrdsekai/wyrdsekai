@@ -1,0 +1,59 @@
+# Tier 3 — the real user path, against a REAL relay and a REAL zone:
+#   Welcome → "On my home machines" → paste a wyrdphone:// invite → Connect
+#
+# What this is proving, and why it matters:
+#
+# Before 2026-07-29 this path called setLocalMode() and the phone became a
+# mode-4 node — its own companion, voice rendered on-device, and a 2.5GB model
+# download nobody asked for. Measured phone throughput does not support that
+# (a 4B decodes ~10 tok/s on a current flagship, 3-6 mid-range, against a
+# reading speed of 7-10; on iOS a 4B frequently cannot be loaded within the
+# per-app memory limit at all). So the default is now a terminal onto the
+# household, and the on-device model is an explicit EXPERIMENTAL opt-in.
+#
+# The invite carries everything: relay URL, NATS user + password, and the
+# household CA fingerprint the phone pins. Nothing here is seeded by a harness.
+#
+# The invite URL is injected:
+#   maestro test -e INVITE_URL='wyrdphone://host:4443/<b64url>' <this flow>
+# NOTE: no `env:` default — Maestro 2.3.0 applies flow env defaults AFTER the
+# CLI -e values, clobbering them (observed live 2026-06-12).
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Step 0 → "On my home machines"
+- tapOn:
+    id: "welcome-home-zone"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-home-input"
+    timeout: 10000
+
+- tapOn:
+    id: "welcome-home-input"
+- inputText: ${INVITE_URL}
+
+# The IME occludes Connect; Android will not deliver a tap to a covered view.
+- hideKeyboard
+
+- takeScreenshot: rn_tier3_invite_pasted
+
+- tapOn:
+    id: "welcome-connect"
+
+# The invite populates the zone bank and lands on the Servers screen, where one
+# tap attempts the relay login. Reaching here at all means the invite parsed,
+# the relay leg persisted, and the household CA pinned.
+- extendedWaitUntil:
+    visible: ".*(Servers|Zones|relay).*"
+    timeout: 60000
+
+- takeScreenshot: rn_tier3_invite_landed

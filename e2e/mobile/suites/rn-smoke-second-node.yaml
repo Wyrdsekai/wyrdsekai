@@ -1,0 +1,14 @@
+# RN Smoke Suite vs SECOND_NODE (~20s) — real production node, not the test server.
+# second-node = home-zone base, 198.51.100.64 (eno1) / 192.0.2.167 (wlp5s0).
+# See docs/ for preconditions (second-node must be installed + running).
+appId: org.wyrdsekai.rn
+env:
+  SERVER_URL: "http://198.51.100.64:7070"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "45000"
+  CONNECT_TIMEOUT: "30000"
+  INFERENCE_TIMEOUT: "30000"
+---
+- runFlow: ../flows/rn/smoke/app-launches.yaml
+- runFlow: ../flows/rn/smoke/mode-selection.yaml

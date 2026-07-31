@@ -1,0 +1,24 @@
+# Smoke (iOS): KMP wizard step transition (step 0 → step 1: inference question).
+# iOS twin of ../smoke/mode-selection.yaml.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+
+- assertVisible:
+    id: "welcome-standalone"
+
+- takeScreenshot: kmp_ios_smoke_mode_selection

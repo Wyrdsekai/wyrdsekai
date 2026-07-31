@@ -1,0 +1,6 @@
+{
+  "type": "reconnect",
+  "id": "msg-008",
+  "roomId": "nexus",
+  "lastSeenSeq": 42
+}

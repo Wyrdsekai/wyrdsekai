@@ -1,0 +1,44 @@
+# Helper: KMP — Welcome → "I have an API key" → Anthropic → land in room
+#
+# Cloud-API onboarding for KMP. Same wizard testIDs as RN since WelcomeScreen
+# is shared cross-platform (org.wyrdsekai.kmp vs .rn bundle id).
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-api"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-provider-anthropic"
+    timeout: 5000
+- tapOn:
+    id: "welcome-provider-anthropic"
+
+- tapOn:
+    id: "welcome-api-key"
+- inputText: ${ANTHROPIC_API_KEY}
+- hideKeyboard
+
+- tapOn:
+    id: "welcome-api-done"
+
+# KMP lands directly on LocalRoomScreen — no intermediate Birth.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}

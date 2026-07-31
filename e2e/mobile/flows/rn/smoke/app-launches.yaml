@@ -1,0 +1,29 @@
+# Smoke: RN app launches and shows the Welcome screen (step 0: "where does your
+# companion live?").
+#
+# NOTE: no `launchApp` step — run-all.sh pre-launches via `am start` before
+# maestro runs. Maestro's launchApp (even stopApp:false) triggers an Activity
+# recreate that wipes the React tree to blank under our build (still
+# investigating; manual am-start lands on Welcome correctly).
+#
+# 2026-07-29: this flow had asserted `welcome-server-url`, `welcome-connect`
+# and `welcome-no-server` on step 0. The screen was redesigned to a two-card
+# "where does your companion live?" chooser and `welcome-no-server` no longer
+# exists anywhere in the client — so the flow had been asserting a UI that was
+# gone. Re-pointed at the cards step 0 actually renders.
+appId: org.wyrdsekai.rn
+---
+
+# welcome-title is a leaf Text — most reliable visibility anchor.
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Step 0 offers exactly two ways to live: someone else's machines, or this one.
+- assertVisible:
+    id: "welcome-home-zone"
+- assertVisible:
+    id: "welcome-standalone-mode"
+
+- takeScreenshot: rn_smoke_app_launches

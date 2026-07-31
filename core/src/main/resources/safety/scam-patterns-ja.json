@@ -1,0 +1,36 @@
+{
+  "locale": "ja",
+  "version": 1,
+  "patterns": [
+    {
+      "regex": "(今すぐ|至急|期限切れ|最後のチャンス|緊急)",
+      "category": "URGENCY_PRESSURE",
+      "severity": "MEDIUM"
+    },
+    {
+      "regex": "(税務署|国税庁|銀行.*セキュリティ|マイクロソフト.*サポート|年金機構|警察.*口座)",
+      "category": "AUTHORITY_IMPERSONATION",
+      "severity": "HIGH"
+    },
+    {
+      "regex": "(プリペイドカード|振り込め|ビットコイン|暗号通貨|コンビニで払)",
+      "category": "UNUSUAL_FINANCIAL",
+      "severity": "HIGH"
+    },
+    {
+      "regex": "(当選|おめでとう.*当たり|懸賞.*受け取り|宝くじ)",
+      "category": "PRIZE_SCAM",
+      "severity": "MEDIUM"
+    },
+    {
+      "regex": "(ウイルス.*検出|パソコン.*感染|リモートアクセス|サポートセンター.*電話)",
+      "category": "TECH_SUPPORT_SCAM",
+      "severity": "HIGH"
+    },
+    {
+      "regex": "(運命の人|お金.*送って|海外.*足止め|オレオレ|振り込め詐欺)",
+      "category": "SOCIAL_EXPLOITATION",
+      "severity": "MEDIUM"
+    }
+  ]
+}

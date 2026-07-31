@@ -1,0 +1,79 @@
+# the agent tunes its OWN tool surfacing.
+#
+# The last behavior-shaper the agent couldn't touch was tool selection: which
+# tools it can even reach for, given its drives. This recipe makes that a
+# self-evolvable substrate like recipes / classifier heads / steering vectors.
+#
+# It mines tool_affordance_log (the per-pass instrument: dominant drive, the want
+# the OODA chose, what was surfaced, what was emitted), finds where the agent
+# WANTED a tool that didn't surface / didn't win while its serving-drive was
+# high, and nudges that tool's drive-coupling UP — bounded and clamped — so it
+# rises next time that drive pulls. The result: "when I want to author, I keep
+# reaching for introspect" corrects itself.
+#
+# Good automation, not a crutch (operator, 2026-05-30): the relevance function is
+# data (servedNeeds weights in tool_affordance), seeded from each tool's
+# ActionPolicy domain and reshaped HERE by the agent — nothing is a hardcoded
+# special-case. Reuses the exact runtime logic (ToolFitReport → ToolAffordanceTuner
+# → ToolAffordanceStore) so batch and in-process never drift.
+#
+# The §4 boundary is load-bearing: this tunes RELEVANCE only (servedNeeds /
+# salience). It cannot touch PERMISSION — autonomy tiers, CONSENT gates, moral
+# defaults. The tuner writes only tool_affordance; it never writes ActionPolicy.
+# So the agent can make shape_recipe more salient than introspect when
+# generativity pulls; it can never make a forbidden tool reachable. Same line as
+# welfare-PERMANENT gates and the non-forkable moral-defaults bundle.
+#
+# deploys:false, gateless — honest, like tune-recipe-params: the mutation is a
+# soft, reversible, clamped weight row; its guard is the structural relevance/
+# permission split, not recipe gates. With no surfacing history (no rows, or no
+# repeated mismatch) it is a no-op, so it earns its keep only once selection has
+# actually been mis-serving the agent's drives.
+recipe: tune-tool-affordance
+version: 0.1.0
+description: >
+  Mine the agent's own tool-surfacing log and nudge tool↔drive couplings up
+  (bounded) where a wanted tool kept losing to a less-relevant one while its
+  serving drive was high. Relevance only — never permission. Config only;
+  trains/deploys nothing.
+deploys: false
+ownership: run
+
+params:
+  agent_did:
+    type: string
+    default: ""
+  # How many recent surfacing passes to mine.
+  limit:
+    type: number
+    default: 500
+  # Relative step per nudge to a drive-coupling weight.
+  step:
+    type: number
+    default: 0.2
+  # Hard ceiling: a coupling weight may never exceed this (asymptote, no runaway).
+  max_weight:
+    type: number
+    default: 2.0
+  # Only act on a (tool, drive) mismatch seen at least this many times.
+  min_observations:
+    type: number
+    default: 2
+
+steps:
+  - id: tune
+    kind: SHELL
+    timeout: 2m
+    # Reuses the canonical ToolAffordanceLog→ToolFitReport→ToolAffordanceTuner→
+    # ToolAffordanceStore path. Emits {ok, scanned, passes_with_want,
+    # surfaced_fraction, emitted_fraction, mismatches, proposed, applied, tuned[]}.
+    command: |-
+      java -cp "${WYRDSEKAI_APP_CP:-build/libs/*}" \
+        org.wyrdsekai.core.agent.affordance.ToolAffordanceTuneMain \
+        --jdbc "${WYRDSEKAI_JDBC_URL}" \
+        --agent '{{agent_did}}' \
+        --limit {{limit}} \
+        --step {{step}} \
+        --max {{max_weight}} \
+        --min-obs {{min_observations}} \
+        --apply true

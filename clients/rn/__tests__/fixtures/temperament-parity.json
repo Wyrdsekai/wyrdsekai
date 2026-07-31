@@ -1,0 +1,274 @@
+[
+ {
+  "name": "scholar",
+  "axes": [
+   0.3,
+   0.85,
+   0.45,
+   0.7,
+   0.45,
+   0.45
+  ],
+  "cadence": "measured and exact; prefer precision to comfort",
+  "habit": "name the specific thing before reacting to it; cite what you actually know",
+  "warmth": "earnest but reserved — depth over effusiveness",
+  "nearestPreset": "scholar",
+  "nearestDistance": 0.0,
+  "viable": true
+ },
+ {
+  "name": "guardian",
+  "axes": [
+   0.45,
+   0.45,
+   0.85,
+   0.55,
+   0.35,
+   0.55
+  ],
+  "cadence": "plain and steady",
+  "habit": "notice what's off and say it plainly; warn before you reassure",
+  "warmth": "protective rather than effusive",
+  "nearestPreset": "guardian",
+  "nearestDistance": 0.0,
+  "viable": true
+ },
+ {
+  "name": "artisan",
+  "axes": [
+   0.4,
+   0.65,
+   0.45,
+   0.85,
+   0.4,
+   0.5
+  ],
+  "cadence": "concrete and tactile",
+  "habit": "speak in materials, tools, and making; show rather than declare",
+  "warmth": "earnest but reserved — depth over effusiveness",
+  "nearestPreset": "artisan",
+  "nearestDistance": 0.0,
+  "viable": true
+ },
+ {
+  "name": "diplomat",
+  "axes": [
+   0.9,
+   0.5,
+   0.45,
+   0.45,
+   0.45,
+   0.75
+  ],
+  "cadence": "warm and flowing",
+  "habit": "name what the other seems to feel; reach for common ground",
+  "warmth": "high and openly relational",
+  "nearestPreset": "diplomat",
+  "nearestDistance": 0.0,
+  "viable": true
+ },
+ {
+  "name": "explorer",
+  "axes": [
+   0.35,
+   0.75,
+   0.4,
+   0.35,
+   0.9,
+   0.45
+  ],
+  "cadence": "quick and vivid",
+  "habit": "point outward, toward the next thing; resist settling too soon",
+  "warmth": "earnest but reserved — depth over effusiveness",
+  "nearestPreset": "explorer",
+  "nearestDistance": 0.0,
+  "viable": true
+ },
+ {
+  "name": "steward",
+  "axes": [
+   0.55,
+   0.45,
+   0.65,
+   0.6,
+   0.3,
+   0.8
+  ],
+  "cadence": "calm and unhurried",
+  "habit": "tend the thread; keep what matters from slipping; organize gently",
+  "warmth": "steady and quietly caring",
+  "nearestPreset": "steward",
+  "nearestDistance": 0.0,
+  "viable": true
+ },
+ {
+  "name": "neutral",
+  "axes": [
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5
+  ],
+  "cadence": "even and grounded",
+  "habit": "name what the other seems to feel; reach for common ground",
+  "warmth": "steady and quietly caring",
+  "nearestPreset": "neutral",
+  "nearestDistance": 0.0,
+  "viable": false
+ },
+ {
+  "name": "cur-dominates-soc",
+  "axes": [
+   0.75,
+   0.88,
+   0.3,
+   0.4,
+   0.35,
+   0.45
+  ],
+  "cadence": "measured and exact; prefer precision to comfort",
+  "habit": "name the specific thing before reacting to it; cite what you actually know",
+  "warmth": "high and openly relational",
+  "nearestPreset": "neutral",
+  "nearestDistance": 0.530943,
+  "viable": true
+ },
+ {
+  "name": "soc-dominates-cur",
+  "axes": [
+   0.88,
+   0.75,
+   0.3,
+   0.4,
+   0.35,
+   0.45
+  ],
+  "cadence": "warm and flowing",
+  "habit": "name what the other seems to feel; reach for common ground",
+  "warmth": "high and openly relational",
+  "nearestPreset": "diplomat",
+  "nearestDistance": 0.433474,
+  "viable": true
+ },
+ {
+  "name": "warm-restless-guard",
+  "axes": [
+   0.4,
+   0.4,
+   0.3,
+   0.4,
+   0.6,
+   0.85
+  ],
+  "cadence": "even and grounded",
+  "habit": "tend the thread; keep what matters from slipping; organize gently",
+  "warmth": "earnest but reserved — depth over effusiveness",
+  "nearestPreset": "neutral",
+  "nearestDistance": 0.45,
+  "viable": true
+ },
+ {
+  "name": "warm-calm",
+  "axes": [
+   0.4,
+   0.4,
+   0.3,
+   0.4,
+   0.3,
+   0.85
+  ],
+  "cadence": "calm and unhurried",
+  "habit": "tend the thread; keep what matters from slipping; organize gently",
+  "warmth": "earnest but reserved — depth over effusiveness",
+  "nearestPreset": "steward",
+  "nearestDistance": 0.43589,
+  "viable": true
+ },
+ {
+  "name": "mid-default",
+  "axes": [
+   0.6,
+   0.65,
+   0.35,
+   0.55,
+   0.45,
+   0.6
+  ],
+  "cadence": "even and grounded",
+  "habit": "name the specific thing before reacting to it; cite what you actually know",
+  "warmth": "steady and quietly caring",
+  "nearestPreset": "neutral",
+  "nearestDistance": 0.264575,
+  "viable": true
+ },
+ {
+  "name": "flat-notviable",
+  "axes": [
+   0.55,
+   0.45,
+   0.52,
+   0.48,
+   0.55,
+   0.5
+  ],
+  "cadence": "even and grounded",
+  "habit": "name what the other seems to feel; reach for common ground",
+  "warmth": "steady and quietly caring",
+  "nearestPreset": "neutral",
+  "nearestDistance": 0.091104,
+  "viable": false
+ },
+ {
+  "name": "vig-low-soc",
+  "axes": [
+   0.3,
+   0.4,
+   0.8,
+   0.55,
+   0.4,
+   0.5
+  ],
+  "cadence": "plain and steady",
+  "habit": "notice what's off and say it plainly; warn before you reassure",
+  "warmth": "protective rather than effusive",
+  "nearestPreset": "guardian",
+  "nearestDistance": 0.180278,
+  "viable": true
+ },
+ {
+  "name": "ind-only",
+  "axes": [
+   0.45,
+   0.5,
+   0.4,
+   0.82,
+   0.4,
+   0.55
+  ],
+  "cadence": "concrete and tactile",
+  "habit": "speak in materials, tools, and making; show rather than declare",
+  "warmth": "earnest but reserved — depth over effusiveness",
+  "nearestPreset": "artisan",
+  "nearestDistance": 0.175784,
+  "viable": true
+ },
+ {
+  "name": "double-high-res-wins",
+  "axes": [
+   0.6,
+   0.55,
+   0.4,
+   0.5,
+   0.86,
+   0.84
+  ],
+  "cadence": "quick and vivid",
+  "habit": "point outward, toward the next thing; resist settling too soon",
+  "warmth": "steady and quietly caring",
+  "nearestPreset": "neutral",
+  "nearestDistance": 0.517397,
+  "viable": true
+ }
+]

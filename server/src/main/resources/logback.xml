@@ -1,0 +1,50 @@
+<configuration>
+  <!-- Human-readable console output -->
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!--
+    Rolling file appender — structured text with ISO timestamps.
+    Machine-parseable, grep-friendly. Rotates daily, max 50MB per file,
+    30 days retention, 1GB total cap. Compressed with gzip.
+
+    Override log directory: WYRDSEKAI_LOG_DIR env var.
+    The `:-logs` fallback below is RELATIVE — it resolves against the caller's
+    working directory. That is fine for the daemon (systemd pins
+    WorkingDirectory) but wrong for a CLI, which can be run from anywhere and
+    which, run once under sudo, would leave a root-owned log file that every
+    later user run failed to open. bin/wyrd therefore exports an absolute
+    per-user WYRDSEKAI_LOG_DIR before every Java invocation; see the comment
+    there. Do not rely on this fallback for anything user-facing.
+
+    Override log level:     WYRDSEKAI_LOG_LEVEL env var (default: INFO)
+    For JSON output:        override logback config via -Dlogback.configurationFile=...
+  -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${WYRDSEKAI_LOG_DIR:-logs}/wyrdsekai.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${WYRDSEKAI_LOG_DIR:-logs}/wyrdsekai.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>50MB</maxFileSize>
+      <maxHistory>30</maxHistory>
+      <totalSizeCap>1GB</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%level thread=%thread logger=%logger{36} %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Suppress noisy libraries -->
+  <logger name="org.eclipse.jetty" level="WARN" />
+  <logger name="io.javalin" level="INFO" />
+  <logger name="slick" level="WARN" />
+  <logger name="com.zaxxer.hikari" level="WARN" />
+  <logger name="org.apache.pekko" level="WARN" />
+
+  <root level="${WYRDSEKAI_LOG_LEVEL:-INFO}">
+    <appender-ref ref="STDOUT" />
+    <appender-ref ref="FILE" />
+  </root>
+</configuration>

@@ -1,0 +1,23 @@
+# Quick: RN — say something in standalone room
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "'Hello from Maestro"
+# IME covers the send button after inputText. Dismiss it by tapping the prose
+# list (RN keyboardShouldPersistTaps=never blurs the input) instead of
+# `hideKeyboard`, which is unreliable on Android 15 (task #30 item 7).
+- tapOn:
+    id: "standalone-prose-list"
+
+- tapOn:
+    id: "standalone-send-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 5000
+
+- takeScreenshot: rn_quick_room_say

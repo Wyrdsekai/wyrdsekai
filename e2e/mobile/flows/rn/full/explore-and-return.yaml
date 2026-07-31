@@ -1,0 +1,78 @@
+# Full: RN — Explore standalone room, interact, settle back home
+# Local-mode replacement for the legacy remote-mode "explore + logout" tour.
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+# Lands in companion's home room.
+- assertVisible:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_explore_01_home
+
+# Look around
+- tapOn:
+    id: "standalone-input"
+- inputText: "look"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 5000
+- takeScreenshot: rn_explore_02_looked
+
+# Say hello
+- tapOn:
+    id: "standalone-input"
+- inputText: "'Hello world, I'm exploring"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+- takeScreenshot: rn_explore_03_said_hello
+
+# Walk through any available exit (typed — exits may not be present in seed Hearth)
+- tapOn:
+    id: "standalone-input"
+- inputText: "go north"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 10000
+- takeScreenshot: rn_explore_04_moved
+
+# Say something
+- tapOn:
+    id: "standalone-input"
+- inputText: "'Interesting place"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+- takeScreenshot: rn_explore_05_said_something
+
+# Return south
+- tapOn:
+    id: "standalone-input"
+- inputText: "go south"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 10000
+- takeScreenshot: rn_explore_06_returned
+
+# Open node settings
+- tapOn:
+    id: "standalone-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+- takeScreenshot: rn_explore_07_settings

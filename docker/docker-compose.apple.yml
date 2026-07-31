@@ -1,0 +1,7 @@
+# Docker Compose for Apple Silicon (macOS arm64).
+# Used INSTEAD OF docker-compose.yml (not as an override) because
+# Docker Compose deep-merges deploy.resources and cannot remove NVIDIA GPU reservations.
+# No inference services in Docker — vllm-mlx handles chat + embeddings natively via Metal.
+# This file is intentionally minimal; add services here only if they need Docker on macOS.
+
+services: {}

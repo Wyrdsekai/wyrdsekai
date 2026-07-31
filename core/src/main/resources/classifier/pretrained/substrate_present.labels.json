@@ -1,0 +1,10 @@
+{
+  "labels": [
+    "neutral",
+    "substrate"
+  ],
+  "label_to_idx": {
+    "neutral": 0,
+    "substrate": 1
+  }
+}

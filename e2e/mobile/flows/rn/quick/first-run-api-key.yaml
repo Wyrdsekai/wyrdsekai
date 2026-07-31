@@ -1,0 +1,53 @@
+# Quick: RN Welcome wizard — "I have an API key" path
+# Picks OpenRouter, enters a stub key, expects to advance to Birth.
+# Stub key is enough to satisfy the wizard's `disabled={!apiKey}` gate;
+# real cloud calls only happen later if the user actually says something.
+appId: org.wyrdsekai.rn
+---
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Skip server question
+- tapOn:
+    id: "welcome-no-server"
+
+# Step 1: pick "I have an API key"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-api"
+
+# Step 2: pick OpenRouter (recommended)
+- extendedWaitUntil:
+    visible:
+      id: "welcome-provider-openrouter"
+    timeout: 5000
+- tapOn:
+    id: "welcome-provider-openrouter"
+
+# Enter API key
+- extendedWaitUntil:
+    visible:
+      id: "welcome-api-key"
+    timeout: 5000
+- tapOn:
+    id: "welcome-api-key"
+- inputText: "sk-or-test-stub-not-real"
+- hideKeyboard
+
+# Continue
+- tapOn:
+    id: "welcome-api-done"
+
+# Lands in Study. API-key path: handleComplete maps provider → inferenceUrl,
+# so Birth fix kicks in and skips local download. Anchor on Send button.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-send-button"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: rn_quick_first_run_api_key

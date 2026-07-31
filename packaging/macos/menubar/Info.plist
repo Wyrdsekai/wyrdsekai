@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Wyrdsekai</string>
+    <key>CFBundleDisplayName</key>
+    <string>Wyrdsekai</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.wyrdsekai.menubar</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleExecutable</key>
+    <string>Wyrdsekai</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>wyrdsekai</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <!-- Menu-bar agent: lives in the status bar, no Dock icon. The world window
+         is shown on demand, so launching it always surfaces something. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Wyrdsekai</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

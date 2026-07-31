@@ -1,0 +1,107 @@
+# Oracle recalibration (#1135).
+#
+# The Oracle is a forecasting/anticipation sidecar (OracleBridge → local HTTP
+# service). It already self-trains on every Forge sleep
+# (OracleForgeHook.onForgeSleep → bridge.train) — but UNGOVERNED: no health
+# check, no accuracy floor, no "did training break the model?" gate, no steward
+# alert. This recipe makes that retrain a governed runbook so the household's
+# own forecaster can't quietly train itself into worse (or dead) predictions.
+#
+# Local-ok: the Oracle talks only over its own local HTTP API (no cloud key).
+# NOT ship-default-enrolled — Oracle availability is deployment-dependent: the
+# oracle-core sidecar (separate repo gitlab.com/masmoo/oracle-core) runs on
+# docker-compose household deploys but is not bundled in native .deb/.pkg/.msi
+# installs. So this recipe is on-demand / steward-fired and cleanly NO-OPs
+# (gate-health STOPs) when the sidecar isn't reachable. (Note: the Java bridge
+# activates on sidecar reachability — WYRDSEKAI_ORACLE_ENABLED is currently dead
+# config with no consumers.)
+#
+# Honest limitations (documented in the script): the sidecar exposes no rich
+# backtest endpoint, so the accuracy gate is DEFENSIVE (enforced only when
+# /v1/stats exposes a metric; otherwise health + predictions-produced protect);
+# and the sidecar trains in place with no snapshot endpoint, so the gates run
+# AFTER train as tripwires + steward alert rather than pre-commit blocks.
+recipe: recalibrate-oracle
+version: 0.1.0
+description: >
+  Governed retrain of the Oracle forecasting sidecar. Welfare-gated on sidecar
+  health, on predictions still being produced after training, and (when the
+  sidecar exposes a metric) on an accuracy floor + no-regression. No-ops safely
+  when the Oracle is disabled or unreachable.
+deploys: true
+ownership: run
+
+# GPU-preferred? No — training happens inside the sidecar; the recipe only
+# drives the HTTP API. Light from the zone's perspective.
+
+params:
+  agent_did:
+    type: string
+    required: true
+  oracle_url:
+    type: string
+    default: ""    # blank → $WYRDSEKAI_ORACLE_URL, then http://localhost:7073
+  # Only enforced when the sidecar exposes an accuracy metric.
+  min_accuracy:
+    type: number
+    default: 0.0
+  regression_epsilon:
+    type: number
+    default: 0.05
+
+steps:
+  - id: health
+    kind: SHELL
+    timeout: 30s
+    command: |-
+      python3 scripts/oracle/recalibrate_oracle.py health \
+        --agent-did '{{agent_did}}' --oracle-url '{{oracle_url}}'
+
+  - id: gate-health
+    kind: GATE
+    # Never claim to recalibrate a dead/disabled Oracle. STOP (honest no-op)
+    # when the sidecar is unreachable — the run records a clean GATE_FAILED
+    # rather than a false SUCCESS.
+    condition: "oracle_healthy == 1"
+    on_fail: STOP
+    welfare: permanent   # don't train against an unreachable sidecar (PERMANENT)
+
+  - id: stats-before
+    kind: SHELL
+    timeout: 30s
+    command: |-
+      python3 scripts/oracle/recalibrate_oracle.py stats-before \
+        --agent-did '{{agent_did}}' --oracle-url '{{oracle_url}}'
+
+  - id: train
+    kind: SHELL
+    timeout: 30m
+    command: |-
+      python3 scripts/oracle/recalibrate_oracle.py train \
+        --agent-did '{{agent_did}}' --oracle-url '{{oracle_url}}'
+
+  - id: verify
+    kind: SHELL
+    timeout: 2m
+    command: |-
+      python3 scripts/oracle/recalibrate_oracle.py verify \
+        --agent-did '{{agent_did}}' --oracle-url '{{oracle_url}}' \
+        --min-accuracy {{min_accuracy}} \
+        --regression-epsilon {{regression_epsilon}}
+
+  - id: gate-predictions
+    kind: GATE
+    # After training, the Oracle must still produce predictions. 0 = the train
+    # broke the model — surface to the steward.
+    condition: "predictions_ok == 1"
+    on_fail: STOP
+    welfare: permanent   # a retrained Oracle that predicts nothing is broken (PERMANENT)
+
+  - id: gate-accuracy
+    kind: GATE
+    # accuracy_ok = 1 when the sidecar exposes no metric (can't gate on the
+    # unmeasurable) OR when post-train accuracy clears the floor AND hasn't
+    # regressed past epsilon vs the incumbent.
+    condition: "accuracy_ok == 1"
+    on_fail: STOP
+    welfare: permanent   # don't keep a measurably-worse forecaster (PERMANENT)

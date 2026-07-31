@@ -1,0 +1,21 @@
+# KMP Quick Suite vs SECOND_NODE (~2min) — parity leg for the KMP client against
+# second-node's production node. See docs/.
+appId: org.wyrdsekai.kmp
+env:
+  SERVER_URL: "http://198.51.100.64:7070"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "30000"
+---
+- runFlow: ../flows/kmp/smoke/app-launches.yaml
+- runFlow: ../flows/kmp/smoke/mode-selection.yaml
+- runFlow: ../flows/kmp/quick/first-run-skip.yaml
+- runFlow: ../flows/kmp/quick/first-run-api-key.yaml
+- runFlow: ../flows/kmp/quick/connect-register.yaml
+- runFlow: ../flows/kmp/quick/account-login.yaml
+- runFlow: ../flows/kmp/quick/account-register.yaml
+- runFlow: ../flows/kmp/quick/room-say.yaml
+- runFlow: ../flows/kmp/quick/room-inventory.yaml
+- runFlow: ../flows/kmp/quick/room-settings.yaml

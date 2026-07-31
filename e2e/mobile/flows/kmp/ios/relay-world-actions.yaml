@@ -1,0 +1,97 @@
+# iOS — movement + item take + item use over the relay tunnel, in ONE session.
+# Logs into the running home-server zone as a real account THROUGH relay-node (the tunnel
+# carries a full authed WS session — #1268), lands in the user's Study (home
+# landing), then exercises the three world verbs the phone must support:
+#   use journal   → Study furnishing use handler (real zone, not the local mirror)
+#   go out        → Study → Nexus     (movement)
+#   go north      → Nexus → Terminal  (movement)
+#   take logbook  → pick up the Terminal's takeable logbook (item take)
+# Deterministic proof is the home-server server log (handleGo / handleTake / use), and
+# the standalone-room-name testTag tracking the room change.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-server-url"
+    timeout: ${BOOT_TIMEOUT}
+- tapOn:
+    id: "welcome-server-url"
+- inputText: "${INVITE_URL}"
+- tapOn:
+    id: "welcome-connect"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-login-account"
+    timeout: 10000
+- tapOn:
+    id: "welcome-login-account"
+- extendedWaitUntil:
+    visible:
+      id: "connect-screen"
+    timeout: 10000
+- tapOn:
+    id: "username-input"
+- inputText: ${TEST_USER}
+- tapOn:
+    id: "password-input"
+- inputText: ${TEST_PASS}
+- pressKey: Enter
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+- takeScreenshot: ios_world_01_landed
+
+# --- use: a Study furnishing (real zone use handler) ---
+- tapOn:
+    id: "standalone-input"
+- inputText: "use journal"
+- tapOn:
+    point: "50%,8%"
+- tapOn:
+    id: "standalone-send-button"
+- takeScreenshot: ios_world_02_use
+
+# --- movement: Study -> Nexus ---
+- tapOn:
+    id: "standalone-input"
+- inputText: "go out"
+- tapOn:
+    point: "50%,8%"
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible: ".*(Nexus|nexus).*"
+    timeout: 30000
+- takeScreenshot: ios_world_03_nexus
+
+# --- movement: Nexus -> Terminal (has a takeable logbook) ---
+- tapOn:
+    id: "standalone-input"
+- inputText: "go north"
+- tapOn:
+    point: "50%,8%"
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible: ".*(Terminal|terminal).*"
+    timeout: 30000
+- takeScreenshot: ios_world_04_terminal
+
+# --- item take: pick up the logbook ---
+- tapOn:
+    id: "standalone-input"
+- inputText: "take logbook"
+- tapOn:
+    point: "50%,8%"
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible: ".*(logbook|take|pick).*"
+    timeout: 30000
+- takeScreenshot: ios_world_05_take

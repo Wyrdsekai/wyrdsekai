@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wyrdsekai MSI product (WiX 3.x). Paired with a heat-harvested AppFiles component
+  group (the jpackage app-image). The Start-menu + Desktop shortcuts target the
+  desktop SHELL — app\Wyrdsekai.Tray.exe (tray control panel + first-run onboarding) —
+  NOT the headless Java launcher. The headless launcher (Wyrdsekai.exe) still ships in
+  the image as the server the shell drives.
+
+  candle defines: SourceDir (app-image dir, used by heat'd appfiles.wxs), Version, IconFile,
+  SnapshotCmd (base64/UTF-16LE-encoded PowerShell pre-upgrade DB snapshot script, built by
+  build-msi.ps1 — see the "pre-upgrade snapshot" block there). Requires -ext
+  WixUtilExtension at candle AND light (WixCA / WixQuietExec).
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Wyrdsekai"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="Wyrdsekai"
+           UpgradeCode="7E0C2A1B-9F3D-4C6E-9A2B-1D5E7F8A3C40">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Platform="x64"
+             Description="Wyrdsekai household node" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Wyrdsekai is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Pre-upgrade DB snapshot (W11, data-durability — parity with the .deb postinst /
+         .pkg preinstall): on UPGRADE ONLY (WIX_UPGRADE_DETECTED, set by MajorUpgrade),
+         copy the node's *.db files aside BEFORE the new build's schema migrations can
+         touch them, pruned to the 3 newest snapshots. The actual copy logic lives in a
+         PowerShell script authored in build-msi.ps1 and passed in base64 (UTF-16LE) as
+         the SnapshotCmd candle define — an -EncodedCommand one-liner keeps this .wxs
+         free of quoting hazards. Runs via WixQuietExec (WixUtilExtension, no console flash),
+         immediate + impersonated so %USERPROFILE%\.wyrdsekai resolves to the installing
+         user (the usual single-steward case; a SYSTEM-context deploy finds no DBs and
+         no-ops). Return="ignore": a failed snapshot must never block the upgrade. -->
+    <SetProperty Id="WixQuietExecCmdLine"
+                 Value="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $(var.SnapshotCmd)"
+                 Before="PreUpgradeDbSnapshot"
+                 Sequence="execute">WIX_UPGRADE_DETECTED</SetProperty>
+    <CustomAction Id="PreUpgradeDbSnapshot"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="immediate"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="PreUpgradeDbSnapshot" After="InstallInitialize">WIX_UPGRADE_DETECTED</Custom>
+    </InstallExecuteSequence>
+
+    <Icon Id="WyrdIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="WyrdIcon.ico" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="Wyrdsekai" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Wyrdsekai" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+
+    <!-- Start-menu shortcut -> the tray shell -->
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcut" Guid="*">
+        <Shortcut Id="StartMenuWyrd"
+                  Name="Wyrdsekai"
+                  Description="Open Wyrdsekai"
+                  Target="[INSTALLDIR]app\Wyrdsekai.Tray.exe"
+                  WorkingDirectory="INSTALLDIR"
+                  Icon="WyrdIcon.ico"
+                  IconIndex="0" />
+        <RemoveFolder Id="RemoveAppProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKMU" Key="Software\Wyrdsekai" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Desktop shortcut -> the tray shell -->
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="*">
+        <Shortcut Id="DesktopWyrd"
+                  Name="Wyrdsekai"
+                  Description="Open Wyrdsekai"
+                  Target="[INSTALLDIR]app\Wyrdsekai.Tray.exe"
+                  WorkingDirectory="INSTALLDIR"
+                  Icon="WyrdIcon.ico"
+                  IconIndex="0" />
+        <RegistryValue Root="HKMU" Key="Software\Wyrdsekai" Name="desktop" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Login autostart -> launch the tray shell on login so the node comes back
+         after a reboot. Without this the server only ran while the tray ran, and
+         the tray never auto-started (2026-07-07 reboot-persistence fix). perMachine
+         install => HKMU is HKLM\...\Run, so it starts for whoever logs in. -->
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="LoginAutostart" Guid="*">
+        <RegistryValue Root="HKMU"
+                       Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="Wyrdsekai"
+                       Type="string"
+                       Value="&quot;[INSTALLDIR]app\Wyrdsekai.Tray.exe&quot;"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Complete" Title="Wyrdsekai" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="LoginAutostart" />
+    </Feature>
+  </Product>
+</Wix>

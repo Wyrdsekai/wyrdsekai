@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    LaunchDaemon for the wyrdsekai server on macOS.
+
+    This file is a TEMPLATE: the .pkg postinstall script substitutes
+    __HOME__ at install time so the daemon can resolve the operator's
+    HOME for env files + per-user data dir, even though it runs as root.
+
+    Runs as root (no UserName/GroupName key) — AND repairs ownership of the
+    user data dir at start AND after the server exits. The root daemon
+    bootstraps skills/, vault/ etc. into __HOME__/.wyrdsekai as ROOT (found
+    2026-07-30: the user could not delete files in their own home). Root
+    itself stays, for the reason below; the sweeps make its droppings the
+    user's again. While the server is RUNNING, its live files (db-shm/-wal
+    etc.) are necessarily root-owned — the exit sweep is what guarantees the
+    tree is the user's whenever the daemon is not running. The wrapper
+    forwards SIGTERM to the server (no bare exec) so launchd shutdown still
+    reaches the JVM and the post-exit sweep gets to run; uninstall.sh does a
+    final sweep too, for paths where the daemon died uncleanly.
+
+    Reasoning:
+    - macOS Local Network Privacy (LNP) gates outbound traffic to LAN
+      addresses (192.168/16, 10/8, etc.) per-binary, per-user. A non-root
+      LaunchDaemon hits LNP exactly like a regular app — and is blocked
+      until the operator clicks "Allow" in System Settings → Privacy &
+      Security → Local Network. That UI doesn't surface for daemons,
+      so the prompt never appears and connect() returns NoRouteToHost.
+    - Root processes bypass LNP entirely. So we run as root and rely on
+      conventional Unix file permissions to keep state safe.
+    - HOME is still pointed at the installing user's home so all data
+      paths (~/.wyrdsekai/{env,node-identity.json,data,logs}) resolve
+      to the user dir. Files written by the daemon end up root-owned;
+      `wyrd` CLI invocations as the user must use `sudo` to mutate.
+
+    DO NOT install this file directly. The postinstall script handles
+    substitution + placement under /Library/LaunchDaemons/.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wyrdsekai.server</string>
+
+    <!--
+        Source the canonical /etc/wyrdsekai/wyrdsekai.conf
+        first (matches .deb layout). Legacy ~/.wyrdsekai/env is sourced second so it
+        wins on hand-tuned older installs that haven't migrated yet.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>set -a; [ -f /etc/wyrdsekai/wyrdsekai.conf ] &amp;&amp; source /etc/wyrdsekai/wyrdsekai.conf; [ -f __HOME__/.wyrdsekai/env ] &amp;&amp; source __HOME__/.wyrdsekai/env; set +a; o=$(/usr/bin/stat -f%Su __HOME__); sweep() { [ -d __HOME__/.wyrdsekai ] &amp;&amp; /usr/sbin/chown -R "$o" __HOME__/.wyrdsekai 2>/dev/null; }; sweep; trap 'kill -TERM $pid 2>/dev/null' TERM INT; /usr/local/wyrdsekai/bin/wyrdsekai-server &amp; pid=$!; wait $pid; wait $pid 2>/dev/null; rc=$?; sweep; exit $rc</string>
+    </array>
+
+    <!--
+        SPEC_RECIPES #1089: WorkingDirectory is the install root so recipe
+        YAMLs can resolve relative paths like
+        core/src/main/resources/classifier/bootstrap/{head}/seeds.jsonl
+        against the bundled assets. The daemon uses absolute paths
+        (WYRDSEKAI_DATA_DIR) for all its own state — CWD only matters for
+        the recipe subsystem's shell-out commands.
+    -->
+    <key>WorkingDirectory</key>
+    <string>/usr/local/wyrdsekai</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!--
+            Override JVM user.home explicitly because the JVM derives it from
+            getpwuid(getuid()) on macOS, ignoring the HOME env var. Running as
+            root would otherwise resolve user.home to /var/root and write
+            node-identity.json + .wyrdsekai/* under root's home instead of the
+            installing user's home, breaking the identity-file lookup that
+            register-nkey already populated. This pins it explicitly.
+        -->
+        <key>JAVA_OPTS</key>
+        <string>-Duser.home=__HOME__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/wyrdsekai-server.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/wyrdsekai-server.log</string>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,21 @@
+# Full: Navigate to model download screen from settings
+# Time: ~15s
+
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/navigate-to-settings.yaml
+
+- scrollUntilVisible:
+    element:
+      id: "manage-models-button"
+    direction: DOWN
+
+- tapOn:
+    id: "manage-models-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "model-download-screen"
+    timeout: 5000
+
+- takeScreenshot: rn_full_settings_models

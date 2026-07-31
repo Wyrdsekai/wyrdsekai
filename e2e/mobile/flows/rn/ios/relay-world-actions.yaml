@@ -1,0 +1,164 @@
+# iOS — movement + item take + item use over the relay tunnel, in ONE session.
+# Logs into the running home-server zone as a real account THROUGH relay-node (the tunnel
+# carries a full authed WS session — #1268), lands in the user's Study (home
+# landing), then exercises the three world verbs the phone must support:
+#   use journal   → Study furnishing use handler (real zone, not the local mirror)
+#   go out        → Study → Nexus     (movement)
+#   go north      → Nexus → Terminal  (movement)
+#   take logbook  → pick up the Terminal's takeable logbook (item take)
+# Deterministic proof is the home-server server log (handleGo / handleTake / use), and
+# the standalone-room-name testTag tracking the room change.
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    clearState: true
+    # iOS Keychain survives app uninstall, so secureStorage (zone bank +
+    # remembered relay password + appMode) would persist a prior successful
+    # login and auto-resume PAST the welcome screen, breaking re-runs. Wipe it
+    # at launch so the flow is idempotent without a manual `simctl erase`.
+    clearKeychain: true
+
+# An iOS "Enable Dictation?"/"Save Password?" system dialog can linger from a
+# prior run or fire on first keyboard focus and overlay the welcome screen,
+# occluding welcome-server-url. Dismiss it first (optional — absent on a clean
+# device / real hardware with dictation+autofill off).
+- tapOn:
+    text: "Not Now"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "welcome-server-url"
+    timeout: ${BOOT_TIMEOUT}
+- tapOn:
+    id: "welcome-server-url"
+- inputText: "${INVITE_URL}"
+# Dismiss the soft keyboard — on iOS it occludes welcome-connect (which sits
+# right under the input), so a tap on the button id silently lands on the
+# keyboard and setStep(1) never fires. Tap the title area, well above it.
+- tapOn:
+    point: "50%,8%"
+- tapOn:
+    id: "welcome-connect"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-login-account"
+    timeout: 10000
+- tapOn:
+    id: "welcome-login-account"
+# A wyrdphone:// invite reaches a NAT'd zone ONLY over the relay, so the
+# login-account button routes it through the zone bank → Servers screen,
+# where openZone does the real account login over the relay (#1264). The
+# zone id is baked into the invite (zone_id=home-server).
+- extendedWaitUntil:
+    visible:
+      id: "servers-screen"
+    timeout: 10000
+# Tap the zone card: the first attempt returns needs-password → inline prompt.
+- tapOn:
+    id: "server-open-home-server"
+- extendedWaitUntil:
+    visible:
+      id: "server-pw-home-server"
+    timeout: 10000
+# Invite-seeded zones carry no account name, so the username field shows too.
+- tapOn:
+    id: "server-user-home-server"
+- inputText: ${TEST_USER}
+- tapOn:
+    id: "server-pw-home-server"
+- inputText: ${TEST_PASS}
+# Dismiss the keyboard so the "Log in" submit button is unoccluded + tappable.
+- tapOn:
+    point: "50%,8%"
+- tapOn:
+    id: "server-pw-submit-home-server"
+# iOS surfaces a "Save Password?" system credential-save dialog after the
+# password submit, which overlays the room screen and occludes the
+# standalone-room-name testTag. Dismiss it ("Not Now") so the landing assertion
+# can see the room behind it. Optional: absent on a device with password-save off.
+- tapOn:
+    text: "Not Now"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+# Home landing: an account that owns a Study lands in their OWN Study over the
+# relay tunnel (residency landing), NOT the Nexus — and the REAL remote home-server
+# Study renders on-device, proving Mode 1. `go out` below then moves Study →
+# Nexus (that's where the Nexus assertion belongs — post-movement, not landing).
+- assertVisible: ".*([Ss]tudy).*"
+- takeScreenshot: ios_world_01_landed
+
+# PRIME + DISMISS the one-time iOS "Enable Dictation?" system dialog. It fires on
+# the FIRST keyboard focus in the app's lifetime and then occludes the whole
+# screen — so a "Not Now" tap placed *before* the first input focus (as the verb
+# blocks below do) misses it, and every subsequent tap lands on the dialog. The
+# simulator pref (AppleKeyboardDictationEnabled) does NOT suppress it on this
+# Xcode/iOS version even after a full reboot. So: focus the input ONCE here to
+# trigger the prompt, dismiss it, and drop the keyboard. Subsequent focuses don't
+# re-prompt, so the verb steps below run unobstructed. (No-op on real hardware
+# with dictation already configured — the taps are optional.)
+- tapOn:
+    id: "standalone-input"
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    point: "50%,8%"
+
+# Submit verbs via the keyboard return key, NOT `standalone-send-button`: the
+# RN send button is occluded / zero-bounds after the soft keyboard shows on the
+# iOS sim, so a tap on it is a silent no-op and the verb never reaches the zone
+# (live-found 2026-06-24 — `go out` opened the tunnel but no command arrived).
+# RN's input has `onSubmitEditing={enterToSend ? sendInput}` with enterToSend
+# defaulting true, so the return key dispatches the same `sendInput` path.
+
+# --- use: a Study furnishing (real zone use handler) ---
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    id: "standalone-input"
+- inputText: "use journal"
+- pressKey: "Enter"
+- takeScreenshot: ios_world_02_use
+
+# --- movement: Study -> Nexus ---
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    id: "standalone-input"
+- inputText: "go out"
+- pressKey: "Enter"
+- extendedWaitUntil:
+    visible: ".*(Nexus|nexus).*"
+    timeout: 30000
+- takeScreenshot: ios_world_03_nexus
+
+# --- movement: Nexus -> Terminal (has a takeable logbook) ---
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    id: "standalone-input"
+- inputText: "go north"
+- pressKey: "Enter"
+- extendedWaitUntil:
+    visible: ".*(Terminal|terminal).*"
+    timeout: 30000
+- takeScreenshot: ios_world_04_terminal
+
+# --- item take: pick up the logbook ---
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    id: "standalone-input"
+- inputText: "take logbook"
+- pressKey: "Enter"
+- extendedWaitUntil:
+    visible: ".*(logbook|take|pick).*"
+    timeout: 30000
+- takeScreenshot: ios_world_05_take

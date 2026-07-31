@@ -1,0 +1,25 @@
+# Tier 3: KMP — cross-zone tell.
+# Sends `tell beta.wyrdsekai hello` and expects a routing acknowledgment.
+#
+# EXPECTED FAILURE today: phone is in "local mode with remote inferenceUrl"
+# but has no WebSocket session to the server. Tells go to PhoneNode locally,
+# which has no cross-zone NATS relay. Routing fails silently. This flow
+# documents the missing pair-flow + WS connection.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/seed-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "tell beta.wyrdsekai hello from the phone"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+
+# Hopeful expected: prose echo "You tell beta.wyrdsekai: ..."
+# Today's reality: nothing happens (or local say echo).
+- extendedWaitUntil:
+    visible: ".*beta\\.wyrdsekai.*"
+    timeout: 15000
+
+- takeScreenshot: kmp_t3_cross_zone_tell

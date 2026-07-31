@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network security config for the wyrdsekai KMP Android client. Mirror of
+  the RN config — trusts system + user CAs, allows cleartext for LAN-direct
+  paths. Per-household TLS trust is established at runtime via TOFU cert
+  pinning in Ktor's HttpClient TrustManager.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+            <certificates src="user"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SPEC_MLX_VOICE_SERVER Phase 3 — LaunchAgent that auto-starts the MLX
+  voice server on user login. Runs in the user's context (NOT root) so
+  Metal acceleration and the per-user mlx-venv are reachable.
+
+  Installation: copy this file to ~/Library/LaunchAgents/ and load with
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/wyrdsekai-mlx-voice.plist
+
+  The agent invokes `wyrd start_inference voice` rather than spawning
+  mlx_lm.server directly so it inherits all path-resolution + fallback
+  logic in bin/wyrd. If MLX deps are missing wyrd will degrade gracefully
+  to llama-server. Substitutions {__USER__, __HOME__} are filled at
+  install-time by packaging/macos/build-pkg.sh postinstall.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wyrdsekai.mlx-voice</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/wyrd</string>
+        <string>start_inference</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>NetworkState</key>
+        <true/>
+    </dict>
+
+    <!-- Throttle restart attempts. mlx_lm.server load is slow; don't churn. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>USER</key>
+        <string>__USER__</string>
+        <!-- /usr/local/bin must be on PATH for symlinked `wyrd`. -->
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <!-- Phase 3+ defaults; override per-host via launchctl setenv if needed. -->
+        <key>WYRDSEKAI_MLX_VOICE_ENABLED</key>
+        <string>1</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.wyrdsekai/.mlx-voice-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.wyrdsekai/.mlx-voice-agent.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__</string>
+
+    <!-- ProcessType=Interactive keeps Metal access + avoids App Nap. -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

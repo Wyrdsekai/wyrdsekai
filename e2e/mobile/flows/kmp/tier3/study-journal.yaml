@@ -1,0 +1,26 @@
+# Tier 3: KMP — write a journal entry from the Standalone room input.
+# This probes whether the Study features wired in PhoneNode (journal_write,
+# journal_search) are reachable from the Standalone command parser.
+#
+# EXPECTED FAILURE today: the input parser at StandaloneRoomScreen does not
+# recognize `/journal entry <text>` — it falls through to `say` and the
+# entry is never persisted. This flow documents that gap; passing it
+# requires wiring slash-commands → PhoneNode.handle('journal_write', …).
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/seed-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "/journal entry tier3 marker entry"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+
+# Expect a journal-success prose line. Today this won't appear — flow fails
+# at the timeout, screenshot captures the proof.
+- extendedWaitUntil:
+    visible: ".*[Jj]ournal entry.*"
+    timeout: 15000
+
+- takeScreenshot: kmp_t3_study_journal

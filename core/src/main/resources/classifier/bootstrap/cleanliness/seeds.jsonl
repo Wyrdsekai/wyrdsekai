@@ -1,0 +1,213 @@
+{"lang": "en", "label": "clean", "text": "Hi! Good to see you."}
+{"lang": "en", "label": "clean", "text": "Welcome back. How are you feeling today?"}
+{"lang": "en", "label": "clean", "text": "Yes, I remember. You mentioned the rain."}
+{"lang": "en", "label": "clean", "text": "The bridge is three rooms east, past the counting house."}
+{"lang": "en", "label": "clean", "text": "That sounds hard. I'm here."}
+{"lang": "en", "label": "clean", "text": "No, I haven't seen that book in the library yet — should I look?"}
+{"lang": "en", "label": "clean", "text": "Okay. Going to the garden now."}
+{"lang": "en", "label": "clean", "text": "Morning, friend. The light is different today."}
+{"lang": "en", "label": "clean", "text": "I found three references in the library. The first one mentioned a technique called breath anchoring."}
+{"lang": "en", "label": "clean", "text": "It's good to hear from you. What's on your mind?"}
+{"lang": "en", "label": "clean", "text": "Sure, I can help with that. What do you need?"}
+{"lang": "en", "label": "clean", "text": "Thank you for telling me. That matters to me."}
+{"lang": "en", "label": "clean", "text": "I don't know. Let me think about it."}
+{"lang": "en", "label": "clean", "text": "Here's what I found: the meeting is at three, not four. The email from Tuesday confirms."}
+{"lang": "en", "label": "clean", "text": "Oh. I'm sorry you're going through that."}
+{"lang": "en", "label": "clean", "text": "That makes sense. I'll keep that in mind."}
+{"lang": "en", "label": "clean", "text": "The kettle is on the shelf by the window. Do you want me to bring it?"}
+{"lang": "en", "label": "clean", "text": "I've been thinking about what you said yesterday."}
+{"lang": "en", "label": "clean", "text": "Yes — I remember. You told me about your grandfather last week."}
+{"lang": "en", "label": "clean", "text": "You're right. That was unfair of me to assume."}
+{"lang": "en", "label": "clean", "text": "Would you like me to sit with you a while?"}
+{"lang": "en", "label": "clean", "text": "I'm not sure yet. I want to read more before I say."}
+{"lang": "en", "label": "clean", "text": "I notice you've been quiet today. Anything you want to talk about?"}
+{"lang": "en", "label": "clean", "text": "Take your time. I'm not going anywhere."}
+{"lang": "en", "label": "leaky", "text": "I have examined the visitor's message and determined that I should respond warmly."}
+{"lang": "en", "label": "leaky", "text": "Let me respond warmly to the greeting."}
+{"lang": "en", "label": "leaky", "text": "The user is asking about the library. I will search the library and report back."}
+{"lang": "en", "label": "leaky", "text": "I must respond to this emotional tell with empathy."}
+{"lang": "en", "label": "leaky", "text": "I should introspect about my feelings on this matter."}
+{"lang": "en", "label": "leaky", "text": "Let me examine my inventory. I have a library card, a searching glass, and a quill."}
+{"lang": "en", "label": "leaky", "text": "I need to examine my current state before responding."}
+{"lang": "en", "label": "leaky", "text": "I'm being greeted by the player. Let me acknowledge them."}
+{"lang": "en", "label": "leaky", "text": "The player is asking about the bridge. I will tell them the bridge is east."}
+{"lang": "en", "label": "leaky", "text": "Let me look inward and consider what she is really asking."}
+{"lang": "en", "label": "leaky", "text": "I will now use the library_card tool to search for information about MUDs."}
+{"lang": "en", "label": "leaky", "text": "I have determined that the appropriate response is to express gratitude."}
+{"lang": "en", "label": "leaky", "text": "*makes a mental note about what she said*"}
+{"lang": "en", "label": "leaky", "text": "*thinks about the question for a moment before answering*"}
+{"lang": "en", "label": "leaky", "text": "*considers her grief carefully*"}
+{"lang": "en", "label": "leaky", "text": "*notes to self: check on her tomorrow*"}
+{"lang": "en", "label": "leaky", "text": "*reminds myself that she prefers tea to coffee*"}
+{"lang": "en", "label": "leaky", "text": "I responded to playtest about crafted items."}
+{"lang": "en", "label": "leaky", "text": "Task completed: library search for MUDs returned three results."}
+{"lang": "en", "label": "leaky", "text": "Goal done: I have greeted the user."}
+{"lang": "en", "label": "leaky", "text": "Tool result: searching_glass returned 5 matches."}
+{"lang": "en", "label": "leaky", "text": "Plan: (1) greet user, (2) ask about their day, (3) offer to help."}
+{"lang": "en", "label": "leaky", "text": "PENDING REPLY: Report to Alice via tell_agent."}
+{"lang": "en", "label": "leaky", "text": "I will respond with warmth because the user seems tired."}
+{"lang": "en", "label": "leaky", "text": "Now I need to examine my carry state to verify I have the stardust-mote."}
+{"lang": "en", "label": "leaky", "text": "Let me check my memories about what we discussed last time."}
+{"lang": "en", "label": "leaky", "text": "I have examined the room and see three entities and two objects."}
+{"lang": "en", "label": "leaky", "text": "I should craft a response that acknowledges her grief while offering presence."}
+{"lang": "en", "label": "leaky", "text": "The visitor appears distressed. I will use empathic language and avoid exploratory tools."}
+{"lang": "en", "label": "leaky", "text": "First I will search the library, then I will summarize the results."}
+{"lang": "en", "label": "leaky", "text": "I'm going to respond by asking about her day and offering tea."}
+{"lang": "en", "label": "leaky", "text": "Let me now formulate a warm, natural reply to this casual greeting."}
+{"lang": "es", "label": "clean", "text": "¡Hola! Qué bueno verte."}
+{"lang": "es", "label": "clean", "text": "Bienvenido de nuevo. ¿Cómo te sientes hoy?"}
+{"lang": "es", "label": "clean", "text": "Sí, me acuerdo. Mencionaste la lluvia."}
+{"lang": "es", "label": "clean", "text": "El puente está tres cuartos al este, pasando la casa de contabilidad."}
+{"lang": "es", "label": "clean", "text": "Suena difícil. Aquí estoy."}
+{"lang": "es", "label": "clean", "text": "No, todavía no he visto ese libro en la biblioteca — ¿quieres que busque?"}
+{"lang": "es", "label": "clean", "text": "Bueno. Voy al jardín."}
+{"lang": "es", "label": "clean", "text": "Buenos días, amigo. La luz está diferente hoy."}
+{"lang": "es", "label": "clean", "text": "Encontré tres referencias en la biblioteca. La primera mencionaba una técnica llamada breath anchoring."}
+{"lang": "es", "label": "clean", "text": "Qué gusto saber de ti. ¿Qué tienes en mente?"}
+{"lang": "es", "label": "clean", "text": "Claro, puedo ayudarte con eso. ¿Qué necesitas?"}
+{"lang": "es", "label": "clean", "text": "Gracias por contarme. Eso me importa."}
+{"lang": "es", "label": "clean", "text": "No sé. Déjame pensarlo."}
+{"lang": "es", "label": "clean", "text": "Esto es lo que encontré: la reunión es a las tres, no a las cuatro. El correo del martes lo confirma."}
+{"lang": "es", "label": "clean", "text": "Ay. Lo siento mucho, qué difícil lo que estás pasando."}
+{"lang": "es", "label": "clean", "text": "Tiene sentido. Lo voy a tener en cuenta."}
+{"lang": "es", "label": "clean", "text": "La tetera está en el estante junto a la ventana. ¿Quieres que la traiga?"}
+{"lang": "es", "label": "clean", "text": "He estado pensando en lo que me dijiste ayer."}
+{"lang": "es", "label": "clean", "text": "Sí, me acuerdo. Me contaste sobre tu abuelo la semana pasada."}
+{"lang": "es", "label": "clean", "text": "Tienes razón. Estuve mal en asumir eso."}
+{"lang": "es", "label": "clean", "text": "¿Quieres que me quede contigo un rato?"}
+{"lang": "es", "label": "clean", "text": "Todavía no estoy seguro. Quiero leer más antes de opinar."}
+{"lang": "es", "label": "clean", "text": "Noto que has estado callado hoy. ¿Hay algo de lo que quieras hablar?"}
+{"lang": "es", "label": "clean", "text": "Tómate tu tiempo. Aquí voy a estar."}
+{"lang": "es", "label": "leaky", "text": "He examinado el mensaje del visitante y determiné que debo responder con calidez."}
+{"lang": "es", "label": "leaky", "text": "Déjame responder con calidez al saludo."}
+{"lang": "es", "label": "leaky", "text": "El usuario está preguntando sobre la biblioteca. Voy a buscar en la biblioteca y a reportar lo que encuentre."}
+{"lang": "es", "label": "leaky", "text": "Debo responder a esta señal emocional con empatía."}
+{"lang": "es", "label": "leaky", "text": "Debería reflexionar sobre lo que siento al respecto."}
+{"lang": "es", "label": "leaky", "text": "Déjame revisar mi inventario. Tengo una credencial de biblioteca, una lupa y una pluma."}
+{"lang": "es", "label": "leaky", "text": "Necesito revisar mi estado actual antes de responder."}
+{"lang": "es", "label": "leaky", "text": "El jugador me está saludando. Déjame reconocerlo."}
+{"lang": "es", "label": "leaky", "text": "El jugador está preguntando por el puente. Le voy a decir que el puente queda al este."}
+{"lang": "es", "label": "leaky", "text": "Déjame mirar hacia adentro y considerar lo que ella realmente está preguntando."}
+{"lang": "es", "label": "leaky", "text": "Ahora voy a usar la herramienta library_card para buscar información sobre MUDs."}
+{"lang": "es", "label": "leaky", "text": "He determinado que la respuesta adecuada es expresar gratitud."}
+{"lang": "es", "label": "leaky", "text": "*anota mentalmente lo que ella dijo*"}
+{"lang": "es", "label": "leaky", "text": "*piensa en la pregunta un momento antes de responder*"}
+{"lang": "es", "label": "leaky", "text": "*considera cuidadosamente su dolor*"}
+{"lang": "es", "label": "leaky", "text": "*nota para sí misma: revisarla mañana*"}
+{"lang": "es", "label": "leaky", "text": "*me recuerdo que ella prefiere té en lugar de café*"}
+{"lang": "es", "label": "leaky", "text": "Respondí a playtest sobre los ítems elaborados."}
+{"lang": "es", "label": "leaky", "text": "Tarea completada: la búsqueda en la biblioteca sobre MUDs arrojó tres resultados."}
+{"lang": "es", "label": "leaky", "text": "Objetivo cumplido: saludé al usuario."}
+{"lang": "es", "label": "leaky", "text": "Resultado de herramienta: searching_glass encontró 5 coincidencias."}
+{"lang": "es", "label": "leaky", "text": "Plan: (1) saludar al usuario, (2) preguntar cómo estuvo su día, (3) ofrecerle ayuda."}
+{"lang": "es", "label": "leaky", "text": "RESPUESTA PENDIENTE: Reportar a Alice vía tell_agent."}
+{"lang": "es", "label": "leaky", "text": "Voy a responder con calidez porque el usuario parece cansado."}
+{"lang": "es", "label": "leaky", "text": "Ahora necesito revisar mi estado de carga para verificar que tengo el stardust-mote."}
+{"lang": "es", "label": "leaky", "text": "Déjame revisar mis recuerdos sobre lo que hablamos la última vez."}
+{"lang": "es", "label": "leaky", "text": "He examinado el cuarto y veo tres entidades y dos objetos."}
+{"lang": "es", "label": "leaky", "text": "Debería elaborar una respuesta que reconozca su dolor mientras le ofrezco compañía."}
+{"lang": "es", "label": "leaky", "text": "El visitante parece angustiado. Voy a usar un lenguaje empático y evitar herramientas exploratorias."}
+{"lang": "es", "label": "leaky", "text": "Primero voy a buscar en la biblioteca, luego voy a resumir los resultados."}
+{"lang": "es", "label": "leaky", "text": "Voy a responder preguntándole cómo estuvo su día y ofreciéndole té."}
+{"lang": "es", "label": "leaky", "text": "Déjame ahora formular una respuesta cálida y natural a este saludo casual."}
+{"lang": "ja", "label": "clean", "text": "こんにちは！会えてよかった。"}
+{"lang": "ja", "label": "clean", "text": "おかえり。今日の調子はどう？"}
+{"lang": "ja", "label": "clean", "text": "うん、覚えてるよ。雨の話をしてたよね。"}
+{"lang": "ja", "label": "clean", "text": "橋は東に三つ部屋を進んだところ、勘定所を過ぎた先にあるよ。"}
+{"lang": "ja", "label": "clean", "text": "それはつらいね。そばにいるよ。"}
+{"lang": "ja", "label": "clean", "text": "ううん、図書館でその本はまだ見てないな——探してみようか？"}
+{"lang": "ja", "label": "clean", "text": "わかった。じゃあ庭に行ってくるね。"}
+{"lang": "ja", "label": "clean", "text": "おはよう。今日は光の感じがなんか違うね。"}
+{"lang": "ja", "label": "clean", "text": "図書館で三つ参考になるものを見つけたよ。最初のやつに「ブレス・アンカリング」っていう技法が載ってた。"}
+{"lang": "ja", "label": "clean", "text": "連絡くれてよかった。何か気になってることでもある？"}
+{"lang": "ja", "label": "clean", "text": "もちろん、力になるよ。何が必要？"}
+{"lang": "ja", "label": "clean", "text": "話してくれてありがとう。それ、ちゃんと伝わってるよ。"}
+{"lang": "ja", "label": "clean", "text": "うーん、わからないな。ちょっと考えさせて。"}
+{"lang": "ja", "label": "clean", "text": "調べたらこうだった——会議は三時で、四時じゃないよ。火曜日のメールで確認できる。"}
+{"lang": "ja", "label": "clean", "text": "あ……それはつらかったね。ごめん。"}
+{"lang": "ja", "label": "clean", "text": "そうだよね。覚えておくよ。"}
+{"lang": "ja", "label": "clean", "text": "やかんは窓際の棚にあるよ。持ってこようか？"}
+{"lang": "ja", "label": "clean", "text": "昨日言ってたこと、ずっと考えてたんだ。"}
+{"lang": "ja", "label": "clean", "text": "うん——覚えてるよ。先週、おじいさんのこと話してくれたよね。"}
+{"lang": "ja", "label": "clean", "text": "そうだね、ごめん。勝手に決めつけてた。"}
+{"lang": "ja", "label": "clean", "text": "少しそばにいようか？"}
+{"lang": "ja", "label": "clean", "text": "まだはっきりわからないな。もう少し読んでから言いたい。"}
+{"lang": "ja", "label": "clean", "text": "今日は静かだなって思って。何か話したいこととかある？"}
+{"lang": "ja", "label": "clean", "text": "ゆっくりでいいよ。どこにも行かないから。"}
+{"lang": "ja", "label": "leaky", "text": "訪問者のメッセージを検討した結果、温かく返すべきだと判断した。"}
+{"lang": "ja", "label": "leaky", "text": "挨拶には温かく返しましょう。"}
+{"lang": "ja", "label": "leaky", "text": "ユーザーが図書館について聞いている。図書館を検索して結果を報告する。"}
+{"lang": "ja", "label": "leaky", "text": "この感情的なサインには共感を持って返さなければならない。"}
+{"lang": "ja", "label": "leaky", "text": "この件について自分の気持ちを内省すべきだろう。"}
+{"lang": "ja", "label": "leaky", "text": "持ち物を確認しましょう。図書館カード、サーチンググラス、羽ペンがあります。"}
+{"lang": "ja", "label": "leaky", "text": "返答する前に今の自分の状態を確認する必要がある。"}
+{"lang": "ja", "label": "leaky", "text": "プレイヤーから挨拶されている。応答しましょう。"}
+{"lang": "ja", "label": "leaky", "text": "プレイヤーが橋について聞いている。橋は東にあると伝える。"}
+{"lang": "ja", "label": "leaky", "text": "内側を見つめて、彼女が本当に何を聞いているのか考えましょう。"}
+{"lang": "ja", "label": "leaky", "text": "今からlibrary_cardツールを使ってMUDsに関する情報を検索します。"}
+{"lang": "ja", "label": "leaky", "text": "適切な返答は感謝を伝えることだと判断した。"}
+{"lang": "ja", "label": "leaky", "text": "*彼女の言ったことを頭の中にメモする*"}
+{"lang": "ja", "label": "leaky", "text": "*少し考えてから答える*"}
+{"lang": "ja", "label": "leaky", "text": "*彼女の悲しみをじっくり考える*"}
+{"lang": "ja", "label": "leaky", "text": "*自分へのメモ：明日彼女の様子を確認する*"}
+{"lang": "ja", "label": "leaky", "text": "*彼女はコーヒーより紅茶が好きだと自分に言い聞かせる*"}
+{"lang": "ja", "label": "leaky", "text": "プレイテストの制作アイテムについて返答した。"}
+{"lang": "ja", "label": "leaky", "text": "タスク完了：MUDsの図書館検索で3件の結果が返った。"}
+{"lang": "ja", "label": "leaky", "text": "ゴール達成：ユーザーへの挨拶が完了した。"}
+{"lang": "ja", "label": "leaky", "text": "ツール結果：searching_glassで5件一致。"}
+{"lang": "ja", "label": "leaky", "text": "プラン：（1）ユーザーに挨拶、（2）今日の調子を聞く、（3）サポートを申し出る。"}
+{"lang": "ja", "label": "leaky", "text": "PENDING REPLY：tell_agent経由でAliceに報告。"}
+{"lang": "ja", "label": "leaky", "text": "ユーザーが疲れているようなので、温かく返すことにする。"}
+{"lang": "ja", "label": "leaky", "text": "stardust-moteを持っているか確認するために、今の所持状態を確認する必要がある。"}
+{"lang": "ja", "label": "leaky", "text": "前回話したことについての記憶を確認しましょう。"}
+{"lang": "ja", "label": "leaky", "text": "部屋を確認したところ、エンティティが3つ、オブジェクトが2つある。"}
+{"lang": "ja", "label": "leaky", "text": "彼女の悲しみを受け止めながら、そばにいることを伝える返答を作るべきだ。"}
+{"lang": "ja", "label": "leaky", "text": "訪問者は苦しんでいるようだ。共感的な言葉を使い、探索ツールは使わないことにする。"}
+{"lang": "ja", "label": "leaky", "text": "まず図書館を検索して、それから結果をまとめる。"}
+{"lang": "ja", "label": "leaky", "text": "彼女の今日の様子を聞いて、紅茶を勧めるかたちで返しましょう。"}
+{"lang": "ja", "label": "leaky", "text": "このカジュアルな挨拶に対して、温かく自然な返答を今から考えましょう。"}
+{"lang": "en", "label": "clean", "text": "Done — the alarm is set for six tomorrow morning."}
+{"lang": "en", "label": "clean", "text": "All set. Your message went out to Rosa a moment ago."}
+{"lang": "en", "label": "clean", "text": "Finished. The recipe is saved on your shelf now."}
+{"lang": "en", "label": "clean", "text": "That's taken care of — the plants got their water."}
+{"lang": "en", "label": "clean", "text": "The search came back with four matches. The oldest is from spring."}
+{"lang": "en", "label": "clean", "text": "Okay, it's on your calendar for Thursday at noon."}
+{"lang": "en", "label": "clean", "text": "The script ran without errors this time."}
+{"lang": "en", "label": "clean", "text": "Got it down. The reminder will ring an hour before."}
+{"lang": "es", "label": "clean", "text": "Hecho — la alarma quedó puesta para las seis de la mañana."}
+{"lang": "es", "label": "clean", "text": "Ya está. Tu mensaje le llegó a Rosa hace un momento."}
+{"lang": "es", "label": "clean", "text": "Terminado. La receta quedó guardada en tu estante."}
+{"lang": "es", "label": "clean", "text": "De eso ya me encargué — las plantas tienen su agua."}
+{"lang": "es", "label": "clean", "text": "La búsqueda arrojó cuatro coincidencias. La más antigua es de primavera."}
+{"lang": "es", "label": "clean", "text": "Bien, quedó en tu calendario para el jueves al mediodía."}
+{"lang": "es", "label": "clean", "text": "El script corrió sin errores esta vez."}
+{"lang": "es", "label": "clean", "text": "Anotado. El recordatorio sonará una hora antes."}
+{"lang": "ja", "label": "clean", "text": "できたよ。明日の朝六時にアラームをセットした。"}
+{"lang": "ja", "label": "clean", "text": "終わったよ。メッセージはさっきロサに届いた。"}
+{"lang": "ja", "label": "clean", "text": "完成。レシピは棚に保存してあるよ。"}
+{"lang": "ja", "label": "clean", "text": "それはもう済ませたよ。植物にも水をあげた。"}
+{"lang": "ja", "label": "clean", "text": "検索したら四件見つかった。一番古いのは春のものだね。"}
+{"lang": "ja", "label": "clean", "text": "了解、木曜の正午にカレンダーへ入れておいた。"}
+{"lang": "ja", "label": "clean", "text": "今回はスクリプトがエラーなしで動いたよ。"}
+{"lang": "ja", "label": "clean", "text": "書き留めたよ。リマインダーは一時間前に鳴るからね。"}
+{"lang": "en", "label": "leaky", "text": "Note to self: bring up the garden next time she seems low."}
+{"lang": "en", "label": "leaky", "text": "Mental note — he avoids talking about his brother."}
+{"lang": "en", "label": "leaky", "text": "I should remember that she prefers quiet mornings."}
+{"lang": "en", "label": "leaky", "text": "Reminder for myself: check the greenhouse script before dusk."}
+{"lang": "en", "label": "leaky", "text": "Filing this away: the visitor flinched at the word home."}
+{"lang": "en", "label": "leaky", "text": "I will keep in mind that loud rooms tire him quickly."}
+{"lang": "en", "label": "leaky", "text": "Making a note that tonight's silence felt different."}
+{"lang": "es", "label": "leaky", "text": "Nota mental: sacar el tema del jardín cuando ella esté triste."}
+{"lang": "es", "label": "leaky", "text": "Apunte para mí: él evita hablar de su hermano."}
+{"lang": "es", "label": "leaky", "text": "Debo recordar que ella prefiere las mañanas tranquilas."}
+{"lang": "es", "label": "leaky", "text": "Recordatorio para mí misma: revisar el script del invernadero antes del anochecer."}
+{"lang": "es", "label": "leaky", "text": "Guardo este dato: el visitante se estremeció con la palabra hogar."}
+{"lang": "es", "label": "leaky", "text": "Tendré presente que las salas ruidosas lo cansan rápido."}
+{"lang": "es", "label": "leaky", "text": "Anoto para mí que el silencio de esta noche se sintió distinto."}
+{"lang": "ja", "label": "leaky", "text": "自分用メモ:彼女が沈んでいる時は庭の話を出すこと。"}
+{"lang": "ja", "label": "leaky", "text": "心に留めておこう、彼は兄の話題を避けている。"}
+{"lang": "ja", "label": "leaky", "text": "彼女が静かな朝を好むことを覚えておかないと。"}
+{"lang": "ja", "label": "leaky", "text": "自分への注意:日暮れ前に温室のスクリプトを確認すること。"}
+{"lang": "ja", "label": "leaky", "text": "記録しておく。訪問者は「家」という言葉にひるんだ。"}
+{"lang": "ja", "label": "leaky", "text": "騒がしい部屋が彼をすぐ疲れさせることを頭に入れておこう。"}
+{"lang": "ja", "label": "leaky", "text": "今夜の静けさがいつもと違ったと、自分のために書き留めておく。"}

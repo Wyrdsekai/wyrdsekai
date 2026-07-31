@@ -1,0 +1,13 @@
+{
+  "type": "state_change",
+  "seq": 9,
+  "description": "Board updated — 2 cards moved to Done.",
+  "structured": null,
+  "blocks": [
+    {
+      "format": "codeplane.board_card",
+      "data": { "boardId": "board-7", "name": "Auth refactor", "status": "done" },
+      "fallback": "Card 'Auth refactor' moved to Done"
+    }
+  ]
+}

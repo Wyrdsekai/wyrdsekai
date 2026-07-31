@@ -1,0 +1,26 @@
+# RN Tier 3 — probe deep behaviors that the quick/full suites don't cover.
+# Each flow exercises one of the high-value gaps the user flagged:
+#   - companion-reply: real LLM round-trip via remote inferenceUrl
+#   - study-journal: journal_write reachable from room input parser
+#   - cross-zone-tell: tell routing when phone has no WS pair session
+#   - ember-library: tool-required prompt → library_card scripted item
+# Several are EXPECTED to fail today; failures document the architectural
+# gaps surfaced in the confidence audit.
+appId: org.wyrdsekai.rn
+env:
+  # Tier 3 points the phone at home-server's inference port directly (:8200), not
+  # the test-server WS port (:7099). The phone's "Use my server" flow stores
+  # this as `inferenceUrl`; the companion routes its `say` calls to
+  # /v1/chat/completions there. :7099 doesn't host inference, so without
+  # this override every companion-reply probe times out at "Wyrd considers..."
+  SERVER_URL: "http://192.0.2.105:8200"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "180000"
+---
+- runFlow: ../flows/rn/tier3/companion-reply.yaml
+- runFlow: ../flows/rn/tier3/study-journal.yaml
+- runFlow: ../flows/rn/tier3/cross-zone-tell.yaml
+- runFlow: ../flows/rn/tier3/ember-library.yaml

@@ -1,0 +1,28 @@
+# Full: KMP — navigate to household screen
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+
+- scrollUntilVisible:
+    element:
+      id: "manage-household-button"
+    direction: DOWN
+    timeout: 10000
+
+- tapOn:
+    id: "manage-household-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "household-screen"
+    timeout: 5000
+
+- takeScreenshot: kmp_full_household_screen

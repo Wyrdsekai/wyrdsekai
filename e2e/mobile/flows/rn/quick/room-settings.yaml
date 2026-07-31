@@ -1,0 +1,18 @@
+# Quick: RN — open node settings dialog
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+# Maestro's `visible:` check can't see the gear icon (small accessibility-light
+# Text inside TouchableOpacity). Use direct tapOn — its matcher walks the
+# resource-id tree without the visibility heuristic.
+- tapOn:
+    id: "standalone-settings-button"
+    retryTapIfNoChange: false
+
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+
+- takeScreenshot: rn_quick_room_settings

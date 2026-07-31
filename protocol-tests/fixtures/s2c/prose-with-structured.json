@@ -1,0 +1,27 @@
+{
+  "type": "prose",
+  "seq": 6,
+  "speaker": "narrator",
+  "text": "You enter the workshop. Tools line the walls and a forge glows in the corner.",
+  "hints": [
+    { "label": "Examine the forge", "intent": "examine_forge", "action": "say", "labelKey": null }
+  ],
+  "structured": {
+    "name": "Workshop",
+    "description": "A well-equipped workshop with a glowing forge.",
+    "exits": [
+      { "direction": "south", "targetRoom": "nexus", "label": "Back to the Nexus" }
+    ],
+    "entities": [],
+    "objects": [
+      { "id": "obj-hammer-01", "name": "hammer", "description": "A sturdy forge hammer", "takeable": true }
+    ],
+    "hints": [],
+    "properties": { "theme": "workshop", "temperature": "warm" },
+    "zone": "home"
+  },
+  "priority": "normal",
+  "lang": "en",
+  "isAiGenerated": true,
+  "blocks": []
+}

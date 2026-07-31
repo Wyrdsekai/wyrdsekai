@@ -1,0 +1,9 @@
+{
+  "accuracy": 0.847457627118644,
+  "training_examples": 705,
+  "validation_examples": 177,
+  "labels": [
+    "clean",
+    "leaky"
+  ]
+}

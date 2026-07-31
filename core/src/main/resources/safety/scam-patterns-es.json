@@ -1,0 +1,36 @@
+{
+  "locale": "es",
+  "version": 1,
+  "patterns": [
+    {
+      "regex": "(?i)(actúe ahora|acción inmediata|expira hoy|última oportunidad|urgente)",
+      "category": "URGENCY_PRESSURE",
+      "severity": "MEDIUM"
+    },
+    {
+      "regex": "(?i)(hacienda|autoridad fiscal|seguridad bancaria|soporte técnico|seguro social)",
+      "category": "AUTHORITY_IMPERSONATION",
+      "severity": "HIGH"
+    },
+    {
+      "regex": "(?i)(tarjeta de regalo|transferencia|western union|pago.*bitcoin|criptomoneda)",
+      "category": "UNUSUAL_FINANCIAL",
+      "severity": "HIGH"
+    },
+    {
+      "regex": "(?i)(ha ganado|premio|lotería|felicidades.*ganador)",
+      "category": "PRIZE_SCAM",
+      "severity": "MEDIUM"
+    },
+    {
+      "regex": "(?i)(virus detectado|computadora infectada|acceso remoto|soporte técnico)",
+      "category": "TECH_SUPPORT_SCAM",
+      "severity": "HIGH"
+    },
+    {
+      "regex": "(?i)(amor verdadero|alma gemela|necesito dinero.*viajar|varado en el extranjero)",
+      "category": "SOCIAL_EXPLOITATION",
+      "severity": "MEDIUM"
+    }
+  ]
+}

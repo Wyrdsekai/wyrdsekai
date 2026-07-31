@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "seq": 10,
+  "code": "no_exit",
+  "message": "There is no exit in that direction.",
+  "requestId": "msg-002"
+}

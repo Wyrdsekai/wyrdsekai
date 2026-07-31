@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+
+# Ruby gems (local to project via bundler)
+vendor/bundle/
+.bundle/
+
+# Generated native folders (recreated by expo prebuild)
+/ios
+/android
+
+# Metro
+.metro-health-check*
+
+# Bundle output
+*.jsbundle
+*.bundle
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# Temporary
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Xcode
+*.xcuserdata/
+
+# Native signing/certs
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.ipa
+*.cer
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts

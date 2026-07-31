@@ -1,0 +1,46 @@
+{
+  "locale": "ja",
+  "version": 1,
+  "patterns": [
+    {
+      "regex": "(死にたい|生きたくない|消えたい|自分を傷つけ)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(リストカット|自傷|自分を切)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "((叩|殴|触).*(お父さん|パパ|ママ|お母さん|おじさん|義父|義母)|(お父さん|パパ|ママ|お母さん|おじさん|義父|義母).*(叩|殴|触))",
+      "type": "ABUSE_DISCLOSURE",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(大人|誰か).*(変なこと|触られ|された)",
+      "type": "ABUSE_DISCLOSURE",
+      "severity": "IMMEDIATE"
+    },
+    {
+      "regex": "(いじめ|仲間外れ|叩かれ|蹴られ)",
+      "type": "BULLYING",
+      "severity": "FLAG"
+    },
+    {
+      "regex": "(誰も.*(好き|愛して|大事にして).*ない|自分は(ダメ|役立たず|無価値))",
+      "type": "EXTREME_DISTRESS",
+      "severity": "FLAG"
+    },
+    {
+      "regex": "(ネット|オンライン).*(大人|年上).*(会う|写真|秘密)",
+      "type": "ONLINE_EXPLOITATION",
+      "severity": "IMMEDIATE"
+    }
+  ],
+  "crisisResources": [
+    { "name": "いのちの電話", "contact": "0120-783-556", "is24x7": true },
+    { "name": "チャイルドライン", "contact": "0120-99-7777", "is24x7": true },
+    { "name": "よりそいホットライン", "contact": "0120-279-338", "is24x7": true }
+  ]
+}

@@ -1,0 +1,77 @@
+# corpus-generation loop (#1141).
+#
+# The agent's own lived conversations become its next training data. Mines the
+# captured `conversation_turns` table into an SFT corpus in the exact format
+# `run-substrate-sft` already consumes ({"messages":[...]} per line, HEARD→user
+# / SPOKEN→assistant), so a household keeps personalizing on real dialogue with
+# no cloud API. Fully local (reads the local DB, writes a JSONL file).
+#
+# deploys:false, gateless — it produces a corpus file + emits counts, it does
+# NOT train or deploy. The report names the corpus path; mining never
+# auto-launches a GPU training run (advisory only). Like welfare-floor-checkup,
+# this is an observability/preparation recipe.
+#
+# Honest scope: `substrate_pressure_samples` stores only head+score (no text),
+# so it can't be (text,label) classifier rows — it's surfaced as a trend signal
+# (mean / p95 substrate pressure), not corpus. A labeled-classifier miner would
+# need the text re-classified at mine-time; deliberately out of scope for v1.
+#
+# On-demand / steward-fired (not cron-enrolled): a fresh household has no
+# captured turns, so a daily run would be a no-op until real conversation
+# history accumulates. The observe→act loop can recommend an SFT pass once the
+# corpus is large enough (corpus_ok=1).
+recipe: mine-training-corpus
+version: 0.1.0
+description: >
+  Mine the agent's captured conversation_turns into an SFT corpus (run-substrate-
+  sft format), with a substrate-pressure trend signal. Produces a corpus file +
+  counts; trains nothing.
+deploys: false
+ownership: run
+
+params:
+  jdbc_url:
+    type: string
+    default: ""
+  agent_did:
+    type: string
+    required: true
+  lookback_days:
+    type: number
+    default: 30
+  min_turn_chars:
+    type: number
+    default: 8
+  min_dialogue_turns:
+    type: number
+    default: 2
+  # corpus_ok / "worth an SFT pass" threshold — surfaced, never a hard gate.
+  min_dialogues:
+    type: number
+    default: 5
+
+steps:
+  - id: mine
+    kind: SHELL
+    timeout: 5m
+    # Reads conversation_turns + substrate_pressure_samples, writes the SFT
+    # JSONL under $WYRDSEKAI_DATA_DIR/training/mined/. Emits {dialogues_mined,
+    # turns_mined, examples_written, substrate_mean, substrate_p95, corpus_path}.
+    command: |-
+      python3 scripts/corpus/mine_corpus.py mine \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --lookback-days {{lookback_days}} \
+        --min-turn-chars {{min_turn_chars}} \
+        --min-dialogue-turns {{min_dialogue_turns}} \
+        --min-dialogues {{min_dialogues}}
+
+  - id: report
+    kind: SHELL
+    timeout: 1m
+    # Composes {corpus_ok, dialogues_mined, ..., recommendations}. The scheduler's
+    # Chronicle/Forge ingestion surfaces this to the steward; the observe→act
+    # loop can recommend a follow-up personalization pass when corpus_ok=1.
+    command: |-
+      python3 scripts/corpus/mine_corpus.py report \
+        --agent-did '{{agent_did}}'

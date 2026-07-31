@@ -1,0 +1,49 @@
+# Quick: KMP Welcome wizard — "I have an API key" path
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+# Skip server question
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-api"
+
+# Step 2: pick OpenRouter, enter stub key, continue
+- extendedWaitUntil:
+    visible:
+      id: "welcome-provider-openrouter"
+    timeout: 5000
+- tapOn:
+    id: "welcome-provider-openrouter"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-api-key"
+    timeout: 5000
+- tapOn:
+    id: "welcome-api-key"
+- inputText: "sk-or-test-stub-not-real"
+- hideKeyboard
+
+- tapOn:
+    id: "welcome-api-done"
+
+# Lands in Study (LocalRoomScreen) — local PhoneNode boots
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: kmp_quick_first_run_api_key

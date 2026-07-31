@@ -1,0 +1,70 @@
+# Helper: KMP — REMOTE ACCOUNT LOGIN via a pasted server URL (no QR).
+#
+# Covers the post-2026-06 relay-login rework login path that NO existing flow
+# touched (the old "connect-register" flow is local "Use my server", not an
+# account login). Flow:
+#   Welcome → enter server URL → Connect (serverConnected=true)
+#         → "Log in to my account on this server" (welcome-login-account)
+#         → ConnectScreen → paste URL + username/password → Login
+#         → land in the user's remote room (their Study, per #711).
+#
+# The e2e test server pre-creates user e2e_test / testpass123.
+# Landing signal: remote RoomScreen exposes `room-input` (local standalone uses
+# `standalone-input`), so room-input is what distinguishes a real logged-in
+# remote session from the local-companion path.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+# Step 0: enter server URL + Connect — validates the server, flips to step 1
+- tapOn:
+    id: "welcome-server-url"
+- inputText: ${SERVER_URL}
+- tapOn:
+    id: "welcome-connect"
+
+# Step 1: choose the REMOTE account-login path (NOT "Use my server" = local).
+# welcome-login-account is gated behind serverConnected, so it only appears
+# once Connect succeeded above.
+- extendedWaitUntil:
+    visible:
+      id: "welcome-login-account"
+    timeout: 10000
+- tapOn:
+    id: "welcome-login-account"
+
+# ConnectScreen — the remote login surface
+- extendedWaitUntil:
+    visible:
+      id: "connect-screen"
+    timeout: 10000
+
+# server-url-input may arrive pre-filled from Welcome; set it defensively.
+- tapOn:
+    id: "server-url-input"
+- eraseText
+- inputText: ${SERVER_URL}
+
+- tapOn:
+    id: "username-input"
+- inputText: ${TEST_USER}
+- tapOn:
+    id: "password-input"
+- inputText: ${TEST_PASS}
+- hideKeyboard
+
+- tapOn:
+    id: "login-button"
+
+# Landing: remote RoomScreen (the user's Study). room-input is the reliable
+# "we are logged in remotely" signal.
+- extendedWaitUntil:
+    visible:
+      id: "room-input"
+    timeout: ${CONNECT_TIMEOUT}

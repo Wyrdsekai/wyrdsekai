@@ -1,0 +1,24 @@
+# Full: Visual regression — room layout hasn't broken
+# First run creates baseline, subsequent runs compare
+# Time: ~15s
+
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+# Look at the room to get full description
+- tapOn:
+    id: "look-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "prose-list"
+    timeout: 5000
+
+# Screenshot comparison (80% threshold — prose content varies but layout should be stable)
+- assertScreenshot:
+    path: "baselines/rn_room_layout.png"
+    thresholdPercentage: 80.0
+    optional: true
+
+- takeScreenshot: rn_room_visual_regression

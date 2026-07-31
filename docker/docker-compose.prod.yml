@@ -1,0 +1,57 @@
+# Wyrdsekai Production Deployment
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml logs -f wyrdsekai
+#
+# Prerequisites:
+#   docker build -t wyrdsekai:latest -f docker/Dockerfile .
+
+services:
+  wyrdsekai:
+    image: wyrdsekai:latest
+    container_name: wyrdsekai-server
+    restart: unless-stopped
+    ports:
+      # HTTP and WebSocket share ONE port (WYRDSEKAI_PORT, default 7070).
+      # The old WS_PORT/HTTP_PORT split never existed server-side.
+      - "${WYRDSEKAI_PORT:-7070}:7070"
+      - "${WYRDSEKAI_TELNET_PORT:-7777}:7777"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/db:/data
+      - ${WYRDSEKAI_DATA:-./data}/scripts:/app/scripts:ro
+    environment:
+      WYRDSEKAI_DATA_DIR: /data
+      WYRDSEKAI_SCRIPTS_DIR: /app/scripts
+      WYRDSEKAI_PORT: "7070"
+      WYRDSEKAI_TELNET_PORT: "7777"
+      WYRDSEKAI_NATS_URL: "nats://nats:4222"
+      JAVA_OPTS: >-
+        -Xms256m -Xmx1g
+        -XX:+UseCompactObjectHeaders
+        --enable-native-access=ALL-UNNAMED
+        -Djava.net.preferIPv4Stack=true
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7070/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  nats:
+    image: nats:2-alpine
+    container_name: wyrdsekai-nats
+    restart: unless-stopped
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    command: ["-js", "-m", "8222"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

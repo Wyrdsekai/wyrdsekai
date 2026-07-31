@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>mlech26l/ncps: PyTorch and TensorFlow implementation of NCP, LTC, and CfC — README</title>
+</head>
+<body>
+<article id="readme">
+<h1>ncps — Neural Circuit Policies</h1>
+
+<p><strong>ncps</strong> is the reference Python implementation of <em>Neural Circuit Policies</em>, including <em>Liquid Time-constant (LTC)</em> networks and the <em>Closed-form Continuous-time (CfC)</em> approximation introduced by Hasani et al. The library is the canonical companion code for the Liquid Neural Networks line of work out of MIT CSAIL.</p>
+
+<h2>Installation</h2>
+<pre><code>pip install ncps</code></pre>
+<p>Optional: <code>pip install ncps[tf]</code> for the TensorFlow backend.</p>
+
+<h2>Quick start (PyTorch)</h2>
+<pre><code>from ncps.torch import LTC
+from ncps.wirings import AutoNCP
+
+wiring = AutoNCP(units=19, output_size=4)
+model = LTC(input_size=2, units=wiring)
+</code></pre>
+<p>The <code>AutoNCP</code> wiring lays the 19 neurons out into the four-layer C. elegans-inspired topology (sensory → inter → command → motor). For most time-series tasks <code>units=19</code> is sufficient — the LTC's ODE-based dynamics replace what would otherwise need hundreds of GRU cells.</p>
+
+<h2>LTCCell vs CfCCell</h2>
+<table>
+  <thead><tr><th>Cell</th><th>Cost per step</th><th>Use when</th></tr></thead>
+  <tbody>
+  <tr><td>LTCCell</td><td>1-3 ODE solver iterations</td><td>You need provable bounded continuous-time dynamics. Slower at inference but expressive.</td></tr>
+  <tr><td>CfCCell</td><td>One closed-form formula</td><td>You want LTC-like behaviour with the wallclock cost of a vanilla RNN. Recommended default for embedded targets.</td></tr>
+  </tbody>
+</table>
+
+<h2>Examples</h2>
+<ul>
+  <li><code>examples/atari/</code> — Liquid policy trained with PPO on Atari Pong.</li>
+  <li><code>examples/autonomous_driving.ipynb</code> — 19-neuron LTC controller steering a simulated car.</li>
+  <li><code>examples/walker/</code> — DeepMind walker locomotion benchmark.</li>
+</ul>
+
+<h2>Citing</h2>
+<p>If you use ncps, please cite:</p>
+<ul>
+  <li>Hasani, Lechner, Amini, Rus, Grosu. <em>Liquid Time-constant Networks</em>. AAAI 2021. arXiv:2006.04439.</li>
+  <li>Hasani et al. <em>Closed-form Continuous-time Neural Networks</em>. Nature Machine Intelligence, 2022.</li>
+</ul>
+
+<h2>Status</h2>
+<p>Maintained. The PyTorch backend is the primary target; the TensorFlow backend follows behind. Issues and PRs welcome.</p>
+</article>
+</body>
+</html>

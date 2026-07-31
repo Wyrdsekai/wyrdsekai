@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Wyrdsekai Settings
+GenericName=Wyrdsekai node settings
+Comment=Edit node settings, start/stop the node, manage your companion
+Exec=wyrdsekai-desktop --settings
+Icon=preferences-system
+Terminal=false
+Categories=Settings;Network;
+Keywords=wyrdsekai;settings;config;node;
+StartupNotify=false

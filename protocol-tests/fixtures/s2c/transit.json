@@ -1,0 +1,8 @@
+{
+  "type": "transit",
+  "seq": 13,
+  "targetZoneId": "neighbor-zone",
+  "targetUrl": "wss://neighbor.example.com/ws",
+  "transitToken": "tt-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "message": "Departing for neighbor-zone through the Gate. Your transit token expires in 1 hour."
+}

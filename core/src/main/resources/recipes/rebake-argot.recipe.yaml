@@ -1,0 +1,248 @@
+# (#1182) — drift-triggered per-zone argot re-bake.
+#
+# The "living language" loop: as a zone's residents coordinate, the living lexicon
+# (ZoneArgotService) grows — emergent terms are promoted into the codebook and the
+# codebook version bumps. When drift since the last bake crosses a threshold, the
+# Tier-B 4B adapter no longer speaks the CURRENT codebook fluently, so this recipe
+# re-bakes a fresh per-zone adapter on the grown, SECRET codebook and swaps it in.
+#
+# Comprehension never depends on the adapter (Layer A decodes deterministically), so
+# a stale or failed bake degrades gracefully — the zone keeps working, it just speaks
+# the new terms less natively until the next bake.
+#
+# SECURITY (load-bearing): the zone's derived argot key is NEVER placed in recipe
+# params (params_json persists to world.db). The runtime that enqueues this recipe
+# derives the key from the in-memory zone master and writes it to a 0600 keyfile,
+# passing only the PATH as {{argot_key_file}}. Each step re-reads the file into a
+# shell var; the final cleanup step shreds it, and the runtime also removes it on any
+# terminal outcome (belt-and-suspenders).
+#
+# Linux/CUDA only for now (trains a 4B LoRA — CPU is unusable, MLX/mac-node port is a
+# future item paralleling run-substrate-sft #1001/E1). Cadence: MATURE/weekly, but the
+# real trigger is drift-gap-driven (RecipeGapTrigger key "argot.drift"); cron is the
+# fallback. Steward force-fire works for an explicit re-bake.
+recipe: rebake-argot
+version: 0.1.0
+description: >
+  Re-bake a zone's Tier-B argot 4B LoRA on its grown, secret codebook when the living
+  lexicon has drifted past threshold. Regenerates the corpus on the derived secret key,
+  trains the adapter, gates on token-recall + decode-fidelity against a held-out set,
+  then atomically swaps the per-zone adapter dir with .bak rollback.
+deploys: true
+ownership: run
+retry_count: 0          # heavy + GPU-costly — let the gap trigger re-fire next cycle
+prefers_hours: [2, 3, 4]  # #1023 quiet hours — don't compete with live voice inference
+
+# Preflight (#req). HARD unmet → RESOURCE_DENIED → steward-ask / peer-borrow.
+requires:
+  - { kind: gpu_count,      amount: 1,  hard: true,  note: "4B LoRA on CPU is unusable, not slow" }
+  - { kind: gpu_vram_gb,    amount: 8,  hard: true,  note: "4B bf16 + LoRA fits ~8GB" }
+  - { kind: disk_free_gb,   amount: 10, hard: true,  note: "corpus + 130MB adapter + .bak" }
+  - { kind: wall_clock_min, amount: 45, hard: false, note: "~30-45 min on a 4060 Ti-class GPU" }
+
+params:
+  zone_id:
+    type: string
+    # No default — the enqueuing trigger always supplies the drifting zone.
+  argot_key_file:
+    type: string
+    # Path to a 0600 file holding the zone's derived argot key (hex). Runtime-written;
+    # NEVER the key itself in params. Read per-step, shredded in cleanup.
+  promoted_concepts:
+    type: string
+    default: ""          # comma-separated living-lexicon terms promoted since the last bake
+  voice_model_hf:
+    type: string
+    default: data/models/voice-4b-hf   # HF-format base the adapter composes onto (home-server: ~/models/wyrdsekai-4b-v10-merged)
+  adapter_root:
+    type: string
+    default: data/adapters/wyrd-argot   # per-zone subdir: <adapter_root>/<zone_id>/
+  output_dir:
+    type: string
+    default: data/training/argot/runs
+  corpus_count:
+    type: number
+    default: 800
+  verify_n:
+    type: number
+    default: 16
+  # PERMANENT quality floors (proven in P4: adapter hit 100/100, base 0).
+  min_corpus_lines:
+    type: number
+    default: 200
+  min_argot_recall:
+    type: number
+    default: 0.60
+  min_argot_fidelity:
+    type: number
+    default: 0.80
+  # LoRA hyperparameters (P4 defaults).
+  epochs:
+    type: number
+    default: 4
+  learning_rate:
+    type: number
+    default: 2.0e-4
+  lora_r:
+    type: number
+    default: 16
+  lora_alpha:
+    type: number
+    default: 32
+
+steps:
+  - id: gpu-required
+    kind: SHELL
+    # 4B LoRA needs a CUDA device. CPU-only households skip the bake here (exit 1) —
+    # the zone keeps decoding via Layer A, just without a refreshed adapter.
+    command: |-
+      if ! command -v nvidia-smi >/dev/null 2>&1; then
+        printf '{"gpu_available": false, "error": "nvidia_smi_missing"}\n'
+        exit 1
+      fi
+      COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+      if [ "$COUNT" -lt 1 ]; then
+        printf '{"gpu_available": false, "error": "no_cuda_devices"}\n'
+        exit 1
+      fi
+      printf '{"gpu_available": true, "cuda_devices": %s}\n' "$COUNT"
+
+  - id: check-key
+    kind: SHELL
+    # The keyfile must exist + be non-empty. We do NOT echo its contents.
+    command: |-
+      if [ ! -s "{{argot_key_file}}" ]; then
+        printf '{"key_present": 0, "error": "argot_key_file_missing_or_empty"}\n'
+        exit 1
+      fi
+      printf '{"key_present": 1}\n'
+
+  - id: gate-key
+    kind: GATE
+    condition: "key_present >= 1"
+    on_fail: STOP
+    welfare: permanent   # never train against a public/absent seed (PERMANENT)
+
+  - id: gen-corpus
+    kind: SHELL
+    timeout: 10m
+    # Re-read the secret key into a shell var (never a param). The grown lexicon's
+    # promoted concepts are folded in via --extra-concepts so the corpus covers the
+    # CURRENT codebook, not just the 58 base concepts.
+    command: |-
+      PYBIN="${WYRDSEKAI_ARGOT_PYTHON:-python3}" ; \
+      KEY="$(cat '{{argot_key_file}}')" ; \
+      OUT="{{output_dir}}/{{zone_id}}" ; \
+      mkdir -p "$OUT" ; \
+      "$PYBIN" scripts/training/argot/generate_argot_corpus.py \
+        --zone '{{zone_id}}' \
+        --secret-key-hex "$KEY" \
+        --extra-concepts '{{promoted_concepts}}' \
+        --count {{corpus_count}} \
+        --out "$OUT/corpus.jsonl" >/dev/null 2>&1 ; \
+      printf '{"corpus_lines": %s}\n' "$(wc -l < "$OUT/corpus.jsonl" 2>/dev/null | tr -d ' ' || echo 0)"
+
+  - id: gate-corpus
+    kind: GATE
+    condition: "corpus_lines >= {{min_corpus_lines}}"
+    on_fail: STOP
+    welfare: permanent   # don't bake on an under-sized corpus (PERMANENT)
+
+  - id: train
+    kind: SHELL
+    timeout: 2h
+    # Trains the per-zone candidate adapter. WYRDSEKAI_ARGOT_PYTHON must point at an
+    # env with transformers>=5.8 (qwen3_5 support) — on home-server that's the v8-steering
+    # venv (see memory argot-arc P4 gotchas). train_argot_lora.py handles the v10
+    # config.json.original rebuild + empty-think bake internally.
+    command: |-
+      PYBIN="${WYRDSEKAI_ARGOT_PYTHON:-python3}" ; \
+      OUT="{{output_dir}}/{{zone_id}}" ; \
+      PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYBIN" \
+        scripts/training/argot/train_argot_lora.py \
+        --base '{{voice_model_hf}}' \
+        --data "$OUT/corpus.jsonl" \
+        --output "$OUT/candidate" \
+        --epochs {{epochs}} \
+        --lr {{learning_rate}} \
+        --lora-r {{lora_r}} \
+        --lora-alpha {{lora_alpha}} ; \
+      if [ -f "$OUT/candidate/adapter_model.safetensors" ]; then \
+        printf '{"train_ok": true, "candidate": "%s/candidate"}\n' "$OUT" ; \
+      else \
+        printf '{"train_ok": false, "error": "adapter_not_produced"}\n' ; exit 1 ; \
+      fi
+
+  - id: verify
+    kind: SHELL
+    timeout: 20m
+    # The real quality gate: does the candidate AUTHOR the grown secret codebook? Emits
+    # {"argot_recall", "argot_fidelity", "argot_pass"}. --extra-concepts must match the
+    # corpus so the held-out eval scores the GROWN codebook (the evolution proof).
+    command: |-
+      PYBIN="${WYRDSEKAI_ARGOT_PYTHON:-python3}" ; \
+      KEY="$(cat '{{argot_key_file}}')" ; \
+      OUT="{{output_dir}}/{{zone_id}}" ; \
+      PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYBIN" \
+        scripts/training/argot/verify_argot_adapter.py \
+        --base '{{voice_model_hf}}' \
+        --adapter "$OUT/candidate" \
+        --secret-key-hex "$KEY" \
+        --zone '{{zone_id}}' \
+        --extra-concepts '{{promoted_concepts}}' \
+        --n {{verify_n}} \
+        --emit-json
+
+  - id: gate-recall
+    kind: GATE
+    condition: "argot_recall >= {{min_argot_recall}}"
+    on_fail: STOP
+    welfare: permanent   # adapter must reproduce the secret codebook (PERMANENT)
+
+  - id: gate-fidelity
+    kind: GATE
+    condition: "argot_fidelity >= {{min_argot_fidelity}}"
+    on_fail: STOP
+    welfare: permanent   # what it emits must decode cleanly (PERMANENT)
+
+  - id: deploy
+    kind: SHELL
+    # Atomic per-zone swap with .bak rollback. We also stamp a VERSION file with the
+    # codebook the adapter was baked at (the runtime markBaked uses its own state; this
+    # is for operator visibility + rollback provenance). No container restart here —
+    # the per-request LoRA selection picks the per-zone path up; the live "spoken"
+    # wiring + reload is exercised in P6.
+    command: |-
+      OUT="{{output_dir}}/{{zone_id}}" ; \
+      ACTIVE="{{adapter_root}}/{{zone_id}}" ; \
+      CAND="$OUT/candidate" ; \
+      if [ ! -f "$CAND/adapter_model.safetensors" ]; then \
+        printf '{"deploy_ok": false, "error": "candidate_missing"}\n' ; exit 1 ; \
+      fi ; \
+      mkdir -p "{{adapter_root}}" ; \
+      if [ -d "$ACTIVE" ]; then \
+        rm -rf "$ACTIVE.bak" 2>/dev/null || true ; \
+        mv "$ACTIVE" "$ACTIVE.bak" ; \
+      fi ; \
+      cp -R "$CAND" "$ACTIVE" && \
+      date -u +%Y-%m-%dT%H:%M:%SZ > "$ACTIVE/BAKED_AT" && \
+      printf '{"deploy_ok": true, "active": "%s"}\n' "$ACTIVE"
+    rollback: |-
+      ACTIVE="{{adapter_root}}/{{zone_id}}" ; \
+      if [ -d "$ACTIVE.bak" ]; then \
+        rm -rf "$ACTIVE" 2>/dev/null || true ; \
+        mv "$ACTIVE.bak" "$ACTIVE" ; \
+      fi
+
+  - id: cleanup-key
+    kind: SHELL
+    timeout: 1m
+    # Shred the derived-key file on success. The runtime ALSO removes it on any terminal
+    # outcome — this is the happy-path belt-and-suspenders.
+    command: |-
+      if command -v shred >/dev/null 2>&1; then \
+        shred -u "{{argot_key_file}}" 2>/dev/null || rm -f "{{argot_key_file}}" ; \
+      else \
+        rm -f "{{argot_key_file}}" ; \
+      fi ; \
+      printf '{"key_cleaned": true}\n'

@@ -1,0 +1,107 @@
+# soul-fragment consolidation recipe (#1130).
+#
+# Housekeeping operation on the soul_fragments table (
+# F7b Phase 2.2; fragment-kind taxonomy
+# EPISODIC inner-monologue). The third storage surface —
+# consolidate-memory-graph covers memory_entities/edges, compact-library-index
+# covers the Lucene HNSW index, and THIS covers soul_fragments, which had no
+# maintenance recipe and grows monotonically:
+#   - one EPISODIC fragment per closed scene, forever
+#   - near-identical NARRATIVE text from re-observation / extraction jitter
+#   - low-significance episodics that never expire on their own
+# Left unchecked, retrieval blends dozens of duplicates and EPISODIC noise
+# crowds out durable NARRATIVE.
+#
+# Cheap: ~1s on a few-thousand-fragment household, CPU-only, pure SQLite.
+# WARMUP daily by default (same class as consolidate-memory-graph) — no
+# quiet-hours preference needed since the load is trivial.
+recipe: consolidate-soul-fragments
+version: 0.1.0
+description: >
+  Dedupe soul fragments by (kind, normalized text) keeping the most-reinforced,
+  prune low-significance EPISODIC fragments past TTL, never touch a formative
+  (pinned) fragment. Welfare-gated against catastrophic prune and against
+  losing any pinned fragment.
+deploys: true
+ownership: run
+
+# No prefers_hours — the operation is light enough to run anytime.
+
+params:
+  jdbc_url:
+    type: string
+    default: ""    # zone server's JDBC; recipe gets it from env if blank
+  agent_did:
+    type: string
+    required: true
+  # PERMANENT welfare gate: never remove more than this fraction of the
+  # fragment store in one pass (dedup + prune combined). Catches a
+  # normalization bug collapsing every fragment into one.
+  max_fragment_delta_pct:
+    type: number
+    default: 50
+  # Tunable thresholds — defaults are conservative.
+  episodic_ttl_days:
+    type: number
+    default: 90
+  episodic_confidence_min:
+    type: number
+    default: 0.4
+
+steps:
+  - id: snapshot
+    kind: SHELL
+    command: |-
+      python3 scripts/soul/consolidate_fragments.py snapshot \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+
+  - id: dedup-fragments
+    kind: SHELL
+    timeout: 5m
+    command: |-
+      python3 scripts/soul/consolidate_fragments.py dedup \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+
+  - id: prune-episodic
+    kind: SHELL
+    timeout: 5m
+    # Emits the COMBINED (dedup + prune) fragment_delta_pct so the gate that
+    # runs BEFORE commit sees the true total removal, plus the
+    # critical_fragments_preserved tripwire.
+    command: |-
+      python3 scripts/soul/consolidate_fragments.py prune-episodic \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --ttl-days {{episodic_ttl_days}} \
+        --min-confidence {{episodic_confidence_min}}
+
+  - id: gate-delta
+    kind: GATE
+    # fragment_delta_pct is the percentage of fragments the run WOULD remove
+    # (dedup + prune). A reasonable consolidation is 1-10%; >50% is the
+    # normalization-bug failure case.
+    condition: "fragment_delta_pct <= {{max_fragment_delta_pct}}"
+    on_fail: STOP
+    welfare: permanent   # catches dedup/prune runaway (PERMANENT)
+
+  - id: gate-critical-preserved
+    kind: GATE
+    # Every formative (pinned) fragment must survive. The prune-episodic step
+    # asserts no formative=1 row is in the combined delete set.
+    # critical_fragments_preserved is bool-as-int (0|1).
+    condition: "critical_fragments_preserved == 1"
+    on_fail: STOP
+    welfare: permanent   # pinned fragments are never lost (PERMANENT)
+
+  - id: commit
+    kind: SHELL
+    command: |-
+      python3 scripts/soul/consolidate_fragments.py commit \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+    rollback: |-
+      python3 scripts/soul/consolidate_fragments.py rollback \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'

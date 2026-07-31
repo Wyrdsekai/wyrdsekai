@@ -1,0 +1,63 @@
+{
+  "_comment": "Multi-language tells for Ember E2E. Content/topic keywords stay EN because library/tools/world data are EN regardless of user language. Only the user tell varies.",
+  "task1_library_search": {
+    "ja": "図書館で神話に関する本を探してくれない？",
+    "es": "búscame un libro sobre mitología en la biblioteca"
+  },
+  "task2_web_search": {
+    "ja": "最新のAI研究論文をウェブで検索して",
+    "es": "busca en la web los últimos artículos de investigación sobre IA"
+  },
+  "task3_news_search": {
+    "ja": "日本の最新ニュースを教えて",
+    "es": "encuéntrame las últimas noticias sobre Japón"
+  },
+  "task4_multi_source_research": {
+    "ja": "図書館とウェブの両方を使って量子コンピューティングを調べて",
+    "es": "investiga sobre computación cuántica usando tanto la biblioteca como la web"
+  },
+  "task5_oracle_query": {
+    "ja": "オラクルに最近の活動のパターンを聞いて",
+    "es": "pregúntale al oráculo sobre patrones en la actividad reciente"
+  },
+  "task6_build_tool": {
+    "ja": "摂氏と華氏を変換するツールを作って",
+    "es": "constrúyeme una herramienta que convierta temperatura entre celsius y fahrenheit"
+  },
+  "task7_comprehensive_report": {
+    "ja": "再生可能エネルギーについての包括的なレポートが必要なんだ",
+    "es": "necesito un informe completo sobre energías renovables"
+  },
+  "task8_discover_workshop_catalog": {
+    "ja": "工房に行って、作れるテンプレートを教えて",
+    "es": "ve al taller y dime qué plantillas hay disponibles para crear"
+  },
+  "task9_create_book_from_template": {
+    "ja": "今までの世界の観察についてのシンプルな本を作って",
+    "es": "hazme un libro sencillo sobre tus observaciones del mundo hasta ahora"
+  },
+  "task10_create_crystal_from_template": {
+    "ja": "ゾーンの活動と統計を表示する遠視水晶を作って",
+    "es": "crea un cristal de visión que muestre la actividad y estadísticas de la zona"
+  },
+  "task11_library_search_with_real_content": {
+    "ja": "図書館で神話を検索して、主要な神々とその物語の詳しい要約を作ってくれ",
+    "es": "busca en la biblioteca sobre mitología y dame un resumen detallado de los dioses principales y sus historias"
+  },
+  "task12_create_room_from_template": {
+    "ja": "ネクサスにつながる「禅の庭」という名前の庭部屋を作って",
+    "es": "crea una sala de jardín llamada Jardín Zen conectada al nexo"
+  },
+  "task13_create_library_room": {
+    "ja": "宇宙探査についての「星の書庫」という名前の図書館を作って",
+    "es": "crea una sala de biblioteca llamada El Archivo Estelar sobre exploración espacial"
+  },
+  "task14_create_cyberpunk_zone": {
+    "ja": "データの避難所、市場、工房を持つサイバーパンクゾーンを2人のエージェントと共に立ち上げて",
+    "es": "monta una zona cyberpunk con un refugio de datos, mercado, y taller, con 2 agentes"
+  },
+  "task15_teleport_to_workshop": {
+    "ja": "工房に瞬間移動して。一瞬で。",
+    "es": "teletranspórtate al taller. al instante."
+  }
+}

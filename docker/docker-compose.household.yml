@@ -1,0 +1,105 @@
+# Wyrdsekai Multi-Node Household
+#
+# Simulates a 3-node household for development/testing.
+# All nodes share the same NATS server for Between communication.
+#
+# Usage:
+#   docker compose -f docker-compose.household.yml up -d
+#   docker compose -f docker-compose.household.yml logs -f
+
+services:
+  nats:
+    image: nats:2-alpine
+    container_name: wyrdsekai-household-nats
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  oracle:
+    build:
+      context: ../oracle-core
+      dockerfile: docker/Dockerfile
+    container_name: wyrdsekai-oracle
+    restart: unless-stopped
+    ports:
+      - "7073:7073"
+    volumes:
+      - ./data/oracle:/data
+    environment:
+      ORACLE_DATA_DIR: /data
+      ORACLE_PORT: "7073"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7073/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  node1:
+    image: wyrdsekai:latest
+    container_name: wyrdsekai-node1
+    restart: unless-stopped
+    ports:
+      - "7070:7070"
+      - "7777:7777"
+      - "8080:8080"
+    volumes:
+      - ./data/node1:/data
+    environment:
+      WYRDSEKAI_DATA_DIR: /data
+      WYRDSEKAI_NATS_URL: "nats://nats:4222"
+      WYRDSEKAI_NODE_NAME: "node1"
+      WYRDSEKAI_ZONE_ID: "household"
+      ORACLE_URL: "http://oracle:7073"
+      JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseCompactObjectHeaders --enable-native-access=ALL-UNNAMED"
+    depends_on:
+      nats:
+        condition: service_healthy
+      oracle:
+        condition: service_healthy
+
+  node2:
+    image: wyrdsekai:latest
+    container_name: wyrdsekai-node2
+    restart: unless-stopped
+    ports:
+      - "7071:7070"
+      - "7778:7777"
+      - "8081:8080"
+    volumes:
+      - ./data/node2:/data
+    environment:
+      WYRDSEKAI_DATA_DIR: /data
+      WYRDSEKAI_NATS_URL: "nats://nats:4222"
+      WYRDSEKAI_NODE_NAME: "node2"
+      WYRDSEKAI_ZONE_ID: "household"
+      JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseCompactObjectHeaders --enable-native-access=ALL-UNNAMED"
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  node3:
+    image: wyrdsekai:latest
+    container_name: wyrdsekai-node3
+    restart: unless-stopped
+    ports:
+      - "7072:7070"
+      - "7779:7777"
+      - "8082:8080"
+    volumes:
+      - ./data/node3:/data
+    environment:
+      WYRDSEKAI_DATA_DIR: /data
+      WYRDSEKAI_NATS_URL: "nats://nats:4222"
+      WYRDSEKAI_NODE_NAME: "node3"
+      WYRDSEKAI_ZONE_ID: "household"
+      JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseCompactObjectHeaders --enable-native-access=ALL-UNNAMED"
+    depends_on:
+      nats:
+        condition: service_healthy

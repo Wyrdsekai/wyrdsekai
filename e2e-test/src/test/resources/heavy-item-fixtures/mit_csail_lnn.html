@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>"Liquid" machine-learning system adapts to changing conditions | MIT CSAIL</title>
+</head>
+<body>
+<article>
+<header>
+  <h1>"Liquid" machine-learning system adapts to changing conditions</h1>
+  <p class="byline">MIT Computer Science &amp; Artificial Intelligence Laboratory — January 28, 2021</p>
+</header>
+
+<section>
+<p>MIT researchers have developed a type of neural network that learns on the job, not just during its training phase. The flexible algorithms — dubbed "liquid" networks — change their underlying equations to continuously adapt to new data inputs, matching what real-world circuits look like at the cellular level. The advance could aid decision-making based on data streams that change over time, including those involved in medical diagnosis and autonomous driving.</p>
+
+<p>Lead author Ramin Hasani is a postdoc at CSAIL working with Daniela Rus, the Andrew and Erna Viterbi Professor of Electrical Engineering and Computer Science. "We can build neural network models that go beyond what is possible today," Hasani says.</p>
+</section>
+
+<section>
+<h2>From C. elegans to autonomous drones</h2>
+<p>Inspired by the C. elegans nematode worm — whose 302-neuron nervous system can perform sophisticated navigation, foraging, and learning — Hasani's team built compact networks of just 19 neurons that nonetheless steer simulated cars and quad-rotor drones through unseen forests. The networks were trained on roughly 20,000 trajectories, far less than the convolutional baselines need.</p>
+<p>The team calls the architecture <strong>Liquid Time-constant (LTC) networks</strong>. Each neuron's response speed — the time constant of its differential equation — depends on the input it sees. That input-dependent dynamic is what gives the network its <em>liquid</em> character.</p>
+</section>
+
+<section>
+<h2>Continuous-time, ODE-based</h2>
+<p>Unlike a standard recurrent neural network (RNN), an LTC neuron is described by an ordinary differential equation. The hidden state is a continuous quantity that the network solves for at each time step using a numerical ODE solver. That gives the network three properties that the team's experiments exploit:</p>
+<ol>
+  <li><strong>Causality.</strong> The model can reason about cause and effect in time-series data.</li>
+  <li><strong>Robustness.</strong> The networks are less brittle to noisy or missing inputs.</li>
+  <li><strong>Compactness.</strong> Sparse 19-neuron LTC controllers replicate behaviour that would otherwise require thousands of fixed-rate neurons.</li>
+</ol>
+</section>
+
+<section>
+<h2>Why "liquid"?</h2>
+<p>The metaphor comes from the way the network's parameters flow at runtime. A trained LTC keeps adjusting its time constants in response to incoming data, making it adaptable in environments the training set never covered. In the team's drone demos, that meant a controller trained over open lakes flew successfully through forests it had never seen.</p>
+</section>
+</article>
+</body>
+</html>

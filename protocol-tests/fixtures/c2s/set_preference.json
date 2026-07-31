@@ -1,0 +1,6 @@
+{
+  "type": "set_preference",
+  "id": "msg-010",
+  "key": "locale",
+  "value": "es"
+}

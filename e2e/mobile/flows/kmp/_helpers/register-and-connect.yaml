@@ -1,0 +1,33 @@
+# Helper: KMP — Welcome → enter server URL → "Use my server" → land in room
+# (Welcome wizard now precedes any onboarding — see WyrdApp.kt appMode==null path.
+#  The test server pre-creates user e2e_test/testpass123.)
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+# Step 0: enter server URL + tap Connect
+- tapOn:
+    id: "welcome-server-url"
+- inputText: ${SERVER_URL}
+- tapOn:
+    id: "welcome-connect"
+
+# Step 1: pick "Use my server"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-server"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-server"
+
+# Companion booting up — LocalRoomScreen surfaces standalone-room-name
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}

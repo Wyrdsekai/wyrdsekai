@@ -1,0 +1,31 @@
+# RN Full Suite (~10min) — local-mode architecture (Welcome → Standalone)
+appId: org.wyrdsekai.rn
+env:
+  SERVER_URL: "http://192.0.2.105:7099"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "30000"
+---
+# Smoke — app launches and wizard navigation
+- runFlow: ../flows/rn/smoke/app-launches.yaml
+- runFlow: ../flows/rn/smoke/mode-selection.yaml
+
+# Quick — first-run skip, connect, room basics
+- runFlow: ../flows/rn/quick/first-run-skip.yaml
+- runFlow: ../flows/rn/quick/first-run-local.yaml
+- runFlow: ../flows/rn/quick/connect-register.yaml
+- runFlow: ../flows/rn/quick/room-say.yaml
+- runFlow: ../flows/rn/quick/room-navigation.yaml
+- runFlow: ../flows/rn/quick/room-inventory.yaml
+- runFlow: ../flows/rn/quick/room-settings.yaml
+
+# Full — explore the world, navigate rooms, interact, come back
+- runFlow: ../flows/rn/full/explore-and-return.yaml
+
+# Full — switch-mode reconnect cycle (navigates the 3-step FirstRunScreen wizard)
+- runFlow: ../flows/rn/full/disconnect-reconnect.yaml
+
+# Full — standalone-mode MUD conformance (§2.2 / §4 / §7.4)
+- runFlow: ../flows/rn/full/standalone-conformance.yaml

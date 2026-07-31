@@ -1,0 +1,9 @@
+# `git archive` exclusions for OSS source releases.
+#
+# Everything matched by export-ignore is omitted when producing a source tarball
+# via `git archive` (e.g. the OSS release artifact). Private research that
+# doesn't belong in the open-source drop lives here.
+
+# Research / soul experiments — live-LLM gated, not part of :core:test.
+# See core/build.gradle.kts experimentTest source set.
+core/src/experimentTest/     export-ignore

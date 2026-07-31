@@ -1,0 +1,79 @@
+# Full: KMP — Standalone-mode MUD conformance on real Android emulator
+#
+# Exercises PhoneNode.examine/.rename/.drop + LocalRoomScreen parser
+# end-to-end against a real Android emulator (no server, no API key).
+# Mirrors PhoneNodeStandaloneConformanceTest.kt — the desktop-target unit
+# tests verify the engine; this verifies the screen + engine on Android.
+#
+# Note on assertions: Compose Material 3 Text nodes report zero bounds
+# via uiautomator's accessibility tree, which makes Maestro's `text:`
+# matcher unreliable on this screen. The unit tests already verify the
+# strings; this flow asserts on testTag-keyed structural elements
+# (prose-list survives each action) + screenshots for visual evidence.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/standalone-onboard.yaml
+
+- takeScreenshot: kmp_standalone_conf_00_landed
+
+# Default playerName "You" — examine me must not crash.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine me"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_standalone_conf_01_examine_me_default
+
+# §7.4 — rename me Tester.
+- tapOn:
+    id: "standalone-input"
+- inputText: "rename me Tester"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_standalone_conf_02_rename_me
+
+# §7.4 reflection — examine me must now show new name.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine me"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_standalone_conf_03_examine_me_renamed
+
+# §7.4 rejection — rename me with no name.
+- tapOn:
+    id: "standalone-input"
+- inputText: "rename me"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_standalone_conf_04_rename_me_empty
+
+# §2.2 — examine for a thing that doesn't exist.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine zzzNothingHere"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_standalone_conf_05_examine_unknown
+
+# §4 — drop nonsense must not crash the screen.
+- tapOn:
+    id: "standalone-input"
+- inputText: "drop zzzGhostObject"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-input"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_standalone_conf_06_drop_nonsense

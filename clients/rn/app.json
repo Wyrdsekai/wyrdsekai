@@ -1,0 +1,53 @@
+{
+  "name": "WyrdsekaiRN",
+  "displayName": "Wyrdsekai",
+  "expo": {
+    "name": "Wyrdsekai",
+    "slug": "wyrdsekai",
+    "version": "0.1.0",
+    "scheme": "wyrdsekai",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "platforms": [
+      "android",
+      "ios",
+      "web"
+    ],
+    "android": {
+      "package": "org.wyrdsekai.rn",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2A1245"
+      },
+      "permissions": [
+        "INTERNET"
+      ],
+      "usesCleartextTraffic": true
+    },
+    "ios": {
+      "bundleIdentifier": "org.wyrdsekai.rn",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d73cc92b-f798-421e-8a09-a002927b4d93"
+      }
+    },
+    "plugins": [
+      "expo-sqlite"
+    ]
+  }
+}

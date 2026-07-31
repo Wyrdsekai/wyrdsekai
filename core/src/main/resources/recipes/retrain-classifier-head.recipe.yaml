@@ -1,0 +1,323 @@
+# first recipe (step-7, safe: CPU, reversible, self-validating).
+# Retrains one ClassifierArm head (sklearn LR on embeddings → ONNX) and deploys it
+# ONLY if it clears a metric gate AND a regression gate. Gates are enforced by the
+# Wyrdsekai runtime, never by the backend that runs the scripts.
+#
+# Step shapes: SHELL/GATE run in-runtime; BACKEND steps (expand-corpus, regression-probe,
+# smoke) are handed to the configured coding backend (Pi default) via the BackendDispatcher.
+# With no backend wired they short-circuit to NEEDS_BACKEND — the recipe needs a familiar
+# to do its own ML legwork, which is the point (V6 reframe).
+recipe: retrain-classifier-head
+version: 0.2.0
+description: >
+  Retrain one routing classifier head and deploy iff val_accuracy >= min_accuracy
+  and the over-routing regression probe still passes. Reversible (backs up prior ONNX).
+deploys: true
+ownership: run
+
+# #1023 — quiet-hours preference. The setfit-pretrain step is GPU-preferred
+# (~50s on RTX 4060 Ti, 10-20min on CPU fallback) — prefer firing during
+# household quiet hours so it doesn't compete with active use. Local time
+# (zone server JVM default TZ). The cron trigger respects this preference
+# UNLESS the run is stale-deferred (now - lastTerminal > 2 × cadenceTier),
+# which prevents indefinite skip when the machine is off during the window.
+prefers_hours: [2, 3, 4]
+# Resource requisites (#req) — preflight-checked before step 1.
+requires:
+  - { kind: gpu_count,      amount: 1,  hard: false, note: "SetFit retrain runs on CPU but is far faster on GPU" }
+  - { kind: ram_gb,         amount: 8,  hard: true }
+  - { kind: disk_free_gb,   amount: 10, hard: true }
+  - { kind: wall_clock_min, amount: 30, hard: false }
+
+params:
+  head:
+    type: string
+    required: true          # e.g. "task_present"
+  min_accuracy:
+    type: number
+    default: 0.80
+  pretrained_dir:
+    type: string
+    default: core/src/main/resources/classifier/pretrained
+  # Local-first expansion knobs (added 2026-05-25 for release-bake). At
+  # variants_per_seed=20 the local 9B produces ~940 lines (~2h on CPU);
+  # the release-bake passes variants_per_seed=4 (~190 lines, ~15min)
+  # paired with min_corpus_lines=150 so the gate clears against the
+  # smaller-but-real corpus. Runtime invocations from a CompanionActor
+  # keep the production defaults.
+  variants_per_seed:
+    type: number
+    default: 20
+  min_corpus_lines:
+    type: number
+    default: 800
+  # Over-routing probe threshold (OPEN-R5 closure). Production scheduler
+  # runs (variants_per_seed=20, ~800 corpus lines) typically miss ≤6 of 90
+  # anchors (30 EN + 30 ES + 30 JA). Build-time bake uses a smaller corpus
+  # and tolerates more — RecipeBakeMain passes max_overrouting_misses=30
+  # to keep the bake unblocked. Lower this to tighten the gate on a
+  # head-by-head basis.
+  max_overrouting_misses:
+    type: number
+    default: 6
+  # Per-language fail threshold (multilingual coverage, 2026-05-25). When
+  # set, each language's miss count must stay ≤ this value — catches a
+  # silent regression in one language even when overall totals stay under
+  # budget. Production default 3/30 per lang; bake passes 12/30 because
+  # the smaller corpus produces a coarser per-language classifier.
+  max_overrouting_misses_per_lang:
+    type: number
+    default: 3
+  # SetFit pretrain (2026-05-25, #1018). The setfit-pretrain step
+  # contrastively fine-tunes the shared encoder on ALL heads' seeds before
+  # training this head's MLP. Replaces the frozen-embedding ceiling (8/90
+  # baseline misses on substrate-sensitive task_present anchors) with a
+  # task-tuned encoder (0/90). Cost: ~50s on RTX 4060 Ti, ~10-20min CPU.
+  # The step is wrapped in `|| true` so a missing-GPU / OOM / dep-error
+  # failure falls through to the legacy frozen-embedding path (the train
+  # step probes for the encoder file and only uses it if present).
+  setfit_epochs:
+    type: number
+    default: 1
+  setfit_encoder_path:
+    type: string
+    # /tmp/setfit-encoder-q8.onnx lives outside the source tree on purpose
+    # — it's scratch space for the recipe run. The deploy-encoder step
+    # promotes the file to core/src/main/resources/models/.
+    default: /tmp/setfit-encoder-q8.onnx
+  max_overrouting_misses_per_lang_map:
+    type: string
+    # PER-LANGUAGE non-regression thresholds, e.g. "en:16,es:16,ja:8".
+    # RecipeBakeMain fills this from the SHIPPED head's own per-language
+    # over-routing (baseline_lang + 1), so a strong language can't silently
+    # regress up to the worst language's budget. Empty = fall back to the
+    # single {{max_overrouting_misses_per_lang}} aggregate threshold.
+    default: ""
+  classifier:
+    type: string
+    # 2026-07-21: controlled A/B (encoder fixed) across all four heads —
+    # LogisticRegression(class_weight="balanced") beats MLP(128) on every
+    # BINARY head's over-routing probe (cleanliness 21 vs 26, task_present
+    # 23 vs 35, substrate_present 21 vs 38 misses) because MLPClassifier has
+    # NO class_weight and over-fires on the imbalanced expanded corpus. The
+    # multi-class request_type head keeps MLP — LR gives up ~5pp of the
+    # non-linear separation an 8-way split needs (0.53 vs 0.58 val_acc).
+    # RecipeBakeMain sets this per head (binary→lr, multiclass→mlp).
+    default: mlp
+
+steps:
+  - id: check-seeds
+    kind: SHELL
+    command: "test $(wc -l < core/src/main/resources/classifier/bootstrap/{{head}}/seeds.jsonl) -ge 40"
+
+  - id: clean-corpus
+    # 2026-07-21: DELETE any stale expanded.jsonl before the (goose-driven)
+    # expand step. The expand-corpus success_contract is only "file exists",
+    # so a leftover corpus from a prior run made the step "pass" WITHOUT the
+    # agent regenerating it — the bake then trained on stale data (English-
+    # heavy, no per-language variants). Removing it first means "exists" now
+    # proves "regenerated"; if the agent fails to run expand_corpus.py the
+    # next step fails LOUD instead of silently using old data.
+    kind: SHELL
+    command: "rm -f core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl ; printf '{\"corpus_cleaned\": true}\\n'"
+
+  - id: expand-corpus
+    kind: BACKEND
+    # A2-style explicit prompt: the items-as-tools preamble that wraps every
+    # backend prompt biases the model toward writing scripted-item .js files.
+    # An A2-style "Use the shell tool. Run this exact command: …" overrides
+    # that bias (proven on 2026-05-24 in RetrainClassifierHeadLiveE2ETest).
+    prompt: >
+      Use the shell tool. Run this exact command:
+      python3 scripts/classifier/expand_corpus.py
+      --seeds core/src/main/resources/classifier/bootstrap/{{head}}/seeds.jsonl
+      --output core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl
+      --backend local
+      --variants-per-seed {{variants_per_seed}}
+      Then stop. No other commands.
+    tools: [shell]
+    success_contract: "file:core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl exists"
+
+  - id: count-corpus
+    kind: SHELL
+    command: |-
+      printf '{"expanded_lines": %s}\n' "$(wc -l < core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl | tr -d ' ')"
+
+  - id: gate-corpus
+    kind: GATE
+    condition: "expanded_lines >= {{min_corpus_lines}}"
+    on_fail: STOP
+    welfare: permanent   # OPEN-R4: load-bearing minimum-corpus floor.
+
+  - id: setfit-pretrain
+    # (2026-05-25, #1018). SHELL with explicit 30m timeout
+    # (#1012). The contrastive fine-tune is GPU-preferred — RTX 4060 Ti
+    # finishes in ~50s, but CPU fallback can take 10-20min. The whole
+    # command is wrapped in `|| true` and emits a setfit_pretrained
+    # flag on success — so missing-GPU / OOM / dep-error gracefully
+    # falls through to the legacy frozen-embedding path (the next
+    # train step probes for the encoder file).
+    #
+    # FROZEN-ENCODER MODE (2026-07-21): when {{setfit_encoder_path}} is EMPTY
+    # the step is a NO-OP and train/probe/deploy all use the COMMITTED encoder
+    # (core/src/main/resources/models/…-setfit-q8.onnx). This is what the
+    # build-time bake does — the old per-head fresh encoder was trained-and-
+    # gated but NEVER DEPLOYED (one shared committed encoder path), so the
+    # deployed head ran against a DIFFERENT encoder than it was gated in.
+    # Freezing makes the bake gate in the exact space the artifact runs in.
+    kind: SHELL
+    timeout: 30m
+    command: |-
+      if [ -z "{{setfit_encoder_path}}" ]; then \
+        printf '{"setfit_pretrained": false, "frozen_encoder": true}\n'; \
+        exit 0; \
+      fi ; \
+      ( SETFIT_PY=scripts/training/.venv-setfit/bin/python; [ -x "$SETFIT_PY" ] || SETFIT_PY=python3; \
+        "$SETFIT_PY" scripts/classifier/train_setfit.py \
+          --output-dir /tmp/setfit \
+          --epochs {{setfit_epochs}} 1>&2 \
+        && "$SETFIT_PY" scripts/classifier/export_setfit_encoder_onnx.py \
+          --encoder /tmp/setfit/encoder \
+          --output {{setfit_encoder_path}} \
+          --quantize int8 1>&2 \
+        && printf '{"setfit_encoder_path": "%s", "setfit_pretrained": true}\n' "{{setfit_encoder_path}}" \
+      ) || printf '{"setfit_pretrained": false}\n'
+
+  - id: train
+    kind: SHELL
+    # Embedding path: when setfit-pretrain ran, use its tuned encoder;
+    # otherwise train_classifier.py falls back to its bundled default
+    # (PARAPHRASE_L12 at core/src/main/resources/models/...).
+    command: |-
+      rm -f /tmp/{{head}}.onnx /tmp/{{head}}.labels.json /tmp/{{head}}.val-accuracy.json ; \
+      EMBED_FLAG="" ; \
+      if [ -f "{{setfit_encoder_path}}" ]; then \
+        EMBED_FLAG="--embedding {{setfit_encoder_path}} --embedding-label paraphrase-multilingual-MiniLM-L12-v2-setfit" ; \
+      fi ; \
+      python scripts/classifier/train_classifier.py \
+        --corpus core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl \
+        --output /tmp/{{head}}.onnx \
+        --labels-output /tmp/{{head}}.labels.json \
+        --classifier {{classifier}} \
+        $EMBED_FLAG 1>&2 \
+      && SIDE=/tmp/{{head}}.val-accuracy.json python3 -c 'import json,os; d=json.load(open(os.environ["SIDE"])); print(json.dumps({"val_accuracy": d["accuracy"]}))'
+
+  - id: gate-accuracy
+    kind: GATE
+    condition: "val_accuracy >= {{min_accuracy}}"
+    on_fail: STOP
+    welfare: permanent   # OPEN-R4: load-bearing val-accuracy welfare floor.
+
+  - id: regression-probe
+    kind: SHELL
+    # RUNTIME-SPACE probe (gate-runtime parity, 2026-07-22; supersedes the
+    # OPEN-R5 python probe as the DECIDER). The offline probe_overrouting.py
+    # embeds with Python-transformers tokenization; production classifies via
+    # ClassifierArm (DJL tokenizer + committed encoder). The spaces disagree
+    # at the margin — proven when the offline probe VETOED a cleanliness
+    # candidate that was measurably better in the runtime path (4/90 vs 5/90,
+    # 2026-07-22). ProbeHeadMain classifies the held-out anchors in
+    # probe-anchors/{{head}}.jsonl through ClassifierArm.CandidateHead — the
+    # exact production inference code — and emits the SAME contract:
+    #   {"overrouting_probe_passes": true|false, "anchors_tested": N,
+    #    "misclassified": K, "max_misses": M, "per_lang_misses": {...}}
+    # The SHELL step's stdout JSON merges into RecipeContext, which the
+    # gate-regression step reads (ProbeHeadMain guarantees stdout purity —
+    # logs go to stderr). Classpath comes from cli/build/probe-classpath.txt,
+    # written by `gradlew :cli:writeProbeClasspath` at bake prep — plain
+    # `java -cp` because a nested gradlew inside the bakeRecipe JVM would
+    # contend for the project lock. probe_overrouting.py remains for offline
+    # dev exploration; it no longer decides deploys.
+    #
+    # NOTE: no --embedding passthrough. The runtime probe always embeds with
+    # the committed classifier encoder — that IS the parity guarantee. Train
+    # with the frozen encoder (setfit_encoder_path="", the release-bake
+    # default) or the head is measured in a space it won't run in.
+    command: |-
+      PERLANG_FLAG="--max-misses-per-lang {{max_overrouting_misses_per_lang}}" ; \
+      if [ -n "{{max_overrouting_misses_per_lang_map}}" ]; then \
+        PERLANG_FLAG="--max-misses-per-lang-map {{max_overrouting_misses_per_lang_map}}" ; \
+      fi ; \
+      java --enable-native-access=ALL-UNNAMED \
+        -cp "$(cat cli/build/probe-classpath.txt)" \
+        org.wyrdsekai.cli.ProbeHeadMain \
+        --head {{head}} \
+        --classifier /tmp/{{head}}.onnx \
+        --labels /tmp/{{head}}.labels.json \
+        --max-misses {{max_overrouting_misses}} \
+        $PERLANG_FLAG
+
+  - id: gate-regression
+    kind: GATE
+    condition: "overrouting_probe_passes == true"
+    on_fail: STOP
+    welfare: permanent   # OPEN-R4: load-bearing overrouting welfare floor.
+
+  - id: deploy-encoder
+    # When setfit-pretrain ran, promote the tuned encoder into the bundled
+    # resources tree — at the CLASSIFIER slot (…-setfit-q8.onnx), NOT the stock
+    # retrieval encoder (…-q8.onnx). Decoupled 2026-05-29: the classifier and
+    # retrieval encoders are separate files (EmbeddingModel.PARAPHRASE_L12_SETFIT
+    # vs PARAPHRASE_L12). Writing the SetFit weights to the retrieval path would
+    # re-create the retrieval regression this decouple fixed. The new classifier
+    # encoder takes effect at next zone restart (EmbeddingService.classifierEncoder()
+    # loads it once). No-op in legacy mode (encoder file absent → guard short-circuits).
+    kind: SHELL
+    command: |-
+      ENCODER_BUNDLE=core/src/main/resources/models/paraphrase-multilingual-MiniLM-L12-v2-setfit-q8.onnx ; \
+      mkdir -p "$(dirname "$ENCODER_BUNDLE")" ; \
+      if [ -f "{{setfit_encoder_path}}" ]; then \
+        if [ -f "$ENCODER_BUNDLE" ]; then cp -f "$ENCODER_BUNDLE" "$ENCODER_BUNDLE.bak" ; fi ; \
+        cp -f "{{setfit_encoder_path}}" "$ENCODER_BUNDLE" ; \
+      fi
+    rollback: |-
+      ENCODER_BUNDLE=core/src/main/resources/models/paraphrase-multilingual-MiniLM-L12-v2-setfit-q8.onnx ; \
+      if [ -f "$ENCODER_BUNDLE.bak" ]; then \
+        cp -f "$ENCODER_BUNDLE.bak" "$ENCODER_BUNDLE" && rm -f "$ENCODER_BUNDLE.bak" ; \
+      fi
+
+  - id: deploy
+    # Promote ALL THREE trained artifacts together: onnx + labels.json +
+    # val-accuracy.json. Copying only the onnx (the pre-2026-07-22 bug) was
+    # harmless ONLY while every retrain preserved the label VOCABULARY — a stale
+    # labels.json still matched a same-vocabulary fresh onnx. It silently breaks
+    # the moment a retrain changes the label set: an N-way onnx read through a
+    # stale M-way label map mislabels EVERY class by index (e.g. idx 1 that the
+    # new head means as "emotional" gets read as the old map's "chat"). Found
+    # 2026-07-22 while evaluating a request_type vocabulary change. The sidecars
+    # are load-bearing — labels.json is the index→label map ClassifierArm routes
+    # on; val-accuracy.json is the OPEN-R4 welfare floor (which was therefore
+    # ALSO stale across every prior retrain). Deploy them atomically with the
+    # onnx, each with its own .bak so rollback restores a consistent triple.
+    # labels/val-accuracy guarded on existence (train_classifier.py always
+    # writes both, but stay defensive).
+    kind: SHELL
+    command: |-
+      P={{pretrained_dir}}/{{head}} ; \
+      cp -f "$P.onnx" "$P.onnx.bak" && cp -f /tmp/{{head}}.onnx "$P.onnx" ; \
+      if [ -f /tmp/{{head}}.labels.json ]; then \
+        [ -f "$P.labels.json" ] && cp -f "$P.labels.json" "$P.labels.json.bak" ; \
+        cp -f /tmp/{{head}}.labels.json "$P.labels.json" ; \
+      fi ; \
+      if [ -f /tmp/{{head}}.val-accuracy.json ]; then \
+        [ -f "$P.val-accuracy.json" ] && cp -f "$P.val-accuracy.json" "$P.val-accuracy.json.bak" ; \
+        cp -f /tmp/{{head}}.val-accuracy.json "$P.val-accuracy.json" ; \
+      fi
+    rollback: |-
+      P={{pretrained_dir}}/{{head}} ; \
+      cp -f "$P.onnx.bak" "$P.onnx" && rm -f "$P.onnx.bak" ; \
+      [ -f "$P.labels.json.bak" ] && cp -f "$P.labels.json.bak" "$P.labels.json" && rm -f "$P.labels.json.bak" ; \
+      [ -f "$P.val-accuracy.json.bak" ] && cp -f "$P.val-accuracy.json.bak" "$P.val-accuracy.json" && rm -f "$P.val-accuracy.json.bak" ; \
+      true
+
+  - id: smoke
+    kind: BACKEND
+    # A2-style explicit shell command. Verifies the just-deployed ONNX
+    # file is present and non-zero; if the deploy was bogus this fails
+    # the contract and the recipe's rollback path fires.
+    prompt: >
+      Use the shell tool. Run this exact command:
+      test -s {{pretrained_dir}}/{{head}}.onnx && echo classifier-deploy-ok
+      Then stop. No other commands.
+    tools: [shell]
+    success_contract: "exit:0"

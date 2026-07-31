@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Wyrdsekai Daemon</string>
+    <string name="notification_channel_name">Inference Daemon</string>
+    <string name="notification_channel_description">Shows daemon status and inference activity</string>
+    <string name="notification_title">Inference Daemon</string>
+    <string name="notification_text_starting">Starting inference engine...</string>
+    <string name="notification_text_running">Running (%1$s, %2$d requests served)</string>
+    <string name="notification_text_stopped">Stopped</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_settings">Settings</string>
+</resources>

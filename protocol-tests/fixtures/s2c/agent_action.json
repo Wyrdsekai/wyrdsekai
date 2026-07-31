@@ -1,0 +1,7 @@
+{
+  "type": "agent_action",
+  "seq": 7,
+  "agentName": "Guide",
+  "action": "take",
+  "description": "picks up the ancient scroll and examines it carefully"
+}

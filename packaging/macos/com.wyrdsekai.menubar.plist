@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.wyrdsekai.menubar — per-user LaunchAgent that opens the Wyrdsekai
+  menu-bar app at login. Installed by the .pkg postinstall (rendered into the
+  target user's ~/Library/LaunchAgents). `open` returns immediately; the app is
+  a long-lived status-bar agent, so KeepAlive is off (no relaunch storms).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wyrdsekai.menubar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>/Applications/Wyrdsekai.app</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/wyrdsekai-menubar.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/wyrdsekai-menubar.log</string>
+</dict>
+</plist>

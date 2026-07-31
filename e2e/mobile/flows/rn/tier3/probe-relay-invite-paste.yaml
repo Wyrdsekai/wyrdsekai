@@ -1,0 +1,44 @@
+# phase A of the invite e2e: paste a wyrdphone://
+# invite URL into the Connect screen's server field and tap Log in. The
+# paste intercept (ConnectScreen.applyPhoneInvite) must parse it, persist
+# the relay credentials, and surface the "Relay invite accepted" message.
+#
+# The invite URL is injected by the wrapper script:
+#   maestro test -e INVITE_URL='wyrdphone://host:4443/<b64url>' <this flow>
+# NOTE: no `env:` default here — Maestro 2.3.0 applies flow env defaults
+# AFTER the CLI -e values, clobbering them (observed live 2026-06-12).
+#
+# Precondition (wrapper's job): app data seeded with
+#   @wyrd_first_run_complete=true + @wyrd_app_mode=remote
+# so the app routes straight to the Connect screen.
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    appId: "org.wyrdsekai.rn"
+    clearState: false  # preserve the seeded route keys
+
+- extendedWaitUntil:
+    visible:
+      id: "server-url-input"
+    timeout: 60000
+
+- tapOn:
+    id: "server-url-input"
+- eraseText
+- inputText: ${INVITE_URL}
+
+# Dismiss the soft keyboard first — it occludes the Login button, and Android
+# won't deliver a tap to a keyboard-covered view (same class as the iOS
+# keyboard-occlusion finding #1240). The KMP login-over-relay flow already
+# hides the keyboard; the RN paste flow was missing it (live-found 2026-06-21).
+- hideKeyboard
+
+- tapOn:
+    id: "login-button"
+
+# applyPhoneInvite surfaces its acceptance through the error/status text.
+# en-locale emulator: "Relay invite accepted — connecting through the relay…"
+- extendedWaitUntil:
+    visible:
+      text: "Relay invite accepted.*"
+    timeout: 15000

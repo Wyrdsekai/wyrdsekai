@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Wyrdsekai.Tray — the Windows desktop shell (system-tray control panel + first-run
+    onboarding wizard). "Enter World" opens the web UI (:7070/app) in the user's default
+    browser — no embedded WebView2, which white-screens on some GPU/driver combos.
+    Build: packaging/windows/build-tray.ps1 (.NET SDK 9+).
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- crisp + correctly-sized on scaled / high-DPI displays -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Wyrdsekai.Tray</RootNamespace>
+    <AssemblyName>Wyrdsekai.Tray</AssemblyName>
+    <ApplicationIcon>..\wyrdsekai.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <Product>Wyrdsekai</Product>
+    <Company>Wyrdsekai</Company>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ship the icon beside the exe so NotifyIcon / windows can load it at runtime -->
+    <None Include="..\wyrdsekai.ico" Link="wyrdsekai.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

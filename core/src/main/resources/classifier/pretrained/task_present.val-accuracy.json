@@ -1,0 +1,10 @@
+{
+  "accuracy": 1.0,
+  "training_examples": 212,
+  "validation_examples": 0,
+  "note": "train-set accuracy from SetFit MLP head; held-out probe is via probe_overrouting.py",
+  "labels": [
+    "actionable",
+    "none"
+  ]
+}

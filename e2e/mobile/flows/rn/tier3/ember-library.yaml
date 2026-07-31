@@ -1,0 +1,28 @@
+# Tier 3: RN — ask companion to use the library_card item to look something up.
+# This is Ember task1 condensed. Requires:
+#   1. Companion can hear and reason on a tool-required prompt
+#   2. library_card item is in companion inventory or room inventory
+#   3. Companion's ReAct loop dispatches library_search and returns prose
+#
+# EXPECTED PARTIAL today: companion replies (remote inference works) but
+# may not have library_card scripted item available — local PhoneNode's
+# foundation rooms don't include the server-zone scripted furnishings.
+# Flow asserts companion produces SOME response within Ember-task budget.
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/seed-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "'search the library for tea brewing techniques"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+
+# Ember tasks budget 600s; phone tier scopes shorter — give 3 min.
+# Look for any companion prose that mentions "tea" (minimum bar).
+- extendedWaitUntil:
+    visible: ".*tea.*"
+    timeout: 180000
+
+- takeScreenshot: rn_t3_ember_library

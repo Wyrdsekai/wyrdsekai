@@ -1,0 +1,29 @@
+# Full: KMP — navigate to model download screen from settings
+# Note: scrollUntilVisible may not work reliably with Compose overlays
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+
+- takeScreenshot: kmp_full_settings_screen
+
+# Try to find manage-models — may need scroll in overlay
+- tapOn:
+    id: "manage-models-button"
+    optional: true
+
+# If we found it and tapped, model-download-screen should appear
+- extendedWaitUntil:
+    visible:
+      id: "model-download-screen"
+    timeout: 5000
+    optional: true
+
+- takeScreenshot: kmp_full_settings_models

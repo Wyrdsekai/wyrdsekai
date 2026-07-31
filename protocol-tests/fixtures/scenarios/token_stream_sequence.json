@@ -1,0 +1,10 @@
+{
+  "description": "Token stream sequence — client accumulates tokens, finalizes on done=true",
+  "messages": [
+    { "type": "token_stream", "seq": 10, "source": "Guide", "token": "The ancient ",   "done": false, "context": null },
+    { "type": "token_stream", "seq": 11, "source": "Guide", "token": "scroll reads: ", "done": false, "context": null },
+    { "type": "token_stream", "seq": 12, "source": "Guide", "token": "'Welcome, ",     "done": false, "context": null },
+    { "type": "token_stream", "seq": 13, "source": "Guide", "token": "traveler.'",     "done": true,  "context": null }
+  ],
+  "expected_assembled_text": "The ancient scroll reads: 'Welcome, traveler.'"
+}

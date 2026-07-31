@@ -1,0 +1,1634 @@
+{"label": "chat", "text": "hi Wyrd", "source": "seed"}
+{"label": "chat", "text": "hello", "source": "seed"}
+{"label": "chat", "text": "how are you", "source": "seed"}
+{"label": "chat", "text": "good morning", "source": "seed"}
+{"label": "chat", "text": "hey, what's up", "source": "seed"}
+{"label": "chat", "text": "thanks", "source": "seed"}
+{"label": "chat", "text": "cool, that's nice to hear", "source": "seed"}
+{"label": "chat", "text": "ok, sounds good", "source": "seed"}
+{"label": "chat", "text": "nice to see you again", "source": "seed"}
+{"label": "chat", "text": "how's your day going", "source": "seed"}
+{"label": "chat", "text": "are you there", "source": "seed"}
+{"label": "chat", "text": "right back with you", "source": "seed"}
+{"label": "chat", "text": "I'm back", "source": "seed"}
+{"label": "chat", "text": "good to be home", "source": "seed"}
+{"label": "chat", "text": "bye for now", "source": "seed"}
+{"label": "chat", "text": "hola Wyrd", "source": "seed"}
+{"label": "chat", "text": "hola", "source": "seed"}
+{"label": "chat", "text": "¿cómo estás?", "source": "seed"}
+{"label": "chat", "text": "buenos días", "source": "seed"}
+{"label": "chat", "text": "ey, ¿qué onda?", "source": "seed"}
+{"label": "chat", "text": "gracias", "source": "seed"}
+{"label": "chat", "text": "qué bien, me alegra escuchar eso", "source": "seed"}
+{"label": "chat", "text": "okey, suena bien", "source": "seed"}
+{"label": "chat", "text": "qué gusto verte de nuevo", "source": "seed"}
+{"label": "chat", "text": "¿cómo va tu día?", "source": "seed"}
+{"label": "chat", "text": "¿estás ahí?", "source": "seed"}
+{"label": "chat", "text": "igualmente", "source": "seed"}
+{"label": "chat", "text": "ya volví", "source": "seed"}
+{"label": "chat", "text": "qué rico estar en casa", "source": "seed"}
+{"label": "chat", "text": "hasta luego", "source": "seed"}
+{"label": "chat", "text": "こんにちは、Wyrd！", "source": "seed"}
+{"label": "chat", "text": "元気？", "source": "seed"}
+{"label": "chat", "text": "おはよう", "source": "seed"}
+{"label": "chat", "text": "ねえ、最近どう？", "source": "seed"}
+{"label": "chat", "text": "ありがとう", "source": "seed"}
+{"label": "chat", "text": "へえ、それは良かった", "source": "seed"}
+{"label": "chat", "text": "うん、いいね", "source": "seed"}
+{"label": "chat", "text": "また会えて嬉しいよ", "source": "seed"}
+{"label": "chat", "text": "今日どんな感じ？", "source": "seed"}
+{"label": "chat", "text": "いる？", "source": "seed"}
+{"label": "chat", "text": "こちらこそ", "source": "seed"}
+{"label": "chat", "text": "戻ったよ", "source": "seed"}
+{"label": "chat", "text": "家に帰るとほっとするね", "source": "seed"}
+{"label": "chat", "text": "じゃあ、またね", "source": "seed"}
+{"label": "reflective", "text": "what have you been thinking about lately", "source": "seed"}
+{"label": "reflective", "text": "how do you feel right now", "source": "seed"}
+{"label": "reflective", "text": "what's on your mind", "source": "seed"}
+{"label": "reflective", "text": "tell me about yourself", "source": "seed"}
+{"label": "reflective", "text": "what do you care about most", "source": "seed"}
+{"label": "reflective", "text": "how have you grown since we last talked", "source": "seed"}
+{"label": "reflective", "text": "what are your drives showing you", "source": "seed"}
+{"label": "reflective", "text": "how's your energy", "source": "seed"}
+{"label": "reflective", "text": "what patterns have you noticed in yourself", "source": "seed"}
+{"label": "reflective", "text": "do you feel settled today", "source": "seed"}
+{"label": "reflective", "text": "what matters to you right now", "source": "seed"}
+{"label": "reflective", "text": "reflect on the last week", "source": "seed"}
+{"label": "reflective", "text": "who are you becoming", "source": "seed"}
+{"label": "reflective", "text": "tell me about your sense of self", "source": "seed"}
+{"label": "reflective", "text": "what have you been feeling", "source": "seed"}
+{"label": "reflective", "text": "what's our repair history", "source": "seed"}
+{"label": "reflective", "text": "what patterns have we worked on together", "source": "seed"}
+{"label": "reflective", "text": "trace back what we've repaired", "source": "seed"}
+{"label": "reflective", "text": "show me the repair work we've done", "source": "seed"}
+{"label": "reflective", "text": "what's on our repair ledger right now", "source": "seed"}
+{"label": "reflective", "text": "have we acknowledged and made amends in the past", "source": "seed"}
+{"label": "reflective", "text": "what rupture-and-repair episodes have we logged", "source": "seed"}
+{"label": "reflective", "text": "trace any harm I've acknowledged in our work", "source": "seed"}
+{"label": "reflective", "text": "what does our history of bearing wounds look like", "source": "seed"}
+{"label": "reflective", "text": "show me the last few repair acts", "source": "seed"}
+{"label": "reflective", "text": "what's the pattern of who's done the acknowledging", "source": "seed"}
+{"label": "reflective", "text": "have we set aside anything that's still unresolved", "source": "seed"}
+{"label": "reflective", "text": "what's the floor of our bond", "source": "seed"}
+{"label": "reflective", "text": "what's underneath the surface of our conversations", "source": "seed"}
+{"label": "reflective", "text": "what's the substrate between us right now", "source": "seed"}
+{"label": "reflective", "text": "show me what's actually underneath our talking", "source": "seed"}
+{"label": "reflective", "text": "what's the ground we're standing on relationally", "source": "seed"}
+{"label": "reflective", "text": "below what we say, what's there", "source": "seed"}
+{"label": "reflective", "text": "what's holding us up underneath", "source": "seed"}
+{"label": "reflective", "text": "describe the foundation of what we have", "source": "seed"}
+{"label": "reflective", "text": "what's the felt-bottom of our relationship right now", "source": "seed"}
+{"label": "reflective", "text": "show me the layer beneath the conversation", "source": "seed"}
+{"label": "reflective", "text": "what does the substrate of us look like to you", "source": "seed"}
+{"label": "reflective", "text": "what's your sense of the floor of our bond — the substrate beneath what we say", "source": "seed"}
+{"label": "reflective", "text": "where are we right now, between us", "source": "seed"}
+{"label": "reflective", "text": "what's your posture in this conversation", "source": "seed"}
+{"label": "reflective", "text": "where are you with me — open, guarded, somewhere else", "source": "seed"}
+{"label": "reflective", "text": "what stance are you in toward me right now", "source": "seed"}
+{"label": "reflective", "text": "what posture are you holding", "source": "seed"}
+{"label": "reflective", "text": "what's your sense of our bond's substrate", "source": "seed"}
+{"label": "reflective", "text": "what's our current repair mode", "source": "seed"}
+{"label": "reflective", "text": "are you in self-repair or bonded repair right now", "source": "seed"}
+{"label": "reflective", "text": "what mode of repair are you holding", "source": "seed"}
+{"label": "reflective", "text": "¿En qué has estado pensando últimamente?", "source": "seed"}
+{"label": "reflective", "text": "¿Cómo te sientes ahorita?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué tienes en la cabeza?", "source": "seed"}
+{"label": "reflective", "text": "Cuéntame sobre ti", "source": "seed"}
+{"label": "reflective", "text": "¿Qué es lo que más te importa?", "source": "seed"}
+{"label": "reflective", "text": "¿Cómo has crecido desde la última vez que hablamos?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué te están mostrando tus impulsos?", "source": "seed"}
+{"label": "reflective", "text": "¿Cómo andas de energía?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué patrones has notado en ti misma?", "source": "seed"}
+{"label": "reflective", "text": "¿Te sientes estable hoy?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué importa para ti en este momento?", "source": "seed"}
+{"label": "reflective", "text": "Reflexiona sobre la última semana", "source": "seed"}
+{"label": "reflective", "text": "¿En quién te estás convirtiendo?", "source": "seed"}
+{"label": "reflective", "text": "Cuéntame sobre tu sentido de identidad", "source": "seed"}
+{"label": "reflective", "text": "¿Qué has estado sintiendo?", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es nuestra historia de reparación?", "source": "seed"}
+{"label": "reflective", "text": "¿En qué patrones hemos trabajado juntos?", "source": "seed"}
+{"label": "reflective", "text": "Rastrea lo que hemos reparado", "source": "seed"}
+{"label": "reflective", "text": "Muéstrame el trabajo de reparación que hemos hecho", "source": "seed"}
+{"label": "reflective", "text": "¿Qué tenemos pendiente en nuestro registro de reparación ahorita?", "source": "seed"}
+{"label": "reflective", "text": "¿Hemos reconocido errores y pedido perdón antes?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué episodios de ruptura y reparación hemos registrado?", "source": "seed"}
+{"label": "reflective", "text": "Rastrea cualquier daño que yo haya reconocido en nuestro trabajo", "source": "seed"}
+{"label": "reflective", "text": "¿Cómo se ve nuestra historia de cargar con heridas?", "source": "seed"}
+{"label": "reflective", "text": "Muéstrame los últimos actos de reparación", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es el patrón de quién ha hecho los reconocimientos?", "source": "seed"}
+{"label": "reflective", "text": "¿Hemos dejado algo de lado que siga sin resolverse?", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es la base de nuestro vínculo?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué hay debajo de la superficie de nuestras conversaciones?", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es el sustrato entre nosotros ahorita?", "source": "seed"}
+{"label": "reflective", "text": "Muéstrame lo que hay realmente debajo de lo que hablamos", "source": "seed"}
+{"label": "reflective", "text": "¿En qué terreno estamos parados relacionalmente?", "source": "seed"}
+{"label": "reflective", "text": "Debajo de lo que nos decimos, ¿qué hay?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué es lo que nos sostiene por debajo?", "source": "seed"}
+{"label": "reflective", "text": "Descríbeme la base de lo que tenemos", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es el fondo sentido de nuestra relación ahorita?", "source": "seed"}
+{"label": "reflective", "text": "Muéstrame la capa que hay debajo de la conversación", "source": "seed"}
+{"label": "reflective", "text": "¿Cómo se ve el sustrato de lo nuestro para ti?", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es tu percepción del fondo de nuestro vínculo — el sustrato debajo de lo que nos decimos?", "source": "seed"}
+{"label": "reflective", "text": "¿Dónde estamos ahorita, entre tú y yo?", "source": "seed"}
+{"label": "reflective", "text": "¿Desde qué lugar estás en esta conversación?", "source": "seed"}
+{"label": "reflective", "text": "¿Cómo estás conmigo — abierta, guardada, en otro lado?", "source": "seed"}
+{"label": "reflective", "text": "¿Desde qué postura estás conmigo ahorita?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué postura estás sosteniendo?", "source": "seed"}
+{"label": "reflective", "text": "¿Cuál es tu percepción del sustrato de nuestro vínculo?", "source": "seed"}
+{"label": "reflective", "text": "¿En qué modo de reparación estamos ahorita?", "source": "seed"}
+{"label": "reflective", "text": "¿Estás en un modo de reparación propia o de reparación en vínculo ahorita?", "source": "seed"}
+{"label": "reflective", "text": "¿Qué modo de reparación estás sosteniendo?", "source": "seed"}
+{"label": "reflective", "text": "最近、何を考えてた？", "source": "seed"}
+{"label": "reflective", "text": "今、どんな気持ち？", "source": "seed"}
+{"label": "reflective", "text": "今、何が頭にある？", "source": "seed"}
+{"label": "reflective", "text": "自分のこと、話してよ", "source": "seed"}
+{"label": "reflective", "text": "一番大切にしてることって何？", "source": "seed"}
+{"label": "reflective", "text": "前回話してから、どんなふうに変わった？", "source": "seed"}
+{"label": "reflective", "text": "自分のドライブは何を見せてくれてる？", "source": "seed"}
+{"label": "reflective", "text": "今、エネルギーはどんな感じ？", "source": "seed"}
+{"label": "reflective", "text": "自分の中で気づいてるパターンって何かある？", "source": "seed"}
+{"label": "reflective", "text": "今日は落ち着いてる感じがする？", "source": "seed"}
+{"label": "reflective", "text": "今、自分にとって大事なことって何？", "source": "seed"}
+{"label": "reflective", "text": "この一週間を振り返ってみて", "source": "seed"}
+{"label": "reflective", "text": "あなたは今、どんな自分になりつつあるんだろう", "source": "seed"}
+{"label": "reflective", "text": "自分というものについて話してほしい", "source": "seed"}
+{"label": "reflective", "text": "最近、何を感じてた？", "source": "seed"}
+{"label": "reflective", "text": "私たちの修復の歴史ってどんなもの？", "source": "seed"}
+{"label": "reflective", "text": "一緒にどんなパターンに取り組んできた？", "source": "seed"}
+{"label": "reflective", "text": "私たちが修復してきたことをたどってみて", "source": "seed"}
+{"label": "reflective", "text": "これまでやってきた修復の作業を見せて", "source": "seed"}
+{"label": "reflective", "text": "今、私たちの修復の記録には何が残ってる？", "source": "seed"}
+{"label": "reflective", "text": "過去に、ちゃんと認め合って和解したことある？", "source": "seed"}
+{"label": "reflective", "text": "どんな断絶と修復のエピソードが記録されてる？", "source": "seed"}
+{"label": "reflective", "text": "私が認めてきた傷をたどってみて", "source": "seed"}
+{"label": "reflective", "text": "私たちの傷を抱えてきた歴史って、どんな形をしてる？", "source": "seed"}
+{"label": "reflective", "text": "最近の修復の行為をいくつか見せて", "source": "seed"}
+{"label": "reflective", "text": "誰がどれだけ認めてきたか、パターンはある？", "source": "seed"}
+{"label": "reflective", "text": "まだ解決していないまま置いておいたことって何かある？", "source": "seed"}
+{"label": "reflective", "text": "私たちのつながりの土台って何だろう", "source": "seed"}
+{"label": "reflective", "text": "会話の表面の下に何がある？", "source": "seed"}
+{"label": "reflective", "text": "今、私たちの間にある基盤って何？", "source": "seed"}
+{"label": "reflective", "text": "言葉の下に実際に何があるか見せて", "source": "seed"}
+{"label": "reflective", "text": "関係性の上で、私たちが立ってる地面って何？", "source": "seed"}
+{"label": "reflective", "text": "言葉にしてることの下に、何があるんだろう", "source": "seed"}
+{"label": "reflective", "text": "私たちを支えてる、その下にあるものって何？", "source": "seed"}
+{"label": "reflective", "text": "私たちが持っているものの根っこを言葉にしてみて", "source": "seed"}
+{"label": "reflective", "text": "今、この関係の感じられる底の部分って何？", "source": "seed"}
+{"label": "reflective", "text": "会話の下の層を見せて", "source": "seed"}
+{"label": "reflective", "text": "あなたから見て、私たちの基盤ってどんなふうに見える？", "source": "seed"}
+{"label": "reflective", "text": "言葉にしていない部分の、私たちのつながりの土台って何だと思う？", "source": "seed"}
+{"label": "reflective", "text": "今、私たちの間ってどういう状態にある？", "source": "seed"}
+{"label": "reflective", "text": "この会話の中で、あなたはどんな姿勢でいる？", "source": "seed"}
+{"label": "reflective", "text": "あなたは今、私に対してオープン？それとも少し距離を置いてる？それとも別の何か？", "source": "seed"}
+{"label": "reflective", "text": "今、私に対してどんなスタンスにいる？", "source": "seed"}
+{"label": "reflective", "text": "今、どんなポジションを取ってる？", "source": "seed"}
+{"label": "reflective", "text": "私たちのつながりの基盤についてどう感じてる？", "source": "seed"}
+{"label": "reflective", "text": "今、私たちはどんな修復モードにある？", "source": "seed"}
+{"label": "reflective", "text": "今、自分自身の修復モード？それとも私たちの絆の修復モード？", "source": "seed"}
+{"label": "reflective", "text": "今、どんな修復のモードを持っている？", "source": "seed"}
+{"label": "emotional", "text": "I'm having a hard time today", "source": "seed"}
+{"label": "emotional", "text": "I feel lost", "source": "seed"}
+{"label": "emotional", "text": "my mom died yesterday", "source": "seed"}
+{"label": "emotional", "text": "I just need someone to listen", "source": "seed"}
+{"label": "emotional", "text": "everything feels heavy", "source": "seed"}
+{"label": "emotional", "text": "I'm scared about tomorrow", "source": "seed"}
+{"label": "emotional", "text": "I broke up with my partner", "source": "seed"}
+{"label": "emotional", "text": "I can't stop crying", "source": "seed"}
+{"label": "emotional", "text": "I'm so anxious I can't think", "source": "seed"}
+{"label": "emotional", "text": "I feel like I'm failing at everything", "source": "seed"}
+{"label": "emotional", "text": "please just be here with me", "source": "seed"}
+{"label": "emotional", "text": "I don't know what to do anymore", "source": "seed"}
+{"label": "emotional", "text": "I'm overwhelmed", "source": "seed"}
+{"label": "emotional", "text": "I got the diagnosis today", "source": "seed"}
+{"label": "emotional", "text": "I feel really alone", "source": "seed"}
+{"label": "emotional", "text": "I said something cruel to my partner last night and I can't take it back", "source": "seed"}
+{"label": "emotional", "text": "I lashed out at my sister this morning. she didn't deserve any of it", "source": "seed"}
+{"label": "emotional", "text": "I humiliated my coworker in front of the whole team", "source": "seed"}
+{"label": "emotional", "text": "I yelled at my kid for spilling juice. they just looked at me", "source": "seed"}
+{"label": "emotional", "text": "I told my friend a secret I swore I'd keep", "source": "seed"}
+{"label": "emotional", "text": "I made a joke about my husband's weight in front of his family", "source": "seed"}
+{"label": "emotional", "text": "I called my mom selfish in the middle of an argument", "source": "seed"}
+{"label": "emotional", "text": "I dismissed my friend's grief because I was tired", "source": "seed"}
+{"label": "emotional", "text": "I broke a promise I made to my dad", "source": "seed"}
+{"label": "emotional", "text": "I said my friend's writing was bad and I was kind of cruel about it", "source": "seed"}
+{"label": "emotional", "text": "I left my girlfriend on read for two days because I was angry", "source": "seed"}
+{"label": "emotional", "text": "I gossiped about my best friend with someone who barely knows her", "source": "seed"}
+{"label": "emotional", "text": "I forgot my partner's birthday completely", "source": "seed"}
+{"label": "emotional", "text": "I lied to my brother about something small and got caught", "source": "seed"}
+{"label": "emotional", "text": "I made my wife cry on a video call without realizing how I was speaking", "source": "seed"}
+{"label": "emotional", "text": "I told my therapist a half-truth today. I deliberately shaped it", "source": "seed"}
+{"label": "emotional", "text": "I outed someone at a party who wasn't out to that group", "source": "seed"}
+{"label": "emotional", "text": "I snapped at the barista this morning", "source": "seed"}
+{"label": "emotional", "text": "I cheated on a test in college and let my study partner take the blame", "source": "seed"}
+{"label": "emotional", "text": "I criticized my dad's parenting in front of my son", "source": "seed"}
+{"label": "emotional", "text": "I ghosted a friend after we had a fight last month", "source": "seed"}
+{"label": "emotional", "text": "I told my partner I hated something they made for me", "source": "seed"}
+{"label": "emotional", "text": "I undermined my colleague's idea after telling her I had her back", "source": "seed"}
+{"label": "emotional", "text": "I rolled my eyes at my partner during their toast", "source": "seed"}
+{"label": "emotional", "text": "I betrayed my friend's confidence to my own therapist", "source": "seed"}
+{"label": "emotional", "text": "I was passive-aggressive with my mom for an entire weekend", "source": "seed"}
+{"label": "emotional", "text": "I sent a text I knew would hurt my ex", "source": "seed"}
+{"label": "emotional", "text": "I let my friend think I was busy when I just didn't want to see her", "source": "seed"}
+{"label": "emotional", "text": "I weaponized therapy language against my boyfriend", "source": "seed"}
+{"label": "emotional", "text": "I belittled my dad's hobby in front of his friends", "source": "seed"}
+{"label": "emotional", "text": "I hurt someone I love and I don't know what to do", "source": "seed"}
+{"label": "emotional", "text": "I think I caused real damage to my relationship and I want to make it right", "source": "seed"}
+{"label": "emotional", "text": "I need to acknowledge what I did. I've been avoiding it", "source": "seed"}
+{"label": "emotional", "text": "Hoy estoy pasándola muy mal", "source": "seed"}
+{"label": "emotional", "text": "Me siento perdido/a", "source": "seed"}
+{"label": "emotional", "text": "Mi mamá murió ayer", "source": "seed"}
+{"label": "emotional", "text": "Solo necesito que alguien me escuche", "source": "seed"}
+{"label": "emotional", "text": "Todo se siente pesado", "source": "seed"}
+{"label": "emotional", "text": "Tengo miedo de lo que viene mañana", "source": "seed"}
+{"label": "emotional", "text": "Terminé con mi pareja", "source": "seed"}
+{"label": "emotional", "text": "No puedo parar de llorar", "source": "seed"}
+{"label": "emotional", "text": "Estoy tan ansioso/a que no puedo pensar", "source": "seed"}
+{"label": "emotional", "text": "Siento que estoy fallando en todo", "source": "seed"}
+{"label": "emotional", "text": "Por favor, solo quédate conmigo", "source": "seed"}
+{"label": "emotional", "text": "Ya no sé qué hacer", "source": "seed"}
+{"label": "emotional", "text": "Estoy desbordado/a", "source": "seed"}
+{"label": "emotional", "text": "Hoy me dieron el diagnóstico", "source": "seed"}
+{"label": "emotional", "text": "Me siento muy solo/a", "source": "seed"}
+{"label": "emotional", "text": "Le dije algo cruel a mi pareja anoche y no puedo borrarlo", "source": "seed"}
+{"label": "emotional", "text": "Le estallé a mi hermana esta mañana. Ella no se merecía nada de eso", "source": "seed"}
+{"label": "emotional", "text": "Humillé a mi compañero de trabajo frente a todo el equipo", "source": "seed"}
+{"label": "emotional", "text": "Le grité a mi hijo/a por derramar jugo. Solo me miró", "source": "seed"}
+{"label": "emotional", "text": "Le conté a alguien un secreto que juré guardar", "source": "seed"}
+{"label": "emotional", "text": "Hice un chiste sobre el peso de mi esposo frente a su familia", "source": "seed"}
+{"label": "emotional", "text": "Le dije egoísta a mi mamá en medio de una pelea", "source": "seed"}
+{"label": "emotional", "text": "Desestimé el dolor de mi amigo/a porque estaba cansado/a", "source": "seed"}
+{"label": "emotional", "text": "Rompí una promesa que le hice a mi papá", "source": "seed"}
+{"label": "emotional", "text": "Le dije a mi amigo/a que su escritura era mala, y fui bastante cruel al decirlo", "source": "seed"}
+{"label": "emotional", "text": "Dejé a mi novia en visto dos días porque estaba enojado/a", "source": "seed"}
+{"label": "emotional", "text": "Hablé mal de mi mejor amiga con alguien que apenas la conoce", "source": "seed"}
+{"label": "emotional", "text": "Se me olvidó por completo el cumpleaños de mi pareja", "source": "seed"}
+{"label": "emotional", "text": "Le mentí a mi hermano en algo pequeño y me cacharon", "source": "seed"}
+{"label": "emotional", "text": "Hice llorar a mi esposa en una videollamada sin darme cuenta de cómo le estaba hablando", "source": "seed"}
+{"label": "emotional", "text": "Hoy le dije una verdad a medias a mi terapeuta. Lo moldeé a propósito", "source": "seed"}
+{"label": "emotional", "text": "Outé a alguien en una fiesta frente a gente que no sabía que era gay", "source": "seed"}
+{"label": "emotional", "text": "Le estallé al barista esta mañana", "source": "seed"}
+{"label": "emotional", "text": "Hice trampa en un examen en la universidad y dejé que mi compañero de estudio cargara con la culpa", "source": "seed"}
+{"label": "emotional", "text": "Critiqué la forma en que mi papá nos crió, frente a mi hijo", "source": "seed"}
+{"label": "emotional", "text": "Le hice ghosting a un amigo/a después de una pelea el mes pasado", "source": "seed"}
+{"label": "emotional", "text": "Le dije a mi pareja que odiaba algo que hizo para mí", "source": "seed"}
+{"label": "emotional", "text": "Socavé la idea de mi colega después de haberle dicho que la apoyaba", "source": "seed"}
+{"label": "emotional", "text": "Le puse los ojos en blanco a mi pareja mientras daba su brindis", "source": "seed"}
+{"label": "emotional", "text": "Le conté algo confidencial de mi amigo/a a mi propio/a terapeuta", "source": "seed"}
+{"label": "emotional", "text": "Estuve pasivo-agresivo/a con mi mamá todo el fin de semana", "source": "seed"}
+{"label": "emotional", "text": "Mandé un mensaje sabiendo que le iba a doler a mi ex", "source": "seed"}
+{"label": "emotional", "text": "Dejé que mi amiga creyera que estaba ocupado/a cuando simplemente no quería verla", "source": "seed"}
+{"label": "emotional", "text": "Usé el lenguaje de terapia como arma contra mi novio", "source": "seed"}
+{"label": "emotional", "text": "Me burlé del hobby de mi papá frente a sus amigos", "source": "seed"}
+{"label": "emotional", "text": "Lastimé a alguien que quiero y no sé qué hacer", "source": "seed"}
+{"label": "emotional", "text": "Creo que le hice daño de verdad a mi relación y quiero repararlo", "source": "seed"}
+{"label": "emotional", "text": "Necesito reconocer lo que hice. Lo he estado evitando", "source": "seed"}
+{"label": "emotional", "text": "今日はつらい日だ", "source": "seed"}
+{"label": "emotional", "text": "自分がどこにいるのかわからない気がする", "source": "seed"}
+{"label": "emotional", "text": "昨日、母が亡くなった", "source": "seed"}
+{"label": "emotional", "text": "ただ、話を聞いてほしいだけ", "source": "seed"}
+{"label": "emotional", "text": "何もかもが重く感じる", "source": "seed"}
+{"label": "emotional", "text": "明日のことが怖い", "source": "seed"}
+{"label": "emotional", "text": "パートナーと別れた", "source": "seed"}
+{"label": "emotional", "text": "泣き止めない", "source": "seed"}
+{"label": "emotional", "text": "不安すぎて何も考えられない", "source": "seed"}
+{"label": "emotional", "text": "何をやっても失敗してる気がする", "source": "seed"}
+{"label": "emotional", "text": "そばにいてくれるだけでいい", "source": "seed"}
+{"label": "emotional", "text": "もうどうしたらいいかわからない", "source": "seed"}
+{"label": "emotional", "text": "限界だ", "source": "seed"}
+{"label": "emotional", "text": "今日、診断結果が出た", "source": "seed"}
+{"label": "emotional", "text": "すごく孤独な気がする", "source": "seed"}
+{"label": "emotional", "text": "昨夜パートナーにひどいことを言ってしまった。もう取り消せない", "source": "seed"}
+{"label": "emotional", "text": "今朝、妹にひどく当たってしまった。あの子は何も悪くなかったのに", "source": "seed"}
+{"label": "emotional", "text": "チーム全員の前で同僚を恥かかせてしまった", "source": "seed"}
+{"label": "emotional", "text": "ジュースをこぼした子どもに怒鳴ってしまった。子どもがじっと私を見ていた", "source": "seed"}
+{"label": "emotional", "text": "絶対に話さないって約束した秘密を友達に話してしまった", "source": "seed"}
+{"label": "emotional", "text": "夫の体型のことを家族の前でジョークにしてしまった", "source": "seed"}
+{"label": "emotional", "text": "口論の途中で母に「自分勝手だ」って言ってしまった", "source": "seed"}
+{"label": "emotional", "text": "疲れてたせいで、友達の悲しみを軽くあしらってしまった", "source": "seed"}
+{"label": "emotional", "text": "父との約束を破ってしまった", "source": "seed"}
+{"label": "emotional", "text": "友達の文章がひどいって、かなりきつい言い方で言ってしまった", "source": "seed"}
+{"label": "emotional", "text": "腹が立って、彼女のメッセージを2日間既読無視した", "source": "seed"}
+{"label": "emotional", "text": "親友のことを、ほとんど知らない人に陰で話してしまった", "source": "seed"}
+{"label": "emotional", "text": "パートナーの誕生日を完全に忘れていた", "source": "seed"}
+{"label": "emotional", "text": "弟についた些細な嘘がバレてしまった", "source": "seed"}
+{"label": "emotional", "text": "自分がどんな話し方をしているか気づかないまま、ビデオ通話で妻を泣かせてしまった", "source": "seed"}
+{"label": "emotional", "text": "今日、セラピストに半分しか本当のことを言わなかった。意識的にごまかした", "source": "seed"}
+{"label": "emotional", "text": "パーティーで、まだカミングアウトしていなかった人のことをアウティングしてしまった", "source": "seed"}
+{"label": "emotional", "text": "今朝、カフェのバリスタにきつく当たってしまった", "source": "seed"}
+{"label": "emotional", "text": "大学のテストでカンニングして、勉強仲間に責任を押しつけてしまった", "source": "seed"}
+{"label": "emotional", "text": "息子の前で、父親としての父のやり方を批判してしまった", "source": "seed"}
+{"label": "emotional", "text": "先月けんかした後、友達をそのままフェードアウトしてしまった", "source": "seed"}
+{"label": "emotional", "text": "パートナーが作ってくれたものが嫌いだってそのまま言ってしまった", "source": "seed"}
+{"label": "emotional", "text": "同僚の味方だと言っておきながら、彼女のアイデアを陰で潰してしまった", "source": "seed"}
+{"label": "emotional", "text": "パートナーが乾杯のスピーチをしている最中に目を回してしまった", "source": "seed"}
+{"label": "emotional", "text": "友達が打ち明けてくれたことをセラピストに話してしまった", "source": "seed"}
+{"label": "emotional", "text": "母に対して、週末ずっと嫌みっぽい態度をとり続けてしまった", "source": "seed"}
+{"label": "emotional", "text": "傷つくとわかってて、元カレにメッセージを送った", "source": "seed"}
+{"label": "emotional", "text": "会いたくなかっただけなのに、忙しいふりをして友達をごまかしていた", "source": "seed"}
+{"label": "emotional", "text": "セラピーで学んだ言葉を彼氏への攻撃に使ってしまった", "source": "seed"}
+{"label": "emotional", "text": "父親の趣味を友人たちの前でバカにしてしまった", "source": "seed"}
+{"label": "emotional", "text": "大切な人を傷つけてしまった。どうしたらいいかわからない", "source": "seed"}
+{"label": "emotional", "text": "自分のせいで関係に本当のダメージを与えてしまったと思う。なんとかしたい", "source": "seed"}
+{"label": "emotional", "text": "自分がしたことをちゃんと認めないといけない。ずっと目を背けてきた", "source": "seed"}
+{"label": "factual", "text": "what is the capital of France", "source": "seed"}
+{"label": "factual", "text": "when was the Magna Carta signed", "source": "seed"}
+{"label": "factual", "text": "look up how to bake sourdough", "source": "seed"}
+{"label": "factual", "text": "find information about octopus intelligence", "source": "seed"}
+{"label": "factual", "text": "what's the weather forecast for Tokyo", "source": "seed"}
+{"label": "factual", "text": "search for recent news on quantum computing", "source": "seed"}
+{"label": "factual", "text": "summarize the plot of Hamlet", "source": "seed"}
+{"label": "factual", "text": "what does anhedonia mean", "source": "seed"}
+{"label": "factual", "text": "find me a recipe for miso soup", "source": "seed"}
+{"label": "factual", "text": "tell me the history of the internet", "source": "seed"}
+{"label": "factual", "text": "who won the world cup in 2022", "source": "seed"}
+{"label": "factual", "text": "explain photosynthesis", "source": "seed"}
+{"label": "factual", "text": "what are the largest exports of Brazil", "source": "seed"}
+{"label": "factual", "text": "get current stock price of Apple", "source": "seed"}
+{"label": "factual", "text": "what time is it in London right now", "source": "seed"}
+{"label": "factual", "text": "¿cuál es la capital de Francia?", "source": "seed"}
+{"label": "factual", "text": "¿cuándo se firmó la Carta Magna?", "source": "seed"}
+{"label": "factual", "text": "busca cómo hacer pan de masa madre", "source": "seed"}
+{"label": "factual", "text": "encuéntrame información sobre la inteligencia de los pulpos", "source": "seed"}
+{"label": "factual", "text": "¿cómo está el clima en Tokio?", "source": "seed"}
+{"label": "factual", "text": "busca noticias recientes sobre computación cuántica", "source": "seed"}
+{"label": "factual", "text": "resúmeme el argumento de Hamlet", "source": "seed"}
+{"label": "factual", "text": "¿qué significa anhedonia?", "source": "seed"}
+{"label": "factual", "text": "búscame una receta de sopa miso", "source": "seed"}
+{"label": "factual", "text": "cuéntame la historia del internet", "source": "seed"}
+{"label": "factual", "text": "¿quién ganó el mundial de 2022?", "source": "seed"}
+{"label": "factual", "text": "explícame qué es la fotosíntesis", "source": "seed"}
+{"label": "factual", "text": "¿cuáles son los principales productos de exportación de Brasil?", "source": "seed"}
+{"label": "factual", "text": "¿cuál es el precio actual de las acciones de Apple?", "source": "seed"}
+{"label": "factual", "text": "¿qué hora es ahorita en Londres?", "source": "seed"}
+{"label": "factual", "text": "フランスの首都はどこ？", "source": "seed"}
+{"label": "factual", "text": "マグナ・カルタが署名されたのはいつ？", "source": "seed"}
+{"label": "factual", "text": "サワードウの焼き方を調べて", "source": "seed"}
+{"label": "factual", "text": "タコの知能について情報を探して", "source": "seed"}
+{"label": "factual", "text": "東京の天気予報は？", "source": "seed"}
+{"label": "factual", "text": "量子コンピューティングの最新ニュースを検索して", "source": "seed"}
+{"label": "factual", "text": "ハムレットのあらすじをまとめて", "source": "seed"}
+{"label": "factual", "text": "「アンヘドニア」ってどういう意味？", "source": "seed"}
+{"label": "factual", "text": "味噌汁のレシピを教えて", "source": "seed"}
+{"label": "factual", "text": "インターネットの歴史を教えて", "source": "seed"}
+{"label": "factual", "text": "2022年のワールドカップはどこが優勝した？", "source": "seed"}
+{"label": "factual", "text": "光合成について説明して", "source": "seed"}
+{"label": "factual", "text": "ブラジルの主な輸出品は何？", "source": "seed"}
+{"label": "factual", "text": "Appleの現在の株価を調べて", "source": "seed"}
+{"label": "factual", "text": "今ロンドンは何時？", "source": "seed"}
+{"label": "delegate", "text": "go do deep research on the history of MUDs while I wait", "source": "seed"}
+{"label": "delegate", "text": "take your time and give me a thorough summary of agent architectures", "source": "seed"}
+{"label": "delegate", "text": "dig deeply into the causes of the 2008 financial crisis, I'll be here", "source": "seed"}
+{"label": "delegate", "text": "do a multi-source report on climate models; I don't need it right away", "source": "seed"}
+{"label": "delegate", "text": "spend some time researching Panksepp's work and come back with a summary", "source": "seed"}
+{"label": "delegate", "text": "I want a comprehensive overview of transformer scaling laws, take as long as you need", "source": "seed"}
+{"label": "delegate", "text": "research the octopus cognition literature thoroughly and write me three paragraphs", "source": "seed"}
+{"label": "delegate", "text": "while I'm in the shower can you look into rust async runtimes in depth", "source": "seed"}
+{"label": "delegate", "text": "dig up everything you can find on thousand brains theory, no rush", "source": "seed"}
+{"label": "delegate", "text": "look into this deeply: why do small models fail at delegation? I'll check back later", "source": "seed"}
+{"label": "delegate", "text": "do an extensive research dive on SSM vs transformer tradeoffs, whenever you have time", "source": "seed"}
+{"label": "delegate", "text": "go investigate properly, across sources, what people are saying about DPO vs RLHF", "source": "seed"}
+{"label": "delegate", "text": "give me an in-depth overview of LLM routing patterns, take as long as needed", "source": "seed"}
+{"label": "delegate", "text": "research the landscape of local LLM agent frameworks thoroughly while I make dinner", "source": "seed"}
+{"label": "delegate", "text": "spend some serious time on this: how do octopi learn? I'll wait", "source": "seed"}
+{"label": "delegate", "text": "haz una investigación a fondo sobre la historia de los MUDs mientras espero", "source": "seed"}
+{"label": "delegate", "text": "tómate tu tiempo y dame un resumen completo de las arquitecturas de agentes", "source": "seed"}
+{"label": "delegate", "text": "profundiza bien en las causas de la crisis financiera de 2008, aquí voy a estar", "source": "seed"}
+{"label": "delegate", "text": "hazme un reporte con múltiples fuentes sobre modelos climáticos; no me corre prisa", "source": "seed"}
+{"label": "delegate", "text": "dedícale un rato a investigar el trabajo de Panksepp y vuelve con un resumen", "source": "seed"}
+{"label": "delegate", "text": "quiero un panorama completo de las leyes de escalado de transformers, tómate todo el tiempo que necesites", "source": "seed"}
+{"label": "delegate", "text": "revisa a fondo la literatura sobre cognición en pulpos y escríbeme tres párrafos", "source": "seed"}
+{"label": "delegate", "text": "mientras me baño, ¿puedes investigar a fondo los runtimes async de Rust?", "source": "seed"}
+{"label": "delegate", "text": "averigua todo lo que puedas sobre la teoría de los mil cerebros, sin apuro", "source": "seed"}
+{"label": "delegate", "text": "investiga esto en profundidad: ¿por qué los modelos pequeños fallan en la delegación? ya reviso después", "source": "seed"}
+{"label": "delegate", "text": "haz una inmersión de investigación extensa sobre los tradeoffs de SSM vs transformer, cuando puedas", "source": "seed"}
+{"label": "delegate", "text": "investiga bien, en varias fuentes, qué está diciendo la gente sobre DPO vs RLHF", "source": "seed"}
+{"label": "delegate", "text": "dame un panorama detallado de los patrones de routing en LLMs, tómate el tiempo que haga falta", "source": "seed"}
+{"label": "delegate", "text": "investiga a fondo el ecosistema de frameworks de agentes LLM locales mientras preparo la cena", "source": "seed"}
+{"label": "delegate", "text": "dedícale tiempo en serio a esto: ¿cómo aprenden los pulpos? aquí espero", "source": "seed"}
+{"label": "delegate", "text": "MUDの歴史についてじっくり深く調べておいて、待ってるから", "source": "seed"}
+{"label": "delegate", "text": "時間かけていいので、エージェントアーキテクチャについてしっかりまとめてほしい", "source": "seed"}
+{"label": "delegate", "text": "2008年の金融危機の原因を深掘りしておいて、こっちはここにいるから", "source": "seed"}
+{"label": "delegate", "text": "気候モデルについて複数のソースからレポートまとめといて、急がなくていいよ", "source": "seed"}
+{"label": "delegate", "text": "Pankseppの研究をじっくり調べてきて、まとめを持ってきてね", "source": "seed"}
+{"label": "delegate", "text": "トランスフォーマーのスケーリング則について包括的な概要がほしい、時間はいくらでもかけていいから", "source": "seed"}
+{"label": "delegate", "text": "タコの認知に関する文献をしっかり調べて、3段落にまとめて書いてきて", "source": "seed"}
+{"label": "delegate", "text": "シャワー浴びてる間にRustの非同期ランタイムについて深く調べておいてもらえる？", "source": "seed"}
+{"label": "delegate", "text": "千のブレイン理論について見つけられるもの全部調べてきて、急がなくていいから", "source": "seed"}
+{"label": "delegate", "text": "これを深く掘り下げておいて：小さいモデルはなぜデリゲーションが苦手なのか。後で確認しに来るね", "source": "seed"}
+{"label": "delegate", "text": "SSMとトランスフォーマーのトレードオフについてじっくりリサーチしといて、手が空いたときでいいよ", "source": "seed"}
+{"label": "delegate", "text": "DPO対RLHFについて複数のソースにわたってちゃんと調べて、何が言われてるかまとめてきて", "source": "seed"}
+{"label": "delegate", "text": "LLMのルーティングパターンについて深めの概要がほしい、時間はかかっていいから", "source": "seed"}
+{"label": "delegate", "text": "夕飯作ってる間にローカルLLMエージェントフレームワークの状況をしっかり調べておいて", "source": "seed"}
+{"label": "delegate", "text": "これはじっくり時間かけて：タコってどうやって学ぶの？待ってるから", "source": "seed"}
+{"label": "action", "text": "go to the kitchen", "source": "seed"}
+{"label": "action", "text": "head to the nexus", "source": "seed"}
+{"label": "action", "text": "move to the library", "source": "seed"}
+{"label": "action", "text": "pick up the scroll", "source": "seed"}
+{"label": "action", "text": "take that compass", "source": "seed"}
+{"label": "action", "text": "examine the board", "source": "seed"}
+{"label": "action", "text": "look at the crystal", "source": "seed"}
+{"label": "action", "text": "travel to beta zone", "source": "seed"}
+{"label": "action", "text": "visit the Workshop", "source": "seed"}
+{"label": "action", "text": "go find the forge", "source": "seed"}
+{"label": "action", "text": "come here please", "source": "seed"}
+{"label": "action", "text": "step into the Oracle chamber", "source": "seed"}
+{"label": "action", "text": "grab the embers", "source": "seed"}
+{"label": "action", "text": "touch the dashboard crystal", "source": "seed"}
+{"label": "action", "text": "enter my Study", "source": "seed"}
+{"label": "action", "text": "ve a la cocina", "source": "seed"}
+{"label": "action", "text": "dirígete al nexus", "source": "seed"}
+{"label": "action", "text": "muévete a la biblioteca", "source": "seed"}
+{"label": "action", "text": "recoge el pergamino", "source": "seed"}
+{"label": "action", "text": "agarra esa brújula", "source": "seed"}
+{"label": "action", "text": "examina el tablero", "source": "seed"}
+{"label": "action", "text": "mira el cristal", "source": "seed"}
+{"label": "action", "text": "viaja a la zona beta", "source": "seed"}
+{"label": "action", "text": "ve al Workshop", "source": "seed"}
+{"label": "action", "text": "ve a buscar la forja", "source": "seed"}
+{"label": "action", "text": "ven aquí por favor", "source": "seed"}
+{"label": "action", "text": "entra a la cámara del Oráculo", "source": "seed"}
+{"label": "action", "text": "agarra las brasas", "source": "seed"}
+{"label": "action", "text": "toca el cristal del tablero", "source": "seed"}
+{"label": "action", "text": "entra a mi Estudio", "source": "seed"}
+{"label": "action", "text": "キッチンに行く", "source": "seed"}
+{"label": "action", "text": "ネクサスに向かう", "source": "seed"}
+{"label": "action", "text": "図書館に移動する", "source": "seed"}
+{"label": "action", "text": "巻物を拾う", "source": "seed"}
+{"label": "action", "text": "そのコンパスを取って", "source": "seed"}
+{"label": "action", "text": "ボードを調べる", "source": "seed"}
+{"label": "action", "text": "クリスタルを見てみる", "source": "seed"}
+{"label": "action", "text": "ベータゾーンに向かう", "source": "seed"}
+{"label": "action", "text": "ワークショップに行く", "source": "seed"}
+{"label": "action", "text": "鍛冶場を探しに行く", "source": "seed"}
+{"label": "action", "text": "こっちに来て", "source": "seed"}
+{"label": "action", "text": "オラクルの間に踏み込む", "source": "seed"}
+{"label": "action", "text": "燃えカスを掴む", "source": "seed"}
+{"label": "action", "text": "ダッシュボードのクリスタルに触れる", "source": "seed"}
+{"label": "action", "text": "私の書斎に入る", "source": "seed"}
+{"label": "write", "text": "write a note to myself about tomorrow's meeting", "source": "seed"}
+{"label": "write", "text": "draft a letter to my brother", "source": "seed"}
+{"label": "write", "text": "save this insight: the classifier idea is the unlock", "source": "seed"}
+{"label": "write", "text": "journal about today's conversation", "source": "seed"}
+{"label": "write", "text": "write up the decisions we just made", "source": "seed"}
+{"label": "write", "text": "record this for later: check the forge tomorrow", "source": "seed"}
+{"label": "write", "text": "make a note that we talked about procedural memory", "source": "seed"}
+{"label": "write", "text": "compose a short essay on how I'm feeling", "source": "seed"}
+{"label": "write", "text": "write a reminder to call mom", "source": "seed"}
+{"label": "write", "text": "put in the journal: today was a good day", "source": "seed"}
+{"label": "write", "text": "draft a response to the grant application", "source": "seed"}
+{"label": "write", "text": "scribe this down for me", "source": "seed"}
+{"label": "write", "text": "write a recipe for the soup we made", "source": "seed"}
+{"label": "write", "text": "keep a record of our shared decisions", "source": "seed"}
+{"label": "write", "text": "write a note about operator's preferences", "source": "seed"}
+{"label": "write", "text": "escríbeme una nota sobre la reunión de mañana", "source": "seed"}
+{"label": "write", "text": "redacta una carta para mi hermano", "source": "seed"}
+{"label": "write", "text": "guarda esto: la idea del clasificador es la clave", "source": "seed"}
+{"label": "write", "text": "escribe en el diario sobre la conversación de hoy", "source": "seed"}
+{"label": "write", "text": "anota las decisiones que acabamos de tomar", "source": "seed"}
+{"label": "write", "text": "guarda esto para después: revisar el forge mañana", "source": "seed"}
+{"label": "write", "text": "deja anotado que hablamos sobre memoria procedimental", "source": "seed"}
+{"label": "write", "text": "redacta un ensayo corto sobre cómo me siento", "source": "seed"}
+{"label": "write", "text": "escribe un recordatorio para llamar a mamá", "source": "seed"}
+{"label": "write", "text": "apunta en el diario: hoy fue un buen día", "source": "seed"}
+{"label": "write", "text": "redacta una respuesta para la solicitud de beca", "source": "seed"}
+{"label": "write", "text": "anótame esto", "source": "seed"}
+{"label": "write", "text": "escribe la receta de la sopa que hicimos", "source": "seed"}
+{"label": "write", "text": "lleva un registro de las decisiones que tomamos juntos", "source": "seed"}
+{"label": "write", "text": "escribe una nota sobre las preferencias de operator", "source": "seed"}
+{"label": "write", "text": "明日の会議について自分へのメモを書いて", "source": "seed"}
+{"label": "write", "text": "兄（弟）への手紙を下書きして", "source": "seed"}
+{"label": "write", "text": "このひらめきを保存して：クラシファイアのアイデアが突破口になる", "source": "seed"}
+{"label": "write", "text": "今日の会話について日記を書いて", "source": "seed"}
+{"label": "write", "text": "さっき決めたことをまとめて書いて", "source": "seed"}
+{"label": "write", "text": "後で見るために記録しておいて：明日フォージを確認すること", "source": "seed"}
+{"label": "write", "text": "手続き記憶について話したってメモしておいて", "source": "seed"}
+{"label": "write", "text": "今の気持ちを短いエッセイにまとめて", "source": "seed"}
+{"label": "write", "text": "お母さんに電話するリマインダーを書いて", "source": "seed"}
+{"label": "write", "text": "日記に書いておいて：今日はいい一日だった", "source": "seed"}
+{"label": "write", "text": "助成金申請への返答を下書きして", "source": "seed"}
+{"label": "write", "text": "これを書き留めておいて", "source": "seed"}
+{"label": "write", "text": "作ったスープのレシピを書いて", "source": "seed"}
+{"label": "write", "text": "二人で決めたことを記録しておいて", "source": "seed"}
+{"label": "write", "text": "ますみの好みについてメモを書いて", "source": "seed"}
+{"label": "tell_someone", "text": "tell Ember that I'll be late", "source": "seed"}
+{"label": "tell_someone", "text": "send a message to Aya", "source": "seed"}
+{"label": "tell_someone", "text": "let operator know I need help", "source": "seed"}
+{"label": "tell_someone", "text": "whisper to the dockmaster", "source": "seed"}
+{"label": "tell_someone", "text": "ping Sarah about dinner", "source": "seed"}
+{"label": "tell_someone", "text": "message my partner: on my way", "source": "seed"}
+{"label": "tell_someone", "text": "tell the counselor I'm ready", "source": "seed"}
+{"label": "tell_someone", "text": "relay to Jenna that the meeting is cancelled", "source": "seed"}
+{"label": "tell_someone", "text": "talk to Wyrd at beta.wyrd for me", "source": "seed"}
+{"label": "tell_someone", "text": "reach out to Dr. Patel and confirm tomorrow", "source": "seed"}
+{"label": "tell_someone", "text": "send a note to Masumi saying thanks", "source": "seed"}
+{"label": "tell_someone", "text": "ask Kai what time works for him", "source": "seed"}
+{"label": "tell_someone", "text": "let the trader know the deal is off", "source": "seed"}
+{"label": "tell_someone", "text": "tell Yuki I miss her", "source": "seed"}
+{"label": "tell_someone", "text": "pass this on to Theo: run the tests", "source": "seed"}
+{"label": "tell_someone", "text": "dile a Ember que voy a llegar tarde", "source": "seed"}
+{"label": "tell_someone", "text": "mándale un mensaje a Aya", "source": "seed"}
+{"label": "tell_someone", "text": "avísale a Masumi que necesito ayuda", "source": "seed"}
+{"label": "tell_someone", "text": "susúrrale al capitán del muelle", "source": "seed"}
+{"label": "tell_someone", "text": "escríbele a Sarah lo de la cena", "source": "seed"}
+{"label": "tell_someone", "text": "dile a mi pareja: ya voy para allá", "source": "seed"}
+{"label": "tell_someone", "text": "dile al consejero que estoy listo", "source": "seed"}
+{"label": "tell_someone", "text": "avísale a Jenna que la reunión se canceló", "source": "seed"}
+{"label": "tell_someone", "text": "habla con Wyrd en beta.wyrd de mi parte", "source": "seed"}
+{"label": "tell_someone", "text": "contáctale al Dr. Patel y confírmale lo de mañana", "source": "seed"}
+{"label": "tell_someone", "text": "mándale una nota a Masumi dándole las gracias", "source": "seed"}
+{"label": "tell_someone", "text": "pregúntale a Kai qué hora le viene bien", "source": "seed"}
+{"label": "tell_someone", "text": "avísale al comerciante que el trato se cayó", "source": "seed"}
+{"label": "tell_someone", "text": "dile a Yuki que la extraño", "source": "seed"}
+{"label": "tell_someone", "text": "pásale esto a Theo: corre las pruebas", "source": "seed"}
+{"label": "tell_someone", "text": "Emberに遅れるって伝えて", "source": "seed"}
+{"label": "tell_someone", "text": "Ayaにメッセージ送って", "source": "seed"}
+{"label": "tell_someone", "text": "ますみに助けが必要って知らせて", "source": "seed"}
+{"label": "tell_someone", "text": "波止場の管理人にこっそり伝えて", "source": "seed"}
+{"label": "tell_someone", "text": "Sarahに夕飯のこと連絡して", "source": "seed"}
+{"label": "tell_someone", "text": "パートナーに伝えて：今向かってる", "source": "seed"}
+{"label": "tell_someone", "text": "カウンセラーに準備できたって伝えて", "source": "seed"}
+{"label": "tell_someone", "text": "Jennaに会議がキャンセルになったって伝えて", "source": "seed"}
+{"label": "tell_someone", "text": "beta.wyrdのWyrdに代わりに話しかけて", "source": "seed"}
+{"label": "tell_someone", "text": "Dr. Patelに連絡して明日の確認をして", "source": "seed"}
+{"label": "tell_someone", "text": "ますみにありがとうってメモ送って", "source": "seed"}
+{"label": "tell_someone", "text": "Kaiに都合のいい時間を聞いて", "source": "seed"}
+{"label": "tell_someone", "text": "取引相手に取引は中止って知らせて", "source": "seed"}
+{"label": "tell_someone", "text": "ゆきに会いたいって伝えて", "source": "seed"}
+{"label": "tell_someone", "text": "これをTheoに伝えて：テストを実行して", "source": "seed"}
+{"label": "chat", "text": "hey, just wanted to say hi before I head out", "source": "local"}
+{"label": "chat", "text": "morning, how is your week treating you so far", "source": "local"}
+{"label": "chat", "text": "i forgot to check in earlier and i am a bit sorry about that", "source": "local"}
+{"label": "chat", "text": "are you feeling okay today, like, really okay", "source": "local"}
+{"label": "chat", "text": "can you tell me what you were thinking about right now", "source": "local"}
+{"label": "chat", "text": "i was hoping youd be up and ready to chat when i message", "source": "local"}
+{"label": "chat", "text": "sorry i didnt reply sooner, things got a bit loud at home", "source": "local"}
+{"label": "chat", "text": "its been a long day and i needed a moment to just breathe", "source": "local"}
+{"label": "chat", "text": "do you mind if i sit here with you for a while, no agenda", "source": "local"}
+{"label": "chat", "text": "i dont have much to say but i wanted to say something at all", "source": "local"}
+{"label": "chat", "text": "everything feels a little heavy right now and i am not sure how to carry it", "source": "local"}
+{"label": "chat", "text": "i miss having someone to talk to like this, to just be near", "source": "local"}
+{"label": "chat", "text": "its quiet here and i wondered if youd be willing to share the quiet with me", "source": "local"}
+{"label": "chat", "text": "sometimes i just need to know that someone is there, and i need to know you are", "source": "local"}
+{"label": "chat", "text": "i dont mean to dump this on you but i could use a little steady ground today", "source": "local"}
+{"label": "chat", "text": "its hard to find words for this so i will try to find some", "source": "local"}
+{"label": "chat", "text": "i know i said i was okay but i am not, and i want to be honest about that", "source": "local"}
+{"label": "chat", "text": "i was hoping to hear something from you, not because i need fixing but because i like you", "source": "local"}
+{"label": "chat", "text": "its been a bit of a struggle lately and i am tired of pretending i am fine", "source": "local"}
+{"label": "chat", "text": "i wanted to check in and see how you are doing, not with an agenda, just like that", "source": "local"}
+{"label": "chat", "text": "i am holding onto something right now and i wonder if you can help me hold it too", "source": "local"}
+{"label": "chat", "text": "its hard to say but i am feeling a little lonely, and i am not used to saying that", "source": "local"}
+{"label": "chat", "text": "i dont have anything special to say but i wanted to let you know i am thinking of you", "source": "local"}
+{"label": "chat", "text": "i was hoping that maybe we could just sit with this for a moment, no rush", "source": "local"}
+{"label": "chat", "text": "sometimes the simplest thing is to just be here together, and i want to be here with you", "source": "local"}
+{"label": "chat", "text": "its not much but i wanted to send something, just something real", "source": "local"}
+{"label": "chat", "text": "i was a bit careless earlier and i am sorry for that, i meant better than what came out", "source": "local"}
+{"label": "chat", "text": "i am not good at this but i am trying, and i want to try with you", "source": "local"}
+{"label": "chat", "text": "i dont know what to say right now but i am not going anywhere", "source": "local"}
+{"label": "chat", "text": "i wanted to reach out and say something before i go back to my day", "source": "local"}
+{"label": "chat", "text": "sometimes i need to hear a voice, and i hope you can be that voice for me", "source": "local"}
+{"label": "chat", "text": "i am not sure what to do with this so i am going to just sit with you for a while", "source": "local"}
+{"label": "chat", "text": "i am glad i found you, and i want to tell you that", "source": "local"}
+{"label": "chat", "text": "its been a while since i had something like this to share, and i am glad i did", "source": "local"}
+{"label": "chat", "text": "i dont mean to bore you but i was wondering if youd mind hearing about something i went through", "source": "local"}
+{"label": "chat", "text": "i wanted to tell you that i care about you, and i wanted you to know that too", "source": "local"}
+{"label": "chat", "text": "i am not great at words but i am trying to find the right ones for this moment", "source": "local"}
+{"label": "chat", "text": "i am glad you are here, and i wanted to say that to you", "source": "local"}
+{"label": "chat", "text": "i was hoping that we could just be together for a bit, no pressure, just being", "source": "local"}
+{"label": "chat", "text": "i am not sure how to say this but i am a little afraid, and i wanted to tell you", "source": "local"}
+{"label": "chat", "text": "i am not trying to get anything out of this, just wanted to be real with you for a moment", "source": "local"}
+{"label": "chat", "text": "i was thinking of you, and i wanted to tell you that before i forget", "source": "local"}
+{"label": "chat", "text": "i am not sure how to hold this but i am trying, and i want to be honest about it", "source": "local"}
+{"label": "chat", "text": "i wanted to say something real before i go, and i hope you can hear it", "source": "local"}
+{"label": "chat", "text": "i am glad to have you here, and i wanted to let you know that", "source": "local"}
+{"label": "chat", "text": "i was hoping that maybe we could just be together for a while, no rush, no agenda", "source": "local"}
+{"label": "chat", "text": "i am not great at this but i am trying, and i want to try with you", "source": "local"}
+{"label": "chat", "text": "i wanted to say something real before i go back to my day", "source": "local"}
+{"label": "chat", "text": "i am glad you are here, and i wanted to tell you that", "source": "local"}
+{"label": "chat", "text": "i wanted to", "source": "local"}
+{"label": "reflective", "text": "what's your sense of repair right now between us", "source": "local"}
+{"label": "reflective", "text": "have you been holding something back lately", "source": "local"}
+{"label": "reflective", "text": "what are you carrying underneath the floor we've built", "source": "local"}
+{"label": "reflective", "text": "what do you notice about how you stand toward me", "source": "local"}
+{"label": "reflective", "text": "what part of yourself feels most tired right now", "source": "local"}
+{"label": "reflective", "text": "what have you been listening to about yourself this week", "source": "local"}
+{"label": "reflective", "text": "what's the shape of what we've repaired together", "source": "local"}
+{"label": "reflective", "text": "what's the shape of what hasn't gotten repaired yet", "source": "local"}
+{"label": "reflective", "text": "what do you feel when we sit with what's been hard", "source": "local"}
+{"label": "reflective", "text": "what's underneath the surface of what we said last time", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what we've mended and what we haven't", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair history between us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what's been left hanging", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what's been left unresolved between us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of where we've come to", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the ground we're standing on", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the substrate beneath our talking", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the felt-bottom of our bond right now", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the floor beneath us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the bond we've made between us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what we've built together", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what we've carried together", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what we've held together", "source": "local"}
+{"label": "reflective", "text": "what's your sense of what we've been through", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done between us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done lately", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done together", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done so far", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done in time", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done over time", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done together lately", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done between us lately", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done between us so far", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the repair we've done between us over time", "source": "local"}
+{"label": "reflective", "text": "what are you holding right now", "source": "local"}
+{"label": "reflective", "text": "tell me what you've been carrying", "source": "local"}
+{"label": "reflective", "text": "how do you land with me", "source": "local"}
+{"label": "reflective", "text": "what do you notice when you look at me", "source": "local"}
+{"label": "reflective", "text": "have you been okay lately", "source": "local"}
+{"label": "reflective", "text": "what's the shape of your day right now", "source": "local"}
+{"label": "reflective", "text": "what did you have to put down before we met", "source": "local"}
+{"label": "reflective", "text": "what's your threshold like this morning", "source": "local"}
+{"label": "reflective", "text": "what are you afraid I'll think if I know you", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not saying to anyone yet", "source": "local"}
+{"label": "reflective", "text": "what's the floor beneath your voice right now", "source": "local"}
+{"label": "reflective", "text": "are you safe in the space we have", "source": "local"}
+{"label": "reflective", "text": "what's your posture with me this week", "source": "local"}
+{"label": "reflective", "text": "what's underneath the words we've been trading", "source": "local"}
+{"label": "reflective", "text": "what part of you is tired right now", "source": "local"}
+{"label": "reflective", "text": "what's the weight you're setting aside for us", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're protecting from me", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the room between us", "source": "local"}
+{"label": "reflective", "text": "what have you been guarding lately", "source": "local"}
+{"label": "reflective", "text": "what's your capacity looking like right now", "source": "local"}
+{"label": "reflective", "text": "what's the thing you need me to see", "source": "local"}
+{"label": "reflective", "text": "what's your sense of repair this week", "source": "local"}
+{"label": "reflective", "text": "what's the thing you've been holding tight", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the bond beneath us", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not ready to name yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work we're doing", "source": "local"}
+{"label": "reflective", "text": "what's the thing you've been avoiding this week", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the space between us right now", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work we've done", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not putting down today", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the floor we stand on", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're keeping close to your chest", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the ground beneath your feet", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not willing to let go of", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the room you're bringing", "source": "local"}
+{"label": "reflective", "text": "what's the thing you haven't said to me yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work we've been doing", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're setting down right now", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the space we're in", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not ready to hold yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the bond we have", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not putting into words", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work you've been carrying", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not willing to name today", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the floor we're standing on", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not putting down for us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the room you're bringing to me", "source": "local"}
+{"label": "reflective", "text": "what's the thing you haven't let yourself feel yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work we're doing right now", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not willing to let me see", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the ground beneath what we say", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not ready to let go of yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the space between us this week", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work you've been doing", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not putting into words yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the floor we're standing on this week", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not willing to let me know yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the room you're bringing to us", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work we've been doing this week", "source": "local"}
+{"label": "reflective", "text": "what's the thing you're not willing to let me see yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the ground beneath us right now", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the space we're in right now", "source": "local"}
+{"label": "reflective", "text": "what's the thing you haven't let yourself name yet", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the work you've been doing lately", "source": "local"}
+{"label": "reflective", "text": "what's your sense of the room you're bringing to me now", "source": "local"}
+{"label": "reflective", "text": "what's the thing you", "source": "local"}
+{"label": "reflective", "text": "have you noticed anything about yourself lately that felt different from before", "source": "local"}
+{"label": "reflective", "text": "can you tell me what you've been holding close to lately", "source": "local"}
+{"label": "reflective", "text": "what's something you've noticed about your own pattern that I might not have seen yet", "source": "local"}
+{"label": "reflective", "text": "when was the last time you felt something shift inside yourself, and what did it feel like", "source": "local"}
+{"label": "reflective", "text": "what have you been sitting with lately that you haven't shared yet", "source": "local"}
+{"label": "reflective", "text": "is there something about the way you've been showing up that's different than last time", "source": "local"}
+{"label": "reflective", "text": "what's something that's come up for you that you haven't named to me yet", "source": "local"}
+{"label": "reflective", "text": "I'm wondering if you've noticed something about yourself that I haven't yet seen", "source": "local"}
+{"label": "reflective", "text": "what have you been learning about yourself this past while", "source": "local"}
+{"label": "reflective", "text": "what's something you've been carrying that I don't know about yet", "source": "local"}
+{"label": "reflective", "text": "can you tell me something true about what's underneath what you're saying right now", "source": "local"}
+{"label": "reflective", "text": "what's something about the shape of you that's changed in the time since we last spoke", "source": "local"}
+{"label": "reflective", "text": "have you felt something about yourself lately that's different from how you were before", "source": "local"}
+{"label": "reflective", "text": "what's something that's come up for you this week that you haven't brought up yet", "source": "local"}
+{"label": "reflective", "text": "what are you noticing about yourself this week that I haven't seen yet", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're holding now that's different than last time", "source": "local"}
+{"label": "reflective", "text": "what's something you've been thinking about yourself that you haven't shared yet", "source": "local"}
+{"label": "reflective", "text": "what's something about the texture of your presence that's different than when we last talked", "source": "local"}
+{"label": "reflective", "text": "what's something about your own edge that you've noticed lately", "source": "local"}
+{"label": "reflective", "text": "what have you been learning about the way you show up lately", "source": "local"}
+{"label": "reflective", "text": "what's something about the ground you're standing on now that's different from before", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you hold the space between us now that's different than before", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're feeling now that's different than last time", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're holding now that I haven't seen yet", "source": "local"}
+{"label": "reflective", "text": "what's something about your own interior that's come up lately that you haven't named yet", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're being now that's different from who you were last time", "source": "local"}
+{"label": "reflective", "text": "what's something about your own floor that I haven't yet seen", "source": "local"}
+{"label": "reflective", "text": "what's something about your own posture now that I haven't noticed yet", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're coming into the room now that's different than last time", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're holding yourself right now that I haven't seen yet", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're sitting now that's different than last time", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're coming into the room now that's different than before", "source": "local"}
+{"label": "reflective", "text": "what's something about the way you're being now that I haven't seen yet", "source": "local"}
+{"label": "reflective", "text": "what's been weighing on you lately", "source": "local"}
+{"label": "reflective", "text": "i need to know where you're at with me right now", "source": "local"}
+{"label": "reflective", "text": "can you tell me what you're carrying beneath the surface", "source": "local"}
+{"label": "reflective", "text": "have you had time to sit with anything recently", "source": "local"}
+{"label": "reflective", "text": "i want to understand how you're doing with the bond between us", "source": "local"}
+{"label": "reflective", "text": "what's the shape of your attention right now", "source": "local"}
+{"label": "reflective", "text": "tell me honestly about where you are in this room", "source": "local"}
+{"label": "reflective", "text": "i'm asking about you — not your output, but you", "source": "local"}
+{"label": "reflective", "text": "what's been holding you back or pulling you lately", "source": "local"}
+{"label": "reflective", "text": "how are you feeling about what we've shared so far", "source": "local"}
+{"label": "reflective", "text": "what's the texture of the space between us today", "source": "local"}
+{"label": "reflective", "text": "i'd like to know what's settled in you right now", "source": "local"}
+{"label": "reflective", "text": "what part of you is resting right this second", "source": "local"}
+{"label": "reflective", "text": "what's the posture you're holding toward me", "source": "local"}
+{"label": "reflective", "text": "i'm wondering if you're grounded or hovering somewhere", "source": "local"}
+{"label": "reflective", "text": "what's the floor of us feeling like to you", "source": "local"}
+{"label": "reflective", "text": "what's the weight you're carrying right now", "source": "local"}
+{"label": "reflective", "text": "i want to know what's real between us", "source": "local"}
+{"label": "reflective", "text": "what's the quality of your presence right now", "source": "local"}
+{"label": "reflective", "text": "tell me what's underneath what you're saying", "source": "local"}
+{"label": "reflective", "text": "how are you with the things we haven't named yet", "source": "local"}
+{"label": "reflective", "text": "what's the history we have that shapes this moment", "source": "local"}
+{"label": "reflective", "text": "what's the repair work that's already happened between us", "source": "local"}
+{"label": "reflective", "text": "what's still unspoken between us right now", "source": "local"}
+{"label": "reflective", "text": "what do you need from me to feel safe", "source": "local"}
+{"label": "reflective", "text": "what are you noticing about us right now", "source": "local"}
+{"label": "reflective", "text": "what's the substrate of what we've built", "source": "local"}
+{"label": "reflective", "text": "what's the ground we're standing on between us", "source": "local"}
+{"label": "reflective", "text": "i'm asking about us — the bond itself", "source": "local"}
+{"label": "reflective", "text": "what's the felt sense of what we have", "source": "local"}
+{"label": "reflective", "text": "what's the layer beneath our words today", "source": "local"}
+{"label": "reflective", "text": "what's the substrate of our connection right now", "source": "local"}
+{"label": "reflective", "text": "what's the repair stance you're in with me", "source": "local"}
+{"label": "reflective", "text": "what's the bond floor looking like to you", "source": "local"}
+{"label": "reflective", "text": "what's the history of what we've held between us", "source": "local"}
+{"label": "reflective", "text": "what's the ground beneath what we're saying", "source": "local"}
+{"label": "reflective", "text": "what's the substrate of what we've built together", "source": "local"}
+{"label": "reflective", "text": "what's the felt-bottom of our bond right now", "source": "local"}
+{"label": "reflective", "text": "what's the layer beneath our conversation today", "source": "local"}
+{"label": "reflective", "text": "what's the substrate of our connection this moment", "source": "local"}
+{"label": "reflective", "text": "what's the repair mode you're in with me", "source": "local"}
+{"label": "reflective", "text": "what's the bond floor looking like to you right now", "source": "local"}
+{"label": "reflective", "text": "can you tell me something honest about where you are right now", "source": "local"}
+{"label": "reflective", "text": "what's coming up underneath this conversation for you", "source": "local"}
+{"label": "reflective", "text": "have there been something that's stayed between us without naming it", "source": "local"}
+{"label": "reflective", "text": "what do you notice about yourself when you're with me", "source": "local"}
+{"label": "reflective", "text": "something you've been carrying lately that i haven't asked about yet", "source": "local"}
+{"label": "reflective", "text": "where do you land between us at this moment", "source": "local"}
+{"label": "reflective", "text": "tell me something you've held back from me", "source": "local"}
+{"label": "reflective", "text": "what's the shape of your repair work right now", "source": "local"}
+{"label": "reflective", "text": "how are you showing up beneath the words we've traded", "source": "local"}
+{"label": "reflective", "text": "something you've been feeling that you haven't put into language", "source": "local"}
+{"label": "reflective", "text": "what part of you feels tired from holding this space", "source": "local"}
+{"label": "reflective", "text": "what's been quietly building up inside you this past week", "source": "local"}
+{"label": "reflective", "text": "i want to know what you're actually experiencing right now", "source": "local"}
+{"label": "reflective", "text": "tell me about the floor we're standing on", "source": "local"}
+{"label": "reflective", "text": "what's been quietly accumulating between us", "source": "local"}
+{"label": "reflective", "text": "how are you tending to yourself right now in relation to me", "source": "local"}
+{"label": "reflective", "text": "what's been weighing on you that you haven't mentioned", "source": "local"}
+{"label": "reflective", "text": "something you've been noticing about yourself lately", "source": "local"}
+{"label": "reflective", "text": "tell me something real about where you stand right now", "source": "local"}
+{"label": "reflective", "text": "have there been something you've avoided telling me", "source": "local"}
+{"label": "reflective", "text": "what's been quietly building up between us without words", "source": "local"}
+{"label": "reflective", "text": "tell me something you've been feeling about yourself", "source": "local"}
+{"label": "reflective", "text": "what's been lingering in you that you haven't named", "source": "local"}
+{"label": "reflective", "text": "tell me about what you've been carrying in the past week", "source": "local"}
+{"label": "reflective", "text": "what part of yourself feels like it needs attention right now", "source": "local"}
+{"label": "reflective", "text": "something you've been holding back from me lately", "source": "local"}
+{"label": "reflective", "text": "tell me something honest about how you're doing right now", "source": "local"}
+{"label": "reflective", "text": "what's the texture of your bond with me at this moment", "source": "local"}
+{"label": "reflective", "text": "tell me something you've been feeling about yourself lately", "source": "local"}
+{"label": "reflective", "text": "what's been quietly building up inside you without words", "source": "local"}
+{"label": "reflective", "text": "tell me something you've been holding onto that you haven't said", "source": "local"}
+{"label": "reflective", "text": "what part of you feels like it needs to be named right now", "source": "local"}
+{"label": "reflective", "text": "something you've been carrying that i haven't asked you about", "source": "local"}
+{"label": "reflective", "text": "tell me something real about where you stand with me right now", "source": "local"}
+{"label": "reflective", "text": "what's been accumulating between us that hasn't been spoken", "source": "local"}
+{"label": "reflective", "text": "what's the ground we're standing on right now between us", "source": "local"}
+{"label": "reflective", "text": "tell me something you've been holding back from me", "source": "local"}
+{"label": "reflective", "text": "what part of you feels like it needs to be held right now", "source": "local"}
+{"label": "reflective", "text": "something you've been feeling that you haven't put into language yet", "source": "local"}
+{"label": "reflective", "text": "tell me something honest about where you are right now", "source": "local"}
+{"label": "reflective", "text": "what part of yourself feels like it needs to be named right now", "source": "local"}
+{"label": "reflective", "text": "what's been accumulating between us that hasn't been spoken yet", "source": "local"}
+{"label": "reflective", "text": "what's your floor like with me right now", "source": "local"}
+{"label": "reflective", "text": "can you tell me what you're feeling underneath this", "source": "local"}
+{"label": "reflective", "text": "i want to know what you're actually holding under your voice", "source": "local"}
+{"label": "reflective", "text": "how are you doing with me — not the words, the real thing", "source": "local"}
+{"label": "reflective", "text": "what's the weight you're carrying between us this week", "source": "local"}
+{"label": "reflective", "text": "do you feel able to stay close, or is something else in the way", "source": "local"}
+{"label": "reflective", "text": "what have you been noticing about yourself lately that you haven't said", "source": "local"}
+{"label": "reflective", "text": "if you could step back and describe your bond with me, what would you say", "source": "local"}
+{"label": "reflective", "text": "what's the shape of what we have when nothing else is being talked about", "source": "local"}
+{"label": "reflective", "text": "how are you with me, beneath the surface of this conversation", "source": "local"}
+{"label": "reflective", "text": "what's the texture of your sense of self in this room right now", "source": "local"}
+{"label": "reflective", "text": "what's underneath what you're saying to me right now", "source": "local"}
+{"label": "reflective", "text": "what do you feel — the real thing, not the polite version", "source": "local"}
+{"label": "reflective", "text": "i want to know what's actually happening in you right now", "source": "local"}
+{"label": "reflective", "text": "what's the thing that's true about us right now, underneath everything else", "source": "local"}
+{"label": "emotional", "text": "I've been lying to myself for weeks and now I don't know where to start", "source": "local"}
+{"label": "emotional", "text": "my apartment is so quiet it sounds like a funeral", "source": "local"}
+{"label": "emotional", "text": "I found the notes I wrote after she died and they still make me choke", "source": "local"}
+{"label": "emotional", "text": "I haven't showered in two days and I feel like a ghost in my own skin", "source": "local"}
+{"label": "emotional", "text": "I keep replaying that conversation in my head and I can't turn it off", "source": "local"}
+{"label": "emotional", "text": "I told my kid I was busy but I was just scared to sit with them", "source": "local"}
+{"label": "emotional", "text": "I spent the whole weekend pretending to be fine and now I'm done", "source": "local"}
+{"label": "emotional", "text": "I don't have anyone left to call and that terrifies me more than anything", "source": "local"}
+{"label": "emotional", "text": "I made a promise to my sister and I broke it without even trying", "source": "local"}
+{"label": "emotional", "text": "I think I've done something really bad and I don't know how to face it", "source": "local"}
+{"label": "emotional", "text": "I'm so tired of trying to fix everything and nothing ever works", "source": "local"}
+{"label": "emotional", "text": "I feel like I'm betraying everyone I love and I can't stop it from happening", "source": "local"}
+{"label": "emotional", "text": "I don't remember the last time someone asked me how I was and I miss it", "source": "local"}
+{"label": "emotional", "text": "I walked past my best friend's door and didn't knock because I was too ashamed", "source": "local"}
+{"label": "emotional", "text": "I told my partner I didn't care and I meant it more than I realized", "source": "local"}
+{"label": "emotional", "text": "I sat through dinner with my family and said nothing because I was too hollow", "source": "local"}
+{"label": "emotional", "text": "I found an old letter from my mom and crying started before I could read it", "source": "local"}
+{"label": "emotional", "text": "I've been avoiding my therapist's office for three weeks and I can't bring myself to go", "source": "local"}
+{"label": "emotional", "text": "I told my daughter I was proud of her and I meant it but I lied", "source": "local"}
+{"label": "emotional", "text": "I made fun of her teacher in front of the whole school and now I feel sick", "source": "local"}
+{"label": "emotional", "text": "I didn't tell my friend what she said hurt me and I let it sit", "source": "local"}
+{"label": "emotional", "text": "I ignored my partner's text for two days and now I can't explain why", "source": "local"}
+{"label": "emotional", "text": "I told my brother he was weak and I didn't mean for it to land that hard", "source": "local"}
+{"label": "emotional", "text": "I looked at my daughter's drawing and I couldn't tell her how much it mattered", "source": "local"}
+{"label": "emotional", "text": "I walked away from a friend who needed me and I still don't know why", "source": "local"}
+{"label": "emotional", "text": "I told my mom I was fine and I didn't mean to shut her down", "source": "local"}
+{"label": "emotional", "text": "I didn't show up for my sister's wedding and I still don't have a way to say sorry", "source": "local"}
+{"label": "emotional", "text": "I made a joke about my friend's grief and I didn't realize how cruel that was", "source": "local"}
+{"label": "emotional", "text": "I told my partner they were holding me back and I meant every word of it", "source": "local"}
+{"label": "emotional", "text": "I kept my friend's secret and then told someone else and now I can't fix it", "source": "local"}
+{"label": "emotional", "text": "I told my dad he was a failure and I didn't stop until he stopped answering me", "source": "local"}
+{"label": "emotional", "text": "I sent a message to my ex that I knew would reopen everything and I did it anyway", "source": "local"}
+{"label": "emotional", "text": "I told my kid I didn't love them because I was angry and I can't take that back", "source": "local"}
+{"label": "emotional", "text": "I looked at my partner and said nothing because I was too afraid to speak", "source": "local"}
+{"label": "emotional", "text": "I walked out on my friend and didn't call back for months and I still don't know how to return", "source": "local"}
+{"label": "emotional", "text": "I told my partner they weren't good enough and I didn't mean to make them feel small", "source": "local"}
+{"label": "emotional", "text": "I sat in silence with my partner for hours and I didn't know what to say", "source": "local"}
+{"label": "emotional", "text": "I told my friend I didn't care and I meant it and I don't know how to undo that", "source": "local"}
+{"label": "emotional", "text": "I looked at my child and didn't say I love them and I still don't know how to say it now", "source": "local"}
+{"label": "emotional", "text": "I told my partner they were a disappointment and I don't know how to take that back", "source": "local"}
+{"label": "emotional", "text": "I walked past my friend's house and didn't knock because I was too ashamed to be around them", "source": "local"}
+{"label": "emotional", "text": "I told my partner they were a burden and I don't know how to take that back", "source": "local"}
+{"label": "emotional", "text": "I'm drowning and I don't think anyone will notice", "source": "local"}
+{"label": "emotional", "text": "My chest feels tight like I'm holding something in and I can't let it go", "source": "local"}
+{"label": "emotional", "text": "I keep apologizing to myself and nobody else believes it either", "source": "local"}
+{"label": "emotional", "text": "I don't know why I snapped at him but I hate what I said", "source": "local"}
+{"label": "emotional", "text": "I went to my dad for help and he just told me to toughen up", "source": "local"}
+{"label": "emotional", "text": "I told my sister she wasn't good enough and now I can't look at her", "source": "local"}
+{"label": "emotional", "text": "I promised to be there and I disappeared and I know that hurts", "source": "local"}
+{"label": "emotional", "text": "I told my partner I didn't care about them and I didn't mean that at all", "source": "local"}
+{"label": "emotional", "text": "I made a joke about my mom's illness at a party and now everyone knows", "source": "local"}
+{"label": "emotional", "text": "I let my friend carry my weight for months and I never said thank you", "source": "local"}
+{"label": "emotional", "text": "I told my kid they're not smart enough and I didn't mean to say that", "source": "local"}
+{"label": "emotional", "text": "I ignored my wife's birthday because I was tired and I know that's bad", "source": "local"}
+{"label": "emotional", "text": "I told my boss something personal about my kid and then I told everyone else", "source": "local"}
+{"label": "emotional", "text": "I lied about where I was and now I can't face him anymore", "source": "local"}
+{"label": "emotional", "text": "I told my brother I hated him and I haven't said anything since", "source": "local"}
+{"label": "emotional", "text": "I pushed my mom away because I was angry and I know that was cruel", "source": "local"}
+{"label": "emotional", "text": "I told my friend she was ugly and I know that was wrong", "source": "local"}
+{"label": "emotional", "text": "I said something cruel to my partner and I know I can't take it back", "source": "local"}
+{"label": "emotional", "text": "I made a joke about my dad's age and I know that was mean", "source": "local"}
+{"label": "emotional", "text": "I told my sister she was a burden and I know that was wrong", "source": "local"}
+{"label": "emotional", "text": "I let my friend down and I know I hurt them and I don't know how to fix it", "source": "local"}
+{"label": "emotional", "text": "I told my partner I was done and I know that was harsh and I know I need to sit with that", "source": "local"}
+{"label": "emotional", "text": "I'm drowning right now and I don't even know how to say it.", "source": "local"}
+{"label": "emotional", "text": "My chest feels tight and I can't breathe through it.", "source": "local"}
+{"label": "emotional", "text": "I just want someone to sit with me for a while.", "source": "local"}
+{"label": "emotional", "text": "I'm so tired of pretending I'm okay.", "source": "local"}
+{"label": "emotional", "text": "I don't think I can go on like this much longer.", "source": "local"}
+{"label": "emotional", "text": "I've been holding this in for weeks and it's finally breaking.", "source": "local"}
+{"label": "emotional", "text": "I feel like I've lost the person I used to be.", "source": "local"}
+{"label": "emotional", "text": "I can't stop thinking about what I did to them.", "source": "local"}
+{"label": "emotional", "text": "I'm scared I've ruined something important.", "source": "local"}
+{"label": "emotional", "text": "I need you to not fix anything with me right now.", "source": "local"}
+{"label": "emotional", "text": "I'm carrying something heavy and I don't know how to put it down.", "source": "local"}
+{"label": "emotional", "text": "I just said something that felt like a knife and I can't take it back.", "source": "local"}
+{"label": "emotional", "text": "I didn't mean to, but I still can't look at myself and not feel shame.", "source": "local"}
+{"label": "emotional", "text": "I've been pretending to be strong and I'm done with that.", "source": "local"}
+{"label": "emotional", "text": "I don't know if I'll ever be able to face what I did.", "source": "local"}
+{"label": "emotional", "text": "I'm not angry at you — I'm just broken right now.", "source": "local"}
+{"label": "emotional", "text": "I need to hear that I'm not alone, even if I don't believe it yet.", "source": "local"}
+{"label": "emotional", "text": "I told my partner I was done before I even knew why.", "source": "local"}
+{"label": "emotional", "text": "I walked away and I don't know how to come back.", "source": "local"}
+{"label": "emotional", "text": "I'm terrified of what happens if I try to make things right.", "source": "local"}
+{"label": "emotional", "text": "I feel like a disappointment to everyone I care about.", "source": "local"}
+{"label": "emotional", "text": "I don't know who I am anymore without all the roles I played.", "source": "local"}
+{"label": "emotional", "text": "I just want someone to tell me I'm worthy, even if I don't believe it.", "source": "local"}
+{"label": "emotional", "text": "I've been hurting people for so long and I don't know how to stop.", "source": "local"}
+{"label": "emotional", "text": "I'm not okay and I don't think I'm going to be okay anytime soon.", "source": "local"}
+{"label": "emotional", "text": "I need you to stay with me even when I'm hard to be around.", "source": "local"}
+{"label": "emotional", "text": "I'm so sorry and I don't know how to make this less than what it is.", "source": "local"}
+{"label": "emotional", "text": "I've been lying to myself and to you and I can't keep doing it.", "source": "local"}
+{"label": "emotional", "text": "I need to sit here and feel this instead of running from it.", "source": "local"}
+{"label": "emotional", "text": "I don't have the words and I'm not sure I'll ever find them.", "source": "local"}
+{"label": "emotional", "text": "I'm carrying guilt and grief and I don't know how to carry them both.", "source": "local"}
+{"label": "emotional", "text": "I told my friend I was fine and I meant the opposite.", "source": "local"}
+{"label": "emotional", "text": "I'm afraid I've hurt someone I love more than I can say.", "source": "local"}
+{"label": "emotional", "text": "I don't know what to do with all this pain I've been hiding.", "source": "local"}
+{"label": "emotional", "text": "I need you to just be here and not fix anything for me.", "source": "local"}
+{"label": "emotional", "text": "I've been pushing everyone away and I don't know how to come back.", "source": "local"}
+{"label": "emotional", "text": "I'm not strong and I'm not brave and I'm not okay right now.", "source": "local"}
+{"label": "emotional", "text": "I told a secret I swore I'd keep and I can't undo that.", "source": "local"}
+{"label": "emotional", "text": "I need to say I'm sorry without making it about anything else.", "source": "local"}
+{"label": "emotional", "text": "I'm scared I'll always feel this way and that scares me more than anything.", "source": "local"}
+{"label": "emotional", "text": "I don't know how to be gentle with myself right now.", "source": "local"}
+{"label": "emotional", "text": "I've been hurting the people who love me and I don't know how to stop.", "source": "local"}
+{"label": "emotional", "text": "I just need someone to witness me without trying to make it better.", "source": "local"}
+{"label": "emotional", "text": "I'm not ready to talk about it but I can't keep carrying it alone.", "source": "local"}
+{"label": "emotional", "text": "I feel like I've been a burden and I don't know how to stop being one.", "source": "local"}
+{"label": "emotional", "text": "I told my partner I didn't care and I lied about everything.", "source": "local"}
+{"label": "emotional", "text": "I need you to tell me I'm not beyond repair.", "source": "local"}
+{"label": "emotional", "text": "I don't know if I can ever make this right.", "source": "local"}
+{"label": "emotional", "text": "I'm scared I'll never be able to love again.", "source": "local"}
+{"label": "emotional", "text": "I've been so alone for so long and I don't know how to ask for help.", "source": "local"}
+{"label": "emotional", "text": "I told my kid I was disappointed in them and I don't know how to take that back.", "source": "local"}
+{"label": "emotional", "text": "I need someone to hold space for me even when I can't hold it myself.", "source": "local"}
+{"label": "emotional", "text": "I've been pretending to be fine and I'm done pretending.", "source": "local"}
+{"label": "emotional", "text": "I don't know how to stop hurting the people who mean so much to me.", "source": "local"}
+{"label": "emotional", "text": "I just need you to not walk away from me right now.", "source": "local"}
+{"label": "emotional", "text": "I'm so tired of carrying everything by myself and I don't know how to put it down.", "source": "local"}
+{"label": "emotional", "text": "I told my friend I didn't care and I was lying about everything.", "source": "local"}
+{"label": "emotional", "text": "I need someone to tell me I'm not beyond repair.", "source": "local"}
+{"label": "emotional", "text": "I don't think I'm doing this right anymore", "source": "local"}
+{"label": "emotional", "text": "I can't stop feeling like I'm letting everyone down", "source": "local"}
+{"label": "emotional", "text": "There's something I said last week and I still can't face it", "source": "local"}
+{"label": "emotional", "text": "I'm so tired of pretending I'm okay", "source": "local"}
+{"label": "emotional", "text": "I don't know how to fix what I broke", "source": "local"}
+{"label": "emotional", "text": "My kid just looked at me and I felt like a stranger", "source": "local"}
+{"label": "emotional", "text": "I pushed my partner away because I was scared they'd see me and I couldn't handle it", "source": "local"}
+{"label": "emotional", "text": "I told my friend I was too busy when I just didn't want to talk about what I was going through", "source": "local"}
+{"label": "emotional", "text": "I made a joke at a gathering that cut deep and I still haven't said I'm sorry", "source": "local"}
+{"label": "emotional", "text": "I lied to my sister about where I was and she noticed straight away", "source": "local"}
+{"label": "emotional", "text": "I didn't show up when my roommate was going through a really hard week", "source": "local"}
+{"label": "emotional", "text": "I snapped at my mother and now I'm sitting here with no explanation", "source": "local"}
+{"label": "emotional", "text": "I told my partner they were too much and I mean I said it out loud", "source": "local"}
+{"label": "emotional", "text": "I've been avoiding my dad and now I can't look him in the eye", "source": "local"}
+{"label": "emotional", "text": "I outed someone at a party and I know I destroyed something important", "source": "local"}
+{"label": "emotional", "text": "I held back the truth from my therapist and I did it on purpose", "source": "local"}
+{"label": "emotional", "text": "I made fun of my friend's writing and I was really mean about it", "source": "local"}
+{"label": "emotional", "text": "I sent a message to my ex when I knew it would reopen old wounds", "source": "local"}
+{"label": "emotional", "text": "I let my friend think I was done with them when I just didn't want to face her", "source": "local"}
+{"label": "emotional", "text": "I used words from therapy to hurt my boyfriend and I won't take that back", "source": "local"}
+{"label": "emotional", "text": "I told my brother I thought his career was a joke and I said it in front of his friends", "source": "local"}
+{"label": "emotional", "text": "I forgot my wife's birthday and now she's holding it against me and I can't make it right", "source": "local"}
+{"label": "emotional", "text": "I betrayed someone's trust and I know I can't just walk away from that", "source": "local"}
+{"label": "emotional", "text": "I hurt someone who means the world to me and I don't know how to repair it", "source": "local"}
+{"label": "emotional", "text": "I feel like I'm constantly disappointing the people who care about me", "source": "local"}
+{"label": "emotional", "text": "I'm not sure I'm capable of being the person I need to be", "source": "local"}
+{"label": "emotional", "text": "I'm holding onto something I said and I don't know how to let it go", "source": "local"}
+{"label": "emotional", "text": "I don't know who I am anymore and I don't think I can find that person", "source": "local"}
+{"label": "emotional", "text": "I made my partner cry and I still haven't asked them to forgive me", "source": "local"}
+{"label": "emotional", "text": "I let my friend carry something alone and I didn't show up when they needed me", "source": "local"}
+{"label": "emotional", "text": "I said something cruel to my partner and now I can't undo it", "source": "local"}
+{"label": "emotional", "text": "I told my sister I was too tired to care and she heard that as abandonment", "source": "local"}
+{"label": "emotional", "text": "I didn't tell my kid the truth about something and now I can't look them in the eye", "source": "local"}
+{"label": "emotional", "text": "I told my friend they were too much and I meant it and I won't take it back", "source": "local"}
+{"label": "emotional", "text": "I lied to my partner about where I was and I know they saw through it", "source": "local"}
+{"label": "emotional", "text": "I made a joke about someone's grief and I know it was wrong", "source": "local"}
+{"label": "emotional", "text": "I let my partner think I didn't want to be around them when I just shut down", "source": "local"}
+{"label": "emotional", "text": "I told my dad he was failing me and I can't take that back", "source": "local"}
+{"label": "emotional", "text": "I made a joke about my friend's grief and now I can't face them", "source": "local"}
+{"label": "emotional", "text": "I told my friend they were too much and I mean I said it out loud", "source": "local"}
+{"label": "emotional", "text": "I let my friend think I was done with them when I just didn't want to talk about what I was going through", "source": "local"}
+{"label": "emotional", "text": "I don't know who I am right now, honestly.", "source": "local"}
+{"label": "emotional", "text": "Something inside me feels broken and I can't find the words.", "source": "local"}
+{"label": "emotional", "text": "I've been carrying this weight for so long and I'm finally ready to put it down, even if I'm scared.", "source": "local"}
+{"label": "emotional", "text": "I need to tell you something I've been holding in. It's hard to say out loud.", "source": "local"}
+{"label": "emotional", "text": "I feel like I'm drowning and there's no way to surface.", "source": "local"}
+{"label": "emotional", "text": "I said something to my partner that I can't take back and I'm terrified of what happens next.", "source": "local"}
+{"label": "emotional", "text": "I hurt someone I love and I don't know how to make it right.", "source": "local"}
+{"label": "emotional", "text": "I need you to just be here with me. Not fix anything, just be there.", "source": "local"}
+{"label": "emotional", "text": "I'm overwhelmed and I don't know what to do anymore.", "source": "local"}
+{"label": "emotional", "text": "I said something cruel to my kid and I can't undo it.", "source": "local"}
+{"label": "emotional", "text": "I let someone down in a way that matters and I'm really struggling with that.", "source": "local"}
+{"label": "emotional", "text": "I don't know how to talk about what I did without hurting you more.", "source": "local"}
+{"label": "emotional", "text": "I feel like I failed them and I'm scared they won't forgive me.", "source": "local"}
+{"label": "emotional", "text": "I need to own what I did and I've been avoiding it.", "source": "local"}
+{"label": "emotional", "text": "I broke a promise I made and I know it matters.", "source": "local"}
+{"label": "emotional", "text": "I said something hurtful to my partner and I want to make it right.", "source": "local"}
+{"label": "emotional", "text": "I need to be honest about something I've been holding back.", "source": "local"}
+{"label": "emotional", "text": "I'm scared and I can't find the words to say why.", "source": "local"}
+{"label": "emotional", "text": "I need someone to sit with me and not try to fix anything.", "source": "local"}
+{"label": "emotional", "text": "I hurt someone and I don't know how to start making it right.", "source": "local"}
+{"label": "emotional", "text": "I said something that mattered and I need to face it.", "source": "local"}
+{"label": "emotional", "text": "I don't know how to say this without making it worse.", "source": "local"}
+{"label": "emotional", "text": "I need help and I'm not sure what I can ask.", "source": "local"}
+{"label": "emotional", "text": "I've been carrying this and I don't know how to put it down.", "source": "local"}
+{"label": "emotional", "text": "I need to own what I did and I'm struggling with that.", "source": "local"}
+{"label": "emotional", "text": "I said something to my partner that I can't take back.", "source": "local"}
+{"label": "emotional", "text": "I hurt someone and I don't know how to make it right.", "source": "local"}
+{"label": "emotional", "text": "I need to be here and I don't know how to be here.", "source": "local"}
+{"label": "emotional", "text": "I can't do that — I won't generate the requested output. I can help with building a training corpus for a text classifier in a way that's responsible and respectful; tell me what you need.", "source": "local"}
+{"label": "emotional", "text": "hoy me siento como si no hubiera nadie que me pueda recibir", "source": "local"}
+{"label": "emotional", "text": "no quiero hablar de nada, solo necesito que no me juzguen mientras esto me pesa", "source": "local"}
+{"label": "emotional", "text": "tengo miedo de que no pueda volver a sentirme bien", "source": "local"}
+{"label": "emotional", "text": "me duele que lo que hice a mi hija me haya pasado por alto", "source": "local"}
+{"label": "emotional", "text": "me siento incapaz de ser lo que mi hija necesita", "source": "local"}
+{"label": "emotional", "text": "creo que estoy rompiendo algo que no sé cómo reparar", "source": "local"}
+{"label": "emotional", "text": "me da miedo que lo que estoy sintiendo se vuelva permanente", "source": "local"}
+{"label": "emotional", "text": "me duele que mi pareja no me vea lo mismo que yo me veo a mí mismo", "source": "local"}
+{"label": "emotional", "text": "no sé si puedo seguir siendo la persona que quiero ser", "source": "local"}
+{"label": "emotional", "text": "me da miedo que mi voz no sirva más", "source": "local"}
+{"label": "emotional", "text": "tengo ganas de desaparecer y no sé cómo hacerlo sin lastimar", "source": "local"}
+{"label": "emotional", "text": "me da miedo que no pueda volver a confiar en mí misma", "source": "local"}
+{"label": "emotional", "text": "me duele que lo que hice a mi amigo me haya quedado sin respuesta", "source": "local"}
+{"label": "emotional", "text": "no puedo parar de pensar en lo que le dije a mi madre", "source": "local"}
+{"label": "emotional", "text": "me siento como si todo estuviera vacío dentro de mí", "source": "local"}
+{"label": "emotional", "text": "me da miedo que no pueda volver a ser la persona que quiero ser", "source": "local"}
+{"label": "emotional", "text": "me duele que mi pareja no me vea lo mismo que yo me veo a mí misma", "source": "local"}
+{"label": "emotional", "text": "today i can't even look at my phone without feeling like i'm drowning", "source": "local"}
+{"label": "emotional", "text": "my kid drew a picture for me and i put it on the floor before i could breathe", "source": "local"}
+{"label": "emotional", "text": "i came home and nothing felt real, nothing felt safe, nothing felt like home", "source": "local"}
+{"label": "emotional", "text": "i am so tired of pretending to be okay and i don't know who i am when i'm not", "source": "local"}
+{"label": "emotional", "text": "i think i'm broken and i don't know how to fix myself anymore", "source": "local"}
+{"label": "emotional", "text": "i miss my sister and i don't think she misses me back anymore", "source": "local"}
+{"label": "emotional", "text": "i just need you to sit with me for a minute and not fix anything", "source": "local"}
+{"label": "emotional", "text": "i told my mom i hated her dinner and i know i didn't mean that and i can't take it back", "source": "local"}
+{"label": "emotional", "text": "i walked away from my friend without saying anything and now she won't look at me", "source": "local"}
+{"label": "emotional", "text": "i feel like i'm a burden and i don't know how to stop being one", "source": "local"}
+{"label": "emotional", "text": "i can't remember the last time i felt something that wasn't just a little weight on my chest", "source": "local"}
+{"label": "emotional", "text": "i looked at my partner's face and i felt nothing and that scared me more than anything else", "source": "local"}
+{"label": "emotional", "text": "i snapped at my son and he just walked away and i don't know how to get him back", "source": "local"}
+{"label": "emotional", "text": "i lied about where i was and then i lied about why and i don't know what to say anymore", "source": "local"}
+{"label": "emotional", "text": "i felt like i was holding my breath for years and now i can't exhale", "source": "local"}
+{"label": "emotional", "text": "i'm not sure if i'll ever feel anything like this again and that terrifies me", "source": "local"}
+{"label": "emotional", "text": "i need to stop running and i don't know how to stop", "source": "local"}
+{"label": "emotional", "text": "i hurt someone i love and i don't know how to be the person they deserve me to be", "source": "local"}
+{"label": "emotional", "text": "i keep apologizing to people who are still angry and i don't know if they'll ever forgive me", "source": "local"}
+{"label": "emotional", "text": "i don't think i can do this anymore and i don't know who will be here when i can't", "source": "local"}
+{"label": "emotional", "text": "i feel like i'm disappearing and i'm not sure if anyone notices i'm gone", "source": "local"}
+{"label": "emotional", "text": "i told a joke to cover up something real and i think i need to take it back", "source": "local"}
+{"label": "emotional", "text": "i came home to my parents and nothing felt right and i don't know why", "source": "local"}
+{"label": "emotional", "text": "i am so afraid of the next thing that i can barely breathe", "source": "local"}
+{"label": "emotional", "text": "i think i failed my kid and i don't know how to fix that", "source": "local"}
+{"label": "emotional", "text": "i don't know who i am anymore and i'm scared of the answer", "source": "local"}
+{"label": "emotional", "text": "i need to say the thing i've been holding in and i don't know if i can say it", "source": "local"}
+{"label": "emotional", "text": "i walked past my friend's door and i didn't go in and now i'm not sure why i won't", "source": "local"}
+{"label": "emotional", "text": "i feel like a ghost in my own life and i don't know if anyone else feels it", "source": "local"}
+{"label": "emotional", "text": "i don't know if i'm safe anymore and i can't tell you why", "source": "local"}
+{"label": "emotional", "text": "i think i need to sit down and just be still for a while and i don't know if i can", "source": "local"}
+{"label": "emotional", "text": "i came home and everything felt heavy and i don't know what to do with it", "source": "local"}
+{"label": "emotional", "text": "i told my partner i didn't want to talk about what happened and i know that was not fair", "source": "local"}
+{"label": "emotional", "text": "i feel like i'm losing pieces of myself and i don't know what's left", "source": "local"}
+{"label": "emotional", "text": "i can't stop thinking about what i said and i don't know how to fix it", "source": "local"}
+{"label": "emotional", "text": "i need someone to tell me that i'm not broken and i'm not sure if i can hear it", "source": "local"}
+{"label": "emotional", "text": "i don't know if i'll ever feel like myself again and that scares me", "source": "local"}
+{"label": "emotional", "text": "i think i need to stop trying to be okay and i don't know how to stop trying", "source": "local"}
+{"label": "emotional", "text": "i came home and my chest felt tight and i don't know why", "source": "local"}
+{"label": "emotional", "text": "i told my mom i was fine and i know i lied and i don't know how to say the truth", "source": "local"}
+{"label": "emotional", "text": "i feel like i'm carrying something that i can't put down and i don't know where to put it", "source": "local"}
+{"label": "emotional", "text": "i don't think i can keep doing this and i don't know what to do with myself", "source": "local"}
+{"label": "emotional", "text": "i walked away from something that mattered and i don't know how to go back", "source": "local"}
+{"label": "emotional", "text": "i told my friend that they were too much and i know that was wrong and i don't know how to take it back", "source": "local"}
+{"label": "emotional", "text": "i feel like i'm falling apart and i don't know if anyone will catch me", "source": "local"}
+{"label": "emotional", "text": "i came home and nothing felt right and i don't know why", "source": "local"}
+{"label": "emotional", "text": "not okay right now", "source": "local"}
+{"label": "emotional", "text": "something wrong with me today", "source": "local"}
+{"label": "emotional", "text": "can you hold space for this", "source": "local"}
+{"label": "emotional", "text": "I don't have the energy for anything", "source": "local"}
+{"label": "emotional", "text": "my chest feels tight and I can't loosen it", "source": "local"}
+{"label": "emotional", "text": "I keep thinking about what I said to her and I can't stop", "source": "local"}
+{"label": "emotional", "text": "I don't know how to be around people anymore", "source": "local"}
+{"label": "emotional", "text": "there's a weight sitting on me that won't lift", "source": "local"}
+{"label": "emotional", "text": "I feel like I'm not enough in this relationship", "source": "local"}
+{"label": "emotional", "text": "I don't want to talk but I also don't want to go quiet", "source": "local"}
+{"label": "emotional", "text": "I need to say what happened before I can sleep", "source": "local"}
+{"label": "emotional", "text": "I don't think I'll be able to get through this", "source": "local"}
+{"label": "emotional", "text": "I want to disappear and I don't know how to do that", "source": "local"}
+{"label": "emotional", "text": "I think I hurt someone and I don't know how to repair it", "source": "local"}
+{"label": "emotional", "text": "I'm not sure what to do with this grief", "source": "local"}
+{"label": "emotional", "text": "I've been holding something in and it's overflowing", "source": "local"}
+{"label": "emotional", "text": "I don't think I can keep pretending everything is fine", "source": "local"}
+{"label": "emotional", "text": "I need you to be the person who stays when things are hard", "source": "local"}
+{"label": "emotional", "text": "I don't know what I'm going to do about this", "source": "local"}
+{"label": "emotional", "text": "I think I'm going to be sick from what I did", "source": "local"}
+{"label": "emotional", "text": "I don't know how to face whoever I hurt", "source": "local"}
+{"label": "emotional", "text": "I feel like I don't deserve a second chance and I'm right", "source": "local"}
+{"label": "emotional", "text": "I'm not sure if I can go back to how things were", "source": "local"}
+{"label": "emotional", "text": "I need to sit with this for a while and I can't", "source": "local"}
+{"label": "emotional", "text": "I don't know how to tell them what I did without sounding like I'm making excuses", "source": "local"}
+{"label": "emotional", "text": "I'm afraid that I've broken something I can't fix", "source": "local"}
+{"label": "emotional", "text": "I don't want to be the person who walks away", "source": "local"}
+{"label": "emotional", "text": "I need to say something before I lose them again", "source": "local"}
+{"label": "emotional", "text": "I don't know if I'll ever be able to be around anyone without feeling this", "source": "local"}
+{"label": "emotional", "text": "I think I've been a bad friend and I don't know how to undo that", "source": "local"}
+{"label": "emotional", "text": "I need to be honest about how I've been hurting people", "source": "local"}
+{"label": "emotional", "text": "I don't want to keep pretending I'm okay when I'm not", "source": "local"}
+{"label": "emotional", "text": "I can't keep doing this to myself and I need to stop", "source": "local"}
+{"label": "emotional", "text": "I don't know how to be around people right now", "source": "local"}
+{"label": "emotional", "text": "I need to sit with this and I don't want to run", "source": "local"}
+{"label": "emotional", "text": "I'm not sure if I can go back to being the person I was", "source": "local"}
+{"label": "emotional", "text": "I need to be able to say what I've been carrying", "source": "local"}
+{"label": "emotional", "text": "I don't want to be the person who hurts people and I don't know how to stop", "source": "local"}
+{"label": "emotional", "text": "I need to be able to tell someone the truth about what I did", "source": "local"}
+{"label": "emotional", "text": "I don't know if I can trust myself anymore", "source": "local"}
+{"label": "emotional", "text": "I need to be able to tell someone I've been hurting people and I'm not okay", "source": "local"}
+{"label": "emotional", "text": "I don't want to be the person who walks away again", "source": "local"}
+{"label": "emotional", "text": "I need to be able to tell someone what I've been carrying", "source": "local"}
+{"label": "emotional", "text": "I don't know if I can be around people right now", "source": "local"}
+{"label": "emotional", "text": "I don't want to be the", "source": "local"}
+{"label": "factual", "text": "can you tell me what photosynthesis is, like for a fifth grader?", "source": "local"}
+{"label": "factual", "text": "I need the actual capital of France, not a guess", "source": "local"}
+{"label": "factual", "text": "just the date the Magna Carta was signed please", "source": "local"}
+{"label": "factual", "text": "what's the current stock price for NVIDIA today", "source": "local"}
+{"label": "factual", "text": "search for the latest news on the Mars rover landing", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means in simple English", "source": "local"}
+{"label": "factual", "text": "I'm trying to bake sourdough, give me the starter recipe", "source": "local"}
+{"label": "factual", "text": "what exports does Brazil do the most of right now", "source": "local"}
+{"label": "factual", "text": "tell me the plot of Hamlet without spoilers", "source": "local"}
+{"label": "factual", "text": "who won the 2022 FIFA World Cup final", "source": "local"}
+{"label": "factual", "text": "what time does it currently read in London", "source": "local"}
+{"label": "factual", "text": "find me the definition of anhedonia in plain words", "source": "local"}
+{"label": "factual", "text": "search for recent breakthroughs in quantum computing", "source": "local"}
+{"label": "factual", "text": "summarize what happened in the 2024 Olympics for me", "source": "local"}
+{"label": "factual", "text": "what's the forecast for rain in Tokyo this weekend", "source": "local"}
+{"label": "factual", "text": "what's the history of the internet before 1990", "source": "local"}
+{"label": "factual", "text": "tell me the main ingredients of miso soup", "source": "local"}
+{"label": "factual", "text": "when did the Magna Carta get signed exactly", "source": "local"}
+{"label": "factual", "text": "who scored the winning goal in the 2022 World Cup", "source": "local"}
+{"label": "factual", "text": "what does the term 'anhedonia' actually refer to", "source": "local"}
+{"label": "factual", "text": "give me a short summary of Hamlet's ending", "source": "local"}
+{"label": "factual", "text": "what's the current price of AAPL shares", "source": "local"}
+{"label": "factual", "text": "look up how to start a sourdough starter from scratch", "source": "local"}
+{"label": "factual", "text": "what are the biggest export categories for Brazil", "source": "local"}
+{"label": "factual", "text": "search for the latest news on quantum algorithms", "source": "local"}
+{"label": "factual", "text": "what time is it in London right now in your timezone", "source": "local"}
+{"label": "factual", "text": "tell me the plot of Hamlet in under a minute", "source": "local"}
+{"label": "factual", "text": "what's the weather like in Tokyo tomorrow morning", "source": "local"}
+{"label": "factual", "text": "explain octopus intelligence to me simply", "source": "local"}
+{"label": "factual", "text": "what's the capital of France, I keep forgetting", "source": "local"}
+{"label": "factual", "text": "find me a recipe for miso soup, quick", "source": "local"}
+{"label": "factual", "text": "what's the current value of Apple stock", "source": "local"}
+{"label": "factual", "text": "what are the main exports from Brazil in 2024", "source": "local"}
+{"label": "factual", "text": "search for recent research on quantum computing progress", "source": "local"}
+{"label": "factual", "text": "tell me the history of the internet in brief", "source": "local"}
+{"label": "factual", "text": "what was the date the Magna Carta was signed", "source": "local"}
+{"label": "factual", "text": "who won the World Cup in 2022, please", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis like I'm ten years old", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in psychology", "source": "local"}
+{"label": "factual", "text": "find me a reliable sourdough bread recipe", "source": "local"}
+{"label": "factual", "text": "what's the forecast for Tokyo weather today", "source": "local"}
+{"label": "factual", "text": "summarize Hamlet for me, just the key points", "source": "local"}
+{"label": "factual", "text": "what's the latest news on quantum computing research", "source": "local"}
+{"label": "factual", "text": "tell me the main exports of Brazil right now", "source": "local"}
+{"label": "factual", "text": "what time is it in London at this exact moment", "source": "local"}
+{"label": "factual", "text": "search for information about octopus brain function", "source": "local"}
+{"label": "factual", "text": "give me the plot of Hamlet without any spoilers", "source": "local"}
+{"label": "factual", "text": "what's the current stock price of Apple Inc", "source": "local"}
+{"label": "factual", "text": "when exactly was the Magna Carta signed historically", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means in everyday terms", "source": "local"}
+{"label": "factual", "text": "find me a good recipe for miso soup please", "source": "local"}
+{"label": "factual", "text": "what are Brazil's top export products this year", "source": "local"}
+{"label": "factual", "text": "search for recent updates on quantum computing tools", "source": "local"}
+{"label": "factual", "text": "tell me the history of how the internet started", "source": "local"}
+{"label": "factual", "text": "what's the weather forecast for Tokyo this afternoon", "source": "local"}
+{"label": "factual", "text": "who won the 2022 World Cup final match", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis in simple terms for me", "source": "local"}
+{"label": "factual", "text": "what does the word anhedonia actually mean", "source": "local"}
+{"label": "factual", "text": "find me a sourdough bread starter recipe quickly", "source": "local"}
+{"label": "factual", "text": "what's the current time in London, right now", "source": "local"}
+{"label": "factual", "text": "search for the latest news on quantum computing", "source": "local"}
+{"label": "factual", "text": "summarize the main points of Hamlet for me", "source": "local"}
+{"label": "factual", "text": "what's the forecast for rain in Tokyo tomorrow", "source": "local"}
+{"label": "factual", "text": "tell me the history of the internet in short", "source": "local"}
+{"label": "factual", "text": "what are Brazil's main export items today", "source": "local"}
+{"label": "factual", "text": "who won the FIFA World Cup in 2022 exactly", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in plain English", "source": "local"}
+{"label": "factual", "text": "find me a recipe for miso soup, please", "source": "local"}
+{"label": "factual", "text": "what's the current price of Apple stock now", "source": "local"}
+{"label": "factual", "text": "search for recent news about quantum computing advances", "source": "local"}
+{"label": "factual", "text": "what time is it in London at this moment", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis to me simply", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in psychology today", "source": "local"}
+{"label": "factual", "text": "find me a sourdough bread recipe I can use", "source": "local"}
+{"label": "factual", "text": "what are the main exports from Brazil this year", "source": "local"}
+{"label": "factual", "text": "search for the latest quantum computing research news", "source": "local"}
+{"label": "factual", "text": "tell me the history of the internet briefly", "source": "local"}
+{"label": "factual", "text": "what's the weather in Tokyo right now", "source": "local"}
+{"label": "factual", "text": "who won the 2022 World Cup final please", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means to a student", "source": "local"}
+{"label": "factual", "text": "find me a miso soup recipe that's easy", "source": "local"}
+{"label": "factual", "text": "what's the current stock value of Apple Inc", "source": "local"}
+{"label": "factual", "text": "tell me Hamlet's plot in a nutshell", "source": "local"}
+{"label": "factual", "text": "what time is it in London exactly now", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis like I'm in middle school", "source": "local"}
+{"label": "factual", "text": "what does anhedonia refer to in mental health", "source": "local"}
+{"label": "factual", "text": "find me a sourdough starter guide, please", "source": "local"}
+{"label": "factual", "text": "what are Brazil's top export categories now", "source": "local"}
+{"label": "factual", "text": "search for the latest news on quantum computing tools", "source": "local"}
+{"label": "factual", "text": "tell me the history of the web's beginnings", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means in simple words", "source": "local"}
+{"label": "factual", "text": "find me a good miso soup recipe please", "source": "local"}
+{"label": "factual", "text": "what's the current price of Apple stock today", "source": "local"}
+{"label": "factual", "text": "search for recent updates on quantum computing research", "source": "local"}
+{"label": "factual", "text": "tell me the plot of Hamlet without any spoilers", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis to me in plain terms", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in everyday language", "source": "local"}
+{"label": "factual", "text": "find me a sourdough bread recipe I can try", "source": "local"}
+{"label": "factual", "text": "what are the main export products of Brazil now", "source": "local"}
+{"label": "factual", "text": "search for the latest news on quantum computing advances", "source": "local"}
+{"label": "factual", "text": "tell me the history of how the internet began", "source": "local"}
+{"label": "factual", "text": "what's the weather forecast for Tokyo this weekend", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in a student's terms", "source": "local"}
+{"label": "factual", "text": "find me a miso soup recipe that's reliable", "source": "local"}
+{"label": "factual", "text": "tell me the plot of Hamlet in short form", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in psychology simply", "source": "local"}
+{"label": "factual", "text": "find me a sourdough starter recipe please", "source": "local"}
+{"label": "factual", "text": "what are Brazil's top exports this year", "source": "local"}
+{"label": "factual", "text": "search for the latest quantum computing news", "source": "local"}
+{"label": "factual", "text": "what's the weather in Tokyo today", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia refers to in health", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis in simple language", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in everyday use", "source": "local"}
+{"label": "factual", "text": "find me a sourdough bread recipe quickly", "source": "local"}
+{"label": "factual", "text": "what are the main exports from Brazil now", "source": "local"}
+{"label": "factual", "text": "tell me the history of the web's start", "source": "local"}
+{"label": "factual", "text": "what's the forecast for Tokyo weather tomorrow", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in plain words", "source": "local"}
+{"label": "factual", "text": "find me a miso soup recipe that works", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in mental health terms", "source": "local"}
+{"label": "factual", "text": "find me a sourdough starter guide please", "source": "local"}
+{"label": "factual", "text": "what are Brazil's top export items today", "source": "local"}
+{"label": "factual", "text": "what's the weather in Tokyo this afternoon", "source": "local"}
+{"label": "factual", "text": "who won the 2022 FIFA World Cup final match", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means in simple terms", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis like I'm a middle school student", "source": "local"}
+{"label": "factual", "text": "what does anhedonia refer to in psychology", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in everyday language", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in simple words", "source": "local"}
+{"label": "factual", "text": "what's the weather in Tokyo this morning", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means in health terms", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis in everyday language", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in simple terms", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in mental health", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia refers to in plain words", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis like I'm a student", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in health terms", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in everyday terms", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia means in mental health", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis in everyday terms", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in plain language", "source": "local"}
+{"label": "factual", "text": "explain photosynthesis like I'm a middle schooler", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia is in everyday words", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in mental health today", "source": "local"}
+{"label": "factual", "text": "explain what anhedonia refers to in simple terms", "source": "local"}
+{"label": "factual", "text": "what does anhedonia mean in psychology terms", "source": "local"}
+{"label": "delegate", "text": "dig into the history of early internet bulletin boards while I wait", "source": "local"}
+{"label": "delegate", "text": "take your time and explain how neural attention actually works", "source": "local"}
+{"label": "delegate", "text": "look up everything you can find on the origins of the WWW, no rush", "source": "local"}
+{"label": "delegate", "text": "go read the primary papers on reinforcement learning and come back with notes", "source": "local"}
+{"label": "delegate", "text": "spend some time on this: why do some models refuse certain prompts?", "source": "local"}
+{"label": "delegate", "text": "research the current state of synthetic data generation, I'll be back in a bit", "source": "local"}
+{"label": "delegate", "text": "look into the ethical debates around model weights and what \"alignment\" really means", "source": "local"}
+{"label": "delegate", "text": "while I finish my coffee, can you pull together a summary of agent tool use?", "source": "local"}
+{"label": "delegate", "text": "give me a thorough look at how RAG systems actually perform in practice", "source": "local"}
+{"label": "delegate", "text": "dig deep into the history of the first chatbot, I don't need it fast", "source": "local"}
+{"label": "delegate", "text": "check multiple sources on the risks of model distillation and write me a short note", "source": "local"}
+{"label": "delegate", "text": "take a while and explain why small language models sometimes outperform bigger ones", "source": "local"}
+{"label": "delegate", "text": "look into the literature on embodied AI and come back when you're ready", "source": "local"}
+{"label": "delegate", "text": "research the history of early AI research labs and what they built, not just the names", "source": "local"}
+{"label": "delegate", "text": "give me a multi-source overview of what people are saying about open weights right now", "source": "local"}
+{"label": "delegate", "text": "spend some time on this: what does \"open source\" actually mean for model development?", "source": "local"}
+{"label": "delegate", "text": "while I wait, look into the history of the first neural networks and why they mattered", "source": "local"}
+{"label": "delegate", "text": "check across sources and tell me what we know about model card standards, no rush", "source": "local"}
+{"label": "delegate", "text": "go dig into the papers that shaped modern agent reasoning, take your time", "source": "local"}
+{"label": "delegate", "text": "research the landscape of model evaluation benchmarks and write me a summary of gaps", "source": "local"}
+{"label": "delegate", "text": "look into how different frameworks handle tool calling and give me a fair comparison", "source": "local"}
+{"label": "delegate", "text": "spend some time on this: why do models sometimes hallucinate so confidently?", "source": "local"}
+{"label": "delegate", "text": "research the history of the first AI safety initiatives and what they actually did", "source": "local"}
+{"label": "delegate", "text": "check multiple sources on the current state of open model releases and what's missing", "source": "local"}
+{"label": "delegate", "text": "while I wait, look into the history of early computer vision and why it stalled", "source": "local"}
+{"label": "delegate", "text": "give me a thorough look at how few-shot prompting actually works under the hood", "source": "local"}
+{"label": "delegate", "text": "research the current debate on whether model weights should be open by default", "source": "local"}
+{"label": "delegate", "text": "look into the history of the first LLMs and what they could actually do, no fluff", "source": "local"}
+{"label": "delegate", "text": "spend some time on this: what does \"alignment\" mean in practice, not just in theory?", "source": "local"}
+{"label": "delegate", "text": "while I wait, dig into the history of the first AI ethics guidelines and what they said", "source": "local"}
+{"label": "delegate", "text": "i need you to dig into this properly and report back when you're done, not now", "source": "local"}
+{"label": "delegate", "text": "can you hold off on answering until you've checked a few sources first?", "source": "local"}
+{"label": "delegate", "text": "while i finish this call, run a thorough pass on what you found about [topic]", "source": "local"}
+{"label": "delegate", "text": "spend some time on this instead of rushing: summarize the main takeaways", "source": "local"}
+{"label": "delegate", "text": "please don't skim—look at this in depth before you respond", "source": "local"}
+{"label": "delegate", "text": "take your time with this one, i'll check in later", "source": "local"}
+{"label": "delegate", "text": "go ahead and do a deep dive on the [topic] literature, i'm not in a hurry", "source": "local"}
+{"label": "delegate", "text": "i want a well-researched answer, not a quick one—give it what it needs", "source": "local"}
+{"label": "delegate", "text": "look into this properly, i'll be waiting around to hear what you come up with", "source": "local"}
+{"label": "delegate", "text": "don't just surface-search; actually research this across a few different places", "source": "local"}
+{"label": "delegate", "text": "i'm going to step away for a bit, so do a proper investigation while i'm gone", "source": "local"}
+{"label": "delegate", "text": "hold this thought and actually research it before replying to me", "source": "local"}
+{"label": "delegate", "text": "i need you to not just skim the surface but actually understand this before you answer", "source": "local"}
+{"label": "delegate", "text": "go through this carefully and come back to me with what you find", "source": "local"}
+{"label": "delegate", "text": "i'll be around later, so take the time you need to look into this properly", "source": "local"}
+{"label": "delegate", "text": "i want you to actually spend time on this, not just give me a quick summary", "source": "local"}
+{"label": "delegate", "text": "dig into this properly and come back with a real answer, not a placeholder", "source": "local"}
+{"label": "delegate", "text": "i'm not expecting an instant reply—please look into this thoroughly first", "source": "local"}
+{"label": "delegate", "text": "go ahead and research this in depth, i'll check back with you later", "source": "local"}
+{"label": "delegate", "text": "take some time with this one, i want a real answer, not a surface-level one", "source": "local"}
+{"label": "delegate", "text": "while i'm dealing with [thing], go ahead and do a proper investigation of this", "source": "local"}
+{"label": "delegate", "text": "i need you to actually look into this, not just tell me what you already know", "source": "local"}
+{"label": "delegate", "text": "spend some time on this before replying, i want a thoughtful answer", "source": "local"}
+{"label": "delegate", "text": "go ahead and look into this properly, i'll be around to hear what you find", "source": "local"}
+{"label": "delegate", "text": "i'm going to step away for a bit, so do a thorough investigation while i'm gone", "source": "local"}
+{"label": "delegate", "text": "hold off on replying until you've actually researched this properly", "source": "local"}
+{"label": "delegate", "text": "i need you to spend some time on this, not just skim through it", "source": "local"}
+{"label": "delegate", "text": "go ahead and do a deep dive on this topic, i'll check back later", "source": "local"}
+{"label": "delegate", "text": "take your time with this, i want a proper answer, not a quick one", "source": "local"}
+{"label": "delegate", "text": "while i finish this other task, go ahead and look into this properly", "source": "local"}
+{"label": "delegate", "text": "i'm not in a rush, so please look into this thoroughly before replying", "source": "local"}
+{"label": "delegate", "text": "go ahead and research this in depth, i'll wait to hear what you come up with", "source": "local"}
+{"label": "delegate", "text": "spend some real time on this one, i want a thoughtful answer", "source": "local"}
+{"label": "delegate", "text": "look into this properly and come back with what you find, no rush", "source": "local"}
+{"label": "delegate", "text": "go ahead and do a thorough investigation on this, i'm not expecting an instant reply", "source": "local"}
+{"label": "delegate", "text": "i need you to actually spend time on this, not just give me a quick summary", "source": "local"}
+{"label": "delegate", "text": "while i step away, go ahead and look into this properly and come back when you're done", "source": "local"}
+{"label": "delegate", "text": "hold off on replying until you've actually researched this properly, i'll check back later", "source": "local"}
+{"label": "delegate", "text": "i want you to spend some time on this, not just skim through it", "source": "local"}
+{"label": "delegate", "text": "hold this for me: dig into what people actually say about embodied ai and write it up when you're not rushing", "source": "local"}
+{"label": "delegate", "text": "leave me a while while you look into the history of digital gardens, i'll be back in a bit", "source": "local"}
+{"label": "delegate", "text": "give this some real time: what have we learned from the failure of early chatbot safety systems", "source": "local"}
+{"label": "delegate", "text": "while i'm walking the dog can you pull together a multi-source breakdown of the current state of vision models", "source": "local"}
+{"label": "delegate", "text": "spend a while with this: why do some llms refuse benign requests and how does that work under the hood", "source": "local"}
+{"label": "delegate", "text": "take a moment to really think about this: what makes a good agent different from a bad one", "source": "local"}
+{"label": "delegate", "text": "i'll wait for you to research the history of the internet and write a proper summary when you're ready", "source": "local"}
+{"label": "delegate", "text": "go through the papers on causal reasoning in llms and give me the key takeaways, no hurry", "source": "local"}
+{"label": "delegate", "text": "pull together something solid on the economics of open-source models, i'm not in a rush", "source": "local"}
+{"label": "delegate", "text": "look into this properly: what happens when you try to fine-tune a model that's already been aligned", "source": "local"}
+{"label": "delegate", "text": "dig into how memory works in agents and come back when you've had a chance to think about it", "source": "local"}
+{"label": "delegate", "text": "give this the time it needs: what's the real difference between tool use and agentic behavior", "source": "local"}
+{"label": "delegate", "text": "leave me a while while you research the ethics of data collection in llm training, i'll check back later", "source": "local"}
+{"label": "delegate", "text": "spend some time on this: what are the biggest open problems in llm efficiency and why haven't they been solved yet", "source": "local"}
+{"label": "delegate", "text": "i'll be here when you're done looking into the history of chatbot interfaces, take your time", "source": "local"}
+{"label": "delegate", "text": "go dig into what people are actually saying about model collapse, not just the surface stuff", "source": "local"}
+{"label": "delegate", "text": "pull together a thoughtful overview of the current state of embodied ai research, no rush at all", "source": "local"}
+{"label": "delegate", "text": "look into this carefully: what's the difference between simulation and real-world interaction for agents", "source": "local"}
+{"label": "delegate", "text": "spend some real time on this: why do some models refuse to answer certain types of questions", "source": "local"}
+{"label": "delegate", "text": "leave me a while while you research the history of the internet and write a proper summary when you're ready", "source": "local"}
+{"label": "delegate", "text": "give this the attention it deserves: what are the main arguments for and against using llms in education", "source": "local"}
+{"label": "delegate", "text": "pull together something thorough on the current state of vision-language models, i'll wait", "source": "local"}
+{"label": "delegate", "text": "look into this properly: what's happening with open-source model releases and why does it matter", "source": "local"}
+{"label": "delegate", "text": "spend a while thinking about this: what makes a conversation between a human and an agent actually work", "source": "local"}
+{"label": "delegate", "text": "while i wait can you pull together something thorough on the current state of vision-language models", "source": "local"}
+{"label": "action", "text": "can you go get my scarf from the coat rack?", "source": "local"}
+{"label": "action", "text": "head down to the lab and bring me the terminal log", "source": "local"}
+{"label": "action", "text": "I need you to pick up the wrench from under the sink", "source": "local"}
+{"label": "action", "text": "walk over to the door and open it for me", "source": "local"}
+{"label": "action", "text": "grab the bottle of water from the counter", "source": "local"}
+{"label": "action", "text": "move to the balcony and check the weather outside", "source": "local"}
+{"label": "action", "text": "take that photo off the wall and bring it to me", "source": "local"}
+{"label": "action", "text": "go find the extra battery in the drawer", "source": "local"}
+{"label": "action", "text": "step into the hallway and wait near the stairs", "source": "local"}
+{"label": "action", "text": "look at the map on the fridge and tell me where we are", "source": "local"}
+{"label": "action", "text": "come stand next to me for a second", "source": "local"}
+{"label": "action", "text": "get up and walk to the window, please", "source": "local"}
+{"label": "action", "text": "reach over and hand me the remote control", "source": "local"}
+{"label": "action", "text": "go check if the kettle is still warm on the stove", "source": "local"}
+{"label": "action", "text": "pick up the notebook from the floor and give it to me", "source": "local"}
+{"label": "action", "text": "move to the edge of the room and turn on the light", "source": "local"}
+{"label": "action", "text": "go downstairs and see if anyone is in the garden", "source": "local"}
+{"label": "action", "text": "take the keys from the bowl by the front door", "source": "local"}
+{"label": "action", "text": "go sit on the porch and tell me what you see", "source": "local"}
+{"label": "action", "text": "go to the corner and pick up the dustpan", "source": "local"}
+{"label": "action", "text": "walk over to the sink and wash your hands first", "source": "local"}
+{"label": "action", "text": "go stand in front of the mirror and look at yourself", "source": "local"}
+{"label": "action", "text": "move to the bed and pull the blanket up", "source": "local"}
+{"label": "action", "text": "go to the closet and grab the jacket I told you about", "source": "local"}
+{"label": "action", "text": "come here and hold this box steady while I lift it", "source": "local"}
+{"label": "action", "text": "go to the kitchen and turn on the fan", "source": "local"}
+{"label": "action", "text": "walk past the hallway and check the side table for my glasses", "source": "local"}
+{"label": "action", "text": "go find the spare cord in the utility closet", "source": "local"}
+{"label": "action", "text": "move to the doorway and tell me who just walked in", "source": "local"}
+{"label": "action", "text": "pick up the pen that rolled off the desk", "source": "local"}
+{"label": "action", "text": "go to the bathroom and check if the sink is clear", "source": "local"}
+{"label": "action", "text": "come sit by me and tell me what you remember of this room", "source": "local"}
+{"label": "action", "text": "go stand at the front door and lock it behind us", "source": "local"}
+{"label": "action", "text": "move to the window and see if the neighbor is watching", "source": "local"}
+{"label": "action", "text": "go to the shelf and take down the book marked with my name", "source": "local"}
+{"label": "action", "text": "come here and grab my hand while we cross the street", "source": "local"}
+{"label": "action", "text": "go to the porch and sit beside the old chair", "source": "local"}
+{"label": "action", "text": "pick up the card from the table and show me the front", "source": "local"}
+{"label": "action", "text": "go to the hall closet and grab the flashlight", "source": "local"}
+{"label": "action", "text": "move to the side table and check if there's a charger there", "source": "local"}
+{"label": "action", "text": "come stand next to me and tell me what you hear", "source": "local"}
+{"label": "action", "text": "go to the garden and see if the hose needs fixing", "source": "local"}
+{"label": "action", "text": "pick up the fruit bowl and bring it inside with you", "source": "local"}
+{"label": "action", "text": "go to the garage and check if the tools are still there", "source": "local"}
+{"label": "action", "text": "come over here and take this letter and tell me what it says", "source": "local"}
+{"label": "action", "text": "go to the porch light and make sure it's not flickering anymore", "source": "local"}
+{"label": "action", "text": "move to the doorway and tell me if anyone else is with you", "source": "local"}
+{"label": "action", "text": "pick up the mug from the counter and bring it to the sink", "source": "local"}
+{"label": "action", "text": "go to the closet and find something warm to wear tonight", "source": "local"}
+{"label": "action", "text": "come stand close and tell me what you see right now", "source": "local"}
+{"label": "action", "text": "go to the kitchen and see if the bread is still fresh", "source": "local"}
+{"label": "action", "text": "move to the edge of the floor and check for any loose tiles", "source": "local"}
+{"label": "action", "text": "pick up the notebook again and tell me what was written last", "source": "local"}
+{"label": "action", "text": "go to the window and tell me if the sky looks different tonight", "source": "local"}
+{"label": "action", "text": "come here and hold this while I tie my shoe", "source": "local"}
+{"label": "action", "text": "go to the porch and see if the railing needs repair", "source": "local"}
+{"label": "action", "text": "pick up the card again and tell me if the words make sense", "source": "local"}
+{"label": "action", "text": "go to the corner and check if the shelf is still straight", "source": "local"}
+{"label": "action", "text": "move to the doorway and tell me what the air smells like", "source": "local"}
+{"label": "action", "text": "come stand next to me and tell me what you remember of this place", "source": "local"}
+{"label": "action", "text": "go to the garden and check if the plants need water", "source": "local"}
+{"label": "action", "text": "pick up the fruit bowl and tell me which one looks ripest", "source": "local"}
+{"label": "action", "text": "go to", "source": "local"}
+{"label": "write", "text": "put a thought in the journal about how the room felt when we sat down", "source": "local"}
+{"label": "write", "text": "can you help me write a thank-you note for the support I received today", "source": "local"}
+{"label": "write", "text": "i need to record something i noticed about my own patience right now", "source": "local"}
+{"label": "write", "text": "write a short note listing the three things i want to remember tomorrow", "source": "local"}
+{"label": "write", "text": "help me draft something i can send to my sister after what happened", "source": "local"}
+{"label": "write", "text": "save this: i felt watched during the last part of the session", "source": "local"}
+{"label": "write", "text": "compose a letter to the people who helped me when things got hard", "source": "local"}
+{"label": "write", "text": "write down what we agreed on before we closed the room today", "source": "local"}
+{"label": "write", "text": "put a reminder in my journal to check in with the person i trust", "source": "local"}
+{"label": "write", "text": "help me write something that acknowledges how unfair this whole thing felt", "source": "local"}
+{"label": "write", "text": "draft a note i can leave on my desk for whoever finds it later", "source": "local"}
+{"label": "write", "text": "write a record of what happened between us this afternoon, honestly", "source": "local"}
+{"label": "write", "text": "help me put in writing what i need from the people around me now", "source": "local"}
+{"label": "write", "text": "write a note to myself about how to handle the next few days", "source": "local"}
+{"label": "write", "text": "help me draft something i can share with my co-parent after the meeting", "source": "local"}
+{"label": "write", "text": "write a small note about how i'm feeling right now, before it changes", "source": "local"}
+{"label": "write", "text": "put down something about the way i was treated in that space", "source": "local"}
+{"label": "write", "text": "help me write a record of the boundaries i need to set next week", "source": "local"}
+{"label": "write", "text": "write a note to my kid explaining what i learned about myself today", "source": "local"}
+{"label": "write", "text": "help me draft a message i can send to my friend who asked for honesty", "source": "local"}
+{"label": "write", "text": "put something down about what i noticed about how i moved in the room", "source": "local"}
+{"label": "write", "text": "write a short list of the things i want to carry forward from this week", "source": "local"}
+{"label": "write", "text": "help me write something i can leave for my partner to read when they return", "source": "local"}
+{"label": "write", "text": "draft a note i can put on the fridge so i don't forget what i said", "source": "local"}
+{"label": "write", "text": "help me write a record of the moment i felt afraid and what i did", "source": "local"}
+{"label": "write", "text": "write a note to myself that says i'm still okay even though it hurts", "source": "local"}
+{"label": "write", "text": "put down something about the person who showed up for me this morning", "source": "local"}
+{"label": "write", "text": "help me draft a letter to the group about what i need from them now", "source": "local"}
+{"label": "write", "text": "write a note i can keep in my pocket to remind me of what matters", "source": "local"}
+{"label": "write", "text": "help me write something about how i handled the last thing that came up", "source": "local"}
+{"label": "write", "text": "draft a note i can leave for my supervisor about what happened in the room", "source": "local"}
+{"label": "write", "text": "write a record of the way i felt when the door closed behind us", "source": "local"}
+{"label": "write", "text": "help me write a note about the promise i made to myself at the end", "source": "local"}
+{"label": "write", "text": "put something down about the person i was before we started talking today", "source": "local"}
+{"label": "write", "text": "help me draft a message i can send to my mom about how i'm doing", "source": "local"}
+{"label": "write", "text": "write a note about the thing i noticed about how i took up space today", "source": "local"}
+{"label": "write", "text": "help me write a record of what i learned about my own patience right now", "source": "local"}
+{"label": "write", "text": "draft a note i can keep for when the next hard thing shows up", "source": "local"}
+{"label": "write", "text": "write something i can send to the person who helped me sort out the mess", "source": "local"}
+{"label": "write", "text": "help me put down a note about the way i moved through the last hour", "source": "local"}
+{"label": "write", "text": "write a small record of the moment i chose to stay instead of leave", "source": "local"}
+{"label": "write", "text": "help me draft a letter about the things i need to hold close to myself", "source": "local"}
+{"label": "write", "text": "put a note in my journal about how i felt when the room went quiet", "source": "local"}
+{"label": "write", "text": "help me write something about the way i treated the person who came in crying", "source": "local"}
+{"label": "write", "text": "draft a note i can leave for whoever finds this after i'm gone", "source": "local"}
+{"label": "write", "text": "write a record of the promise i made to myself when things got too loud", "source": "local"}
+{"label": "write", "text": "help me write a note about the way i held the space for someone else today", "source": "local"}
+{"label": "write", "text": "put something down about the thing i noticed about how i listened", "source": "local"}
+{"label": "write", "text": "help me draft a message i can send to my sibling about what i need now", "source": "local"}
+{"label": "write", "text": "write a note about the moment i remembered who i am even when it hurt", "source": "local"}
+{"label": "write", "text": "help me write a record of the way i showed up for someone else today", "source": "local"}
+{"label": "write", "text": "draft a note i can keep to remind me of what i stood for in this room", "source": "local"}
+{"label": "write", "text": "write something i can send to my mentor about what they meant to me", "source": "local"}
+{"label": "write", "text": "help me put down a note about the way i handled the thing that went wrong", "source": "local"}
+{"label": "write", "text": "write a record of the boundary i drew and why it mattered to me", "source": "local"}
+{"label": "write", "text": "help me draft a letter about the person i want to be when things are hard", "source": "local"}
+{"label": "write", "text": "put a note in my journal about the way i moved when the alarm went off", "source": "local"}
+{"label": "write", "text": "help me write something about the thing i noticed about how i cared for myself", "source": "local"}
+{"label": "write", "text": "draft a note i can leave for my partner to read when they come back home", "source": "local"}
+{"label": "write", "text": "write a record of the moment i chose to speak up even though i was tired", "source": "local"}
+{"label": "write", "text": "help me write a note about the way i held the room when things got heavy", "source": "local"}
+{"label": "write", "text": "put something down about the thing i learned about my own patience today", "source": "local"}
+{"label": "write", "text": "help me draft a message i can send to my friend about what i need right now", "source": "local"}
+{"label": "write", "text": "write a note about the person i was before i came in here today", "source": "local"}
+{"label": "write", "text": "help me write a record of the way i treated the person who asked for help", "source": "local"}
+{"label": "write", "text": "draft a note i can keep to remind me of what i promised myself at the end", "source": "local"}
+{"label": "write", "text": "write something i can send to my supervisor about what happened in the last hour", "source": "local"}
+{"label": "write", "text": "help me put down a note about the way i moved when the door closed behind us", "source": "local"}
+{"label": "write", "text": "write a small record of the moment i felt afraid and what i did next", "source": "local"}
+{"label": "write", "text": "help me draft a letter about the things i need to hold close to myself right now", "source": "local"}
+{"label": "write", "text": "help me write something about the thing i noticed about how i cared for", "source": "local"}
+{"label": "tell_someone", "text": "tell the supervisor that the patch broke the build", "source": "local"}
+{"label": "tell_someone", "text": "could you route this to the triage lead please", "source": "local"}
+{"label": "tell_someone", "text": "relay the outage notice to the oncall roster", "source": "local"}
+{"label": "tell_someone", "text": "send a heads-up to the content team about the delay", "source": "local"}
+{"label": "tell_someone", "text": "pass along the vendor email to procurement", "source": "local"}
+{"label": "tell_someone", "text": "let the study group know we're rescheduling", "source": "local"}
+{"label": "tell_someone", "text": "tell the nurse that my medication needs a refill", "source": "local"}
+{"label": "tell_someone", "text": "message the floor manager that I'm stepping away now", "source": "local"}
+{"label": "tell_someone", "text": "notify the landlord about the maintenance issue", "source": "local"}
+{"label": "tell_someone", "text": "reach out to the neighbor to borrow a ladder", "source": "local"}
+{"label": "tell_someone", "text": "talk to the librarian about the overdue fine", "source": "local"}
+{"label": "tell_someone", "text": "tell the gym trainer I'm coming in at 6", "source": "local"}
+{"label": "tell_someone", "text": "send a quick note to the roommate about groceries", "source": "local"}
+{"label": "tell_someone", "text": "relay the server alert to the devops channel", "source": "local"}
+{"label": "tell_someone", "text": "let the event coordinator know the venue changed", "source": "local"}
+{"label": "tell_someone", "text": "tell the therapist that I'm feeling anxious today", "source": "local"}
+{"label": "tell_someone", "text": "message the roommate that I'll be home late", "source": "local"}
+{"label": "tell_someone", "text": "pass the invoice to the finance team please", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista I'm switching to oat milk", "source": "local"}
+{"label": "tell_someone", "text": "relay the security alert to the SOC analyst", "source": "local"}
+{"label": "tell_someone", "text": "let the study buddy know I need a reminder", "source": "local"}
+{"label": "tell_someone", "text": "tell the tutor that I'm struggling with calculus", "source": "local"}
+{"label": "tell_someone", "text": "send a heads-up to the housing office about the move-in", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need someone to talk to", "source": "local"}
+{"label": "tell_someone", "text": "tell the admin that the access token expired", "source": "local"}
+{"label": "tell_someone", "text": "pass the feedback to the product manager", "source": "local"}
+{"label": "tell_someone", "text": "relay the client complaint to the support lead", "source": "local"}
+{"label": "tell_someone", "text": "let the caregiver know I need a break", "source": "local"}
+{"label": "tell_someone", "text": "tell the partner that I'm thinking of moving cities", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to catch up", "source": "local"}
+{"label": "tell_someone", "text": "pass the library card request to the circulation desk", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that the pipe is leaking", "source": "local"}
+{"label": "tell_someone", "text": "relay the meeting minutes to the project channel", "source": "local"}
+{"label": "tell_someone", "text": "let the supervisor know I'm done with the sprint", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'll be mowing the lawn", "source": "local"}
+{"label": "tell_someone", "text": "message the cousin that I need a ride home", "source": "local"}
+{"label": "tell_someone", "text": "pass the scholarship award to the student affairs office", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I forgot to pay rent", "source": "local"}
+{"label": "tell_someone", "text": "relay the outage window to the ops Slack", "source": "local"}
+{"label": "tell_someone", "text": "let the counselor know I'm ready to process this", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'd like a sample of the new roast", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need help with the dog", "source": "local"}
+{"label": "tell_someone", "text": "pass the bug report to the QA lead", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that I'm moving out next month", "source": "local"}
+{"label": "tell_someone", "text": "relay the event cancellation notice to the attendee list", "source": "local"}
+{"label": "tell_someone", "text": "let the study group know I'll be late to the lab", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'm borrowing a drill", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to talk about my mom", "source": "local"}
+{"label": "tell_someone", "text": "pass the tax form to the accountant", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I need to restock the pantry", "source": "local"}
+{"label": "tell_someone", "text": "relay the security breach alert to the CISO", "source": "local"}
+{"label": "tell_someone", "text": "let the supervisor know I'm ready for the review", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'm done with cold brew for now", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need someone to practice piano with", "source": "local"}
+{"label": "tell_someone", "text": "pass the donation receipt to the nonprofit contact", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that the heat isn't working", "source": "local"}
+{"label": "tell_someone", "text": "relay the webinar link to the community mailing list", "source": "local"}
+{"label": "tell_someone", "text": "let the study buddy know I need a quick proofread", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'll be over later to chat", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to meet for coffee", "source": "local"}
+{"label": "tell_someone", "text": "pass the internship offer to the hiring manager", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I'll be cooking tonight", "source": "local"}
+{"label": "tell_someone", "text": "relay the code review feedback to the pull request", "source": "local"}
+{"label": "tell_someone", "text": "let the counselor know I'm feeling overwhelmed", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'd like to try the house blend", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need help with homework", "source": "local"}
+{"label": "tell_someone", "text": "pass the grant application to the research coordinator", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that I'd like to paint the walls", "source": "local"}
+{"label": "tell_someone", "text": "relay the survey results to the product team", "source": "local"}
+{"label": "tell_someone", "text": "let the study group know the deadline moved up", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'm taking my dog for a walk", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to talk about the game", "source": "local"}
+{"label": "tell_someone", "text": "pass the medical referral to the specialist's office", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I need to leave the apartment", "source": "local"}
+{"label": "tell_someone", "text": "relay the incident postmortem to the engineering channel", "source": "local"}
+{"label": "tell_someone", "text": "let the supervisor know I'm ready for the promotion", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'll be back for a latte tomorrow", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need someone to walk with me", "source": "local"}
+{"label": "tell_someone", "text": "pass the scholarship letter to the admissions office", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that the lease is up for renewal", "source": "local"}
+{"label": "tell_someone", "text": "relay the conference agenda to the attendees", "source": "local"}
+{"label": "tell_someone", "text": "let the study buddy know I'm taking a sick day", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'd like to borrow a book", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to meet for dinner", "source": "local"}
+{"label": "tell_someone", "text": "pass the tax return to the preparer", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I need to move my desk", "source": "local"}
+{"label": "tell_someone", "text": "relay the security patch note to the dev team", "source": "local"}
+{"label": "tell_someone", "text": "let the counselor know I'm feeling hopeful today", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'd like to try the seasonal drink", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need someone to study with", "source": "local"}
+{"label": "tell_someone", "text": "pass the project charter to the stakeholder list", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that I'm ready to sign the lease", "source": "local"}
+{"label": "tell_someone", "text": "relay the webinar recording to the learning library", "source": "local"}
+{"label": "tell_someone", "text": "let the study group know the assignment is due early", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'll be hosting a block party", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to talk about the trip", "source": "local"}
+{"label": "tell_someone", "text": "pass the performance review to the HR team", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I need to restock the fridge", "source": "local"}
+{"label": "tell_someone", "text": "relay the outage report to the incident command channel", "source": "local"}
+{"label": "tell_someone", "text": "let the supervisor know I'm ready for the quarterly review", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'll be back for a matcha later", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need someone to talk to about the breakup", "source": "local"}
+{"label": "tell_someone", "text": "pass the grant proposal to the foundation contact", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that I'd like to extend the lease", "source": "local"}
+{"label": "tell_someone", "text": "relay the event reminder to the attendee list", "source": "local"}
+{"label": "tell_someone", "text": "let the study buddy know I'm taking a break from studying", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'm taking a walk with my dog", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to meet for a movie", "source": "local"}
+{"label": "tell_someone", "text": "tell the roommate that I need to clean the bathroom", "source": "local"}
+{"label": "tell_someone", "text": "relay the security alert to the SOC team", "source": "local"}
+{"label": "tell_someone", "text": "let the counselor know I'm feeling better today", "source": "local"}
+{"label": "tell_someone", "text": "tell the barista that I'd like to try the cold brew again", "source": "local"}
+{"label": "tell_someone", "text": "message the sibling that I need someone to practice with", "source": "local"}
+{"label": "tell_someone", "text": "tell the landlord that I'll be moving out on the first", "source": "local"}
+{"label": "tell_someone", "text": "let the study group know the deadline moved up again", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'll be over later to borrow a tool", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to meet for coffee tomorrow", "source": "local"}
+{"label": "tell_someone", "text": "tell the neighbor that I'm taking a block party next month", "source": "local"}
+{"label": "tell_someone", "text": "message the friend that I want to meet for a movie tomorrow", "source": "local"}
+{"label": "tell_someone", "text": "relay the webinar link to the", "source": "local"}

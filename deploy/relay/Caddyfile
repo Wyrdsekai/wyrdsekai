@@ -1,0 +1,111 @@
+# Wyrdsekai Relay — Caddy: the single public TLS front
+#
+# Caddy owns ALL public ingress: ONE listener on RELAY_PORT (default 4443),
+# serving the household-CA leaf. One routing table:
+#   registration paths  → registration:9280   (join flow, NKey enrollment)
+#   everything else     → nats:9222           (NATS WebSocket, plaintext
+#                                              inside the compose network —
+#                                              phones AND zones land here)
+#
+# There is deliberately NO web-PKI/ACME path. Nothing browses a relay:
+# every client that ever connects (zone, phone) receives the relay's CA
+# fingerprint inside steward-carried invite material (join token,
+# wyrdphone:// URL) and pins it. One trust model, any port — the relay
+# never competes with a web server for 80/443. (NATS native :4222 is
+# also published for the zone leg — see docker-compose.yml.)
+#
+# Port 8443 is GONE; §10.7's reason for it —
+# leaving :443 free for operator websites — is moot now that the relay
+# never wants :443 in the first place.
+#
+
+{
+	# Disable Caddy's admin API. The relay caddy is launched `caddy run --config`
+	# and never reconfigures at runtime, so it doesn't need the admin endpoint —
+	# and leaving it on makes it fight any OTHER caddy on the box (e.g. the
+	# operator's website caddy on a "relay + website" host) for the default
+	# 127.0.0.1:2019, which crash-loops the relay. Off = co-host-safe.
+	admin off
+	auto_https disable_redirects
+}
+
+# Shared routing table — imported by both listeners.
+(relay_routes) {
+	# Registration sidecar (Python, has its own per-IP rate limits).
+	# /join is the one-code enrollment path; the
+	# rest are the NKey surface, unchanged.
+	handle /join {
+		reverse_proxy registration:9280
+	}
+	handle /register {
+		reverse_proxy registration:9280
+	}
+	handle /register-nkey {
+		reverse_proxy registration:9280
+	}
+	handle /re-register-nkey {
+		reverse_proxy registration:9280
+	}
+	# Signed self-removal (`wyrd relay leave`). Was MISSING from this table
+	# until 2026-07-30 — the POST fell through to the NATS default route
+	# (405/502), so remote deregister had NEVER worked through Caddy and
+	# every departed zone left a stale registration behind. Ed25519
+	# signature-gated inside the sidecar, same trust model as /admin.
+	handle /deregister {
+		reverse_proxy registration:9280
+	}
+	# P4 — NKey-signed phone-invite mint (public; possession of a
+	# registered household seed is the authorization).
+	handle /phone-invite {
+		reverse_proxy registration:9280
+	}
+	# b/§5 — owner-claim + signed admin surface.
+	# Both are PUBLIC-reachable but SIGNATURE-GATED inside the sidecar
+	# (Ed25519 over claim-owner:/admin: challenges); they open no
+	# unauthenticated mutation path. /claim-owner-mint is NOT fronted —
+	# it stays localhost-only (relay.sh on the host), same as /invite.
+	handle /claim-owner {
+		reverse_proxy registration:9280
+	}
+	handle /admin* {
+		reverse_proxy registration:9280
+	}
+	# /peer-invite is localhost-gated inside the sidecar (it checks the
+	# client beyond Caddy's X-Forwarded-For); public callers get 403.
+	handle /peer-invite {
+		reverse_proxy registration:9280
+	}
+	handle /peer-accept {
+		reverse_proxy registration:9280
+	}
+	handle /status {
+		reverse_proxy registration:9280
+	}
+	handle /relays {
+		reverse_proxy registration:9280
+	}
+	handle /health {
+		reverse_proxy registration:9280
+	}
+	handle /announce {
+		reverse_proxy registration:9280
+	}
+
+	# Everything else — including the WebSocket upgrade at / — is NATS.
+	# Caddy proxies WebSocket transparently. Phones and zones both
+	# connect here (`wss://<relay>` → wyrd.zone.* / between.* subjects).
+	handle {
+		reverse_proxy nats:9222
+	}
+}
+
+# ─── The listener: household-CA mode on RELAY_PORT (default 4443) ────────
+# RELAY_PORT lets an operator move this listener; invite material carries
+# host:port so clients follow automatically.
+:{$RELAY_PORT:4443} {
+	# chain.crt = leaf + household CA. Serving the CA in the handshake is
+	# what lets devices pin it from an invite's ca_fp fingerprint (§10.9 —
+	# no cleartext /ca.crt bootstrap exists on single-port relays).
+	tls /certs/chain.crt /certs/leaf.key
+	import relay_routes
+}

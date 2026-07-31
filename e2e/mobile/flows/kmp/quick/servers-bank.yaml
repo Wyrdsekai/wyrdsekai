@@ -1,0 +1,40 @@
+# "Your servers" surface, wired into WyrdApp navigation.
+# Prereq: seed_servers_bank_kmp.sh has seeded a one-zone bank + app_mode=servers.
+# Proves on a real device: the bank loads from secure storage, ServersScreen
+# renders the entry, tapping it drives the ViewModel into the password prompt,
+# and submitting runs the real OpenZone→ZoneConnect→NATS connect (which fails
+# against the unreachable seed relay and surfaces an error — no live infra needed).
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: "servers-screen"
+    timeout: 30000
+- assertVisible:
+    id: "servers-title"
+- assertVisible:
+    id: "servers-card-home-server"
+# Tap the server → auto-attempt → no remembered password → inline prompt opens.
+- tapOn:
+    id: "servers-open-home-server"
+- extendedWaitUntil:
+    visible:
+      id: "servers-password-home-server"
+    timeout: 15000
+# Capture a username (invite-seeded zones have none) + a password, then submit.
+- tapOn:
+    id: "servers-username-home-server"
+- inputText: "ada"
+- tapOn:
+    id: "servers-password-home-server"
+- inputText: "testpass"
+- tapOn:
+    id: "servers-submit-home-server"
+# The real connect attempt to the unreachable seed relay fails → error renders.
+- extendedWaitUntil:
+    visible:
+      id: "servers-error-home-server"
+    timeout: 40000
+- takeScreenshot: kmp_servers_bank_error

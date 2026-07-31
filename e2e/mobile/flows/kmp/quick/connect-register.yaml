@@ -1,0 +1,14 @@
+# Quick: KMP — Welcome → "Use my server" lands in Study (local-mode room)
+# Post-Welcome architecture: server URL feeds local-mode inference, not a remote session.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- assertVisible:
+    id: "standalone-room-name"
+- assertVisible:
+    id: "standalone-input"
+- assertVisible:
+    id: "standalone-send-button"
+
+- takeScreenshot: kmp_quick_connect_register

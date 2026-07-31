@@ -1,0 +1,29 @@
+{
+  "description": "Client disconnects after seq 3, reconnects, receives replay of seq 4-5 plus replay_done",
+  "initial_messages": [
+    { "type": "room_state", "seq": 1, "room": { "roomId": "nexus", "name": "The Nexus", "description": "A hub.", "zone": "home", "exits": [], "entities": [], "objects": [], "hints": [] }, "inventory": null },
+    { "type": "prose", "seq": 2, "speaker": "Guide", "text": "Welcome.", "hints": [], "structured": null, "priority": "normal" },
+    { "type": "prose", "seq": 3, "speaker": "narrator", "text": "The room hums.", "hints": [], "structured": null, "priority": "ambient" }
+  ],
+  "disconnect_after_seq": 3,
+  "messages_during_disconnect": [
+    { "type": "prose", "seq": 4, "speaker": "Guide", "text": "Are you still there?", "hints": [], "structured": null, "priority": "normal" },
+    { "type": "state_change", "seq": 5, "description": "A door opens.", "structured": null, "blocks": [] }
+  ],
+  "client_sends": {
+    "type": "reconnect",
+    "id": "reconnect-1",
+    "roomId": "nexus",
+    "lastSeenSeq": 3
+  },
+  "expected_replay": [
+    { "seq": 4, "type": "prose" },
+    { "seq": 5, "type": "state_change" }
+  ],
+  "expected_replay_done": {
+    "type": "replay_done",
+    "fromSeq": 3,
+    "toSeq": 5,
+    "count": 2
+  }
+}

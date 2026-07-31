@@ -1,0 +1,23 @@
+# Quick: RN — typed /inventory in standalone room
+# (StandaloneRoomScreen has no inventory overlay yet; verifying typed verb path.)
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "/inventory"
+# Dismiss the IME by tapping the prose list instead of `hideKeyboard`,
+# which is unreliable on Android 15 (task #30 item 7).
+- tapOn:
+    id: "standalone-prose-list"
+
+- tapOn:
+    id: "standalone-send-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 5000
+
+- takeScreenshot: rn_quick_room_inventory

@@ -1,0 +1,10 @@
+{
+  "type": "command",
+  "id": "msg-009b",
+  "command": "codeplane.approve",
+  "args": [],
+  "payload": {
+    "eventId": "evt-42",
+    "decision": "approve"
+  }
+}

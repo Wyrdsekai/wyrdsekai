@@ -1,0 +1,10 @@
+{
+  "labels": [
+    "actionable",
+    "none"
+  ],
+  "label_to_idx": {
+    "actionable": 0,
+    "none": 1
+  }
+}

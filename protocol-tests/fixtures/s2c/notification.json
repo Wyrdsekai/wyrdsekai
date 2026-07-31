@@ -1,0 +1,7 @@
+{
+  "type": "notification",
+  "seq": 11,
+  "level": "info",
+  "title": "Welcome",
+  "message": "Connected to Wyrdsekai home zone. Type /help for commands."
+}

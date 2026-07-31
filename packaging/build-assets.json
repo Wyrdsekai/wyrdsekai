@@ -1,0 +1,259 @@
+{
+  "manifest_version": 1,
+  "notes": "Build-time assets that cannot live in git: upstream release binaries and multi-megabyte model files. packaging/fetch-build-assets.sh pulls each one and verifies the pinned sha256. Without this a clone of the public repository built a package that was missing them and only said so in scattered warnings. Revisions are pinned commits, never branches. The V8 voice vectors are here because data/training/** is excluded from the export: without them an OSS-built package shipped a voice missing the greeting-collapse fix, first-person-presence, refusal stability and register hold \u2014 a real behavioural difference that no warning made obvious.",
+  "assets": [
+    {
+      "file": "minilm-l6-v2-q8.onnx",
+      "sha256": "3c17e69240d6ef5a3104ed58ece4e77d7dcc03ed1ef606b64ee335589f928a2e",
+      "size": 22903748,
+      "hf_repo": "wyrdsekai/embedding-models",
+      "hf_revision": "23669f610d082685b9fdad48cf3b906839701ff2",
+      "hf_path": "minilm-l6-v2-q8.onnx",
+      "dest": "core/src/main/resources/models",
+      "executable": false,
+      "note": "Retrieval encoder for the compact tier."
+    },
+    {
+      "file": "minilm-tokenizer.json",
+      "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+      "size": 466247,
+      "hf_repo": "wyrdsekai/embedding-models",
+      "hf_revision": "23669f610d082685b9fdad48cf3b906839701ff2",
+      "hf_path": "minilm-tokenizer.json",
+      "dest": "core/src/main/resources/models",
+      "executable": false,
+      "note": "Tokenizer paired with minilm-l6."
+    },
+    {
+      "file": "paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json",
+      "sha256": "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441",
+      "size": 17082913,
+      "hf_repo": "wyrdsekai/embedding-models",
+      "hf_revision": "23669f610d082685b9fdad48cf3b906839701ff2",
+      "hf_path": "paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json",
+      "dest": "core/src/main/resources/models",
+      "executable": false,
+      "note": "Tokenizer paired with the default embedding model."
+    },
+    {
+      "file": "paraphrase-multilingual-MiniLM-L12-v2-q8.onnx",
+      "sha256": "4b1f1b6c8d9fbe793f115a7635754b14afeaa1afcb58c7cdc98e78fd59047f80",
+      "size": 117973190,
+      "hf_repo": "wyrdsekai/embedding-models",
+      "hf_revision": "23669f610d082685b9fdad48cf3b906839701ff2",
+      "hf_path": "paraphrase-multilingual-MiniLM-L12-v2-q8.onnx",
+      "dest": "core/src/main/resources/models",
+      "executable": false,
+      "note": "Default embedding model, in the source-relative path recipes load by."
+    },
+    {
+      "file": "metasearch",
+      "sha256": "458ec61e6c5df0250cd84be1cb346a6cd3b96ab4f0be0350345b0c0f93d11e2b",
+      "size": 25690120,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "32c12445e9e3b50e2c314ef827f539787e6a4aa5",
+      "hf_path": "metasearch-linux-amd64",
+      "dest": "packaging",
+      "executable": true,
+      "note": "Keyless web-search backend (metasearch2, CC0-1.0). Upstream ships no release binaries."
+    },
+    {
+      "file": "anti_defiance.gguf",
+      "sha256": "63e8ee6eaf6e338f27ac975fada49cd8475dd0166679895c124dab096df718bd",
+      "size": 318976,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/vectors/anti_defiance.gguf",
+      "dest": "data/training/v8/vectors",
+      "executable": false,
+      "note": "V8 voice control vector \u2014 llama-server applies it via --control-vector-scaled."
+    },
+    {
+      "file": "es_register_hold.gguf",
+      "sha256": "060326efdb801d256260c8e8ad73a81ff3d95f28c35a38a7b687fb69a30674bf",
+      "size": 318976,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/vectors/es_register_hold.gguf",
+      "dest": "data/training/v8/vectors",
+      "executable": false,
+      "note": "V8 voice control vector \u2014 llama-server applies it via --control-vector-scaled."
+    },
+    {
+      "file": "refusal_stability.gguf",
+      "sha256": "059c63a9c3611b9e4514c2300d45ed9a738879b8262fea49d04668406aaa58f1",
+      "size": 318976,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/vectors/refusal_stability.gguf",
+      "dest": "data/training/v8/vectors",
+      "executable": false,
+      "note": "V8 voice control vector \u2014 llama-server applies it via --control-vector-scaled."
+    },
+    {
+      "file": "first_person_presence.gguf",
+      "sha256": "4fdb2978282b4d5d5747bb3702084f52a90ca2b0ea272efc72d52f62ebf9b21a",
+      "size": 318976,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/vectors/first_person_presence.gguf",
+      "dest": "data/training/v8/vectors",
+      "executable": false,
+      "note": "V8 voice control vector \u2014 llama-server applies it via --control-vector-scaled."
+    },
+    {
+      "file": "anti_defiance.meta.json",
+      "sha256": "3360337f1aad9ef6f3970af2c0f431773f17d64a938fc4800ddf6393370484cd",
+      "size": 222,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/anti_defiance.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "anti_defiance.safetensors",
+      "sha256": "70b75b2137ab5c35ae75dc2bda6c184ffa8e6bde79761e7075db40d5de9ef09a",
+      "size": 320016,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/anti_defiance.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "es_register_hold.meta.json",
+      "sha256": "009fa4dcd94eecbea403c5152a331901f4cbf0f82e4e2d493f82b77affe5e78f",
+      "size": 225,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/es_register_hold.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "es_register_hold.safetensors",
+      "sha256": "6504f71ae25705b210a4005169cb16855d071c5584dc141dd08ba19dbc3aa92b",
+      "size": 320016,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/es_register_hold.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "factual_recall_anchor.meta.json",
+      "sha256": "4d8eec328b75a1cef009d1642aed4309cb407c965c8994c5d06c47cdb3237d6f",
+      "size": 230,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/factual_recall_anchor.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "factual_recall_anchor.safetensors",
+      "sha256": "6317253f6c2defbb92b65245fa10342e668c06a5f1e0a121f2cf1082b6f31ab8",
+      "size": 320024,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/factual_recall_anchor.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "first_person_presence.meta.json",
+      "sha256": "1eb89de65f091a5764a9871d51248f7f2683f99c22d565fd369f2fb16bc5c261",
+      "size": 230,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/first_person_presence.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "first_person_presence.safetensors",
+      "sha256": "75e96a3cdece7360c4d5f593c18201cdde24c1fdfd3aead22d1dd6829bc3bb6c",
+      "size": 320024,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/first_person_presence.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "inline_creative.meta.json",
+      "sha256": "bfd2eaa3a2ccd8a3b7151f46c2cf9b57767d0f5e6235126fca2317c01994697a",
+      "size": 224,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/inline_creative.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "inline_creative.safetensors",
+      "sha256": "3fece4af43009c06b33ce34e7303ebf3502f38cdc872adcb776a97d993c00062",
+      "size": 320016,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/inline_creative.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "refusal_stability.meta.json",
+      "sha256": "dd0ff546790d68aac3b54eb59d2802364454943ebf6e63115fe37d77f09adadd",
+      "size": 226,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/refusal_stability.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "refusal_stability.safetensors",
+      "sha256": "5340ed2fcdae2eedec35e2fcc2523e83771d775e4133b890ddb364ade662a6b1",
+      "size": 320024,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/refusal_stability.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "smoketest-happy.meta.json",
+      "sha256": "5725efb279f2ceda85c8e237a743fcb921e64d6fc459161ccc3595e35c2818a3",
+      "size": 224,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/smoketest-happy.meta.json",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    },
+    {
+      "file": "smoketest-happy.safetensors",
+      "sha256": "f14ef8e2b8a746bff1ae82683b859d817139246494e6bfd209045edcefa34ac7",
+      "size": 320016,
+      "hf_repo": "wyrdsekai/build-assets",
+      "hf_revision": "a0c52c21e87f3636ca457a19c727efcc4abfe67c",
+      "hf_path": "v8/mlx/smoketest-happy.safetensors",
+      "dest": "data/training/v8/mlx",
+      "executable": false,
+      "note": "MLX-format V8 vector \u2014 the Apple Silicon voice path."
+    }
+  ]
+}

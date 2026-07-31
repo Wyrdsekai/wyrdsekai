@@ -1,0 +1,170 @@
+{
+  "manifest_version": 2,
+  "comment": "Coding-backend bundle manifest. See docs/EXTENDING.md for how backends are selected. v2 (2026-05-04 reconciliation) adds 'distribution' (npm | github_release) + 'npm_package' for npm-distributed CLIs (Cline, Continue, Claude SDK, Gemini CLI). Versions and sha256 placeholders are filled in by scripts/build-coding-cli-manifest.sh at release-build time. Do NOT hand-edit shipped manifests; edit the build helper instead.",
+  "backends": {
+    "opencode": {
+      "bundled": true,
+      "version": "1.14.33",
+      "path": "data/coding-cli-bundle/opencode/",
+      "config_template": "scripts/policy/opencode-config.json",
+      "size_mb": 50
+    },
+    "goose": {
+      "bundled": false,
+      "version": "1.34.1",
+      "comment": "Repo moved block/goose -> aaif-goose/goose under AAIF/Linux Foundation. Asset naming uses Rust target triples; Windows uses .zip upstream — build helper substitutes per-platform suffix. Provider auth: NOT GOOSE_PROVIDER_KEY (wyrdsekai invention); upstream Goose reads ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY directly per provider. Adapter maps coding.backends.goose.provider -> correct env var.",
+      "distribution": "github_release",
+      "download_url_template": "https://github.com/aaif-goose/goose/releases/download/v1.34.1/goose-{rust_triple}.tar.gz",
+      "sha256_per_platform": {
+        "linux-x64": "31088690f1680d653c7c350daee73d643d78b2f71d717fff04cbbac2586a9240",
+        "linux-arm64": "359de49f333127abcfcd7debe86949af03aa0c1bd678c86d1cd1ce77dbf8b7c0",
+        "darwin-arm64": "2df188a17c0fe538dba936fc2eb6edb14802de58677af149a77548158c4d3c67",
+        "darwin-x64": "2544a0630e51b701d093222097c25729b7edb0cc319fa5f2491ae9d75de028e2",
+        "windows-x64": "TODO_RUN_BUILD_HELPER"
+      },
+      "size_mb": 80,
+      "auth": {
+        "oauth": null,
+        "api_key": {
+          "note": "Per-provider: ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY / (none for local). Adapter sets the right env var based on coding.backends.goose.provider; no GOOSE_PROVIDER_KEY indirection."
+        }
+      }
+    },
+    "codex": {
+      "bundled": false,
+      "version": "0.128.0",
+      "distribution": "github_release",
+      "download_url_template": "https://github.com/openai/codex/releases/download/rust-v0.128.0/codex-{rust_triple_musl}.tar.gz",
+      "sha256_per_platform": {
+        "linux-x64": "886b85e6118c0b43234437ca007fbe923611a53b103d00e0d3ae74aefb20e23a",
+        "linux-arm64": "3161b4d5304feaf7befbb0fcb41bf9a7ee40e31ba7e3ef36d40a00aa3ba6cbd0",
+        "darwin-arm64": "f068202e8a898c240c8c068401bccd30ba7b56f61f5ffcd1483d545d47aaf3d5",
+        "darwin-x64": "c7a08d2011f77e88402a173c473ceec37307a710a681cddd26357c33a025a961",
+        "windows-x64": "11ab2d657093dfa856ce5328a0987bfe147a9d0fb08099d30e974cb8d3dbb402"
+      },
+      "size_mb": 30,
+      "tos_warning": "Subject to OpenAI Usage Policies and pricing",
+      "auth": {
+        "oauth": {
+          "command": "codex login --device-auth",
+          "credential_path": "~/.codex/auth.json",
+          "headless_supported": true
+        },
+        "api_key": {
+          "env_var": "OPENAI_API_KEY",
+          "key_chest_slot": "OPENAI_API_KEY"
+        }
+      }
+    },
+    "claude-sdk": {
+      "bundled": false,
+      "version": "2.1.128",
+      "comment": "Distributed via npm @anthropic-ai/claude-code; reuses ClaudeCliInference.java pattern. Headless OAuth: claude login --no-browser (paste-this-URL device flow).",
+      "distribution": "npm",
+      "npm_package": "@anthropic-ai/claude-code",
+      "size_mb": 30,
+      "tos_warning": "Subject to Anthropic Usage Policies",
+      "auth": {
+        "oauth": {
+          "command": "claude login --no-browser",
+          "credential_path": "~/.config/claude/",
+          "headless_supported": true,
+          "note": "claude login --no-browser is the headless paste-this-URL OAuth flow (code.claude.com/docs/en/headless). Pre-2026-05 the manifest mistakenly marked this false. Existing pattern in core/src/main/java/org/wyrdsekai/core/inference/ClaudeCliInference.java."
+        },
+        "api_key": {
+          "env_var": "ANTHROPIC_API_KEY",
+          "key_chest_slot": "ANTHROPIC_API_KEY"
+        }
+      }
+    },
+    "gemini-cli": {
+      "bundled": false,
+      "version": "0.40.1",
+      "min_version": "0.40.1",
+      "min_version_reason": "CVSS-10 RCE; original patches in 0.39.1 / 0.40.0-preview.3, cherry-pick floor v0.40.1 (2026-04-30)",
+      "distribution": "npm",
+      "npm_package": "@google/gemini-cli",
+      "size_mb": 30,
+      "tos_warning": "Subject to Google API Terms",
+      "auth": {
+        "oauth": {
+          "command": "gemini",
+          "credential_path": "~/.gemini/oauth_creds.json",
+          "headless_supported": false,
+          "note": "OAuth is browser-only (issue google-gemini/gemini-cli#1696 unresolved as of May 2026). Headless hosts must use API key via GEMINI_API_KEY (or GOOGLE_API_KEY / GOOGLE_APPLICATION_CREDENTIALS)."
+        },
+        "api_key": {
+          "env_var": "GEMINI_API_KEY",
+          "key_chest_slot": "GEMINI_API_KEY"
+        }
+      }
+    },
+    "cline": {
+      "bundled": false,
+      "version": "2.18.0",
+      "comment": "Distributed via npm `cline` (cline.bot/blog/announcing-cline-cli-2-0). GitHub releases publish only the .vsix IDE extension. Headless argv: cline -y \"<task>\" or cline --json \"<task>\" with prompt as POSITIONAL.",
+      "distribution": "npm",
+      "npm_package": "cline",
+      "size_mb": 50,
+      "auth": {
+        "oauth": {
+          "command": "cline auth",
+          "credential_path": "unknown",
+          "headless_supported": true,
+          "note": "Browser OAuth via `cline auth` with no args; credential file location is not publicly documented as of May 2026."
+        },
+        "api_key": {
+          "note": "Pre-stage credentials via `cline auth -p <provider> -k <key>` OR set the standard provider env var (ANTHROPIC_API_KEY / OPENAI_API_KEY / etc.) — Cline reads them directly. CLINE_PROVIDER_KEY is wyrdsekai's invention and is no longer used."
+        }
+      }
+    },
+    "continue": {
+      "bundled": false,
+      "version": "1.5.45",
+      "comment": "Distributed via npm @continuedev/cli; binary name `cn`; requires Node.js 20+. Headless argv: cn -p \"<prompt>\" with prompt as POSITIONAL. Source: docs.continue.dev/cli/quickstart + docs.continue.dev/guides/cli.",
+      "distribution": "npm",
+      "npm_package": "@continuedev/cli",
+      "size_mb": 30,
+      "auth": {
+        "oauth": {
+          "credential_path": "~/.continue/auth.json",
+          "headless_supported": true,
+          "note": "First run prompts browser OAuth; no dedicated `cn login` subcommand in current upstream docs (May 2026). Headless hosts can use CONTINUE_API_KEY env var instead."
+        },
+        "api_key": {
+          "env_var": "CONTINUE_API_KEY",
+          "key_chest_slot": "CONTINUE_API_KEY"
+        }
+      }
+    },
+    "openhands": {
+      "bundled": false,
+      "version": "1.20.0",
+      "comment": "Targets V1 Agent Server (OpenHands/software-agent-sdk v1.20.0 May 4 2026). Adapter speaks REST + WebSocket to `openhands-agent-server --port 8000`, NOT JSON-RPC MCP (the MCP shape used pre-2026-05-04 was fabricated). Docker-image tag is the legacy OpenHands/OpenHands runtime image (v1.7.0); V1 SDK Agent Server is typically run via pip install openhands-agent-server, but the docker_image is retained for `wyrd setup openhands` users who want the legacy runtime sandbox.",
+      "docker_image": "ghcr.io/all-hands-ai/openhands:v1.7.0",
+      "agent_server_port": 8000,
+      "setup_command": "wyrd setup openhands",
+      "tos_warning": "Pulls multi-GB Docker images",
+      "auth": {
+        "oauth": null,
+        "api_key": {
+          "env_var": "OPENHANDS_LLM_KEY",
+          "key_chest_slot": "OPENHANDS_LLM_KEY",
+          "note": "Provider-pluggable"
+        }
+      }
+    },
+    "devin": {
+      "bundled": false,
+      "config_only": true,
+      "tos_warning": "Cloud SaaS — code leaves the household. Subject to Cognition Terms",
+      "auth": {
+        "oauth": null,
+        "api_key": {
+          "env_var": "DEVIN_API_KEY",
+          "key_chest_slot": "DEVIN_API_KEY"
+        }
+      }
+    }
+  }
+}

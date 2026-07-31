@@ -1,0 +1,42 @@
+# iOS port of the KMP relay-invite paste flow (run_probe_relay_invite_kmp.sh
+# step 5). Full parity with Android since #1233: the paste → parse → persist
+# path is asserted here, and behind it InvitePinning.ios pins the household
+# CA from the invite fingerprints and NodeManager.ios holds a NATS relay leg
+# over pinned wss — verify out-of-band with the /connz docker-exec helper
+# (expect authorized_user=relay_phone) and the simulator console
+# (`InvitePinning: Pinned …` / `WyrdNode: NATS connected … as relay_phone`).
+# Needs: a live relay on the LAN + INVITE_URL minted by `wyrd phone invite`.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-server-url"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-server-url"
+
+- inputText: "${INVITE_URL}"
+
+- tapOn:
+    id: "welcome-connect"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-server"
+    timeout: 10000
+
+- tapOn:
+    id: "welcome-use-server"
+
+# Invite accepted → onboarding completes into the local room (nats creds +
+# zone persisted by the WyrdApp invite branch; same code path as Android).
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: kmp_ios_relay_invite_paste

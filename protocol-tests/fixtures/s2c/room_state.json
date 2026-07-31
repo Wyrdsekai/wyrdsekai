@@ -1,0 +1,29 @@
+{
+  "type": "room_state",
+  "seq": 1,
+  "room": {
+    "roomId": "nexus",
+    "name": "The Nexus",
+    "description": "A vast crystalline chamber hums with quiet energy. Corridors branch in every direction.",
+    "zone": "home",
+    "exits": [
+      { "direction": "north", "targetRoom": "terminal", "label": "A corridor leads north to the Terminal" },
+      { "direction": "down", "targetRoom": "vault", "label": "Stone steps spiral downward" }
+    ],
+    "entities": [
+      { "id": "agent-guide-01", "name": "Guide", "type": "agent", "description": "A patient guide with kind eyes" }
+    ],
+    "objects": [
+      { "id": "obj-scroll-01", "name": "scroll", "description": "An ancient scroll with faded writing", "takeable": true },
+      { "id": "obj-pedestal-01", "name": "pedestal", "description": "A stone pedestal with a circular indentation", "takeable": false }
+    ],
+    "hints": [
+      { "label": "Talk to the Guide", "intent": "greet_guide", "action": "say", "labelKey": "hint.greet_guide" },
+      { "label": "Read the scroll", "intent": "read_scroll", "action": "use", "labelKey": null },
+      { "label": "Go north", "intent": "go_terminal", "action": "go", "labelKey": null }
+    ]
+  },
+  "inventory": [
+    { "id": "obj-key-01", "name": "brass key", "description": "A small brass key, warm to the touch", "takeable": true }
+  ]
+}

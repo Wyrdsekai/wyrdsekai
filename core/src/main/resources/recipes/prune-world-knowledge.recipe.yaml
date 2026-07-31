@@ -1,0 +1,84 @@
+# world_knowledge dead-entry prune (#1134).
+#
+# Housekeeping for the world_knowledge table (
+# Phase 2.4): the key/value facts a companion holds about its world.
+#
+# DELIBERATELY NARROW — prunes DEAD ENTRIES ONLY, never live facts:
+#   - PK is (did, key): duplicates / contradictions can't exist (a new value
+#     overwrites), so there's nothing to dedupe.
+#   - Age != staleness for a fact. A true fact set once and never re-touched is
+#     NORMAL, not cruft. Age-based pruning would delete durable knowledge — the
+#     paternalism trap. We don't do that.
+#   - The only prunable rows are DEAD: value NULL / blank / a tombstone
+#     sentinel (left by a cleared fact or a failed write). They carry no
+#     information and only add scan noise.
+#
+# Cheap, pure-SQLite, CPU-only. On-demand / steward-fired (not cron-enrolled) —
+# dead entries are rare, so a daily run would almost always be a no-op.
+# welfare-floor-checkup surfaces the dead-entry count and recommends this recipe
+# when it's actually worth running.
+recipe: prune-world-knowledge
+version: 0.1.0
+description: >
+  Prune dead world_knowledge entries (blank/tombstone values) only. Never
+  age-based, never touches a live fact. Welfare-gated against over-prune and
+  against deleting a non-dead row.
+deploys: true
+ownership: run
+
+params:
+  jdbc_url:
+    type: string
+    default: ""
+  agent_did:
+    type: string
+    required: true
+  max_key_delta_pct:
+    type: number
+    default: 50
+  # Safety floor only — never a prune trigger. 0 = consider all dead rows.
+  min_age_days:
+    type: number
+    default: 0
+
+steps:
+  - id: snapshot
+    kind: SHELL
+    command: |-
+      python3 scripts/soul/prune_world_knowledge.py snapshot \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+
+  - id: plan
+    kind: SHELL
+    timeout: 2m
+    command: |-
+      python3 scripts/soul/prune_world_knowledge.py plan \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --min-age-days {{min_age_days}}
+
+  - id: gate-delta
+    kind: GATE
+    condition: "key_delta_pct <= {{max_key_delta_pct}}"
+    on_fail: STOP
+    welfare: permanent   # catches a bug nuking the knowledge table (PERMANENT)
+
+  - id: gate-only-dead
+    kind: GATE
+    # Every key the plan selected must have had a dead value. 0 = a bug
+    # selected a live fact — STOP rather than delete real knowledge.
+    condition: "all_pruned_were_dead == 1"
+    on_fail: STOP
+    welfare: permanent   # never delete a live fact (PERMANENT)
+
+  - id: commit
+    kind: SHELL
+    command: |-
+      python3 scripts/soul/prune_world_knowledge.py commit \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+    rollback: |-
+      python3 scripts/soul/prune_world_knowledge.py rollback \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'

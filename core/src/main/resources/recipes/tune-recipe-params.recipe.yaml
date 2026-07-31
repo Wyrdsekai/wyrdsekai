@@ -1,0 +1,96 @@
+# tune-recipe-params loop (#1142).
+#
+# A recipe whose product is *other recipes' soft defaults*. It reads a target
+# recipe's outcome history (success/fail over the queue window) and, when the
+# failure rate is high enough, nudges that recipe's SOFT params — timeouts,
+# lookback windows, advisory thresholds — UP within a hard, multiplier-bounded
+# envelope, persisting the new default through the zone's tune endpoint so
+# future runs pick it up. This is the real "act on the observation" mutator:
+# the household's recipes get less brittle on their own.
+#
+# Safety invariant (the whole point): a param referenced by a PERMANENT welfare
+# gate condition (OPEN-R4, #1013) is a load-bearing floor and is REFUSED by the
+# server-side RecipeParamTuner.validateNudge — this loop can never move it. The
+# script also skips floor-protected params client-side, so a floor is
+# double-guarded. Everything tuned is bounded: never lowered, never below the
+# manifest default, never above manifestDefault * abs_max_mult — so a loop
+# firing every cadence asymptotes instead of running away.
+#
+# deploys:false, gateless — and that is honest here, not a dodge. The mutation
+# is a soft, reversible config-override row, and its guard is the
+# floor-protection enforced at the apply endpoint, NOT recipe gates. Adding two
+# GATE steps would be theater: the endpoint refuses a PERMANENT-gated param
+# regardless of what this recipe declares. Like welfare-floor-checkup and
+# mine-training-corpus, it observes + acts within its own guardrail.
+#
+# On-demand / steward- or observe→act-fired (not blindly cron-enrolled): with
+# no run history a target recipe has nothing to tune (total_runs < min_runs →
+# no-op), so it earns its keep only once a recipe has actually been failing.
+recipe: tune-recipe-params
+version: 0.1.0
+description: >
+  Read a target recipe's run history and nudge its soft params (timeouts,
+  lookback windows, advisory thresholds) up within a bounded envelope when it's
+  been failing. Refuses any param behind a PERMANENT welfare gate. Changes
+  config only; trains/deploys nothing.
+deploys: false
+ownership: run
+
+params:
+  # The recipe being tuned (e.g. research-pack-freshness, compact-library-index).
+  target_recipe:
+    type: string
+    required: true
+  agent_did:
+    type: string
+    default: ""
+  # Only act once the target has at least this many terminal runs in the window.
+  min_runs:
+    type: number
+    default: 5
+  # Only act when the observed failure rate is at least this high.
+  max_fail_rate:
+    type: number
+    default: 0.25
+  # Relative step per tune (0.25 = +25% of current, clamped to the ceiling).
+  nudge_frac:
+    type: number
+    default: 0.25
+  # Hard ceiling multiplier: a param may never exceed manifestDefault * this.
+  abs_max_mult:
+    type: number
+    default: 4.0
+  # Substring allowlist of param names this loop may touch (comma-separated).
+  tunable:
+    type: string
+    default: "timeout,lookback,window,days,minutes,seconds,retry,limit"
+
+steps:
+  - id: tune
+    kind: SHELL
+    timeout: 2m
+    # GETs /api/recipes/{target}/tune/stats, computes bounded nudges skipping
+    # any floor-protected param, POSTs /api/recipes/{target}/tune/apply for each.
+    # Emits {target_recipe, total_runs, fail_rate, tuned_count, refused_count,
+    # skipped_floor_count, stats_reachable}.
+    command: |-
+      python3 scripts/recipe/tune_recipe_params.py tune \
+        --target-recipe '{{target_recipe}}' \
+        --agent-did '{{agent_did}}' \
+        --min-runs {{min_runs}} \
+        --max-fail-rate {{max_fail_rate}} \
+        --nudge-frac {{nudge_frac}} \
+        --abs-max-mult {{abs_max_mult}} \
+        --tunable '{{tunable}}'
+
+  - id: report
+    kind: SHELL
+    timeout: 1m
+    # Composes {tuned_ok, target_recipe, tuned_count, refused_count,
+    # skipped_floor_count, tuned_params, recommendations}. The scheduler's
+    # Chronicle/Forge ingestion surfaces this; observe→act can recommend a
+    # re-measure pass over the next window.
+    command: |-
+      python3 scripts/recipe/tune_recipe_params.py report \
+        --target-recipe '{{target_recipe}}' \
+        --agent-did '{{agent_did}}'

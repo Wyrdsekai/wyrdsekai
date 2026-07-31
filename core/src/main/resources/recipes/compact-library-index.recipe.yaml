@@ -1,0 +1,108 @@
+# library-index compaction recipe (#1027).
+#
+# Housekeeping for Lucene HNSW indexes. Without this, indexes grow
+# monotonically — library search latency drifts up over time as HNSW
+# gets bushier with stale vectors. Storage cost matters on phone
+# nodes especially (~8KB per chunk including text + 384-d vector).
+#
+# Per-collection compaction: forceMerge(1) + drop chunks past provenance
+# expiry + re-embed rows whose model_version doesn't match the bundled
+# default (catches the post-SetFit migration tail).
+#
+# Cost: ~2 min per collection on a 100K-chunk index. CPU-bound.
+# Lucene file-locks held during compaction — runs OK on a live zone
+# but locks the affected collection briefly. SETTLING cadence + quiet
+# hours to minimize user impact.
+recipe: compact-library-index
+version: 0.1.0
+description: >
+  Lucene forceMerge(1) + stale-pack chunk pruning + re-embed
+  version-mismatched rows. Per-collection scope. Welfare-gated against
+  catastrophic prune and search-quality regression.
+deploys: true
+ownership: run
+
+prefers_hours: [2, 3, 4]
+
+params:
+  collection:
+    type: string
+    required: true     # e.g. "soul_fragments", "library", "memory_items", "world_dna"
+  # PERMANENT welfare floors.
+  max_chunk_delta_pct:
+    type: number
+    default: 30        # don't ever drop >30% of an index in one run
+  # Search-probe top-3 preservation check: same 5 known-good queries
+  # before vs after compaction; top-3 result IDs must match (set, not order).
+  search_probe_path:
+    type: string
+    default: data/library/probes/{{collection}}.jsonl
+
+steps:
+  - id: search-probe-before
+    kind: SHELL
+    timeout: 2m
+    command: |-
+      python3 scripts/library/compact_collection.py probe \
+        --collection '{{collection}}' \
+        --probes '{{search_probe_path}}' \
+        --label before
+
+  - id: snapshot-before
+    kind: SHELL
+    command: |-
+      python3 scripts/library/compact_collection.py snapshot \
+        --collection '{{collection}}'
+
+  - id: prune-stale-chunks
+    kind: SHELL
+    timeout: 5m
+    command: |-
+      python3 scripts/library/compact_collection.py prune \
+        --collection '{{collection}}'
+
+  - id: reembed-version-mismatch
+    kind: SHELL
+    timeout: 30m
+    # Catches rows whose embedding_model is older than the current
+    # PARAPHRASE_L12 version. Same migration the boot-time embed-migrate
+    # would do; this recipe is the agent-callable version.
+    command: |-
+      python3 scripts/library/compact_collection.py reembed \
+        --collection '{{collection}}'
+
+  - id: force-merge
+    kind: SHELL
+    timeout: 10m
+    command: |-
+      python3 scripts/library/compact_collection.py merge \
+        --collection '{{collection}}'
+
+  - id: snapshot-after
+    kind: SHELL
+    command: |-
+      python3 scripts/library/compact_collection.py diff \
+        --collection '{{collection}}'
+
+  - id: gate-chunk-delta
+    kind: GATE
+    condition: "chunk_delta_pct <= {{max_chunk_delta_pct}}"
+    on_fail: STOP
+    welfare: permanent   # never lose >30% of an index in one run (PERMANENT)
+
+  - id: search-probe-after
+    kind: SHELL
+    timeout: 2m
+    command: |-
+      python3 scripts/library/compact_collection.py probe \
+        --collection '{{collection}}' \
+        --probes '{{search_probe_path}}' \
+        --label after
+
+  - id: gate-search-quality
+    kind: GATE
+    # search_probe_top3_match is `1` iff top-3 result IDs (as a set) match
+    # before vs after across ALL probes; `0` if any probe diverged.
+    condition: "search_probe_top3_match == 1"
+    on_fail: STOP
+    welfare: permanent   # compaction doesn't break retrieval (PERMANENT)

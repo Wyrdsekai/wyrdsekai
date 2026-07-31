@@ -1,0 +1,49 @@
+# Quick (iOS): KMP Welcome wizard — "I have an API key" path → standalone room.
+# The API-key field's keyboard Done action submits directly (#1240 fix), so the
+# soft keyboard no longer blocks reaching the Continue button. iOS twin of
+# ../quick/first-run-api-key.yaml.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-api"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-provider-openrouter"
+    timeout: 5000
+- tapOn:
+    id: "welcome-provider-openrouter"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-api-key"
+    timeout: 5000
+- tapOn:
+    id: "welcome-api-key"
+- inputText: "sk-or-test-stub-not-real"
+# Submit via the keyboard's Done key — the field's KeyboardActions.onDone
+# fires the same path as the Continue button, so the keyboard-occluded button
+# never needs to be reached (#1240).
+- pressKey: Enter
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: kmp_ios_quick_first_run_api_key

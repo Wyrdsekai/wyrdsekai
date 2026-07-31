@@ -1,0 +1,7 @@
+{
+  "type": "notification",
+  "seq": 12,
+  "level": "warning",
+  "title": "Maintenance",
+  "message": "Zone maintenance scheduled in 10 minutes. Save your work."
+}

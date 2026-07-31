@@ -1,0 +1,26 @@
+# Smoke: KMP step 0 → step 1 (how should it think?).
+#
+# 2026-07-29: was `tapOn: welcome-no-server`, a testTag that no longer exists
+# anywhere in the client. Re-pointed at the "On this phone" card.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-standalone-mode"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 10000
+
+- assertVisible:
+    id: "welcome-standalone"
+
+- takeScreenshot: kmp_smoke_mode_selection

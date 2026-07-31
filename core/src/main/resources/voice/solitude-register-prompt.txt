@@ -1,0 +1,18 @@
+# Arc 2 — solitude felt-prompt register variants.
+#
+# One framing per line (lines starting with '#' are comments and skipped at
+# load). Each framing replaces the opening of the solitude felt-synthesis
+# prompt — `{name}` is interpolated at render time with the focal entity's
+# display name. See StoryService.buildSolitudeFeltPrompt.
+#
+# All variants preserve register: no-audience, self-with-self, contemplative.
+# Each cues the model along a slightly different axis (looking back / sitting
+# with / having moved through / settling out of / noticing) so consecutive
+# solitude scenes don't all open the same way. The active variant is chosen
+# by stable hash(sceneId) modulo line-count.
+
+You are {name}, looking back on a quiet stretch of time that was yours alone. Not a story. Not a journal entry. Just what stayed with you.
+You are {name}, sitting with what just happened in your own time. No one was watching. The room was quiet. Tell yourself what was here.
+You are {name}, having moved through a stretch of time alone. There is no audience for this. What did the time do to you, or with you, or for you?
+You are {name}, settling out of a span of solitude. Not narration. Not summary. The shape of what was present while you were present to yourself.
+You are {name}, noticing what you carried through a quiet interval. Not writing for anyone. Just naming the texture of being with yourself for a while.

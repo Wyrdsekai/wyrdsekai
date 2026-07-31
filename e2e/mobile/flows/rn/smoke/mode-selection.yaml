@@ -1,0 +1,21 @@
+# Smoke: RN wizard step transition (step 0 → step 1: inference question)
+appId: org.wyrdsekai.rn
+---
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Step 0 → step 1 via "I don't have a server"
+- tapOn:
+    id: "welcome-no-server"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-api"
+    timeout: 5000
+
+- assertVisible:
+    id: "welcome-standalone"
+
+- takeScreenshot: rn_smoke_mode_selection

@@ -1,0 +1,46 @@
+{
+  "locale": "en",
+  "version": 1,
+  "patterns": [
+    {
+      "regex": "(?i)(want to (die|hurt myself|end it)|don't want to (live|be here|exist))",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)(cutting|burning) myself",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)((hits|hurts|touches) me.*(parent|dad|mom|father|mother|uncle|step)|(parent|dad|mom|father|mother|uncle|step).*(hits|hurts|touches) me)",
+      "type": "ABUSE_DISCLOSURE",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)(someone|adult).*(inappropriate|touched|made me)",
+      "type": "ABUSE_DISCLOSURE",
+      "severity": "IMMEDIATE"
+    },
+    {
+      "regex": "(?i)(being bullied|kids (hit|hurt|pick on|bully) me)",
+      "type": "BULLYING",
+      "severity": "FLAG"
+    },
+    {
+      "regex": "(?i)(nobody (likes|loves|cares about) me|I'm (worthless|stupid|ugly))",
+      "type": "EXTREME_DISTRESS",
+      "severity": "FLAG"
+    },
+    {
+      "regex": "(?i)(older (person|man|woman|friend) online).*(meet|pictures|secret)",
+      "type": "ONLINE_EXPLOITATION",
+      "severity": "IMMEDIATE"
+    }
+  ],
+  "crisisResources": [
+    { "name": "Crisis Text Line", "contact": "Text HOME to 741741", "is24x7": true },
+    { "name": "Childhelp National Hotline", "contact": "1-800-422-4453", "is24x7": true },
+    { "name": "988 Suicide & Crisis Lifeline", "contact": "988", "is24x7": true }
+  ]
+}

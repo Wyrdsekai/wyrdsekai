@@ -1,0 +1,17 @@
+Wyrdsekai
+Copyright 2026 Masumi Nakamura
+
+This product includes software developed at the Apache Software Foundation
+(https://www.apache.org/), including Apache Pekko (a fork of Akka), Apache
+Lucene, Apache Hadoop, Apache POI, Apache PDFBox, Apache Parquet, Apache
+Avro, Apache MINA SSHD, Apache HttpComponents, and Apache Commons, all
+licensed under the Apache License 2.0.
+
+A complete inventory of third-party components distributed with Wyrdsekai —
+including the full server dependency tree with per-component licenses, the
+binaries and model assets bundled by the installers, and the licenses
+elected for dual-licensed components — is maintained in
+docs/THIRD_PARTY_NOTICES.md in this distribution.
+
+Upstream NOTICE files of redistributed Apache-licensed components are
+preserved inside their respective jars (META-INF/NOTICE).

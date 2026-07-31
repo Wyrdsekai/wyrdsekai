@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Oracle forecasting sidecar (oracle-core) LaunchDaemon. Runs the bundled
+  wheel's oracle-server on :7073 as a launchd-supervised foreground process.
+  The Java zone auto-connects when :7073 health-probes OK.
+
+  Runs as root (system daemon) but with HOME + an explicit data-dir flag
+  pointed at the installing user's ~/.wyrdsekai so it shares state with the CLI
+  venv that `wyrd oracle bootstrap` created. {__HOME__} is substituted at
+  install-time by packaging/macos/build-pkg.sh postinstall.
+
+  If the venv is missing (air-gapped install that skipped pip), launchd will
+  fail to spawn and back off harmlessly — re-run `wyrd oracle bootstrap` then
+  `sudo launchctl kickstart -k system/com.wyrdsekai.oracle`.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wyrdsekai.oracle</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.wyrdsekai/.venv-oracle/bin/oracle-server</string>
+        <string>--port</string>
+        <string>7073</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--data-dir</string>
+        <string>__HOME__/.wyrdsekai/oracle</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>ORACLE_PORT</key>
+        <string>7073</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Don't churn if the venv is missing / flask is slow to bind. -->
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/wyrdsekai-oracle.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/wyrdsekai-oracle.log</string>
+</dict>
+</plist>

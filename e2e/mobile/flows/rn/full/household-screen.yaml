@@ -1,0 +1,24 @@
+# Full: Navigate to household management screen
+# Time: ~15s
+
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/navigate-to-settings.yaml
+
+- scrollUntilVisible:
+    element:
+      id: "manage-household-button"
+    direction: DOWN
+
+- tapOn:
+    id: "manage-household-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "household-screen"
+    timeout: 5000
+
+- assertVisible:
+    id: "household-status-dot"
+
+- takeScreenshot: rn_full_household_screen

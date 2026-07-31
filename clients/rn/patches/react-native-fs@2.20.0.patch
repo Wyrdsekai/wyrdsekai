@@ -1,0 +1,30 @@
+diff --git a/FS.common.js b/FS.common.js
+index 62b7ba7306b5d3742fc70c62f792fd0d63458fea..14d2506bacd9d328eb454d17c73401f98fb31e96 100755
+--- a/FS.common.js
++++ b/FS.common.js
+@@ -11,14 +11,22 @@ var RNFSManager = require('react-native').NativeModules.RNFSManager;
+ 
+ var NativeEventEmitter = require('react-native').NativeEventEmitter;
+ 
+-var RNFS_NativeEventEmitter = new NativeEventEmitter(RNFSManager);
++// Guard: on iOS New Arch (RN 0.83), react-native-fs 2.20.0 hasn't shipped a
++// TurboModule spec, so NativeModules.RNFSManager is null. Building a
++// NativeEventEmitter with a null arg throws Invariant Violation at module
++// load and crashes the entire bundle. Fall back to a no-op emitter so the
++// module loads; any actual fs call will still throw cleanly, but the JS
++// bundle initializes. Production iOS paths use expo-file-system instead.
++var RNFS_NativeEventEmitter = RNFSManager
++  ? new NativeEventEmitter(RNFSManager)
++  : { addListener: function () { return { remove: function () {} }; }, removeAllListeners: function () {} };
+ 
+ var base64 = require('base-64');
+ var utf8 = require('utf8');
+ var isIOS = require('react-native').Platform.OS === 'ios';
+ 
+-var RNFSFileTypeRegular = RNFSManager.RNFSFileTypeRegular;
+-var RNFSFileTypeDirectory = RNFSManager.RNFSFileTypeDirectory;
++var RNFSFileTypeRegular = RNFSManager ? RNFSManager.RNFSFileTypeRegular : 0;
++var RNFSFileTypeDirectory = RNFSManager ? RNFSManager.RNFSFileTypeDirectory : 1;
+ 
+ var jobId = 0;
+ 

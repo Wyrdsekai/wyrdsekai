@@ -1,0 +1,11 @@
+# KMP parallel of rn/_helpers/seed-and-connect.yaml. Caller seeds
+# wyrdsekai_prefs.xml via seed_phone_session_kmp.sh BEFORE running this
+# flow. Once seeded, WyrdApp.kt hydrates tokenStore → routes appMode=local
+# + isLoggedIn=true → Birth → LocalRoomScreen with the ServerClient
+# auto-attached.
+appId: org.wyrdsekai.kmp
+---
+- extendedWaitUntil:
+    visible:
+      id: "standalone-send-button"
+    timeout: ${CONNECT_TIMEOUT}

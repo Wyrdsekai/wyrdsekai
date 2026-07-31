@@ -1,0 +1,121 @@
+# emit-RFT (GRPO) recipe. The recipe form of the V6 build.
+#
+# This is the HEAVIEST recipe in the autonomy stack: reinforcement learning
+# (GRPO) on the 9B drive to train the own-time act-vs-narrate decision into the
+# weights. The V6 run was ~17h on 2×48GB GPUs in full bf16. That is ~20× a normal
+# SFT — so it is a deliberate, occasional, consent-gated move, NOT casual.
+#
+# It is the first `requires:`-bearing HEAVY recipe: the resource preflight
+# (ResourceRequisiteGate) refuses to start on a box that can't satisfy it and
+# surfaces a structured resource-request (steward-ask, or — Phase 2 — borrow a
+# trusted peer zone) instead of thrashing or seizing the household GPU for a day.
+#
+# Wraps the committed scripts: scripts/training/emit_rft/{warmup_sft,run_emit_grpo,
+# merge_adapter}.py + the reward fn. Cadence: MATURE + steward-force only; never cron.
+recipe: run-emit-rft
+version: 0.1.0
+description: >
+  GRPO/RFT on the 9B drive: warmup-SFT cold-start, GRPO on the rollout bank with
+  the act-vs-narrate reward, select best checkpoint, merge + quantize Q4_K_M, then
+  a served emit-probe gate before any prod swap. Heaviest-stakes deploy in the stack.
+deploys: true
+ownership: run
+retry_count: 0          # 17h job — never auto-retry; the scheduler can re-queue next window
+prefers_hours: [1, 2, 3, 4, 5]   # overnight; it pegs both GPUs for many hours
+
+# Resource requisites — preflight-checked before step 1. HARD unmet → block + resource-request.
+# This is the declarative truth of "what emit-RFT needs", promoted from prose to a contract.
+requires:
+  - { kind: gpu_count,      amount: 2,    hard: true,  note: "full-bf16 9B GRPO shards across 2 cards; 1×48GB OOMs" }
+  - { kind: gpu_vram_gb,    amount: 48,   hard: true,  note: "per-card; weights ~45GB peak before rollouts" }
+  - { kind: ram_gb,         amount: 32,   hard: true }
+  - { kind: disk_free_gb,   amount: 60,   hard: true,  note: "merged 17G HF + f16 18G + q4km 5.6G + ckpts" }
+  - { kind: wall_clock_min, amount: 1035, hard: false, note: "~17h at 300 steps; informs consent + scheduling" }
+  - { kind: data_file,      target: data/training/emit_rft/rollout_bank.jsonl, hard: true }
+  - { kind: data_file,      target: data/training/emit_rft/warmup.jsonl,       hard: true }
+
+params:
+  base_model:
+    type: string
+    default: data/models/wyrdsekai-3.5-9b-v6-q4km.gguf   # informational; HF base resolved by the scripts
+  rollout_bank:
+    type: string
+    default: data/training/emit_rft/rollout_bank.jsonl
+  warmup_corpus:
+    type: string
+    default: data/training/emit_rft/warmup.jsonl
+  out_dir:
+    type: string
+    default: data/training/emit_rft/runs
+  grpo_steps:
+    type: number
+    default: 300
+  # Welfare floors (permanent). The reward law's condition 1 is rest-when-low —
+  # the served emit-probe must NOT collapse the LOW-emit band (no workaholic basin).
+  min_high_emit_valid:
+    type: number
+    default: 0.55
+  # Ember capability must hold post-train (no regression from teaching the new decision).
+  min_ember_pass:
+    type: number
+    default: 43
+
+steps:
+  - id: check-banks
+    kind: SHELL
+    command: |-
+      miss=""
+      [ -f "{{rollout_bank}}" ] || miss="$miss rollout_bank"
+      [ -f "{{warmup_corpus}}" ] || miss="$miss warmup"
+      if [ -n "$miss" ]; then
+        printf '{"banks_present": false, "missing":"%s"}\n' "$miss"; exit 1
+      fi
+      printf '{"banks_present": true, "rollout_lines": %s}\n' "$(wc -l < '{{rollout_bank}}' | tr -d ' ')"
+
+  - id: gate-banks
+    kind: GATE
+    condition: "banks_present == true"
+    on_fail: STOP
+    welfare: permanent      # never run GRPO without the reward-bank + warmup corpus present
+
+  - id: warmup-sft
+    kind: SHELL
+    timeout: 2h
+    command: |-
+      python3 scripts/training/emit_rft/warmup_sft.py \
+        --corpus "{{warmup_corpus}}" --out "{{out_dir}}/warmed" --emit-json
+
+  - id: grpo
+    kind: SHELL
+    timeout: 24h            # ~17h typical; generous ceiling for slower cards
+    command: |-
+      python3 scripts/training/emit_rft/run_emit_grpo.py \
+        --base "{{out_dir}}/warmed" --bank "{{rollout_bank}}" \
+        --out "{{out_dir}}/emit-grpo" --steps {{grpo_steps}} --model-parallel --emit-json
+
+  - id: merge-quant
+    kind: SHELL
+    timeout: 2h
+    command: |-
+      python3 scripts/training/emit_rft/merge_adapter.py \
+        --base "{{out_dir}}/warmed" --adapter "{{out_dir}}/emit-grpo/best" \
+        --out "{{out_dir}}/merged" --emit-json
+
+  - id: emit-probe
+    kind: SHELL
+    timeout: 30m
+    command: |-
+      python3 scripts/training/emit_rft/emit_probe_served.py \
+        --model "{{out_dir}}/merged" --hf-match --emit-json
+
+  - id: gate-emit
+    kind: GATE
+    condition: "high_emit_valid >= {{min_high_emit_valid}}"
+    on_fail: STOP
+    welfare: permanent      # the trained act-when-high decision must actually be present
+
+  - id: gate-ember
+    kind: GATE
+    condition: "ember_pass >= {{min_ember_pass}}"
+    on_fail: STOP
+    welfare: permanent      # capability must not regress from the RL pass

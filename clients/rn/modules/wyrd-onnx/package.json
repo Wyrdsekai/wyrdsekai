@@ -1,0 +1,27 @@
+{
+  "name": "wyrd-onnx",
+  "version": "0.1.0",
+  "description": "In-tree TurboModule bridging React Native to onnxruntime-android / onnxruntime-objc. Replaces onnxruntime-react-native (broken on New Architecture).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "files": [
+    "src",
+    "android",
+    "ios",
+    "WyrdOnnx.podspec",
+    "react-native.config.js"
+  ],
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "codegenConfig": {
+    "name": "WyrdOnnxSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "org.wyrdsekai.onnx"
+    }
+  }
+}

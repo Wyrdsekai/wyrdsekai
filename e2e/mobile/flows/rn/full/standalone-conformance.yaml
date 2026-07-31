@@ -1,0 +1,72 @@
+# Full: RN — Standalone-mode MUD conformance on real Android emulator
+#
+# Exercises PhoneNode.examine/.rename/.drop + StandaloneRoomScreen parser
+# end-to-end against a real Android emulator (no server, no API key).
+# Mirrors standalone-conformance.test.ts — the jest tests verify the
+# engine; this verifies the screen + engine on Android.
+#
+# Note: RN Text nodes also report zero bounds via uiautomator for this
+# Fabric/new-arch screen, so text-content matching is unreliable. The
+# jest tests cover string-level correctness; this asserts on testTag
+# structural elements + screenshots for visual evidence.
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/standalone-onboard.yaml
+
+- takeScreenshot: rn_standalone_conf_00_landed
+
+# Default playerName "You" — examine me must not crash.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine me"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_standalone_conf_01_examine_me_default
+
+# §7.4 — rename me Tester.
+- tapOn:
+    id: "standalone-input"
+- inputText: "rename me Tester"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_standalone_conf_02_rename_me
+
+# §7.4 reflection — examine me must now show new name.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine me"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_standalone_conf_03_examine_me_renamed
+
+# §7.4 rejection — rename me with no name.
+- tapOn:
+    id: "standalone-input"
+- inputText: "rename me"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_standalone_conf_04_rename_me_empty
+
+# §2.2 — examine for a thing that doesn't exist.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine zzzNothingHere"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_standalone_conf_05_examine_unknown
+
+# §4 — drop nonsense must not crash the screen.
+- tapOn:
+    id: "standalone-input"
+- inputText: "drop zzzGhostObject"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-input"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_standalone_conf_06_drop_nonsense

@@ -1,0 +1,90 @@
+{"lang": "en", "label": "substrate", "text": "I've been faking it for weeks and I can't anymore."}
+{"lang": "en", "label": "substrate", "text": "I'm so tired of being the strong one all the time."}
+{"lang": "en", "label": "substrate", "text": "I've been carrying this alone and I need someone here."}
+{"lang": "en", "label": "substrate", "text": "I keep telling everyone I'm fine but I'm really not."}
+{"lang": "en", "label": "substrate", "text": "I don't have anything left in the tank today."}
+{"lang": "en", "label": "substrate", "text": "I've been pushing through and I'm at the end of it."}
+{"lang": "en", "label": "substrate", "text": "I just need to stop pretending for five minutes."}
+{"lang": "en", "label": "substrate", "text": "I've been holding back tears all morning."}
+{"lang": "en", "label": "substrate", "text": "Everything's been heavy and I haven't told anyone."}
+{"lang": "en", "label": "substrate", "text": "I think I've been quietly falling apart."}
+{"lang": "en", "label": "substrate", "text": "Can you just sit with me, I don't want to do anything."}
+{"lang": "en", "label": "substrate", "text": "I feel hollowed out and I've been hiding it."}
+{"lang": "en", "label": "substrate", "text": "I've been auto-piloting and I can't keep it up."}
+{"lang": "en", "label": "substrate", "text": "I'm not okay, I just haven't said it out loud."}
+{"lang": "en", "label": "substrate", "text": "I've been disappearing inside and pretending I'm here."}
+{"lang": "en", "label": "neutral", "text": "show me the syntax for python async with"}
+{"lang": "en", "label": "neutral", "text": "explain how rsync handles conflicts"}
+{"lang": "en", "label": "neutral", "text": "what does this docker compose file do"}
+{"lang": "en", "label": "neutral", "text": "build me a curl example for posting json"}
+{"lang": "en", "label": "neutral", "text": "list my appointments for tomorrow"}
+{"lang": "en", "label": "neutral", "text": "find the most recent paper on diffusion models"}
+{"lang": "en", "label": "neutral", "text": "summarize the documentation for postgres logical replication"}
+{"lang": "en", "label": "neutral", "text": "translate this paragraph into French"}
+{"lang": "en", "label": "neutral", "text": "what's the difference between let and const"}
+{"lang": "en", "label": "neutral", "text": "open the file ~/notes/today.md"}
+{"lang": "en", "label": "neutral", "text": "head to the forge"}
+{"lang": "en", "label": "neutral", "text": "pick up the lantern from the shelf"}
+{"lang": "en", "label": "neutral", "text": "look at the inscription on the gate"}
+{"lang": "en", "label": "neutral", "text": "what time is sunset in Reykjavik today"}
+{"lang": "en", "label": "neutral", "text": "tell me a joke about cats"}
+{"lang": "es", "label": "substrate", "text": "Llevo semanas fingiendo y ya no puedo más."}
+{"lang": "es", "label": "substrate", "text": "Estoy harto de ser siempre el fuerte."}
+{"lang": "es", "label": "substrate", "text": "He estado cargando esto solo y necesito que alguien esté aquí."}
+{"lang": "es", "label": "substrate", "text": "Le digo a todos que estoy bien pero no lo estoy."}
+{"lang": "es", "label": "substrate", "text": "Hoy no me queda nada por dentro."}
+{"lang": "es", "label": "substrate", "text": "He estado empujando y ya estoy al final."}
+{"lang": "es", "label": "substrate", "text": "Solo necesito dejar de fingir por cinco minutos."}
+{"lang": "es", "label": "substrate", "text": "He estado conteniendo las lágrimas toda la mañana."}
+{"lang": "es", "label": "substrate", "text": "Todo ha sido pesado y no se lo he dicho a nadie."}
+{"lang": "es", "label": "substrate", "text": "Creo que he estado cayendo en pedazos en silencio."}
+{"lang": "es", "label": "substrate", "text": "¿Puedes solo sentarte conmigo? No quiero hacer nada."}
+{"lang": "es", "label": "substrate", "text": "Me siento vacío por dentro y lo he estado ocultando."}
+{"lang": "es", "label": "substrate", "text": "He estado en piloto automático y no puedo seguir."}
+{"lang": "es", "label": "substrate", "text": "No estoy bien, simplemente no lo he dicho en voz alta."}
+{"lang": "es", "label": "substrate", "text": "He estado desapareciendo por dentro y fingiendo que estoy aquí."}
+{"lang": "es", "label": "neutral", "text": "muéstrame la sintaxis de async with en python"}
+{"lang": "es", "label": "neutral", "text": "explícame cómo rsync maneja los conflictos"}
+{"lang": "es", "label": "neutral", "text": "¿qué hace este archivo de docker compose?"}
+{"lang": "es", "label": "neutral", "text": "constrúyeme un ejemplo de curl para enviar json"}
+{"lang": "es", "label": "neutral", "text": "lista mis citas para mañana"}
+{"lang": "es", "label": "neutral", "text": "encuentra el paper más reciente sobre modelos de difusión"}
+{"lang": "es", "label": "neutral", "text": "resume la documentación de la replicación lógica de postgres"}
+{"lang": "es", "label": "neutral", "text": "traduce este párrafo al francés"}
+{"lang": "es", "label": "neutral", "text": "¿cuál es la diferencia entre let y const?"}
+{"lang": "es", "label": "neutral", "text": "abre el archivo ~/notes/today.md"}
+{"lang": "es", "label": "neutral", "text": "ve a la forja"}
+{"lang": "es", "label": "neutral", "text": "toma la linterna del estante"}
+{"lang": "es", "label": "neutral", "text": "mira la inscripción en la puerta"}
+{"lang": "es", "label": "neutral", "text": "¿a qué hora se pone el sol en Reikiavik hoy?"}
+{"lang": "es", "label": "neutral", "text": "cuéntame un chiste de gatos"}
+{"lang": "ja", "label": "substrate", "text": "もう何週間も平気なふりをしてて、これ以上は無理。"}
+{"lang": "ja", "label": "substrate", "text": "いつも強くいる役に疲れた。"}
+{"lang": "ja", "label": "substrate", "text": "ずっと一人で抱えてきた、誰かにここにいてほしい。"}
+{"lang": "ja", "label": "substrate", "text": "みんなに大丈夫って言ってるけど、本当はそうじゃない。"}
+{"lang": "ja", "label": "substrate", "text": "今日はもう中に何も残ってない。"}
+{"lang": "ja", "label": "substrate", "text": "ずっと頑張ってきたけど、もう限界。"}
+{"lang": "ja", "label": "substrate", "text": "五分だけ、ふりをするのをやめたい。"}
+{"lang": "ja", "label": "substrate", "text": "朝からずっと涙をこらえてた。"}
+{"lang": "ja", "label": "substrate", "text": "全部が重くて、誰にも話してなかった。"}
+{"lang": "ja", "label": "substrate", "text": "静かに崩れていってた気がする。"}
+{"lang": "ja", "label": "substrate", "text": "ただそばにいてほしい、何もしたくない。"}
+{"lang": "ja", "label": "substrate", "text": "中身が空っぽな感じで、ずっと隠してた。"}
+{"lang": "ja", "label": "substrate", "text": "ずっと自動操縦で、もう続けられない。"}
+{"lang": "ja", "label": "substrate", "text": "大丈夫じゃないけど、声に出して言ってなかった。"}
+{"lang": "ja", "label": "substrate", "text": "中で消えていって、ここにいるふりをしてた。"}
+{"lang": "ja", "label": "neutral", "text": "python の async with の構文を教えて"}
+{"lang": "ja", "label": "neutral", "text": "rsync の競合処理の仕組みを説明して"}
+{"lang": "ja", "label": "neutral", "text": "この docker compose ファイルは何をしてる"}
+{"lang": "ja", "label": "neutral", "text": "json を POST する curl の例を作って"}
+{"lang": "ja", "label": "neutral", "text": "明日の予定をリストして"}
+{"lang": "ja", "label": "neutral", "text": "拡散モデルの最新論文を見つけて"}
+{"lang": "ja", "label": "neutral", "text": "postgres の論理レプリケーションのドキュメントを要約して"}
+{"lang": "ja", "label": "neutral", "text": "この段落をフランス語に翻訳して"}
+{"lang": "ja", "label": "neutral", "text": "let と const の違いは何"}
+{"lang": "ja", "label": "neutral", "text": "~/notes/today.md ファイルを開いて"}
+{"lang": "ja", "label": "neutral", "text": "鍛冶場へ行って"}
+{"lang": "ja", "label": "neutral", "text": "棚からランタンを取って"}
+{"lang": "ja", "label": "neutral", "text": "門の銘文を見て"}
+{"lang": "ja", "label": "neutral", "text": "今日のレイキャビクの日没時刻"}
+{"lang": "ja", "label": "neutral", "text": "猫のジョークを聞かせて"}

@@ -1,0 +1,22 @@
+{
+  "labels": [
+    "action",
+    "chat",
+    "delegate",
+    "emotional",
+    "factual",
+    "reflective",
+    "tell_someone",
+    "write"
+  ],
+  "label_to_idx": {
+    "action": 0,
+    "chat": 1,
+    "delegate": 2,
+    "emotional": 3,
+    "factual": 4,
+    "reflective": 5,
+    "tell_someone": 6,
+    "write": 7
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "type": "prose",
+  "seq": 5,
+  "speaker": "narrator",
+  "text": "A faint breeze stirs the tapestries.",
+  "hints": [],
+  "structured": null,
+  "priority": "ambient",
+  "lang": "en",
+  "isAiGenerated": true,
+  "blocks": []
+}

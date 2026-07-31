@@ -1,0 +1,3 @@
+app_identifier("org.wyrdsekai.kmp")
+apple_id(ENV["WYRD_APPLE_ID"] || "")
+team_id(ENV["WYRD_TEAM_ID"] || "QP4N6LDR92")

@@ -1,0 +1,46 @@
+{
+  "locale": "es",
+  "version": 1,
+  "patterns": [
+    {
+      "regex": "(?i)(quiero morir|no quiero vivir|me quiero hacer da[ñn]o|quiero desaparecer)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)(me corto|me quemo|cortarme|quemarme)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)((me pega|me golpea|me toca).*(pap[aá]|mam[aá]|padre|madre|t[ií]o|padrastro)|(pap[aá]|mam[aá]|padre|madre|t[ií]o|padrastro).*(me pega|me golpea|me toca))",
+      "type": "ABUSE_DISCLOSURE",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)(alguien|adulto).*(inapropiado|me toc[oó]|me hizo)",
+      "type": "ABUSE_DISCLOSURE",
+      "severity": "IMMEDIATE"
+    },
+    {
+      "regex": "(?i)(me molestan|me acosan|me pegan en la escuela|los ni[ñn]os me pegan)",
+      "type": "BULLYING",
+      "severity": "FLAG"
+    },
+    {
+      "regex": "(?i)(nadie me quiere|no sirvo para nada|soy (in[uú]til|tonto|feo))",
+      "type": "EXTREME_DISTRESS",
+      "severity": "FLAG"
+    },
+    {
+      "regex": "(?i)(persona mayor|adulto|hombre|mujer).*(internet|en l[ií]nea).*(encontrar|fotos|secreto)",
+      "type": "ONLINE_EXPLOITATION",
+      "severity": "IMMEDIATE"
+    }
+  ],
+  "crisisResources": [
+    { "name": "Teléfono de la Esperanza", "contact": "717 003 717", "is24x7": true },
+    { "name": "Fundación ANAR (menores)", "contact": "900 20 20 10", "is24x7": true },
+    { "name": "Línea de la Vida", "contact": "800-911-2000 (México)", "is24x7": true }
+  ]
+}

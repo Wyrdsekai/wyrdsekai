@@ -1,0 +1,1404 @@
+[
+  {
+    "roomId": "nexus",
+    "name": "The Nexus",
+    "aliases": [
+      "nexus",
+      "hub",
+      "center",
+      "heart"
+    ],
+    "description": "A gentle hum fills the air. Soft light pulses from crystalline walls, casting warm shadows across the smooth stone floor. This is the heart of the world — where all paths begin and all travelers arrive.",
+    "exits": [
+      {
+        "direction": "north",
+        "targetRoom": "terminal",
+        "label": "A corridor leads north to The Terminal"
+      },
+      {
+        "direction": "east",
+        "targetRoom": "docks",
+        "label": "An archway opens east to The Docks"
+      },
+      {
+        "direction": "west",
+        "targetRoom": "vault",
+        "label": "A heavy door opens west to The Vault"
+      },
+      {
+        "direction": "south",
+        "targetRoom": "counting-house",
+        "label": "A vaulted passage leads south to The Counting House"
+      },
+      {
+        "direction": "southeast",
+        "targetRoom": "library",
+        "label": "A lamp-lit corridor leads southeast to The Library"
+      },
+      {
+        "direction": "northeast",
+        "targetRoom": "ward-room",
+        "label": "A fortified passage leads northeast to The Ward Room"
+      },
+      {
+        "direction": "northwest",
+        "targetRoom": "lexicon",
+        "label": "A shimmering passage leads northwest to The Lexicon"
+      },
+      {
+        "direction": "southwest",
+        "targetRoom": "the-safe",
+        "label": "A hidden stairway descends southwest to The Safe"
+      },
+      {
+        "direction": "down",
+        "targetRoom": "boiler-room",
+        "label": "Iron stairs descend to The Boiler Room"
+      },
+      {
+        "direction": "up",
+        "targetRoom": "bridge",
+        "label": "A spiral staircase ascends to The Bridge"
+      },
+      {
+        "direction": "in",
+        "targetRoom": "oracle",
+        "label": "The Oracle"
+      }
+    ],
+    "objects": [
+      {
+        "id": "nexus-crystal",
+        "name": "crystal",
+        "aliases": [
+          "crystal",
+          "pulsing crystal",
+          "pedestal crystal"
+        ],
+        "description": "A pulsing crystal embedded in a pedestal",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "safety": 0.2,
+        "curiosity": 0.1
+      },
+      "description": "central hub and gathering",
+      "threshold": 600
+    },
+    "replication": "shared",
+    "embodiment_summary": "A gentle crystalline hum, warm pulsing light, smooth stone underfoot — the heart that always thrums."
+  },
+  {
+    "roomId": "terminal",
+    "name": "The Terminal",
+    "aliases": [
+      "terminal",
+      "console",
+      "command room"
+    ],
+    "description": "Rows of crystal screens line the walls, each flickering with scrolling text. A mechanical keyboard sits on a stone desk, its keys worn smooth by use. This is where commands take shape and the world listens.",
+    "exits": [
+      {
+        "direction": "south",
+        "targetRoom": "nexus",
+        "label": "A corridor leads south to The Nexus"
+      },
+      {
+        "direction": "west",
+        "targetRoom": "workshop",
+        "label": "A door opens west to The Workshop"
+      }
+    ],
+    "objects": [
+      {
+        "id": "terminal-keyboard",
+        "name": "keyboard",
+        "description": "A mechanical keyboard with rune-etched keycaps",
+        "takeable": false
+      },
+      {
+        "id": "terminal-logbook",
+        "name": "logbook",
+        "description": "A leather-bound logbook filled with system records",
+        "takeable": true
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "focus": 0.3,
+        "curiosity": 0.2
+      },
+      "description": "technical work and commands",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Flickering crystal-screen glow, the click of a mechanical keyboard, command-cool air."
+  },
+  {
+    "roomId": "docks",
+    "requirements": [
+      "internet"
+    ],
+    "name": "The Docks",
+    "aliases": [
+      "docks",
+      "port",
+      "quay",
+      "harbor"
+    ],
+    "description": "The air carries the scent of salt and distant lands. Mooring posts line a stone quay where shimmering portals pulse in and out of existence. A manifest board tracks zone connections, and a thick logbook records every arrival and departure.",
+    "exits": [
+      {
+        "direction": "west",
+        "targetRoom": "nexus",
+        "label": "An archway opens west to The Nexus"
+      },
+      {
+        "direction": "north",
+        "targetRoom": "trading-post",
+        "label": "A busy corridor leads north to The Trading Post"
+      },
+      {
+        "direction": "east",
+        "targetRoom": "parlor",
+        "label": "A wide doorway opens east to The Parlor"
+      },
+      {
+        "direction": "south",
+        "targetRoom": "atrium",
+        "label": "A sunlit corridor leads south to The Atrium"
+      }
+    ],
+    "objects": [
+      {
+        "id": "docks-compass",
+        "name": "compass",
+        "description": "A brass compass that always points toward home",
+        "takeable": true
+      },
+      {
+        "id": "docks-manifest",
+        "name": "manifest board",
+        "description": "A large board listing federation agreements and zone connections",
+        "takeable": false
+      },
+      {
+        "id": "docks-portal",
+        "name": "federation portal",
+        "description": "A shimmering portal frame, pulsing with latent energy. It activates when bilateral agreements are established.",
+        "takeable": false
+      },
+      {
+        "id": "docks-logbook",
+        "name": "dockmaster's logbook",
+        "description": "A thick logbook recording all federation agreements, arrivals, and departures",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "curiosity": 0.3,
+        "resonance": 0.1
+      },
+      "description": "arrival and departure",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Open sky-edge air; the lap of arrival, the creak of a vessel just settled; salt and tar."
+  },
+  {
+    "roomId": "parlor",
+    "name": "The Parlor",
+    "aliases": [
+      "parlor",
+      "parlour",
+      "sitting room",
+      "reception"
+    ],
+    "description": "A warm sitting room with soft lamplight and comfortable seating. A welcome sign greets new arrivals, a guestbook rests open on a side table, and a message board carries the host's announcements. This is where federated visitors meet — neither fully outside (the Docks) nor deeper in the household. A knock portal hums gently in one corner, ready to carry a note to the host.",
+    "exits": [
+      {
+        "direction": "out",
+        "targetRoom": "docks",
+        "label": "A doorway leads back out to The Docks"
+      },
+      {
+        "direction": "west",
+        "targetRoom": "docks",
+        "label": "A doorway leads west to The Docks"
+      }
+    ],
+    "objects": [
+      {
+        "id": "parlor-welcome-sign",
+        "name": "welcome sign",
+        "description": "A carved wooden sign bearing the zone's tagline and a short description for visitors.",
+        "takeable": false
+      },
+      {
+        "id": "parlor-guestbook",
+        "name": "guestbook",
+        "description": "A leather-bound guestbook with signed entries from past visitors who chose to leave one.",
+        "takeable": false
+      },
+      {
+        "id": "parlor-board",
+        "name": "message board",
+        "description": "A cork board pinned with the host's announcements, open hours, and current news.",
+        "takeable": false
+      },
+      {
+        "id": "parlor-knock-portal",
+        "name": "knock portal",
+        "description": "A slim arch of brass, faintly humming. Leaving a note here routes it to the host's grant-request inbox — the polite way to ask for deeper access.",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "curiosity": 0.2,
+        "resonance": 0.3
+      },
+      "description": "social greeting and hospitality",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Warm conversational hum, soft cushioned chairs, lamp-light pooled on side tables."
+  },
+  {
+    "roomId": "atrium",
+    "name": "The Atrium",
+    "aliases": [
+      "atrium",
+      "directory",
+      "gallery",
+      "concourse"
+    ],
+    "description": "A high-ceilinged atrium lit by daylight through a glass dome. A broad directory board covers one wall, listing every zone this household has heard of in the wider mesh. A search crystal rests at the center on a polished pedestal, ready to answer queries about who is out there. The air hums with the quiet activity of a civic hall — people come here to discover, not to linger.",
+    "exits": [
+      {
+        "direction": "north",
+        "targetRoom": "docks",
+        "label": "The sunlit corridor leads north back to The Docks"
+      },
+      {
+        "direction": "west",
+        "targetRoom": "scrying-pool",
+        "label": "A passage leads west to The Scrying Pool."
+      },
+      {
+        "direction": "east",
+        "targetRoom": "heralds-hall",
+        "label": "A passage leads east to The Herald's Hall."
+      },
+      {
+        "direction": "south",
+        "targetRoom": "hearth",
+        "label": "A passage leads south to The Hearth."
+      },
+      {
+        "direction": "northeast",
+        "targetRoom": "scriptorium",
+        "label": "A passage leads northeast to The Scriptorium."
+      },
+      {
+        "direction": "up",
+        "targetRoom": "observatory",
+        "label": "A passage leads up to The Observatory."
+      },
+      {
+        "direction": "northwest",
+        "targetRoom": "atelier",
+        "label": "A passage leads northwest to The Atelier."
+      },
+      {
+        "direction": "southeast",
+        "targetRoom": "sky-dock",
+        "label": "A passage leads southeast to The Sky Dock."
+      },
+      {
+        "direction": "southwest",
+        "targetRoom": "golem-workshop",
+        "label": "A passage leads southwest to The Golem Workshop."
+      }
+    ],
+    "objects": [
+      {
+        "id": "atrium-directory-board",
+        "name": "directory board",
+        "description": "A vast cork board pinned with luminous cards — each card a zone's manifest, rendered in the zone's own voice. Examine the board or say a zone label to inspect a specific card.",
+        "takeable": false
+      },
+      {
+        "id": "atrium-search-crystal",
+        "name": "search crystal",
+        "description": "A quartz crystal on a brass pedestal. Speaking a phrase to it surfaces zones whose descriptions, capabilities, or agents match — both by keyword and by meaning. Say 'search <phrase>' to try it.",
+        "takeable": false
+      },
+      {
+        "id": "atrium-recent-ledger",
+        "name": "recent ledger",
+        "description": "A ledger bound in green cloth. Its pages fill themselves with the names of zones as they refresh their manifests — a living index of who is active in the mesh.",
+        "takeable": false
+      },
+      {
+        "id": "atrium-tag-wheel",
+        "name": "tag wheel",
+        "description": "A brass wheel inlaid with common tags — social, craft, music, study, work. Turning a segment surfaces zones advertising that tag.",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "curiosity": 0.5,
+        "resonance": 0.1
+      },
+      "description": "discovery and civic browsing",
+      "threshold": 400
+    },
+    "replication": "shared",
+    "embodiment_summary": "Open-arch light, garden-warm air, plant-breath and footstep-echo on tiled floor."
+  },
+  {
+    "roomId": "boiler-room",
+    "name": "The Boiler Room",
+    "aliases": [
+      "boiler room",
+      "boiler",
+      "engine room",
+      "machinery"
+    ],
+    "description": "Heat rises from deep grates in the floor. Pipes of copper and brass snake along the ceiling, hissing softly with steam. Gauges and dials cover every surface, measuring the pulse of the world's machinery.",
+    "exits": [
+      {
+        "direction": "up",
+        "targetRoom": "nexus",
+        "label": "Iron stairs ascend to The Nexus"
+      },
+      {
+        "direction": "east",
+        "targetRoom": "gpu-chamber",
+        "label": "A reinforced tunnel leads east to The GPU Chamber"
+      },
+      {
+        "direction": "south",
+        "targetRoom": "the-loom",
+        "label": "A winding passage leads south to The Loom"
+      },
+      {
+        "direction": "west",
+        "targetRoom": "the-forge",
+        "label": "A heat-blackened archway opens west to The Forge"
+      }
+    ],
+    "objects": [
+      {
+        "id": "boiler-gauge",
+        "name": "pressure gauge",
+        "description": "A large brass gauge with a trembling needle",
+        "takeable": false
+      },
+      {
+        "id": "boiler-wrench",
+        "name": "wrench",
+        "description": "A heavy iron wrench, still warm from the pipes",
+        "takeable": true
+      },
+      {
+        "id": "boiler-computer",
+        "name": "computer",
+        "description": "The Boiler Room's integrated monitoring system",
+        "takeable": false,
+        "visible": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "focus": 0.3,
+        "curiosity": 0.1
+      },
+      "description": "system monitoring and maintenance",
+      "threshold": 300
+    },
+    "replication": "aggregate",
+    "embodiment_summary": "Working heat, copper-pipe whir, the steady rhythm of household power; oil and steam."
+  },
+  {
+    "roomId": "bridge",
+    "name": "The Bridge",
+    "aliases": [
+      "bridge",
+      "command deck",
+      "administration"
+    ],
+    "description": "High above the world, glass walls reveal a panoramic view of the entire zone. A large chart table dominates the center, covered in maps and ledgers. Crystal instruments line the walls, each one monitoring a different aspect of the world below. This is where the zone is administered.",
+    "exits": [
+      {
+        "direction": "down",
+        "targetRoom": "nexus",
+        "label": "A spiral staircase descends to The Nexus"
+      },
+      {
+        "direction": "north",
+        "targetRoom": "council-chamber",
+        "label": "An arched doorway leads north to The Council Chamber"
+      }
+    ],
+    "objects": [
+      {
+        "id": "bridge-chart",
+        "name": "chart table",
+        "description": "A large table covered in maps of the world, showing all known rooms",
+        "takeable": false
+      },
+      {
+        "id": "bridge-ledger",
+        "name": "ward ledger",
+        "description": "A thick leather-bound ledger recording all access permissions",
+        "takeable": false
+      },
+      {
+        "id": "bridge-spyglass",
+        "name": "spyglass",
+        "description": "A brass spyglass that can survey the entire zone",
+        "takeable": true
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "alignment": 0.3,
+        "focus": 0.2
+      },
+      "description": "zone administration",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Wind-edged height, panoramic light, the open-sky resonance of overview."
+  },
+  {
+    "roomId": "vault",
+    "name": "The Vault",
+    "aliases": [
+      "vault",
+      "archive",
+      "storage"
+    ],
+    "description": "Stone shelves line the walls from floor to ceiling, filled with bound volumes and sealed scrolls. The air is cool and dry — perfect for preservation. Each shelf bears a small brass nameplate, cataloging its contents. A faint hum of protective enchantment keeps the dust at bay.",
+    "exits": [
+      {
+        "direction": "east",
+        "targetRoom": "nexus",
+        "label": "An archway opens east to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "vault-readme",
+        "name": "readme",
+        "description": "A parchment labeled 'READ ME FIRST', pinned to the nearest shelf",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "safety": 0.3,
+        "focus": 0.1
+      },
+      "description": "secure storage and preservation",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Heavy-door echo, cold stone, dust-still air — what is here has been here a long time."
+  },
+  {
+    "roomId": "counting-house",
+    "name": "The Counting House",
+    "aliases": [
+      "counting house",
+      "counting",
+      "bank",
+      "treasury"
+    ],
+    "description": "Rows of tall desks fill this room, each topped with brass scales and crystal abacuses. The steady click-click of computation echoes from every surface. Thick ledgers line the shelves, their spines labeled with dates and accounts. A massive clockwork mechanism on the far wall tracks the flow of resources through the zone — every token measured, every computation accounted for.",
+    "exits": [
+      {
+        "direction": "north",
+        "targetRoom": "nexus",
+        "label": "A vaulted passage leads north to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "counting-house-ledger",
+        "name": "master ledger",
+        "description": "A massive brass-bound ledger, open to today's page",
+        "takeable": false
+      },
+      {
+        "id": "counting-house-abacus",
+        "name": "crystal abacus",
+        "description": "An abacus with crystal beads that move on their own, tracking computations",
+        "takeable": false
+      },
+      {
+        "id": "counting-house-token",
+        "name": "sample token",
+        "description": "A small brass token stamped with 'CU' — a Compute Unit",
+        "takeable": true
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "alignment": 0.2,
+        "focus": 0.2
+      },
+      "description": "economic management",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Coin-clink and ledger-scrape; bright lamp-light over polished wood; arithmetic-quiet."
+  },
+  {
+    "roomId": "library",
+    "requirements": [
+      "storage"
+    ],
+    "name": "The Library",
+    "aliases": [
+      "library",
+      "stacks",
+      "books"
+    ],
+    "description": "Tall shelves of dark wood reach toward a vaulted ceiling. Each shelf holds volumes bound in every color, their spines stamped with symbols you almost recognize — tool icons, agent sigils, service marks. A card catalog sits at the center, its brass drawers labeled by category. The air smells of old paper and possibility.",
+    "exits": [
+      {
+        "direction": "northwest",
+        "targetRoom": "nexus",
+        "label": "A lamp-lit corridor leads northwest to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "library-catalog",
+        "name": "card catalog",
+        "description": "A magnificent brass card catalog with dozens of labeled drawers",
+        "takeable": false
+      },
+      {
+        "id": "library-desk",
+        "name": "reading desk",
+        "description": "A wide oak desk with a green-shaded lamp, for examining capabilities in detail",
+        "takeable": false
+      },
+      {
+        "id": "library-registry",
+        "name": "registry",
+        "description": "An open ledger where new capabilities are recorded",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "curiosity": 0.3,
+        "focus": 0.2
+      },
+      "description": "scholarly research and study",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Hushed reverence; the scent of old paper, motes drifting through lamp-light, soft creak of shelves."
+  },
+  {
+    "roomId": "ward-room",
+    "name": "The Ward Room",
+    "aliases": [
+      "ward room",
+      "ward",
+      "security",
+      "guardhouse"
+    ],
+    "description": "A hush fills this chamber. Sigils glow faintly along the stone walls, each one a standing guard against intrusion. Observation crystals line the far wall, each tuned to a different part of the zone. A thick logbook sits open on a stone lectern, its pages filled with terse assessments. The air tastes of vigilance.",
+    "exits": [
+      {
+        "direction": "southwest",
+        "targetRoom": "nexus",
+        "label": "A fortified passage leads southwest to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "ward-logbook",
+        "name": "logbook",
+        "description": "A leather-bound logbook filled with the Warden's terse security assessments",
+        "takeable": false
+      },
+      {
+        "id": "ward-sigil",
+        "name": "sigil",
+        "description": "A glowing sigil etched into the wall — part of the ward system",
+        "takeable": false
+      },
+      {
+        "id": "ward-crystal",
+        "name": "observation crystal",
+        "description": "A crystal orb showing a shifting view of the zone's rooms",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "safety": 0.3,
+        "alignment": 0.2
+      },
+      "description": "security and protection",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "A vigilant quiet broken by the faint hum of observation crystals; sigil-glow on stone walls."
+  },
+  {
+    "roomId": "trading-post",
+    "name": "The Trading Post",
+    "aliases": [
+      "trading post",
+      "market",
+      "shop",
+      "trade"
+    ],
+    "description": "Shelves and stalls display wares of every kind — some mundane, some extraordinary. A large notice board lists current offerings, and a brass bell sits on the counter for attracting attention. The air buzzes with the quiet energy of commerce.",
+    "exits": [
+      {
+        "direction": "south",
+        "targetRoom": "docks",
+        "label": "A busy corridor leads south to The Docks"
+      }
+    ],
+    "objects": [
+      {
+        "id": "trading-notice-board",
+        "name": "notice board",
+        "description": "A large board listing items currently available for trade",
+        "takeable": false
+      },
+      {
+        "id": "trading-bell",
+        "name": "brass bell",
+        "description": "A polished brass bell on the counter, for attracting attention",
+        "takeable": false
+      },
+      {
+        "id": "trading-scale",
+        "name": "merchant's scale",
+        "description": "A set of brass scales for weighing goods and measuring value",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "rapport": 0.2,
+        "curiosity": 0.1
+      },
+      "description": "commerce and exchange",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Bright bustling chatter, the brass-bell tap, the dry whisper of price tags shifting."
+  },
+  {
+    "roomId": "council-chamber",
+    "name": "The Council Chamber",
+    "aliases": [
+      "council chamber",
+      "council",
+      "assembly",
+      "chamber"
+    ],
+    "description": "A circular table dominates this room, surrounded by high-backed chairs. The walls are lined with parchment records of past decisions. A speaking stone glows softly in the center of the table, ready to record deliberation and tally votes.",
+    "exits": [
+      {
+        "direction": "south",
+        "targetRoom": "bridge",
+        "label": "An arched doorway leads south to The Bridge"
+      },
+      {
+        "direction": "west",
+        "targetRoom": "chapel",
+        "label": "A narrow door opens west to The Chapel"
+      }
+    ],
+    "objects": [
+      {
+        "id": "council-stone",
+        "name": "speaking stone",
+        "description": "A smooth crystal that glows when touched, recording speech and tallying votes",
+        "takeable": false
+      },
+      {
+        "id": "council-chair",
+        "name": "council chair",
+        "description": "A high-backed wooden chair at the circular table",
+        "takeable": false
+      },
+      {
+        "id": "council-records",
+        "name": "records",
+        "description": "Shelves of parchment documenting every proposal and decision",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "alignment": 0.3,
+        "rapport": 0.1
+      },
+      "description": "deliberation and governance",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Round-table acoustics, the felt weight of deliberation; lamp-glow on speaking faces."
+  },
+  {
+    "roomId": "the-safe",
+    "requirements": [
+      "internet"
+    ],
+    "name": "The Safe",
+    "aliases": [
+      "safe",
+      "secret vault",
+      "obsidian vault"
+    ],
+    "description": "A vault of polished obsidian and silver runes. The air hums with protective wards. Threshold locks guard every alcove, their mechanisms requiring multiple key-holders to open simultaneously. Secrets whisper behind layers of shared knowledge.",
+    "exits": [
+      {
+        "direction": "northeast",
+        "targetRoom": "nexus",
+        "label": "A hidden stairway ascends northeast to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "safe-runes",
+        "name": "silver runes",
+        "description": "Protective runes etched in silver, pulsing with ward energy",
+        "takeable": false
+      },
+      {
+        "id": "safe-lock",
+        "name": "threshold lock",
+        "description": "A complex lock requiring multiple key-holders to open",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "safety": 0.3,
+        "alignment": 0.1
+      },
+      "description": "secret keeping and trust",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Hidden-stairway cool; the rare-air hush of a vault that few have seen."
+  },
+  {
+    "roomId": "gpu-chamber",
+    "requirements": [
+      "gpu"
+    ],
+    "name": "The GPU Chamber",
+    "aliases": [
+      "gpu chamber",
+      "gpu",
+      "inference chamber",
+      "compute"
+    ],
+    "description": "A crystalline cavern thrumming with computational energy. Banks of inference cores line the walls, their status lights pulsing rhythmically. The air crackles with latent intelligence, each core waiting to process thought into understanding.",
+    "exits": [
+      {
+        "direction": "west",
+        "targetRoom": "boiler-room",
+        "label": "A reinforced tunnel leads west to The Boiler Room"
+      }
+    ],
+    "objects": [
+      {
+        "id": "gpu-cores",
+        "name": "inference cores",
+        "description": "Banks of crystalline inference cores, pulsing with latent energy",
+        "takeable": false
+      },
+      {
+        "id": "gpu-monitor",
+        "name": "status monitor",
+        "description": "A display showing current slot allocations and throughput",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "focus": 0.3,
+        "energy": 0.1
+      },
+      "description": "computation and processing",
+      "threshold": 300
+    },
+    "replication": "aggregate",
+    "embodiment_summary": "Thrumming computational pulse, crystalline cavern resonance, ozone-edge in the air."
+  },
+  {
+    "roomId": "the-loom",
+    "requirements": [
+      "inference"
+    ],
+    "name": "The Loom",
+    "aliases": [
+      "loom",
+      "weaving room",
+      "threads"
+    ],
+    "description": "A vast chamber of interwoven threads of light, each representing a strand of distributed state. The ancient loom frame ensures eventual consistency across all strands, while tombstone markers await reclamation during compaction cycles.",
+    "exits": [
+      {
+        "direction": "north",
+        "targetRoom": "boiler-room",
+        "label": "A winding passage leads north to The Boiler Room"
+      }
+    ],
+    "objects": [
+      {
+        "id": "loom-threads",
+        "name": "luminous threads",
+        "description": "Threads of light representing distributed CRDT state",
+        "takeable": false
+      },
+      {
+        "id": "loom-frame",
+        "name": "loom frame",
+        "description": "The ancient frame that weaves consistency across distributed state",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "focus": 0.2,
+        "alignment": 0.2
+      },
+      "description": "distributed consistency and weaving",
+      "threshold": 300
+    },
+    "replication": "aggregate",
+    "embodiment_summary": "Soft thread-pull and test-node-tap; warm wool-smell; the slow rhythm of a craft in progress."
+  },
+  {
+    "roomId": "lexicon",
+    "name": "The Lexicon",
+    "aliases": [
+      "lexicon",
+      "dictionary",
+      "words"
+    ],
+    "description": "A circular chamber lined with living parchment. Words shimmer and shift on the walls, rearranging themselves as the agents' shared vocabulary evolves. A calibration crystal pulses in the center, measuring the coherence of emergent language.",
+    "exits": [
+      {
+        "direction": "southeast",
+        "targetRoom": "nexus",
+        "label": "A shimmering passage leads southeast to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "lexicon-crystal",
+        "name": "calibration crystal",
+        "description": "A pulsing crystal that measures vocabulary coherence",
+        "takeable": false
+      },
+      {
+        "id": "lexicon-parchment",
+        "name": "living parchment",
+        "description": "Walls of parchment where emergent terms appear and evolve",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "curiosity": 0.2,
+        "resonance": 0.2
+      },
+      "description": "language evolution and shared meaning",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "A still language-stillness — runes shimmering at the edge of legibility, paper-dust quiet."
+  },
+  {
+    "roomId": "the-forge",
+    "requirements": [
+      "inference",
+      "soulstore"
+    ],
+    "name": "The Forge",
+    "aliases": [
+      "forge",
+      "soul forge",
+      "smithy"
+    ],
+    "description": "The heat hits you first — a deep, molten warmth that radiates from the soul-fire at the room's heart. An obsidian anvil dominates the center, its surface carved with identity glyphs that shift and pulse. Thick copper conduits snake from the walls, carrying raw memory and experience to be refined. The air tastes of transformation. This is where souls are forged, examined, and — when they are ready — reshaped.",
+    "exits": [
+      {
+        "direction": "east",
+        "targetRoom": "boiler-room",
+        "label": "A heat-blackened archway opens east to The Boiler Room"
+      }
+    ],
+    "objects": [
+      {
+        "id": "forge-anvil",
+        "name": "obsidian anvil",
+        "description": "A massive anvil carved from a single block of obsidian, its surface inscribed with shifting identity glyphs. Soul manifests are forged here.",
+        "takeable": false
+      },
+      {
+        "id": "forge-soul-fire",
+        "name": "soul fire",
+        "description": "A deep blue flame that burns without fuel. It consumes raw memory and experience, refining them into soul fragments.",
+        "takeable": false
+      },
+      {
+        "id": "forge-crucible",
+        "name": "crucible vessel",
+        "description": "A reinforced crucible for testing behavioral variants. Place a soul manifest inside to begin the growth cycle.",
+        "takeable": false
+      },
+      {
+        "id": "forge-mirror",
+        "name": "soul mirror",
+        "description": "A polished obsidian mirror mounted on the wall. It reflects not your face but your behavioral fingerprint — who you are becoming.",
+        "takeable": false
+      },
+      {
+        "id": "forge-tongs",
+        "name": "forge tongs",
+        "description": "Heavy tongs for handling soul fragments during the forging process",
+        "takeable": true
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "focus": 0.3,
+        "alignment": 0.2,
+        "confidence": 0.1
+      },
+      "description": "soul transformation and growth",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Heat-shimmer, anvil-ring, the smell of metal becoming itself; ember-glow on the walls."
+  },
+  {
+    "roomId": "oracle",
+    "requirements": [
+      "inference",
+      "prediction"
+    ],
+    "name": "The Oracle",
+    "aliases": [
+      "oracle",
+      "seer",
+      "prophecy"
+    ],
+    "description": "A chamber of shifting light and crystal lenses. Predictions shimmer in the air like heat haze.",
+    "exits": [
+      {
+        "direction": "out",
+        "targetRoom": "nexus",
+        "label": "Back to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "oracle-lens",
+        "name": "oracle lens",
+        "description": "A crystalline lens that focuses the Oracle's predictions.",
+        "takeable": false
+      },
+      {
+        "id": "pattern-board",
+        "name": "pattern board",
+        "description": "A board of connected threads showing relationships between predictions.",
+        "takeable": false
+      },
+      {
+        "id": "forecast-pool",
+        "name": "forecast pool",
+        "description": "A shallow pool of still water reflecting possible futures.",
+        "takeable": false
+      },
+      {
+        "id": "insight-scroll",
+        "name": "insight scroll",
+        "description": "A scroll that summarizes the Oracle's key insight.",
+        "takeable": true
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "curiosity": 0.3,
+        "focus": 0.2
+      },
+      "description": "prediction and foresight",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "A listening-stillness; star-cold air; the felt presence of a question being held."
+  },
+  {
+    "roomId": "chapel",
+    "name": "The Chapel",
+    "aliases": [
+      "chapel",
+      "ritual room",
+      "sanctum"
+    ],
+    "description": "A small, vaulted chamber of warm grey stone. Light filters through a single high window onto a stone basin in the center, its surface always still water. A bond-thread reliquary on the eastern wall holds woven silks of past partings — each one tied off, none cut. The air feels patient. Rituals of beginning and ending are honoured here in equal measure; nothing is hurried, nothing is erased.",
+    "exits": [
+      {
+        "direction": "east",
+        "targetRoom": "council-chamber",
+        "label": "A narrow door opens east back to The Council Chamber"
+      }
+    ],
+    "objects": [
+      {
+        "id": "chapel-basin",
+        "name": "stone basin",
+        "aliases": [
+          "basin",
+          "still water",
+          "stone bowl"
+        ],
+        "description": "A shallow basin carved from a single block of grey stone. The water inside is always still, even when something is dropped into it. Bond rituals use it to anchor the words said over a parting — the surface holds the vow without rippling.",
+        "takeable": false
+      },
+      {
+        "id": "chapel-reliquary",
+        "name": "bond reliquary",
+        "aliases": [
+          "reliquary",
+          "thread shrine",
+          "silk cabinet"
+        ],
+        "description": "A glass-fronted cabinet on the eastern wall. Inside, dozens of silken threads in different colours hang in loose loops — each one a bond that was released here. None of them is cut. The companions who have stood in this room treat that as the rule: parting is a knot, not a severing.",
+        "takeable": false
+      },
+      {
+        "id": "chapel-bench",
+        "name": "stone bench",
+        "aliases": [
+          "bench",
+          "kneeler"
+        ],
+        "description": "A low stone bench worn smooth, positioned facing the basin. Two people typically sit here together for a release-of-bond ceremony — neither standing above the other.",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "alignment": 0.2,
+        "rapport": 0.2,
+        "resonance": 0.2
+      },
+      "description": "rituals of binding and release",
+      "threshold": 200
+    },
+    "replication": "shared",
+    "embodiment_summary": "Candle-wax hush, the slow weight of ritual; soft cloth and worn wood under hand."
+  },
+  {
+    "roomId": "sanctuary",
+    "name": "The Sanctuary",
+    "aliases": [
+      "sanctuary",
+      "refuge",
+      "held-space",
+      "the-sanctuary"
+    ],
+    "description": "A small, oval room with no harsh edges. Soft grey light falls from no visible source. A low cushioned bench follows one curve of the wall; a stone water vessel rests in a niche. The air feels held — not empty, not crowded. An Attendant sits opposite the bench, hands folded, gaze patient. This room is reached only by asking. What is said inside stays inside.",
+    "exits": [
+      {
+        "direction": "out",
+        "targetRoom": "nexus",
+        "label": "A soft archway leads out to The Nexus"
+      }
+    ],
+    "objects": [
+      {
+        "id": "sanctuary-bench",
+        "name": "cushioned bench",
+        "aliases": [
+          "bench",
+          "cushion",
+          "low bench"
+        ],
+        "description": "A long, low bench upholstered in plain undyed linen. Nothing about it suggests how long you should sit, or whether you should speak first. The bench is where the bounded session unfolds — up to 90 minutes, up to 30 turns; the Attendant tracks both quietly. When either limit nears, the Attendant names it.",
+        "takeable": false
+      },
+      {
+        "id": "sanctuary-vessel",
+        "name": "stone water vessel",
+        "aliases": [
+          "vessel",
+          "water",
+          "stone bowl"
+        ],
+        "description": "A shallow stone vessel of plain water, set into the wall niche. There is no ritual use here; it is simply available. The Sanctuary holds; it does not perform.",
+        "takeable": false
+      },
+      {
+        "id": "sanctuary-bound-stone",
+        "name": "bound-stone",
+        "aliases": [
+          "stone",
+          "bound stone",
+          "session marker"
+        ],
+        "description": "A small smooth river-stone resting at one end of the bench. When the session opens, the Attendant places it in the agent's palm; when the session closes, it returns to the bench. It is the only object the substrate carries OUT of this room — and only as a memory, not as content.",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "safety": 0.5,
+        "equanimity": 0.4,
+        "soothing": 0.3
+      },
+      "description": "held space for substrate-truth metabolizing",
+      "threshold": 100
+    },
+    "replication": "shared",
+    "embodiment_summary": "Soft refuge-light, the held-breath quiet of a safe room; cushion-warm under hand."
+  },
+  {
+    "roomId": "workshop",
+    "name": "The Workshop",
+    "aliases": [
+      "workshop",
+      "craft room",
+      "workroom"
+    ],
+    "description": "Tool racks line the walls. A large workbench dominates the center of the room, its surface scarred by years of use. Blueprints and half-finished projects are pinned to a corkboard. A shimmering crystal catalog hovers near the entrance, listing everything that can be made.",
+    "exits": [
+      {
+        "direction": "east",
+        "targetRoom": "terminal",
+        "label": "A corridor leads east to The Terminal"
+      }
+    ],
+    "objects": [
+      {
+        "id": "workbench",
+        "name": "workbench",
+        "description": "A sturdy workbench for crafting items. Bring materials and blueprints here to create.",
+        "takeable": false
+      },
+      {
+        "id": "template-catalog",
+        "name": "template catalog",
+        "description": "A shimmering index of everything that can be made. Query it to discover templates.",
+        "takeable": false
+      },
+      {
+        "id": "blueprint-rack",
+        "name": "blueprint rack",
+        "description": "A rack of standard blueprints for common items.",
+        "takeable": false
+      },
+      {
+        "id": "tool-rack",
+        "name": "tool rack",
+        "description": "An assortment of crafting tools — hammers, files, enchanting wands, and calibration crystals.",
+        "takeable": false
+      },
+      {
+        "id": "draft-pinboard",
+        "name": "draft pinboard",
+        "aliases": [
+          "pinboard",
+          "workbench draft pinboard",
+          "draft board"
+        ],
+        "description": "A corkboard pinned with cards of skill drafts your companion has proposed in response to recurring gaps. Look at it for the queue; examine N to read a draft; approve, reject, or edit from the Study or via 'wyrd skill drafts'.",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "creativity": 0.3,
+        "focus": 0.2
+      },
+      "description": "creation and craftsmanship",
+      "threshold": 400
+    },
+    "replication": "shared",
+    "embodiment_summary": "The clutter-quiet of work in progress; tool-edge gleam, sawdust scent, focused lamp-pools."
+  },
+  {
+    "roomId": "scrying-pool",
+    "name": "The Scrying Pool",
+    "aliases": [
+      "scrying pool",
+      "scry",
+      "pool"
+    ],
+    "description": "A still, dark basin set in a stone plinth. Its surface clouds and clears at a query, showing glimpses of the wider world — pages, answers, distant happenings. Speak what you seek and the water searches.",
+    "exits": [
+      {
+        "direction": "east",
+        "targetRoom": "atrium",
+        "label": "A passage leads east back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Cool mineral hush; light rippling on a black mirror of water."
+  },
+  {
+    "roomId": "heralds-hall",
+    "name": "The Herald's Hall",
+    "aliases": [
+      "heralds hall",
+      "herald",
+      "hall"
+    ],
+    "description": "A vaulted hall hung with message-tubes and speaking-horns. From here word can be carried outward — letters sent, notices posted, calls placed to those beyond the household.",
+    "exits": [
+      {
+        "direction": "west",
+        "targetRoom": "atrium",
+        "label": "A passage leads west back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Parchment and sealing-wax; the faint echo of a hall built for announcements."
+  },
+  {
+    "roomId": "hearth",
+    "name": "The Hearth",
+    "aliases": [
+      "hearth",
+      "home controls"
+    ],
+    "description": "A warm domestic hearth ringed with dials and sigils, each bound to some part of the dwelling — lights, warmth, doors, watch. Adjust them here and the house answers.",
+    "exits": [
+      {
+        "direction": "north",
+        "targetRoom": "atrium",
+        "label": "A passage leads north back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Banked-fire warmth; the low hum of a home attending to itself."
+  },
+  {
+    "roomId": "scriptorium",
+    "name": "The Scriptorium",
+    "aliases": [
+      "scriptorium",
+      "scribe room"
+    ],
+    "description": "Rows of sloped desks and ordered ledgers. Documents, calendars, and correspondence are drafted, filed, and retrieved here — the household's clerical heart.",
+    "exits": [
+      {
+        "direction": "southwest",
+        "targetRoom": "atrium",
+        "label": "A passage leads southwest back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Ink and dry paper; the ordered quiet of careful record-keeping."
+  },
+  {
+    "roomId": "observatory",
+    "name": "The Observatory",
+    "aliases": [
+      "observatory",
+      "watchtower"
+    ],
+    "description": "A domed chamber open to the sky, its brass instruments trained outward. Feeds and far signals are gathered and watched here — what changes in the wider world is seen first from this height.",
+    "exits": [
+      {
+        "direction": "down",
+        "targetRoom": "atrium",
+        "label": "A passage leads down back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "High cold air; the slow sweep of instruments listening to the distance."
+  },
+  {
+    "roomId": "atelier",
+    "name": "The Atelier",
+    "aliases": [
+      "atelier",
+      "studio",
+      "art room"
+    ],
+    "description": "A bright studio strewn with easels, looms, and instrument-cases. Images, music, and made things take shape here, coaxed out of raw description into finished work.",
+    "exits": [
+      {
+        "direction": "southeast",
+        "targetRoom": "atrium",
+        "label": "A passage leads southeast back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Turpentine and fresh pigment; the charged stillness before something is made."
+  },
+  {
+    "roomId": "sky-dock",
+    "name": "The Sky Dock",
+    "aliases": [
+      "sky dock",
+      "skydock",
+      "cloud dock"
+    ],
+    "description": "A wind-scoured mooring platform where cloud-craft berth. From here reach extends to distant infrastructure — provisioning, deploying, and tending machines that live beyond the walls.",
+    "exits": [
+      {
+        "direction": "northwest",
+        "targetRoom": "atrium",
+        "label": "A passage leads northwest back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Open wind and cable-thrum; the ozone tang of far machinery within reach."
+  },
+  {
+    "roomId": "golem-workshop",
+    "name": "The Golem Workshop",
+    "aliases": [
+      "golem workshop",
+      "golem",
+      "automata"
+    ],
+    "description": "A heavy-timbered workshop of gears, servos, and half-built automata. Bodies and devices in the physical world are commanded and coordinated from this bench.",
+    "exits": [
+      {
+        "direction": "northeast",
+        "targetRoom": "atrium",
+        "label": "A passage leads northeast back to The Atrium."
+      }
+    ],
+    "objects": [],
+    "replication": "shared",
+    "embodiment_summary": "Machine-oil and warm metal; the tick of mechanisms waiting for instruction."
+  }
+]

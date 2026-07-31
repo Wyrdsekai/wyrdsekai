@@ -1,0 +1,16 @@
+use_default_settings: true
+
+search:
+  safe_search: 0
+  autocomplete: "duckduckgo"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "wyrdsekai-searxng-key"
+  limiter: false
+  image_proxy: false
+
+ui:
+  static_use_hash: true

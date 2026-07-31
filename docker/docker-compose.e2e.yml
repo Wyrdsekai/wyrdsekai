@@ -1,0 +1,527 @@
+# Wyrdsekai E2E Test Infrastructure
+#
+# Provides inference backends (sglang, vllm, llama-server) and messaging (nats)
+# for E2E testing. Matches the proven CodePlane Docker pattern.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.e2e.yml up -d nats
+#   COMPOSE_PROFILES=sglang docker compose -f docker/docker-compose.e2e.yml up -d sglang
+#   COMPOSE_PROFILES=vllm   docker compose -f docker/docker-compose.e2e.yml up -d vllm
+#
+# Environment variables:
+#   SGLANG_MODEL             HuggingFace model ID (default: Qwen/Qwen3-8B)
+#   VLLM_MODEL               HuggingFace model ID (default: cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit)
+#   WYRDSEKAI_DATA           Data directory (default: ./data)
+#   HF_TOKEN                 HuggingFace token for gated models
+
+services:
+  # ─── NATS — Between messaging ────────────────────────────────────────────
+  nats:
+    image: nats:2-alpine
+    container_name: wyrdsekai-e2e-nats
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    command: ["-js", "-m", "8222"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ─── Searxng — web search for agent tools ─────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: wyrdsekai-e2e-searxng
+    ports:
+      - "${SEARXNG_PORT:-8888}:8080"
+    volumes:
+      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_SECRET=wyrdsekai-e2e
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ─── SGLang — primary inference (16GB GPU) ───────────────────────────────
+  sglang:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:latest}
+    container_name: wyrdsekai-e2e-sglang
+    profiles: ["sglang"]
+    ports:
+      - "${SGLANG_PORT:-8000}:8000"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SGLANG_MODEL=${SGLANG_MODEL:-Qwen/Qwen3-8B}
+      - SGLANG_TP_SIZE=${SGLANG_TP_SIZE:-1}
+      - SGLANG_MAX_MODEL_LEN=${SGLANG_MAX_MODEL_LEN:-16384}
+      - SGLANG_GPU_MEM_UTIL=${SGLANG_GPU_MEM_UTIL:-0.88}
+      - SGLANG_TOOL_PARSER=${SGLANG_TOOL_PARSER:-qwen}
+      - SGLANG_EXTRA_ARGS=${SGLANG_EXTRA_ARGS:---quantization fp8}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SGLANG_GPU_DEVICES:-0}"]
+              capabilities: [gpu]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        python3 -m sglang.launch_server
+        --model-path $$SGLANG_MODEL
+        --host 0.0.0.0
+        --port 8000
+        --tp-size $$SGLANG_TP_SIZE
+        --context-length $$SGLANG_MAX_MODEL_LEN
+        --mem-fraction-static $$SGLANG_GPU_MEM_UTIL
+        --tool-call-parser $$SGLANG_TOOL_PARSER
+        $$SGLANG_EXTRA_ARGS
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  # ─── vLLM — heavy inference (24GB+ GPU) ─────────────────────────────────
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.16.0-cu130}
+    container_name: wyrdsekai-e2e-vllm
+    profiles: ["vllm"]
+    ports:
+      - "${VLLM_PORT:-8100}:8000"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      # Prioritize host-injected CUDA libs over container compat libs.
+      # Prevents Error 803 when host driver is newer than the image's compat stubs.
+      - LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
+      - VLLM_MODEL=${VLLM_MODEL:-cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit}
+      - VLLM_TP_SIZE=${VLLM_TP_SIZE:-1}
+      - VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-16384}
+      - VLLM_GPU_MEM_UTIL=${VLLM_GPU_MEM_UTIL:-0.90}
+      - VLLM_TOOL_PARSER=${VLLM_TOOL_PARSER:-qwen3_coder}
+      - VLLM_EXTRA_ARGS=${VLLM_EXTRA_ARGS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_GPU_DEVICES:-0}"]
+              capabilities: [gpu]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        vllm serve $$VLLM_MODEL
+        --host 0.0.0.0
+        --port 8000
+        --tensor-parallel-size $$VLLM_TP_SIZE
+        --max-model-len $$VLLM_MAX_MODEL_LEN
+        --gpu-memory-utilization $$VLLM_GPU_MEM_UTIL
+        --enable-auto-tool-choice
+        --tool-call-parser $$VLLM_TOOL_PARSER
+        $$VLLM_EXTRA_ARGS
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  # ─── llama-server — lightweight single-model inference ───────────────────
+  # Default ctx is 16384 — Memory and long-session E2E tests accumulate ~5K+
+  # tokens of state (soul fragments, memory items, ReAct loops) and need room
+  # to breathe. 4K was the old default and caused fullSleepCycleMemoryPipeline
+  # to fail with HTTP 400 ("request exceeds available context size") masquerading
+  # as a model-behavior flake. Override via LLAMA_CTX_SIZE for memory-constrained
+  # runs; see E2eTestSupport.REQUIRED_CTX_SIZE for the minimum enforced by tests.
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-e2e-llama
+    profiles: ["llama"]
+    ports:
+      - "${LLAMA_PORT:-8080}:8080"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - "--model"
+      - "/models/${LLAMA_MODEL:-qwen3-4b-q4_k_m.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "${LLAMA_CTX_SIZE:-16384}"
+      - "--jinja"
+      - "--flash-attn"
+      - "on"
+      - "--reasoning"
+      - "off"
+      - "-ngl"
+      - "${LLAMA_GPU_LAYERS:-99}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  # ─── llama-phone — Qwen3-0.6B for phone-tier relay tests ──────────────
+  llama-phone:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-e2e-llama-phone
+    profiles: ["relay"]
+    ports:
+      - "${LLAMA_PHONE_PORT:-8081}:8080"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - "--model"
+      - "/models/${LLAMA_PHONE_MODEL:-Qwen3-0.6B-Q8_0.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "${LLAMA_PHONE_CTX:-2048}"
+      - "--jinja"
+      - "--flash-attn"
+      - "on"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  # ─── llama-drive — 9B drive-trained model for Soul/Drive E2E tests ──
+  #
+  # Dedicated test-owned instance of the server-tier inference backend.
+  # Separate from any shared `wyrdsekai-9b-drive` container an operator may
+  # be running in production: tests own their infra end-to-end and don't
+  # silently inherit whatever config the prod container was last started
+  # with. Context-size 16384 matches the E2E floor
+  # (E2eTestSupport.REQUIRED_CTX_SIZE + soul fragment budget); 4096 caused
+  # fullSleepCycleMemoryPipeline to fail with inference_fail fallback
+  # because accumulated state blew past the window mid-test.
+  #
+  # The sampling args mirror the production runtime (temp 0.7, top-p 0.8,
+  # repeat-penalty 1.05, reasoning off) so test behaviour doesn't drift
+  # from live behaviour. See TestServerBootstrap.ensureInferenceBackend
+  # for the bootstrap path that starts this profile.
+  #
+  # Activate with profile "drive":
+  #   docker compose -f docker/docker-compose.e2e.yml --profile drive up -d llama-drive
+  #
+  # Backend selection (from tests):
+  #   WYRDSEKAI_E2E_BACKEND=llama-drive (points at localhost:8083 by default)
+  llama-drive:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-e2e-llama-drive
+    profiles: ["drive"]
+    ports:
+      - "${LLAMA_DRIVE_PORT:-8083}:8080"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${LLAMA_DRIVE_GPU_DEVICES:-0}"]
+              capabilities: [gpu]
+    command:
+      - "--model"
+      - "/models/${LLAMA_DRIVE_MODEL:-wyrdsekai-3.5-9b-v5-q4km.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "${LLAMA_DRIVE_CTX_SIZE:-16384}"
+      - "--jinja"
+      - "--flash-attn"
+      - "on"
+      - "--reasoning"
+      - "off"
+      - "-ngl"
+      - "${LLAMA_DRIVE_GPU_LAYERS:-99}"
+      - "--temp"
+      - "${LLAMA_DRIVE_TEMP:-0.7}"
+      - "--top-p"
+      - "${LLAMA_DRIVE_TOP_P:-0.8}"
+      - "--repeat-penalty"
+      - "${LLAMA_DRIVE_REPEAT_PENALTY:-1.05}"
+      - "-n"
+      - "${LLAMA_DRIVE_MAX_TOKENS:-512}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ─── llama-voice — 4B voice backend for tier-aware prompt assembly ──
+  #
+  # Dual-inference companion to llama-drive. The 9B drive on llama-drive
+  # handles ReAct, classifier, and cap:reasoning; this 4B handles cap:quick
+  # for voice-pass post-processing of tell_agent replies. Without this
+  # backend the 9B drive's raw output (bracket-tagged working memory,
+  # timestamped `[user fact]` entries, drive-shaped prose) leaks straight
+  # into player responses — every prose-asserting test class flakes.
+  #
+  # Production wires a voice LoRA via `wyrd inference voice-restart`; tests
+  # run the base 4B without the adapter for reproducibility (the polish
+  # quality is still high enough to keep memory-dump shapes out of replies).
+  # Override LLAMA_VOICE_LORA to mount a per-character adapter.
+  #
+  # Activate alongside drive:
+  #   docker compose -f docker/docker-compose.e2e.yml --profile drive up -d llama-drive llama-voice
+  #
+  # The test JVM picks this up via WYRDSEKAI_E2E_VOICE_PORT (set by
+  # e2e-test.sh) — see E2eTestSupport.setupDualInference.
+  llama-voice:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-e2e-llama-voice
+    profiles: ["drive"]
+    ports:
+      - "${LLAMA_VOICE_PORT:-8201}:8080"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models
+      - ${WYRDSEKAI_DATA:-./data}/adapters:/adapters
+      # V8 control vectors (Qwen3.5-4B steering on top of V5 SSD weights).
+      # Mounted read-only; if dir is missing the --control-vector-scaled flag
+      # below resolves to "" via LLAMA_V8_VECTORS override.
+      - ${WYRDSEKAI_DATA:-./data}/training/v8/vectors:/vectors:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${LLAMA_VOICE_GPU_DEVICES:-0}"]
+              capabilities: [gpu]
+    command:
+      - "--model"
+      # V8 production voice base = Qwen3.5-4B-Instruct + repeng control vectors
+      # (loaded below). Matches home-server :8201 production.
+      - "/models/${LLAMA_VOICE_MODEL:-wyrdsekai-3.5-4b-balanced-q4km.gguf}"
+      # V8 steering vectors — single flag, comma-separated FNAME:SCALE pairs.
+      # llama.cpp enforces the single-flag form (deprecation warning otherwise).
+      # Calibrated alphas from V8 PLAN.md Gate 3 (combined-application sweep).
+      - "--control-vector-scaled"
+      - "${LLAMA_V8_VECTORS:-/vectors/anti_defiance.gguf:0.15,/vectors/es_register_hold.gguf:0.20,/vectors/refusal_stability.gguf:0.20}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "${LLAMA_VOICE_CTX_SIZE:-8192}"
+      - "--jinja"
+      - "--flash-attn"
+      - "on"
+      - "--reasoning"
+      - "off"
+      - "-ngl"
+      - "${LLAMA_VOICE_GPU_LAYERS:-99}"
+      - "--temp"
+      - "${LLAMA_VOICE_TEMP:-0.7}"
+      - "--top-p"
+      - "${LLAMA_VOICE_TOP_P:-0.9}"
+      - "-n"
+      - "${LLAMA_VOICE_MAX_TOKENS:-256}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ─── opencode — coding-task backend (default-on per SPEC §2.5) ──────
+  #
+  # OpenCode is a Node CLI (npm package `opencode`) that drives an autonomous
+  # edit loop against an OpenAI-compatible inference endpoint. The OpenCode
+  # backend (core/coding/OpenCodeBackend) spawns it as a subprocess and reads
+  # JSON output from stdout — so for E2E we can either:
+  #
+  #   (a) run OpenCode directly on the host (recommended; CI workflow is
+  #       `npm install -g opencode@1.14.x` then `WYRDSEKAI_E2E_OPENCODE=1`
+  #       to pass the test gate). The OpenCodeBackend's DefaultProcessRunner
+  #       finds `opencode` via PATH.
+  #
+  #   (b) wrap it in this container and have the test JVM exec it via docker
+  #       (NOT what the production runner does; only useful when CI hosts
+  #       can't install Node). Activating this profile alone is not enough —
+  #       OpenCodeRuntimeConfig.executable_path must also be repointed at a
+  #       bind-mounted shim such as `data/coding-cli-bundle/opencode-shim.sh`
+  #       that delegates `docker exec` calls into this container.
+  #
+  # Path (a) is what `scripts/training/coding/run_opencode_e2e.sh` uses —
+  # it skips this container and just verifies `opencode --version` on the
+  # host. This service stays here for path (b) sandboxing experiments.
+  #
+  # Activate with profile "coding":
+  #   docker compose -f docker/docker-compose.e2e.yml --profile coding up -d opencode
+  opencode:
+    image: node:20-alpine
+    container_name: wyrdsekai-e2e-opencode
+    profiles: ["coding"]
+    # Keep the container alive so `docker exec` can target it for shim mode.
+    # `tail -f /dev/null` is the cheapest no-op idle.
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        npm install -g opencode@${OPENCODE_VERSION:-1.14.33} >/dev/null 2>&1 &&
+        echo "opencode installed:" && opencode --version &&
+        tail -f /dev/null
+    environment:
+      # OpenCode's @ai-sdk/openai-compatible provider needs *some* key; the
+      # llama-server endpoint ignores it but the npm package errors on blank.
+      - OPENAI_API_KEY=not-required
+      # Wire OpenCode at the host's llama-drive endpoint by default.
+      # Override per run if the test JVM auto-allocated a different port.
+      - OPENCODE_BASE_URL=${OPENCODE_BASE_URL:-http://host.docker.internal:8083/v1}
+    volumes:
+      # Mount workspace + a writable scratch dir so subprocess outputs land
+      # somewhere the test JVM can read them.
+      - ${WYRDSEKAI_DATA:-./data}/opencode-workspace:/workspace
+    healthcheck:
+      # Container is ready when `opencode --version` returns 0. Slow first
+      # start because of the npm install; subsequent health checks are fast.
+      test: ["CMD", "sh", "-c", "command -v opencode >/dev/null && opencode --version >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ─── llama-laptop — Qwen3-4B for laptop-tier relay tests ──────────────
+  llama-laptop:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-e2e-llama-laptop
+    profiles: ["relay"]
+    ports:
+      - "${LLAMA_LAPTOP_PORT:-8082}:8080"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - "--model"
+      - "/models/${LLAMA_LAPTOP_MODEL:-Qwen3-4B-Q4_K_M.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "${LLAMA_LAPTOP_CTX:-4096}"
+      - "--jinja"
+      - "--flash-attn"
+      - "on"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  # ─── openhands-agent-server — V1 Agent Server v1.19.1 ──────────────
+  #
+  # OpenHands V1 Agent Server (live-verified 2026-05-05). Pinned to
+  # ghcr.io/openhands/agent-server:1.19.1-python — the standalone Python
+  # agent-server image. The legacy V0 runtime image at
+  # ghcr.io/all-hands-ai/openhands:* is a different surface entirely and
+  # is NOT compatible with the V1 adapter.
+  #
+  # Container listens on :8000 internally; host-mapped to :8002 by
+  # default (override with OPENHANDS_AGENT_SERVER_PORT). :8002 chosen
+  # to avoid colliding with:
+  #   - other E2E services on :8000-:8001
+  #   - the existing wyrdsekai-openhands-probe operator may have
+  #     running on :8001 (separate probe instance, leave it alone)
+  #
+  # LLM wiring (per the V1.19.1 reconciliation gotchas):
+  #   1. LLM_BASE_URL points at host's e2e-drive llama-server (:8083).
+  #      `host.docker.internal` requires --add-host on Linux.
+  #   2. LLM_API_KEY=not-required — litellm requires SOME string when
+  #      llm.base_url + llm.model are sent per-call (env-var fallback
+  #      is disabled for per-call overrides). The OpenHands adapter
+  #      sends per-call overrides, so this env var is the safety net
+  #      for any path that doesn't go through the adapter.
+  #   3. LLM_MODEL must be present and prefixed `openai/...` for litellm
+  #      to route through the OpenAI-compatible provider (which is what
+  #      llama-server speaks). Without the prefix, litellm tries to
+  #      resolve the bare name against its provider registry and fails.
+  #
+  # Health: V1.19.1 returns the literal string "OK" with 200 OK on
+  # /health (NOT /api/health — that's a 404). The healthcheck below
+  # uses curl -f against /health.
+  #
+  # Activate with profile "openhands":
+  #   docker compose -f docker/docker-compose.e2e.yml --profile openhands up -d openhands-agent-server
+  #
+  # Backend selection (from tests):
+  #   WYRDSEKAI_E2E_OPENHANDS=1 (gates OpenHandsE2ETest)
+  #   WYRDSEKAI_OPENHANDS_AGENT_SERVER_URL=http://localhost:8002
+  openhands-agent-server:
+    image: ghcr.io/openhands/agent-server:${OPENHANDS_AGENT_SERVER_TAG:-1.19.1-python}
+    container_name: wyrdsekai-e2e-openhands
+    profiles: ["openhands"]
+    ports:
+      - "${OPENHANDS_AGENT_SERVER_PORT:-8002}:8000"
+    environment:
+      # Point at the host's e2e llama-drive on :8083. host.docker.internal
+      # resolves to the host gateway via --add-host below (Linux Docker
+      # default; on macOS/Windows the daemon resolves it natively).
+      - LLM_BASE_URL=${OPENHANDS_LLM_BASE_URL:-http://host.docker.internal:8083/v1}
+      # litellm-required stub; llama-server ignores the value but litellm
+      # errors on blank when per-call override mode is active.
+      - LLM_API_KEY=${OPENHANDS_LLM_API_KEY:-not-required}
+      # `openai/` prefix is the litellm convention for routing through
+      # the OpenAI-compatible provider. The bare model name after the
+      # prefix is what llama-server advertises (GGUF basename).
+      - LLM_MODEL=${OPENHANDS_LLM_MODEL:-openai/9b-v5-q4km}
+    extra_hosts:
+      # Required on Linux for host.docker.internal to resolve to the
+      # host gateway. Harmless on macOS/Windows where Docker Desktop
+      # already provides this mapping.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Bind a writable workspace dir so files OpenHands creates land
+      # somewhere the test JVM can inspect (mirrors the opencode
+      # service's mount pattern).
+      - ${WYRDSEKAI_DATA:-./data}/openhands-workspace:/workspace
+    healthcheck:
+      # Live-verified: returns "OK" 200 on /health (NOT /api/health).
+      # `-f` makes curl exit non-zero on 4xx/5xx; we don't grep the body
+      # because the literal "OK" is well-known and the 200 is sufficient.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s

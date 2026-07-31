@@ -1,0 +1,13 @@
+# Helper: Connect and navigate to settings screen
+
+appId: org.wyrdsekai.rn
+---
+- runFlow: register-and-connect.yaml
+
+- tapOn:
+    id: "settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000

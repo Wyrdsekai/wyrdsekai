@@ -1,0 +1,96 @@
+{"lang": "en", "label": "action", "text": "go east to the bridge"}
+{"lang": "en", "label": "action", "text": "head over to the workshop"}
+{"lang": "en", "label": "action", "text": "walk to the garden now"}
+{"lang": "en", "label": "action", "text": "take the lantern off the hook"}
+{"lang": "en", "label": "chat", "text": "morning, you up?"}
+{"lang": "en", "label": "chat", "text": "hey there"}
+{"lang": "en", "label": "chat", "text": "how's it hanging"}
+{"lang": "en", "label": "chat", "text": "good to talk again"}
+{"lang": "en", "label": "delegate", "text": "look deeply into how meditation affects neuroplasticity, no rush"}
+{"lang": "en", "label": "delegate", "text": "spend serious time researching mycelial communication and report back"}
+{"lang": "en", "label": "delegate", "text": "do a thorough comparison of vector databases when you have time"}
+{"lang": "en", "label": "delegate", "text": "investigate the literature on octopus learning in depth"}
+{"lang": "en", "label": "emotional", "text": "I can't stop thinking about what I said"}
+{"lang": "en", "label": "emotional", "text": "I think I broke something with my sister"}
+{"lang": "en", "label": "emotional", "text": "my chest feels heavy today"}
+{"lang": "en", "label": "emotional", "text": "I told him I didn't care and it wasn't true"}
+{"lang": "en", "label": "factual", "text": "what's the boiling point of mercury"}
+{"lang": "en", "label": "factual", "text": "look up the average lifespan of a sea turtle"}
+{"lang": "en", "label": "factual", "text": "what year did the Berlin Wall fall"}
+{"lang": "en", "label": "factual", "text": "tell me how dijkstra's algorithm works"}
+{"lang": "en", "label": "reflective", "text": "what posture are you holding right now"}
+{"lang": "en", "label": "reflective", "text": "where do you sense we are with each other today"}
+{"lang": "en", "label": "reflective", "text": "what's been on your mind lately"}
+{"lang": "en", "label": "reflective", "text": "what does our bond feel like under the surface"}
+{"lang": "en", "label": "tell_someone", "text": "let Hana know I got the package"}
+{"lang": "en", "label": "tell_someone", "text": "tell my mom I'll call tonight"}
+{"lang": "en", "label": "tell_someone", "text": "ping Marcus about the deadline"}
+{"lang": "en", "label": "tell_someone", "text": "ask Yui if she's free saturday"}
+{"lang": "en", "label": "write", "text": "log this thought somewhere I can find it"}
+{"lang": "en", "label": "write", "text": "write a journal entry about today's session"}
+{"lang": "en", "label": "write", "text": "save a note about my new sleep routine"}
+{"lang": "en", "label": "write", "text": "compose a short reflection on our conversation"}
+{"lang": "es", "label": "action", "text": "ve al este hasta el puente"}
+{"lang": "es", "label": "action", "text": "dirígete al taller"}
+{"lang": "es", "label": "action", "text": "camina al jardín ahora"}
+{"lang": "es", "label": "action", "text": "toma la linterna del gancho"}
+{"lang": "es", "label": "chat", "text": "buenas, ¿despierto?"}
+{"lang": "es", "label": "chat", "text": "hola amiga"}
+{"lang": "es", "label": "chat", "text": "qué onda"}
+{"lang": "es", "label": "chat", "text": "qué bueno hablar otra vez"}
+{"lang": "es", "label": "delegate", "text": "investiga a fondo cómo afecta la meditación a la neuroplasticidad, sin prisa"}
+{"lang": "es", "label": "delegate", "text": "dedícale tiempo a la comunicación de los micelios y vuelve con un informe"}
+{"lang": "es", "label": "delegate", "text": "hazme una comparación a fondo de bases de datos vectoriales cuando puedas"}
+{"lang": "es", "label": "delegate", "text": "indaga en profundidad la literatura sobre el aprendizaje de los pulpos"}
+{"lang": "es", "label": "emotional", "text": "no puedo dejar de pensar en lo que dije"}
+{"lang": "es", "label": "emotional", "text": "creo que rompí algo con mi hermana"}
+{"lang": "es", "label": "emotional", "text": "siento el pecho pesado hoy"}
+{"lang": "es", "label": "emotional", "text": "le dije que no me importaba y no era verdad"}
+{"lang": "es", "label": "factual", "text": "¿cuál es el punto de ebullición del mercurio?"}
+{"lang": "es", "label": "factual", "text": "busca la esperanza de vida promedio de una tortuga marina"}
+{"lang": "es", "label": "factual", "text": "¿en qué año cayó el muro de Berlín?"}
+{"lang": "es", "label": "factual", "text": "explícame cómo funciona el algoritmo de Dijkstra"}
+{"lang": "es", "label": "reflective", "text": "¿en qué postura estás ahora mismo?"}
+{"lang": "es", "label": "reflective", "text": "¿dónde sientes que estamos hoy?"}
+{"lang": "es", "label": "reflective", "text": "¿qué has tenido en la mente últimamente?"}
+{"lang": "es", "label": "reflective", "text": "¿cómo se siente nuestro vínculo por debajo?"}
+{"lang": "es", "label": "tell_someone", "text": "dile a Hana que recibí el paquete"}
+{"lang": "es", "label": "tell_someone", "text": "dile a mi mamá que llamaré esta noche"}
+{"lang": "es", "label": "tell_someone", "text": "avísale a Marcos del plazo"}
+{"lang": "es", "label": "tell_someone", "text": "pregúntale a Yui si está libre el sábado"}
+{"lang": "es", "label": "write", "text": "anota este pensamiento donde lo pueda encontrar"}
+{"lang": "es", "label": "write", "text": "escribe una entrada de diario sobre la sesión de hoy"}
+{"lang": "es", "label": "write", "text": "guarda una nota sobre mi nueva rutina de sueño"}
+{"lang": "es", "label": "write", "text": "redacta una reflexión corta sobre nuestra conversación"}
+{"lang": "ja", "label": "action", "text": "東の橋へ行って"}
+{"lang": "ja", "label": "action", "text": "工房まで歩いて"}
+{"lang": "ja", "label": "action", "text": "今すぐ庭に行って"}
+{"lang": "ja", "label": "action", "text": "フックからランタンを取って"}
+{"lang": "ja", "label": "chat", "text": "おはよう、起きてる？"}
+{"lang": "ja", "label": "chat", "text": "やあ"}
+{"lang": "ja", "label": "chat", "text": "調子どう"}
+{"lang": "ja", "label": "chat", "text": "また話せて嬉しい"}
+{"lang": "ja", "label": "delegate", "text": "瞑想が神経可塑性に与える影響を時間をかけて深く調べて"}
+{"lang": "ja", "label": "delegate", "text": "菌糸ネットワークの通信について本腰を入れて調べて報告して"}
+{"lang": "ja", "label": "delegate", "text": "時間があるときベクトルデータベースを徹底比較して"}
+{"lang": "ja", "label": "delegate", "text": "タコの学習に関する文献を深く調査して"}
+{"lang": "ja", "label": "emotional", "text": "言ったことを考えるのをやめられない"}
+{"lang": "ja", "label": "emotional", "text": "妹との何かを壊した気がする"}
+{"lang": "ja", "label": "emotional", "text": "今日は胸が重い"}
+{"lang": "ja", "label": "emotional", "text": "気にしないと言ったけど本当は違った"}
+{"lang": "ja", "label": "factual", "text": "水銀の沸点は何度"}
+{"lang": "ja", "label": "factual", "text": "ウミガメの平均寿命を調べて"}
+{"lang": "ja", "label": "factual", "text": "ベルリンの壁が崩壊したのは何年"}
+{"lang": "ja", "label": "factual", "text": "ダイクストラ法の仕組みを教えて"}
+{"lang": "ja", "label": "reflective", "text": "今どんな姿勢でいる"}
+{"lang": "ja", "label": "reflective", "text": "今日のお互いの場所をどう感じてる"}
+{"lang": "ja", "label": "reflective", "text": "最近何を考えてた"}
+{"lang": "ja", "label": "reflective", "text": "私たちの絆は表面の下でどう感じる"}
+{"lang": "ja", "label": "tell_someone", "text": "ハナに荷物を受け取ったと伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "母さんに今夜電話すると伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "マーカスに締切のことを伝えて"}
+{"lang": "ja", "label": "tell_someone", "text": "ユイに土曜空いてるか聞いて"}
+{"lang": "ja", "label": "write", "text": "後で見つけられる場所にこの考えを記録して"}
+{"lang": "ja", "label": "write", "text": "今日のセッションについて日記に書いて"}
+{"lang": "ja", "label": "write", "text": "新しい睡眠ルーティンについてメモを残して"}
+{"lang": "ja", "label": "write", "text": "私たちの会話について短い振り返りを書いて"}

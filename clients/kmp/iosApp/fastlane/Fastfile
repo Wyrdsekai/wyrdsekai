@@ -1,0 +1,79 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Fetch or create signing certificates and profiles"
+  lane :certs do
+    cert(development: true)
+    sigh(
+      development: true,
+      app_identifier: "org.wyrdsekai.kmp",
+      force: false
+    )
+  end
+
+  desc "Build debug IPA for device"
+  lane :build do
+    cert(development: true)
+    sigh(
+      development: true,
+      app_identifier: "org.wyrdsekai.kmp",
+      force: false
+    )
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: "WyrdsekaiKMP.xcodeproj",
+      profile_name: lane_context[SharedValues::SIGH_NAME],
+      profile_uuid: lane_context[SharedValues::SIGH_UUID],
+      bundle_identifier: "org.wyrdsekai.kmp",
+      code_sign_identity: "iPhone Developer",
+      team_id: CredentialsManager::AppfileConfig.try_fetch_value(:team_id)
+    )
+
+    build_app(
+      project: "WyrdsekaiKMP.xcodeproj",
+      scheme: "WyrdsekaiKMP",
+      configuration: "Debug",
+      export_method: "development",
+      output_directory: "./build",
+      output_name: "wyrdsekai-kmp.ipa",
+      clean: true,
+      export_options: {
+        compileBitcode: false,
+        stripSwiftSymbols: true,
+        provisioningProfiles: {
+          "org.wyrdsekai.kmp" => lane_context[SharedValues::SIGH_NAME]
+        }
+      }
+    )
+  end
+
+  desc "Build release IPA"
+  lane :release do
+    cert
+    sigh(
+      app_identifier: "org.wyrdsekai.kmp",
+      force: false
+    )
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: "WyrdsekaiKMP.xcodeproj",
+      profile_name: lane_context[SharedValues::SIGH_NAME],
+      profile_uuid: lane_context[SharedValues::SIGH_UUID],
+      bundle_identifier: "org.wyrdsekai.kmp",
+      code_sign_identity: "iPhone Distribution",
+      team_id: CredentialsManager::AppfileConfig.try_fetch_value(:team_id)
+    )
+
+    build_app(
+      project: "WyrdsekaiKMP.xcodeproj",
+      scheme: "WyrdsekaiKMP",
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "./build",
+      output_name: "wyrdsekai-kmp.ipa",
+      clean: true
+    )
+  end
+end

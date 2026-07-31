@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Wyrdsekai
+Comment=Wyrdsekai tray + front door
+Exec=wyrdsekai-desktop
+Icon=applications-internet
+Terminal=false
+Categories=Network;
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5
+NoDisplay=true
+StartupNotify=false

@@ -1,0 +1,33 @@
+# Helper: KMP — Welcome wizard → "Just explore on my own" → standalone room
+#
+# This is the pure-standalone path (no server URL, no API key). PhoneNode
+# boots its local engine and renders LocalRoomScreen. Used by the standalone-
+# mode conformance flow which exercises §2.2/§4/§7.4 against the engine
+# directly (no network).
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+# Step 0 → step 1: "I don't have a server"
+- tapOn:
+    id: "welcome-no-server"
+
+# Step 1 → standalone: "Just explore on my own"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-standalone"
+    timeout: 5000
+- tapOn:
+    id: "welcome-standalone"
+
+# Companion boots locally; LocalRoomScreen surfaces standalone-room-name.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}

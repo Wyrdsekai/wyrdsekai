@@ -1,0 +1,391 @@
+{
+  "version": "2026.06.10",
+  "packs": [
+    {
+      "name": "simple-wikipedia",
+      "title": "Simple English Wikipedia",
+      "description": "205,000+ Simple English Wikipedia articles — general knowledge for any question",
+      "downloadUrls": [],
+      "urlResolver": "wikimedia-cirrus",
+      "resolverArgs": {
+        "index": "simplewiki_content"
+      },
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Encyclopedias and dictionaries"
+      ],
+      "estimatedSize": "~520 MB download, ~200 MB indexed",
+      "essential": true,
+      "tier": 1,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "gutenberg-classics",
+      "title": "Project Gutenberg Classics",
+      "description": "Top 20 classic books — Frankenstein, Pride and Prejudice, Moby Dick, and more",
+      "downloadUrls": [
+        "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+        "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
+        "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
+        "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+        "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+        "https://www.gutenberg.org/cache/epub/345/pg345.txt",
+        "https://www.gutenberg.org/cache/epub/98/pg98.txt",
+        "https://www.gutenberg.org/cache/epub/174/pg174.txt",
+        "https://www.gutenberg.org/cache/epub/43/pg43.txt",
+        "https://www.gutenberg.org/cache/epub/5200/pg5200.txt",
+        "https://www.gutenberg.org/cache/epub/1080/pg1080.txt",
+        "https://www.gutenberg.org/cache/epub/1952/pg1952.txt",
+        "https://www.gutenberg.org/cache/epub/514/pg514.txt",
+        "https://www.gutenberg.org/cache/epub/768/pg768.txt",
+        "https://www.gutenberg.org/cache/epub/1260/pg1260.txt",
+        "https://www.gutenberg.org/cache/epub/16328/pg16328.txt",
+        "https://www.gutenberg.org/cache/epub/1232/pg1232.txt",
+        "https://www.gutenberg.org/cache/epub/2542/pg2542.txt",
+        "https://www.gutenberg.org/cache/epub/1513/pg1513.txt",
+        "https://www.gutenberg.org/cache/epub/64317/pg64317.txt"
+      ],
+      "copyright": "public-domain",
+      "contentRating": "general",
+      "license": "Public domain",
+      "subjects": [
+        "Literature",
+        "Fiction",
+        "Philosophy"
+      ],
+      "estimatedSize": "~15 MB",
+      "essential": true,
+      "tier": 1,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "jmdict",
+      "title": "JMdict — Japanese–English Dictionary",
+      "description": "The standard Japanese–English dictionary (EDRDG) — 190,000+ entries with readings and glosses",
+      "downloadUrls": [
+        "http://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "EDRDG (CC-BY-SA-4.0)",
+      "subjects": [
+        "Dictionaries",
+        "Japanese language",
+        "Translation"
+      ],
+      "estimatedSize": "~10 MB download, ~110 MB unpacked",
+      "essential": true,
+      "tier": 0,
+      "language": [
+        "ja",
+        "en"
+      ]
+    },
+    {
+      "name": "freedict-spa-eng",
+      "title": "FreeDict — Spanish–English Dictionary (both directions)",
+      "description": "FreeDict bilingual dictionaries: Spanish→English (spa-eng 0.3.1) and English→Spanish (eng-spa 2025.11.23) — headwords with translations",
+      "downloadUrls": [
+        "https://download.freedict.org/dictionaries/spa-eng/0.3.1/freedict-spa-eng-0.3.1.src.tar.xz",
+        "https://download.freedict.org/dictionaries/eng-spa/2025.11.23/freedict-eng-spa-2025.11.23.src.tar.xz"
+      ],
+      "copyright": "gpl",
+      "contentRating": "general",
+      "license": "GPL (FreeDict)",
+      "subjects": [
+        "Dictionaries",
+        "Spanish language",
+        "Translation"
+      ],
+      "estimatedSize": "~4 MB download",
+      "essential": true,
+      "tier": 0,
+      "language": [
+        "es",
+        "en"
+      ]
+    },
+    {
+      "name": "medquad",
+      "title": "MedQuAD — Medical Q&A",
+      "description": "47,441 medical Q&A pairs from NIH — drugs, diseases, treatments, first aid",
+      "downloadUrls": [
+        "https://github.com/abachaa/MedQuAD/archive/refs/heads/master.zip"
+      ],
+      "copyright": "cc-by",
+      "contentRating": "general",
+      "license": "CC-BY-4.0",
+      "subjects": [
+        "Medicine",
+        "Health"
+      ],
+      "estimatedSize": "~30 MB download",
+      "essential": true,
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-cooking",
+      "title": "StackExchange Cooking Q&A",
+      "description": "Recipes, techniques, food safety, substitutions — real Q&A from experienced cooks",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/cooking.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Cooking",
+        "Recipes",
+        "Food"
+      ],
+      "estimatedSize": "~84 MB",
+      "essential": true,
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-diy",
+      "title": "StackExchange DIY & Home Improvement",
+      "description": "Plumbing, electrical, HVAC, painting, flooring — practical home repair Q&A",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/diy.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Home improvement",
+        "DIY",
+        "Repair"
+      ],
+      "estimatedSize": "~217 MB",
+      "essential": true,
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-gardening",
+      "title": "StackExchange Gardening & Landscaping",
+      "description": "Plants, pest control, soil, landscaping — gardening Q&A",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/gardening.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Gardening",
+        "Plants",
+        "Landscaping"
+      ],
+      "estimatedSize": "~42 MB",
+      "essential": true,
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-pets",
+      "title": "StackExchange Pets",
+      "description": "Pet care, training, veterinary questions",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/pets.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Pets",
+        "Animals"
+      ],
+      "estimatedSize": "~26 MB",
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-health",
+      "title": "StackExchange Health",
+      "description": "General health questions and medical information",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/health.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Health",
+        "Wellness"
+      ],
+      "estimatedSize": "~21 MB",
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-fitness",
+      "title": "StackExchange Physical Fitness",
+      "description": "Exercise, training programs, stretching, recovery — fitness Q&A",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/fitness.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Fitness",
+        "Exercise",
+        "Health"
+      ],
+      "estimatedSize": "~33 MB",
+      "tier": 2,
+      "shelf": "qa",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-money",
+      "title": "StackExchange Personal Finance",
+      "description": "Taxes, investing, budgeting, insurance — personal finance Q&A",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/money.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Finance",
+        "Taxes",
+        "Investing"
+      ],
+      "estimatedSize": "~127 MB",
+      "tier": 2,
+      "shelf": "qa",
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-travel",
+      "title": "StackExchange Travel",
+      "description": "Travel planning, visas, logistics, destinations",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/travel.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Travel",
+        "Tourism"
+      ],
+      "estimatedSize": "~149 MB",
+      "tier": 2,
+      "shelf": "qa",
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "stackexchange-parenting",
+      "title": "StackExchange Parenting",
+      "description": "Child development, discipline, education, family",
+      "downloadUrls": [
+        "https://archive.org/download/stackexchange/parenting.stackexchange.com.7z"
+      ],
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Parenting",
+        "Children",
+        "Family"
+      ],
+      "estimatedSize": "~43 MB",
+      "tier": 2,
+      "shelf": "qa",
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "wikibooks-en",
+      "title": "English Wikibooks (incl. the Cookbook)",
+      "description": "Open textbooks and structured how-to books — the Wikibooks Cookbook's recipes, study guides, and manuals to compose from, not just Q&A",
+      "downloadUrls": [],
+      "urlResolver": "wikimedia-cirrus",
+      "resolverArgs": {
+        "index": "enwikibooks_content"
+      },
+      "copyright": "cc-by-sa",
+      "contentRating": "general",
+      "license": "CC-BY-SA-4.0",
+      "subjects": [
+        "Textbooks",
+        "Cooking",
+        "How-to",
+        "Reference"
+      ],
+      "estimatedSize": "~520 MB download",
+      "tier": 2,
+      "shelf": "reference",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    },
+    {
+      "name": "python-docs",
+      "title": "Python 3 Official Documentation",
+      "description": "The complete Python 3 documentation in plain text — language reference, stdlib, tutorial",
+      "downloadUrls": [
+        "https://docs.python.org/3/archives/python-3.14-docs-text.tar.bz2"
+      ],
+      "copyright": "psf",
+      "contentRating": "general",
+      "license": "PSF-2.0",
+      "subjects": [
+        "Programming",
+        "Python",
+        "Reference"
+      ],
+      "estimatedSize": "~3 MB download",
+      "tier": 2,
+      "shelf": "coding",
+      "recommended": true,
+      "language": [
+        "en"
+      ]
+    }
+  ]
+}

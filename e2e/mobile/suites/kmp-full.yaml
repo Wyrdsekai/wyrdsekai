@@ -1,0 +1,29 @@
+# KMP Full Suite (~10min)
+appId: org.wyrdsekai.kmp
+env:
+  SERVER_URL: "http://192.0.2.105:7099"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "30000"
+---
+# Smoke — app launches and wizard navigation
+- runFlow: ../flows/kmp/smoke/app-launches.yaml
+- runFlow: ../flows/kmp/smoke/mode-selection.yaml
+
+# Quick — first-run skip, connect, room basics
+- runFlow: ../flows/kmp/quick/first-run-skip.yaml
+- runFlow: ../flows/kmp/quick/connect-register.yaml
+- runFlow: ../flows/kmp/quick/room-say.yaml
+- runFlow: ../flows/kmp/quick/room-inventory.yaml
+- runFlow: ../flows/kmp/quick/room-settings.yaml
+
+# Full — explore the world, navigate rooms, interact, come back, logout
+- runFlow: ../flows/kmp/full/explore-and-return.yaml
+
+# Full — disconnect and reconnect
+- runFlow: ../flows/kmp/full/disconnect-reconnect.yaml
+
+# Full — standalone-mode MUD conformance (§2.2 / §4 / §7.4)
+- runFlow: ../flows/kmp/full/standalone-conformance.yaml

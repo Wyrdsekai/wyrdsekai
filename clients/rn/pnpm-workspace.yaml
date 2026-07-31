@@ -1,0 +1,2 @@
+patchedDependencies:
+  react-native-fs@2.20.0: patches/react-native-fs@2.20.0.patch

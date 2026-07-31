@@ -1,0 +1,75 @@
+# AMD ROCm GPU override for docker-compose.e2e.yml
+# Usage: docker compose -f docker/docker-compose.e2e.yml -f docker/docker-compose.e2e.rocm.yml up
+#
+# Overrides NVIDIA-specific deploy sections with AMD ROCm device access.
+# Requires: ROCm drivers installed, user in video+render groups.
+
+services:
+  sglang:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:latest-rocm630}
+    deploy: {}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SGLANG_MODEL=${SGLANG_MODEL:-Qwen/Qwen3-8B}
+      - SGLANG_TP_SIZE=${SGLANG_TP_SIZE:-1}
+      - SGLANG_MAX_MODEL_LEN=${SGLANG_MAX_MODEL_LEN:-16384}
+      - SGLANG_GPU_MEM_UTIL=${SGLANG_GPU_MEM_UTIL:-0.88}
+      - SGLANG_TOOL_PARSER=${SGLANG_TOOL_PARSER:-qwen}
+      - SGLANG_EXTRA_ARGS=${SGLANG_EXTRA_ARGS:---quantization fp8}
+      - PYTORCH_ROCM_ARCH=${ROCM_ARCH:-gfx1100}
+
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai-rocm:latest}
+    deploy: {}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_MODEL=${VLLM_MODEL:-cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit}
+      - VLLM_TP_SIZE=${VLLM_TP_SIZE:-1}
+      - VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-16384}
+      - VLLM_GPU_MEM_UTIL=${VLLM_GPU_MEM_UTIL:-0.90}
+      - VLLM_TOOL_PARSER=${VLLM_TOOL_PARSER:-qwen3_coder}
+      - VLLM_EXTRA_ARGS=${VLLM_EXTRA_ARGS:-}
+      - PYTORCH_ROCM_ARCH=${ROCM_ARCH:-gfx1100}
+      - VLLM_USE_TRITON_FLASH_ATTN=0
+
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm
+    deploy: {}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+
+  llama-phone:
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm
+    deploy: {}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+
+  llama-laptop:
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm
+    deploy: {}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render

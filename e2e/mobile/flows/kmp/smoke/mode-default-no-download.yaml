@@ -1,0 +1,28 @@
+# Smoke: the SHIPPED DEFAULT puts no model on the phone. KMP twin of the RN
+# flow of the same name — see it for the measured reasoning behind the label.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-standalone-mode"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-standalone"
+    timeout: 10000
+
+# The on-device option must announce itself as experimental, so nobody opts
+# into a slow companion without being told.
+- assertVisible: ".*EXPERIMENTAL.*"
+
+- assertVisible:
+    id: "welcome-use-api"
+
+- takeScreenshot: kmp_smoke_mode_default_no_download

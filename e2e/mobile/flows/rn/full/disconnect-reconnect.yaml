@@ -1,0 +1,59 @@
+# Full: RN — Switch to remote → FirstRunScreen → relaunch back to local mode
+# Replaces legacy "disconnect from remote" flow. In post-Welcome architecture,
+# disconnect = exit local mode via "Switch to remote server".
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- assertVisible:
+    id: "standalone-send-button"
+- takeScreenshot: rn_full_disconnect_01_local
+
+- tapOn:
+    id: "standalone-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+
+# Switch to remote — drops node, lands on FirstRunScreen for re-pairing
+- tapOn:
+    id: "switch-mode-button"
+- extendedWaitUntil:
+    visible:
+      id: "first-run-screen"
+    timeout: 10000
+- takeScreenshot: rn_full_disconnect_02_first_run
+
+# Re-enter local mode — FirstRunScreen is a 3-step wizard:
+# step 1: local-mode-card → step 2 (companion name) → step 3 (server scan)
+- tapOn:
+    id: "local-mode-card"
+
+# Step 2: companion name (pre-filled with "Wyrd" but TextInput needs focus to
+# count as "filled"; tap-and-skip via the input then advance via next-button)
+- extendedWaitUntil:
+    visible:
+      id: "wizard-step-2"
+    timeout: 5000
+- tapOn:
+    id: "companion-name-input"
+- inputText: "Wyrd"
+- hideKeyboard
+- tapOn:
+    id: "next-button"
+
+# Step 3: server scan — skip (no server needed for the local loop test)
+- extendedWaitUntil:
+    visible:
+      id: "wizard-step-3"
+    timeout: 5000
+- tapOn:
+    id: "skip-button"
+
+# Lands back in Standalone (local node boots again).
+- extendedWaitUntil:
+    visible:
+      id: "standalone-send-button"
+    timeout: ${CONNECT_TIMEOUT}
+- takeScreenshot: rn_full_disconnect_03_back_local

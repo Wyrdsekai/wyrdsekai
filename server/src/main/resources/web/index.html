@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<!--
+  Wyrdsekai browser client - a single-file web surface for the household
+  node. Speaks the same WebSocket protocol (/ws, C2S/S2C JSON envelopes)
+  as the phone clients and the wyrd connect TUI. Auth is the standard
+  REST flow: login / redeem-invite / register -> session token -> ws?token=.
+  No build step, no dependencies; served from the classpath at /app.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wyrdsekai</title>
+<style>
+  :root {
+    --bg: #1a1a2e; --panel: #20203a; --line: #2a2a4e;
+    --fg: #e0e0e0; --dim: #8888aa; --accent: #c0a0ff; --link: #80b0ff;
+    --err: #ff8080; --ok: #80d0a0;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: monospace; background: var(--bg); color: var(--fg);
+         margin: 0; height: 100dvh; display: flex; flex-direction: column; }
+  header { padding: 8px 14px; border-bottom: 1px solid var(--line);
+           display: flex; justify-content: space-between; align-items: baseline; }
+  header h1 { color: var(--accent); font-size: 1.1em; margin: 0; }
+  #conn { color: var(--dim); font-size: 0.85em; }
+  #conn.ok { color: var(--ok); }
+  #log { flex: 1; overflow-y: auto; padding: 12px 14px; line-height: 1.5;
+         overflow-wrap: break-word; white-space: pre-wrap; }
+  .room-name { color: var(--accent); font-weight: bold; margin-top: 0.6em; }
+  .room-desc { color: var(--fg); }
+  .room-meta { color: var(--dim); }
+  .speaker { color: var(--link); }
+  .me { color: var(--ok); }
+  .action { color: var(--dim); font-style: italic; }
+  .notice { color: var(--accent); }
+  .error { color: var(--err); }
+  .sys { color: var(--dim); }
+  form#bar { display: flex; gap: 8px; padding: 10px 14px;
+             border-top: 1px solid var(--line); }
+  input, button, select {
+    font-family: monospace; font-size: 1em; color: var(--fg);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+    padding: 8px 10px; }
+  input:focus { outline: 1px solid var(--accent); }
+  #input { flex: 1; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  /* auth overlay */
+  #auth { position: fixed; inset: 0; background: var(--bg);
+          display: flex; align-items: center; justify-content: center; }
+  #auth .card { background: var(--panel); border: 1px solid var(--line);
+                border-radius: 6px; padding: 22px 26px; width: min(420px, 92vw); }
+  #auth h1 { color: var(--accent); margin: 0 0 4px; font-size: 1.3em; }
+  #auth p.sub { color: var(--dim); margin: 0 0 14px; font-size: 0.9em; }
+  #auth .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  #auth .tabs button { flex: 1; padding: 6px; font-size: 0.85em; }
+  #auth .tabs button.active { border-color: var(--accent); color: var(--accent); }
+  #auth label { display: block; color: var(--dim); font-size: 0.85em; margin: 10px 0 3px; }
+  #auth input { width: 100%; }
+  #auth .go { width: 100%; margin-top: 16px; padding: 10px; color: var(--accent); }
+  #auth .msg { min-height: 1.4em; margin-top: 10px; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <div class="card">
+    <h1>Wyrdsekai</h1>
+    <p class="sub">This is a household node. Sign in to step through.</p>
+    <div class="tabs">
+      <button type="button" data-mode="login"  class="active">Sign in</button>
+      <button type="button" data-mode="invite">I have an invite</button>
+      <button type="button" data-mode="register">Register</button>
+    </div>
+    <form id="authForm">
+      <div id="f-code" hidden>
+        <label for="code">Invite code</label>
+        <input id="code" autocomplete="off" placeholder="wind scarlet root ...">
+      </div>
+      <label for="user">Name</label>
+      <input id="user" autocomplete="username" placeholder="steward">
+      <label for="pass">Password</label>
+      <input id="pass" type="password" autocomplete="current-password">
+      <button class="go" type="submit">Enter</button>
+      <div class="msg" id="authMsg"></div>
+    </form>
+  </div>
+</div>
+
+<header>
+  <h1>Wyrdsekai</h1>
+  <span id="conn">disconnected</span>
+</header>
+<div id="log"></div>
+<form id="bar">
+  <input id="input" autocomplete="off" spellcheck="false"
+         placeholder="speak — or try: look, go north, /help">
+  <button type="submit">send</button>
+</form>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const log = $("log");
+
+// ---- i18n ----------------------------------------------------------------
+// UI strings only — room prose is localized by the server, which receives
+// our locale on the WebSocket handshake (?locale=).
+const I18N = {
+  en: {
+    sub: "This is a household node. Sign in to step through.",
+    tab_login: "Sign in", tab_invite: "I have an invite", tab_register: "Register",
+    l_code: "Invite code", l_name: "Name", l_pass: "Password", enter: "Enter",
+    placeholder: "speak — or try: look, go north, /help", send: "send",
+    disconnected: "disconnected", connecting: "connecting…", connected: "connected",
+    not_connected: "not connected",
+    retrying: s => `connection lost — retrying in ${s}s`,
+    expired: "Session expired — sign in again.",
+    logged_out: "Signed out everywhere. Sign in to return.",
+    net_error: "network error: ", failed: c => `failed (${c})`,
+    exits: "exits: ", here: "here: ", see: "you see: ", carrying: "carrying: ",
+    you: "you", someone: "someone", somewhere: "somewhere",
+  },
+  es: {
+    sub: "Este es un nodo doméstico. Inicia sesión para entrar.",
+    tab_login: "Entrar", tab_invite: "Tengo invitación", tab_register: "Registrarse",
+    l_code: "Código de invitación", l_name: "Nombre", l_pass: "Contraseña", enter: "Entrar",
+    placeholder: "habla — o prueba: look, go north, /help", send: "enviar",
+    disconnected: "desconectado", connecting: "conectando…", connected: "conectado",
+    not_connected: "sin conexión",
+    retrying: s => `conexión perdida — reintentando en ${s}s`,
+    expired: "Sesión caducada — inicia sesión de nuevo.",
+    logged_out: "Sesión cerrada en todas partes. Inicia sesión para volver.",
+    net_error: "error de red: ", failed: c => `falló (${c})`,
+    exits: "salidas: ", here: "aquí: ", see: "ves: ", carrying: "llevas: ",
+    you: "tú", someone: "alguien", somewhere: "algún lugar",
+  },
+  ja: {
+    sub: "これはホームノードです。サインインして入ってください。",
+    tab_login: "サインイン", tab_invite: "招待コードあり", tab_register: "登録",
+    l_code: "招待コード", l_name: "名前", l_pass: "パスワード", enter: "入る",
+    placeholder: "話しかける — または: look, go north, /help", send: "送信",
+    disconnected: "切断", connecting: "接続中…", connected: "接続済み",
+    not_connected: "未接続",
+    retrying: s => `接続が切れました — ${s}秒後に再試行`,
+    expired: "セッションが切れました — 再度サインインしてください。",
+    logged_out: "すべての接続からサインアウトしました。戻るにはサインインしてください。",
+    net_error: "ネットワークエラー: ", failed: c => `失敗 (${c})`,
+    exits: "出口: ", here: "ここにいる: ", see: "見えるもの: ", carrying: "所持品: ",
+    you: "あなた", someone: "誰か", somewhere: "どこか",
+  },
+};
+const LOCALE = (() => {
+  const p = new URLSearchParams(location.search).get("lang");
+  const cand = (p || navigator.language || "en").slice(0, 2).toLowerCase();
+  return I18N[cand] ? cand : "en";
+})();
+const T = I18N[LOCALE];
+function applyI18n() {
+  document.querySelector("#auth p.sub").textContent = T.sub;
+  const tabs = document.querySelectorAll("#auth .tabs button");
+  tabs[0].textContent = T.tab_login;
+  tabs[1].textContent = T.tab_invite;
+  tabs[2].textContent = T.tab_register;
+  document.querySelector("label[for=code]").textContent = T.l_code;
+  document.querySelector("label[for=user]").textContent = T.l_name;
+  document.querySelector("label[for=pass]").textContent = T.l_pass;
+  document.querySelector("#auth .go").textContent = T.enter;
+  $("input").placeholder = T.placeholder;
+  document.querySelector("#bar button").textContent = T.send;
+  $("conn").textContent = T.disconnected;
+}
+applyI18n();
+
+let token = sessionStorage.getItem("wyrd.token") || null;
+let ws = null, roomId = null, lastSeq = 0, attempts = 0;
+let myName = null;            // own display name — used to suppress the self-broadcast say echo
+let roomExits = new Set();    // current room's exit names (lowercased) — any of them moves you
+let manualClose = false;
+let pendingLogout = false;   // logout/quitall: clear token + return to auth on close
+const streams = new Map();   // source -> live element for token_stream
+
+// ---- rendering ----------------------------------------------------------
+function line(cls, ...parts) {
+  const div = document.createElement("div");
+  if (cls) div.className = cls;
+  for (const p of parts) {
+    if (p instanceof Node) div.appendChild(p);
+    else div.appendChild(document.createTextNode(p));
+  }
+  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  log.appendChild(div);
+  if (stick) log.scrollTop = log.scrollHeight;
+  return div;
+}
+function span(cls, text) {
+  const s = document.createElement("span");
+  s.className = cls; s.textContent = text;
+  return s;
+}
+function names(list) {
+  return (list || []).map(x => x && (x.name || x.displayName || x.id) || "?").join(", ");
+}
+
+function render(m) {
+  switch (m.type) {
+    case "room_state": {
+      const r = m.room || {};
+      roomId = r.roomId || roomId;
+      line("room-name", r.name || r.roomId || T.somewhere);
+      if (r.description) line("room-desc", r.description);
+      const exitList = (r.exits || []).map(e => e && (e.direction || e.name) || "?");
+      // Remember this room's actual exits so typing a bare exit name (incl. custom
+      // ones like "portal"/"hatch") moves you, instead of falling through to say.
+      roomExits = new Set(exitList.filter(x => x && x !== "?").map(x => x.toLowerCase()));
+      const exits = exitList.join(", ");
+      if (exits) line("room-meta", T.exits + exits);
+      if ((r.entities || []).length) line("room-meta", T.here + names(r.entities));
+      if ((r.objects || []).length) line("room-meta", T.see + names(r.objects));
+      if ((m.inventory || []).length) line("room-meta", T.carrying + names(m.inventory));
+      break;
+    }
+    case "prose":
+      streams.delete(m.speaker);
+      // Render every speaker's line — INCLUDING our own. The server broadcasts
+      // our say/emote back to the room and we show it as "<name>: …", exactly as
+      // SSH/telnet do (their Say/Emote handlers emit NO local echo on send), so
+      // this is the single source — no "you: …" / "<name>: …" double.
+      if (m.speaker) line(null, span("speaker", m.speaker + ": "), m.text || "");
+      else line(null, m.text || "");
+      for (const b of m.blocks || []) {
+        // /invite phone delivers the wyrdphone://
+        // invite as a server-rendered QR PNG so a phone camera can scan
+        // it straight off this page (block fallback = the bare URL,
+        // already in the prose text above).
+        if (b.format === "wyrdsekai.invite_qr" && b.data && b.data.png) {
+          const img = document.createElement("img");
+          img.src = "data:image/png;base64," + b.data.png;
+          img.alt = b.data.url || "invite QR";
+          img.style.cssText = "display:block;margin:8px 0;max-width:280px;image-rendering:pixelated;background:#fff;padding:8px;border-radius:4px";
+          line("qr", img);
+        }
+      }
+      break;
+    case "token_stream": {
+      const src = m.source || "·";
+      let el = streams.get(src);
+      if (!el) {
+        el = line(null, span("speaker", src + ": "), span("", ""));
+        streams.set(src, el);
+      }
+      if (m.token) el.lastChild.textContent += m.token;
+      if (m.done) streams.delete(src);
+      log.scrollTop = log.scrollHeight;
+      break;
+    }
+    case "agent_action":
+      line("action", `${m.agentName || T.someone} ${m.action || ""}`.trim());
+      break;
+    case "state_change":
+      if (m.description) line("sys", m.description);
+      break;
+    case "notification":
+      line("notice", `[${m.level || "info"}] ${m.title || ""}${m.body ? " — " + m.body : ""}`);
+      break;
+    case "error":
+      line("error", `${m.code || "error"}: ${m.message || ""}`);
+      break;
+    case "map_data":
+      if (m.textMap) line("sys", m.textMap);
+      break;
+    // transit / topology_changed / zone_response / voice_audio / replay_done:
+    // not surfaced in the browser MVP
+  }
+}
+
+// ---- websocket ----------------------------------------------------------
+function setConn(text, ok) {
+  $("conn").textContent = text;
+  $("conn").className = ok ? "ok" : "";
+}
+function wsUrl() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&locale=${LOCALE}`;
+}
+function connect() {
+  setConn(T.connecting, false);
+  ws = new WebSocket(wsUrl());
+  ws.onopen = () => {
+    attempts = 0;
+    setConn(T.connected, true);
+    if (lastSeq > 0) {
+      send({ type: "reconnect", id: newId(), roomId: roomId || "nexus", lastSeenSeq: lastSeq });
+    }
+  };
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (typeof m.seq === "number" && m.seq > lastSeq) lastSeq = m.seq;
+    render(m);
+  };
+  ws.onclose = ev => {
+    setConn(T.disconnected, false);
+    if (pendingLogout) {
+      // logout/quitall ended the whole presence: the token is dead. Clear it,
+      // stop any reconnect, and drop back to the auth screen.
+      pendingLogout = false; manualClose = false;
+      sessionStorage.removeItem("wyrd.token");
+      token = null;
+      showAuth(T.logged_out);
+      return;
+    }
+    if (manualClose) return;
+    if (ev.code === 4001 || ev.code === 4002) {  // bad/expired token
+      sessionStorage.removeItem("wyrd.token");
+      token = null;
+      showAuth(T.expired);
+      return;
+    }
+    const delay = Math.min(1000 * 2 ** attempts++, 30000);
+    line("sys", T.retrying(Math.round(delay / 1000)));
+    setTimeout(() => { if (!manualClose && token) connect(); }, delay);
+  };
+}
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  else line("error", T.not_connected);
+}
+const newId = () => Math.random().toString(36).slice(2, 10);
+
+// ---- input parsing (mirror of the TUI CommandParser subset) --------------
+const DIRS = new Set(["n","s","e","w","ne","nw","se","sw","u","d",
+  "north","south","east","west","northeast","northwest","southeast",
+  "southwest","up","down","out","in"]);
+
+function dispatch(raw) {
+  const text = raw.trim();
+  if (!text) return;
+  const lower = text.toLowerCase();
+  const id = newId();
+  // No local echo. Speech (say/emote) appears when the server broadcasts the
+  // Said/Emoted event back to the room as prose, rendered "<name>: …" — exactly
+  // as SSH/telnet do (their Say/Emote handlers emit no local echo: "the Said
+  // event comes back via room notification"). Commands produce their own output
+  // and never echo as speech. The server is the single source of every line.
+
+  if (text.startsWith("/")) {
+    const parts = text.slice(1).split(/\s+/);
+    if (parts[0] === "quit" || parts[0] === "exit") {
+      // Server-authoritative detach: it computes how many other channels remain
+      // for this account and pushes the hint, then closes us. manualClose stops
+      // the auto-reconnect; we DON'T close locally so the hint renders first.
+      manualClose = true; send({ type: "command", id, command: "quit", args: [] }); return; }
+    if (parts[0] === "logout" || parts[0] === "quitall") {
+      // Leave everywhere: the server drops the account's other channels then
+      // closes us. pendingLogout makes onclose clear the now-dead token and
+      // drop back to the auth screen instead of auto-reconnecting.
+      pendingLogout = true; manualClose = true;
+      send({ type: "command", id, command: parts[0], args: [] }); return; }
+    send({ type: "command", id, command: parts[0], args: parts.slice(1) });
+    return;
+  }
+  if (text.startsWith("'") || text.startsWith("\"")) {
+    send({ type: "say", id, roomId, text: text.slice(1).trim() }); return;
+  }
+  if (text.startsWith(":") || text.startsWith(";")) {
+    send({ type: "emote", id, roomId, text: text.slice(1).trim() }); return;
+  }
+  if (/^\d{1,2}$/.test(text)) {
+    send({ type: "hint_select", id, roomId, index: parseInt(text, 10) }); return;
+  }
+
+  const words = text.split(/\s+/);
+  const verb = words[0].toLowerCase();
+  const rest = text.slice(words[0].length).trim();
+
+  if (DIRS.has(lower))                  { send({ type: "go", id, roomId, direction: lower }); return; }
+  // Bare exit name from THIS room (covers custom exits like "portal"/"hatch"
+  // that aren't compass directions) — move instead of falling through to say.
+  if (roomExits.has(lower))             { send({ type: "go", id, roomId, direction: lower }); return; }
+  if (verb === "go" && rest)            { send({ type: "go", id, roomId, direction: rest.toLowerCase() }); return; }
+  if (["home","study","return","office"].includes(lower)) {
+    send({ type: "command", id, command: lower, args: [] }); return; }
+  if (lower === "look" || lower === "l"){ send({ type: "look", id, roomId }); return; }
+  if ((verb === "look" && words[1] === "at") || (verb === "l" && words[1] === "at")) {
+    send({ type: "examine", id, roomId, target: words.slice(2).join(" ") }); return; }
+  if (verb === "examine" || verb === "ex") { send({ type: "examine", id, roomId, target: rest }); return; }
+  if (verb === "take" || verb === "get"){ send({ type: "take", id, roomId, objectName: rest }); return; }
+  if (verb === "drop")                  { send({ type: "drop", id, roomId, objectName: rest }); return; }
+  if (verb === "use") {
+    const onIdx = words.findIndex(w => w.toLowerCase() === "on");
+    if (onIdx > 1) send({ type: "use", id, roomId,
+                          objectName: words.slice(1, onIdx).join(" "),
+                          target: words.slice(onIdx + 1).join(" ") });
+    else send({ type: "use", id, roomId, objectName: rest, target: null });
+    return; }
+  if (verb === "say")                   { send({ type: "say", id, roomId, text: rest }); return; }
+  if (verb === "emote")                 { send({ type: "emote", id, roomId, text: rest }); return; }
+  if (lower === "i" || lower === "inventory") { send({ type: "command", id, command: "inventory", args: [] }); return; }
+  if (["who","help","actions","map","where","exits"].includes(verb)) {
+    send({ type: "command", id, command: verb, args: words.slice(1) }); return; }
+  if (lower === "quit" || lower === "exit" || lower === "q") {
+    // Server-authoritative detach (see /quit above): send the command and let
+    // the server push the remaining-channel hint, then close us.
+    manualClose = true; send({ type: "command", id, command: "quit", args: [] }); return; }
+  if (lower === "logout" || lower === "quitall") {
+    // Leave everywhere (see /logout above): pendingLogout returns us to auth.
+    pendingLogout = true; manualClose = true;
+    send({ type: "command", id, command: lower, args: [] }); return; }
+
+  // chat-first default: plain text is speech
+  send({ type: "say", id, roomId, text });
+}
+
+$("bar").addEventListener("submit", ev => {
+  ev.preventDefault();
+  dispatch($("input").value);
+  $("input").value = "";
+});
+
+// ---- auth ----------------------------------------------------------------
+let mode = "login";
+document.querySelectorAll("#auth .tabs button").forEach(b => {
+  b.onclick = () => {
+    mode = b.dataset.mode;
+    document.querySelectorAll("#auth .tabs button")
+      .forEach(x => x.classList.toggle("active", x === b));
+    $("f-code").hidden = mode !== "invite";
+  };
+});
+function showAuth(msg) {
+  $("auth").style.display = "flex";
+  $("authMsg").textContent = msg || "";
+}
+$("authForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const user = $("user").value.trim(), pass = $("pass").value;
+  const msg = $("authMsg");
+  msg.textContent = "…";
+  const ep = { login: "/api/auth/login", invite: "/api/auth/redeem",
+               register: "/api/auth/register" }[mode];
+  const body = mode === "invite"
+    ? { code: $("code").value.trim(), username: user, password: pass, displayName: user }
+    : mode === "register"
+      ? { username: user, password: pass, display_name: user }
+      : { username: user, password: pass };
+  try {
+    const res = await fetch(ep, { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { msg.textContent = data.error || T.failed(res.status); return; }
+    token = data.token;
+    myName = (data.displayName || data.username || user || "").trim();
+    sessionStorage.setItem("wyrd.token", token);
+    $("auth").style.display = "none";
+    manualClose = false; pendingLogout = false;
+    connect();
+    $("input").focus();
+  } catch (e) {
+    msg.textContent = T.net_error + e;
+  }
+});
+
+// boot: reuse a still-valid session if we have one
+if (token) { $("auth").style.display = "none"; connect(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# RN Tier 3 vs SECOND_NODE — Mode-2 companion-chat leg: real LLM round-trip through
+# second-node's llama-server (:8200, 9B v6). Mirrors rn-tier3.yaml but pointed at second-node.
+#
+# PRECONDITION: seed the phone session first (skips the Welcome wizard):
+#   PHONE_PKG=org.wyrdsekai.rn \
+#   LLAMA_URL=http://198.51.100.64:8200 \
+#   WYRD_SERVER_URL=http://198.51.100.64:7070 \
+#   WYRD_USERNAME=e2e_test WYRD_PASSWORD=testpass123 \
+#   ./scripts/seed_phone_session.sh
+#
+# SERVER_URL here is the INFERENCE url (:8200) — the tier3 flows store it as
+# inferenceUrl via "Use my server"; :7070 hosts no /v1/chat/completions.
+appId: org.wyrdsekai.rn
+env:
+  SERVER_URL: "http://198.51.100.64:8200"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "180000"
+---
+- runFlow: ../flows/rn/tier3/companion-reply.yaml
+- runFlow: ../flows/rn/tier3/study-journal.yaml
+- runFlow: ../flows/rn/tier3/cross-zone-tell.yaml
+- runFlow: ../flows/rn/tier3/ember-library.yaml

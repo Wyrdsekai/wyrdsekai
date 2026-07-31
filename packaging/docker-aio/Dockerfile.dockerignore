@@ -1,0 +1,8 @@
+# BuildKit per-Dockerfile ignore — overrides the repo .dockerignore for
+# the AIO build only. Whitelist approach: the context needs ONLY the dist
+# tree and this directory; everything else (incl. the multi-GB model zoo)
+# stays out.
+*
+!build/dist
+!packaging/docker-aio
+build/dist/*.tar.gz

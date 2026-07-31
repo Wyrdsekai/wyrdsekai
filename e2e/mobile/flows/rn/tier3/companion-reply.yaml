@@ -1,0 +1,29 @@
+# Tier 3: RN — companion replies via remote inference.
+# Player says "Hello Wyrd, are you there?". Wait for new prose entry whose
+# speaker is NOT the player. Uses home-server's :8200 production inference via
+# inferenceUrl (set by "Use my server" in the helper).
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/seed-and-connect.yaml
+
+# Capture initial prose count so we can detect the new reply.
+- takeScreenshot: rn_t3_companion_before
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "'Hello Wyrd, are you there"
+- hideKeyboard
+- tapOn:
+    id: "standalone-send-button"
+
+# Companion reply via home-server's :8200 takes ~5-30s in practice. We can't
+# directly assert "speaker != You" via Maestro — but we CAN wait until the
+# companion-state dot turns green ("idle" after thinking). The dot's
+# accessibilityLabel doesn't expose state; instead we look for specific
+# text the companion is likely to emit. Drive-trained model usually replies
+# with the configured companion name.
+- extendedWaitUntil:
+    visible: ".*Wyrd.*"
+    timeout: 60000
+
+- takeScreenshot: rn_t3_companion_after

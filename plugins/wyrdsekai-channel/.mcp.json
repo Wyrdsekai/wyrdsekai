@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "wyrdsekai": {
+      "command": "npx",
+      "args": ["tsx", "./index.ts"],
+      "cwd": "plugins/wyrdsekai-channel",
+      "env": {
+        "WYRDSEKAI_SERVER_URL": "http://localhost:7070",
+        "WYRDSEKAI_RESIDENT_TOKEN": ""
+      }
+    }
+  }
+}

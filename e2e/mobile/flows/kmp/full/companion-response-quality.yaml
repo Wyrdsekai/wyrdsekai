@@ -1,0 +1,22 @@
+# Full: KMP — verify companion response quality
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "room-input"
+- inputText: "Hello, who are you?"
+- tapOn:
+    id: "send-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "prose-list"
+    timeout: ${INFERENCE_TIMEOUT}
+
+- takeScreenshot: kmp_companion_response
+
+- assertScreenshot:
+    path: "baselines/kmp_room_with_prose.png"
+    thresholdPercentage: 80.0
+    optional: true

@@ -1,0 +1,20 @@
+# Quick (iOS): KMP — say something in the standalone room. Onboards via the
+# pure-standalone path (no server) since LocalRoomScreen is identical in both
+# modes. iOS twin of ../quick/room-say.yaml.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: _helpers/standalone-onboard.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "'Hello from KMP iOS Maestro"
+
+- tapOn:
+    id: "standalone-send-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 5000
+
+- takeScreenshot: kmp_ios_quick_room_say

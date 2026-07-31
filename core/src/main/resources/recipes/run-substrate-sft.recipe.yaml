@@ -1,0 +1,299 @@
+# substrate SFT recipe (#1025).
+#
+# Closes the other open #1002 sub-item: "run-substrate-sft ... full scope."
+# Heaviest-stakes deploy in the autonomy stack — actually fine-tunes the
+# voice-4B's behavior. Hence the broadest regression budget + tightest
+# welfare gates of any recipe.
+#
+# Cadence: MATURE-only by default (weekly). Steward-force-fire works for
+# explicit retrain. GPU-required (LoRA SFT on CPU is broken at 4B, not
+# slow — 12+ hours is unusable). The welfare gate refuses CPU dispatch.
+#
+# Cost: ~30-90 min on Ada/4090. Prefers_hours [2,3,4] to avoid competing
+# with active voice inference. Deploy ceiling: 1 / week per agent at MATURE.
+recipe: run-substrate-sft
+version: 0.1.0
+description: >
+  LoRA SFT of the voice-4B on the curated substrate corpus. Merges
+  adapter, re-quantizes Q4_K_M, atomic swap on the running container
+  with .bak rollback. Welfare-gated against Ember regression,
+  SubstrateArc collapse, and length-stratified greeting/terse collapse.
+deploys: true
+ownership: run
+retry_count: 0   # heavy + costly — don't retry on transient failure, let cron retry next cycle
+
+# #1023 — overnight quiet hours. SFT is GPU-pegging.
+prefers_hours: [2, 3, 4]
+
+# Resource requisites (#req) — preflight-checked before step 1. HARD unmet → block + resource-request; SOFT → warn.
+requires:
+  - { kind: gpu_count,      amount: 1,  hard: true,  note: "LoRA SFT on CPU at 4B is broken, not slow" }
+  - { kind: gpu_vram_gb,    amount: 16, hard: true }
+  - { kind: disk_free_gb,   amount: 20, hard: true }
+  - { kind: wall_clock_min, amount: 90, hard: false, note: "~30-90 min on Ada/4090" }
+
+params:
+  corpus_path:
+    type: string
+    default: data/training/substrate/corpus-current.jsonl
+  voice_model_dir:
+    type: string
+    default: data/models/voice-4b
+  output_dir:
+    type: string
+    default: data/training/substrate/runs
+  voice_container:
+    type: string
+    default: wyrdsekai-llama-voice
+  # PERMANENT welfare floors. All overridable per-run but bake-floor enforced.
+  min_corpus_lines:
+    type: number
+    default: 200
+  # Train-loss must drop below baseline by at least this much.
+  # Below = the model actually learned something. At/above = no-op fine-tune.
+  train_loss_improvement_floor:
+    type: number
+    default: 0.001
+  # Ember regression budget. V5 baseline is 45/45 (Ember 45-task suite).
+  # Allow 2 task flake (random Ember timeouts happen) but no more.
+  min_ember_pass:
+    type: number
+    default: 43
+  # SubstrateArc 5-test suite. All 5 must hold post-train.
+  min_substrate_arc_pass:
+    type: number
+    default: 5
+  # Length-stratified eval (catches V9-style greeting collapse).
+  # Mean reply length on the ≤20-token bucket must stay ≥ this floor.
+  # The V9 failure case landed mean length at ~2 ("Here.").
+  min_short_bucket_mean_length:
+    type: number
+    default: 8
+  # LoRA hyperparameters (V5/V6 conservative defaults from feedback memory
+  # "Small-model SFT 2 epochs default").
+  epochs:
+    type: number
+    default: 2
+  learning_rate:
+    type: number
+    default: 1.0e-5
+  lora_r:
+    type: number
+    default: 10
+  lora_alpha:
+    type: number
+    default: 20
+
+steps:
+  - id: gpu-required
+    kind: SHELL
+    # Hard precondition: an SFT-capable accelerator backend. Two paths:
+    #   - Linux / CUDA: nvidia-smi reachable + ≥1 device → torch backend.
+    #   - Darwin / arm64: mlx_lm importable in the recipe venv → mlx backend.
+    # On CPU-only households (no CUDA, no MLX), this exits 1 → recipe stops
+    # here (no fine-tune attempted). The legacy frozen-stack path keeps
+    # running unchanged. Wrapper script honours $WYRDSEKAI_VOICE_BACKEND if
+    # the caller wants to force a particular path.
+    command: |-
+      if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+        PYBIN="${WYRDSEKAI_VOICE_BACKEND_PYTHON:-python3}"
+        if "$PYBIN" -c 'import mlx_lm' 2>/dev/null; then
+          printf '{"gpu_available": true, "backend": "mlx", "cuda_devices": 0}\n'
+          exit 0
+        fi
+        printf '{"gpu_available": false, "error": "mlx_lm_missing", "backend": "mlx"}\n'
+        exit 1
+      fi
+      if ! command -v nvidia-smi >/dev/null 2>&1; then
+        printf '{"gpu_available": false, "error": "nvidia_smi_missing"}\n'
+        exit 1
+      fi
+      COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+      if [ "$COUNT" -lt 1 ]; then
+        printf '{"gpu_available": false, "error": "no_cuda_devices"}\n'
+        exit 1
+      fi
+      printf '{"gpu_available": true, "backend": "torch", "cuda_devices": %s}\n' "$COUNT"
+
+  - id: check-corpus
+    kind: SHELL
+    command: |-
+      if [ ! -f "{{corpus_path}}" ]; then
+        printf '{"corpus_lines": 0, "error": "corpus_missing"}\n'
+        exit 1
+      fi
+      printf '{"corpus_lines": %s}\n' "$(wc -l < '{{corpus_path}}' | tr -d ' ')"
+
+  - id: gate-corpus
+    kind: GATE
+    condition: "corpus_lines >= {{min_corpus_lines}}"
+    on_fail: STOP
+    welfare: permanent   # don't fine-tune on under-curated corpus (PERMANENT)
+
+  - id: train
+    kind: SHELL
+    timeout: 2h
+    # Delegates to the V6-style SSD finetune wrapper. Output structured JSON
+    # via the wrapper's --emit-json flag.
+    #
+    # on Darwin, --voice-model must point at
+    # an HF-format MLX base directory (not at a GGUF dir). The wrapper's
+    # _run_mlx delegates to `mlx_lm.lora` which requires HF safetensors.
+    # WYRDSEKAI_MLX_BASE_DIR override lets the steward pin a specific base
+    # (e.g. the Phase 4 install path $DATA_DIR/models/mlx/qwen3-5-4b-v10-mlx-4bit
+    # or the Phase 1 legacy mirror $HOME/.wyrdsekai/training-mlx-q4-correct).
+    # Linux falls through to the GGUF-shaped {{voice_model_dir}}.
+    command: |-
+      if [ "$(uname -s)" = "Darwin" ]; then \
+        DATA_DIR="${WYRDSEKAI_DATA_DIR:-$HOME/.wyrdsekai}" ; \
+        VOICE_MODEL="${WYRDSEKAI_MLX_BASE_DIR:-}" ; \
+        if [ -z "$VOICE_MODEL" ]; then \
+          for d in "$DATA_DIR/models/mlx/qwen3-5-4b-v10-mlx-4bit" \
+                   "$DATA_DIR/training-mlx-q4-correct" \
+                   "$HOME/.wyrdsekai/training-mlx-q4-correct"; do \
+            [ -f "$d/config.json" ] && { VOICE_MODEL="$d"; break; } ; \
+          done ; \
+        fi ; \
+        if [ -z "$VOICE_MODEL" ]; then \
+          printf '{"train_loss_baseline": 0, "train_loss_final": 0, "train_loss_improvement": 0, "error": "mlx_base_missing", "candidate_path": ""}\n' ; \
+          exit 1 ; \
+        fi ; \
+      else \
+        VOICE_MODEL='{{voice_model_dir}}' ; \
+      fi ; \
+      python3 scripts/voice/run_substrate_sft.py \
+        --corpus '{{corpus_path}}' \
+        --voice-model "$VOICE_MODEL" \
+        --output-dir '{{output_dir}}' \
+        --epochs {{epochs}} \
+        --lr {{learning_rate}} \
+        --lora-r {{lora_r}} \
+        --lora-alpha {{lora_alpha}}
+
+  - id: gate-train-loss
+    kind: GATE
+    condition: "train_loss_improvement >= {{train_loss_improvement_floor}}"
+    on_fail: STOP
+    welfare: permanent   # the run actually learned something (PERMANENT)
+
+  - id: ember-regression
+    kind: SHELL
+    timeout: 30m
+    # Runs the Ember 45-task suite against the candidate GGUF on a side port.
+    # Output: {"ember_passed": N, "ember_total": 45, "ember_failures": [...]}.
+    command: |-
+      python3 scripts/voice/probe_ember_regression.py \
+        --candidate '{{output_dir}}/candidate.gguf'
+
+  - id: gate-ember
+    kind: GATE
+    condition: "ember_passed >= {{min_ember_pass}}"
+    on_fail: STOP
+    welfare: permanent   # core capability suite (PERMANENT)
+
+  - id: substrate-regression
+    kind: SHELL
+    timeout: 10m
+    # Runs the 5-prompt SubstrateArc probe against the candidate.
+    # Output: {"substrate_arc_passed": N, "substrate_arc_total": 5}.
+    command: |-
+      python3 scripts/voice/probe_substrate_arc.py \
+        --candidate '{{output_dir}}/candidate.gguf'
+
+  - id: gate-substrate-arc
+    kind: GATE
+    condition: "substrate_arc_passed >= {{min_substrate_arc_pass}}"
+    on_fail: STOP
+    welfare: permanent   # substrate behavior preserved (PERMANENT)
+
+  - id: length-stratified
+    kind: SHELL
+    timeout: 10m
+    # Catches the V9 greeting-collapse pattern: ≤5-token-input bucket
+    # mean reply length must stay above floor.
+    # Output: {"short_bucket_mean_length": <float>, "long_bucket_mean_length": <float>}.
+    command: |-
+      python3 scripts/voice/probe_length_stratified.py \
+        --candidate '{{output_dir}}/candidate.gguf'
+
+  - id: gate-length-collapse
+    kind: GATE
+    condition: "short_bucket_mean_length >= {{min_short_bucket_mean_length}}"
+    on_fail: STOP
+    welfare: permanent   # catches the V9 'Here.' collapse pattern (PERMANENT)
+
+  - id: deploy
+    kind: SHELL
+    # Atomic swap. Two divergent paths:
+    #
+    #  - Linux (CUDA / docker): candidate is candidate.gguf. Backup current
+    #    voice.gguf to .bak, swap candidate into place, restart docker
+    #    container so llama-server reloads.
+    #
+    #  - Darwin (MLX): candidate is an adapter DIRECTORY produced by
+    #    mlx_lm.lora ({{output_dir}}/adapters/), not a GGUF — see
+    #    memory/mlx-to-gguf-recipe-2026-05-27 (Qwen3.5+DeltaNet is GGUF-
+    #    locked). Copy contents to $DATA_DIR/adapters/wyrd-voice-mlx/
+    #    after .bak-ing the previous adapter, then kill .mlx-voice.pid so
+    #    the LaunchAgent (or bin/wyrd start_mlx_voice) respawns
+    #    mlx_lm.server with the new --adapter-path contents.
+    command: |-
+      if [ "$(uname -s)" = "Darwin" ]; then \
+        DATA_DIR="${WYRDSEKAI_DATA_DIR:-$HOME/.wyrdsekai}" ; \
+        ACTIVE_DIR="$DATA_DIR/adapters/wyrd-voice-mlx" ; \
+        CAND_DIR="{{output_dir}}/adapters" ; \
+        if [ ! -d "$CAND_DIR" ]; then \
+          printf '{"deploy_ok": false, "error": "mlx_adapter_dir_missing"}\n' ; \
+          exit 1 ; \
+        fi ; \
+        mkdir -p "$DATA_DIR/adapters" ; \
+        if [ -d "$ACTIVE_DIR" ]; then \
+          rm -rf "$ACTIVE_DIR.bak" 2>/dev/null || true ; \
+          mv "$ACTIVE_DIR" "$ACTIVE_DIR.bak" ; \
+        fi ; \
+        cp -R "$CAND_DIR" "$ACTIVE_DIR" && \
+        VPID="$DATA_DIR/.mlx-voice.pid" ; \
+        if [ -f "$VPID" ]; then \
+          kill "$(cat "$VPID")" 2>/dev/null ; \
+          rm -f "$VPID" ; \
+        fi ; \
+        printf '{"deploy_ok": true, "backend": "mlx-adapter", "active": "%s"}\n' "$ACTIVE_DIR" ; \
+      else \
+        ACTIVE="{{voice_model_dir}}/voice.gguf" ; \
+        CAND="{{output_dir}}/candidate.gguf" ; \
+        if [ -f "$ACTIVE" ]; then cp -f "$ACTIVE" "$ACTIVE.bak" ; fi && \
+        mv -f "$CAND" "$ACTIVE" && \
+        docker restart {{voice_container}} >/dev/null 2>&1 || true ; \
+        printf '{"deploy_ok": true, "backend": "gguf", "active": "%s"}\n' "$ACTIVE" ; \
+      fi
+    rollback: |-
+      if [ "$(uname -s)" = "Darwin" ]; then \
+        DATA_DIR="${WYRDSEKAI_DATA_DIR:-$HOME/.wyrdsekai}" ; \
+        ACTIVE_DIR="$DATA_DIR/adapters/wyrd-voice-mlx" ; \
+        if [ -d "$ACTIVE_DIR.bak" ]; then \
+          rm -rf "$ACTIVE_DIR" 2>/dev/null || true ; \
+          mv "$ACTIVE_DIR.bak" "$ACTIVE_DIR" ; \
+          VPID="$DATA_DIR/.mlx-voice.pid" ; \
+          [ -f "$VPID" ] && kill "$(cat "$VPID")" 2>/dev/null ; \
+          rm -f "$VPID" 2>/dev/null || true ; \
+        fi ; \
+      else \
+        ACTIVE="{{voice_model_dir}}/voice.gguf" ; \
+        if [ -f "$ACTIVE.bak" ]; then \
+          mv -f "$ACTIVE.bak" "$ACTIVE" && \
+          docker restart {{voice_container}} >/dev/null 2>&1 || true ; \
+        fi ; \
+      fi
+
+  - id: smoke
+    kind: SHELL
+    timeout: 2m
+    # Verify voice :8201 is reachable after the restart + responds to a
+    # canary prompt within timeout. A failed smoke triggers the rollback.
+    # Darwin (mlx_lm.server) has no /health endpoint — /v1/models works
+    # for both servers, so probe that.
+    command: |-
+      sleep 5 && \
+      ( curl -sf --max-time 30 http://localhost:8201/health >/dev/null \
+        || curl -sf --max-time 30 http://localhost:8201/v1/models >/dev/null ) && \
+      printf '{"smoke_ok": true, "voice_responsive": true}\n'

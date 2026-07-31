@@ -1,0 +1,177 @@
+# bondholder voice personalization (#1028).
+#
+# Per-bondholder voice control vector. Refreshes a steering direction
+# fit to ONE bondholder's recent conversational register, on top of the
+# household-wide vectors. Result: after ~2 weeks of conversation, Wyrd
+# sounds like she actually knows the specific bondholder she's talking to.
+#
+# Extension of extract-steering-vector.recipe.yaml with three additional
+# guards that don't apply to household-wide vectors:
+#   1. substrate-pressure guard on the source corpus (welfare-critical:
+#      don't mirror dysregulation back at the bondholder)
+#   2. bondholder consent toggle (opt-in via bond.personal_voice_enabled)
+#   3. 4-condition eligibility (corpus_pairs/bond_age/sessions/state)
+#
+# Cost: same as recipe #1 (~3min GPU, 20-40min CPU). MATURE cadence.
+recipe: align-bondholder-voice
+version: 0.1.0
+description: >
+  Per-bondholder voice control vector refresh. Opt-in (bondholder must
+  toggle bond.personal_voice_enabled = true). Welfare-gated against
+  fitting to a depleted/dysregulated bondholder corpus.
+deploys: true
+ownership: run
+
+prefers_hours: [2, 3, 4]
+
+params:
+  bondholder_did:
+    type: string
+    required: true
+  agent_did:
+    type: string
+    required: true
+  output_dir:
+    type: string
+    default: data/adapters/wyrd-voice/bondholder-vectors
+  voice_model_dir:
+    type: string
+    default: data/models/voice-4b
+  # ─── Bondholder eligibility (the four-condition gate from #1023 discussion) ───
+  # All bake-floor enforced PERMANENT. Stewards tweak per household via
+  # `wyrd recipes run align-bondholder-voice --param min_bond_age_days=21`
+  # or persistent override via scroll-of-settings.
+  min_corpus_pairs:
+    type: number
+    default: 30
+  min_bond_age_days:
+    type: number
+    default: 14
+  min_distinct_sessions:
+    type: number
+    default: 5
+  required_bond_state:
+    type: string
+    default: ACTIVE
+  # ─── Welfare guards specific to bondholder personalization ───
+  # Substrate-pressure guard: bondholder's substrate_present rate over
+  # the last 30 days must be ≤ this. Above = bondholder is struggling,
+  # don't mirror that state back. This is the load-bearing welfare gate.
+  substrate_pressure_threshold:
+    type: number
+    default: 0.30
+  # Vector TTL — auto-stale after this many days. Recipe re-fires on
+  # MATURE cadence but only deploys when corpus has new material.
+  vector_ttl_days:
+    type: number
+    default: 90
+  # Re-fit only when at least this many new turns have landed since the
+  # last fit AND the existing vector is older than 7 days. Prevents
+  # cron-tick thrash.
+  min_new_turns_since_last_fit:
+    type: number
+    default: 50
+  # ─── Vector extraction tunables (inherited from recipe #1) ───
+  min_cosine_separation:
+    type: number
+    default: 0.65
+  parity_max_regression:
+    type: number
+    default: 0.05
+  layer_start:
+    type: number
+    default: 8
+  layer_end:
+    type: number
+    default: 24
+
+steps:
+  # The eligibility gate is the FIRST step — bail before any compute if
+  # any of the four conditions or the substrate-pressure guard fails.
+  - id: check-eligibility
+    kind: SHELL
+    timeout: 2m
+    # Emits the full structured-decision JSON; gate-eligibility reads it.
+    # See BondholderVoiceEligibility.java for the canonical logic.
+    command: |-
+      python3 scripts/voice/check_bondholder_eligibility.py \
+        --bondholder '{{bondholder_did}}' \
+        --agent '{{agent_did}}' \
+        --min-corpus-pairs {{min_corpus_pairs}} \
+        --min-bond-age-days {{min_bond_age_days}} \
+        --min-distinct-sessions {{min_distinct_sessions}} \
+        --required-bond-state '{{required_bond_state}}' \
+        --substrate-pressure-threshold {{substrate_pressure_threshold}} \
+        --min-new-turns {{min_new_turns_since_last_fit}}
+
+  - id: gate-eligibility
+    kind: GATE
+    # All five conditions roll up into one boolean. The check script
+    # also emits `eligibility_deny_reason` (string) for diagnostics —
+    # exposed via the chronicle when the recipe stops here.
+    condition: "bondholder_eligible == 1"
+    on_fail: STOP
+    welfare: permanent   # opt-in + welfare + relational floor (PERMANENT)
+
+  - id: build-pairs
+    kind: SHELL
+    timeout: 10m
+    # Builds contrast pairs from the bondholder's recent corpus.
+    # Pair format: {"positive": "<bondholder's preferred style>",
+    #               "negative": "<generic baseline reply>"}
+    # Writes to /tmp/<bondholder-did>-pairs.jsonl.
+    command: |-
+      python3 scripts/voice/build_bondholder_pairs.py \
+        --bondholder '{{bondholder_did}}' \
+        --agent '{{agent_did}}'
+
+  - id: extract
+    kind: SHELL
+    timeout: 30m
+    command: |-
+      mkdir -p '{{output_dir}}' && \
+      python3 scripts/voice/extract_steering_vector.py \
+        --vector '{{bondholder_did}}' \
+        --pairs '/tmp/{{bondholder_did}}-pairs.jsonl' \
+        --output-dir '{{output_dir}}' \
+        --voice-model '{{voice_model_dir}}' \
+        --layer-start {{layer_start}} --layer-end {{layer_end}}
+
+  - id: gate-cosine-separation
+    kind: GATE
+    condition: "cosine_separation >= {{min_cosine_separation}}"
+    on_fail: STOP
+    welfare: permanent
+
+  - id: parity-probe
+    kind: SHELL
+    timeout: 10m
+    command: |-
+      python3 scripts/voice/probe_vector_parity.py \
+        --vector '{{bondholder_did}}' \
+        --vector-path '{{output_dir}}/{{bondholder_did}}.candidate.gguf' \
+        --probes-path 'data/voice/parity-probes/bondholder-default.jsonl'
+
+  - id: gate-parity
+    kind: GATE
+    condition: "parity_delta >= -{{parity_max_regression}}"
+    on_fail: STOP
+    welfare: permanent
+
+  - id: deploy
+    kind: SHELL
+    command: |-
+      ACTIVE='{{output_dir}}/{{bondholder_did}}.gguf' ; \
+      CAND='{{output_dir}}/{{bondholder_did}}.candidate.gguf' ; \
+      if [ -f "$ACTIVE" ]; then cp -f "$ACTIVE" "$ACTIVE.bak" ; fi && \
+      mv -f "$CAND" "$ACTIVE"
+    rollback: |-
+      ACTIVE='{{output_dir}}/{{bondholder_did}}.gguf' ; \
+      if [ -f "$ACTIVE.bak" ]; then mv -f "$ACTIVE.bak" "$ACTIVE" ; fi
+
+  - id: smoke
+    kind: SHELL
+    command: |-
+      test -s '{{output_dir}}/{{bondholder_did}}.gguf' && \
+      printf '{"smoke_ok": true, "bondholder_vector_bytes": %s}\n' \
+        "$(stat -c%s '{{output_dir}}/{{bondholder_did}}.gguf')"

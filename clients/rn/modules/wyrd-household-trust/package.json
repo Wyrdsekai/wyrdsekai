@@ -1,0 +1,18 @@
+{
+  "name": "wyrd-household-trust",
+  "version": "0.1.0",
+  "description": "In-tree iOS native module that pins self-signed household relay TLS certs for the RN WebSocket (SocketRocket) transport. iOS companion to the Android org.wyrdsekai.rn.HouseholdTrust* classes (#733).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "files": [
+    "src",
+    "ios",
+    "WyrdHouseholdTrust.podspec",
+    "react-native.config.js"
+  ],
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  }
+}

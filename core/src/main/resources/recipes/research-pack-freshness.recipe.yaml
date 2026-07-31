@@ -1,0 +1,110 @@
+# research/library freshness + dead-source prune (#1136/#1139).
+#
+# The library analogue of prune-world-knowledge, now a real mutator (#1139): it
+# enumerates indexed knowledge-chunk provenance, HTTP-validates each distinct
+# source URL, and PRUNES the chunks whose source has gone dead (server answered
+# 4xx/5xx — "gone"/"forbidden"). It does NOT prune merely-unreachable sources
+# (offline / DNS-fail → "unchecked", never pruned), so a transient outage can't
+# empty the index.
+#
+# The seam this needs now exists (#1139): WyrdLuceneStore.enumerateKnowledgeProvenance
+# + pruneKnowledgeByIds, surfaced at POST /api/library/freshness/{enumerate,
+# prune-ids}. Both are side-channel (enumerate reads stored fields, prune deletes
+# by id) — NEITHER rewrites a document, so no chunk loses its dense vector (cf.
+# the updateKnowledgeTags vector-loss trap that motivated the seam).
+#
+# Welfare gates (both PERMANENT): a relative cap (max % of the index pruned in
+# one pass) AND an absolute cap (max chunks pruned in one pass) — two independent
+# safety dimensions so neither a small-index percentage nor a large-index count
+# can runaway-delete. dead_chunks counts only sources that ANSWERED gone, so a
+# fully-offline household trips neither gate (everything stays unchecked).
+#
+# On-demand / steward-fired (not cron-enrolled): `validate` makes outbound HTTP
+# HEAD requests — a fully-offline household simply prunes nothing. Local-ok by
+# the recipe invariant (household web access, not a cloud LLM key).
+recipe: research-pack-freshness
+version: 0.2.0
+description: >
+  Library freshness: enumerate knowledge-chunk provenance, HTTP-validate source
+  liveness, and prune chunks whose source has gone dead. Welfare-gated against
+  mass-prune by both a percentage cap and an absolute cap.
+deploys: true
+ownership: run
+
+params:
+  agent_did:
+    type: string
+    required: true
+  reading_ttl_days:
+    type: number
+    default: 120
+  validate_timeout:
+    type: number
+    default: 5.0
+  enumerate_limit:
+    type: number
+    default: 2000
+  # PERMANENT-gate bounds — never auto-prune past either.
+  max_dead_pct:
+    type: number
+    default: 25
+  max_dead_abs:
+    type: number
+    default: 500
+
+steps:
+  - id: scan
+    kind: SHELL
+    timeout: 2m
+    # Reads catalog + reading log AND enumerates indexed chunk provenance from
+    # the zone. Emits {pack_total, stale_unread, chunk_total}.
+    command: |-
+      python3 scripts/recipe/library_freshness.py scan \
+        --agent-did '{{agent_did}}' \
+        --reading-ttl-days {{reading_ttl_days}} \
+        --enumerate-limit {{enumerate_limit}}
+
+  - id: validate
+    kind: SHELL
+    timeout: 10m
+    # HTTP-HEAD each distinct source; map dead (4xx/5xx) sources → chunk ids.
+    # Graceful: offline / DNS-fail → unchecked, never dead. Emits {checked,
+    # dead_sources, dead_chunks, unchecked, dead_chunk_pct, chunk_total}.
+    command: |-
+      python3 scripts/recipe/library_freshness.py validate \
+        --agent-did '{{agent_did}}' \
+        --timeout {{validate_timeout}}
+
+  - id: gate-delta
+    kind: GATE
+    # Relative cap — never prune more than max_dead_pct of the index in one pass.
+    condition: "dead_chunk_pct <= {{max_dead_pct}}"
+    on_fail: STOP
+    welfare: permanent   # a mass-dead reading (bug / global outage) must not empty the library
+
+  - id: gate-abs
+    kind: GATE
+    # Absolute cap — independent of index size, never prune more than max_dead_abs.
+    condition: "dead_chunks <= {{max_dead_abs}}"
+    on_fail: STOP
+    welfare: permanent   # belt-and-suspenders with gate-delta on large indexes
+
+  - id: prune
+    kind: SHELL
+    timeout: 5m
+    # The mutation: delete the dead chunk ids via the zone. Forward-only —
+    # the source is gone, so recovery is re-acquisition through the library,
+    # not undelete (rollback logs that). The gates above are the real teeth.
+    command: |-
+      python3 scripts/recipe/library_freshness.py prune \
+        --agent-did '{{agent_did}}'
+    rollback: |-
+      python3 scripts/recipe/library_freshness.py rollback \
+        --agent-did '{{agent_did}}'
+
+  - id: report
+    kind: SHELL
+    timeout: 1m
+    command: |-
+      python3 scripts/recipe/library_freshness.py report \
+        --agent-did '{{agent_did}}'

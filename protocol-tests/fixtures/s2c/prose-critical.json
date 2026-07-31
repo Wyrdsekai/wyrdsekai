@@ -1,0 +1,12 @@
+{
+  "type": "prose",
+  "seq": 4,
+  "speaker": "system",
+  "text": "Zone maintenance begins in 5 minutes.",
+  "hints": [],
+  "structured": null,
+  "priority": "critical",
+  "lang": null,
+  "isAiGenerated": false,
+  "blocks": []
+}

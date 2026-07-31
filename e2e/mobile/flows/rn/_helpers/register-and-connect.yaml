@@ -1,0 +1,36 @@
+# Helper: RN — Welcome → "Use my server" → Birth → Standalone room
+# After Welcome, the app navigates to Birth (companion booting), then to Standalone.
+# We wait for standalone-room-name so downstream flows can act on the live room.
+appId: org.wyrdsekai.rn
+---
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Step 0: enter server URL + tap Connect. `hideKeyboard` is mandatory —
+# the IME covers welcome-connect after inputText and the tap lands on the
+# keyboard instead of the button.
+- tapOn:
+    id: "welcome-server-url"
+- inputText: ${SERVER_URL}
+- hideKeyboard
+- tapOn:
+    id: "welcome-connect"
+
+# Step 1: pick "Use my server" (only available after Connect succeeds)
+- extendedWaitUntil:
+    visible:
+      id: "welcome-use-server"
+    timeout: 5000
+- tapOn:
+    id: "welcome-use-server"
+
+# Birth screen briefly, then Standalone (the phone's Study).
+# Anchor on the Send button (clickable+focusable) — Maestro's `visible:` check
+# on RN Fabric is unreliable for non-interactive Text nodes (room name title)
+# but works for buttons. Once Send is visible, the room is mounted.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-send-button"
+    timeout: ${CONNECT_TIMEOUT}

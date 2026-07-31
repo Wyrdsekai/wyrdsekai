@@ -1,0 +1,44 @@
+# iOS variant of probe-relay-tell.yaml. The driver script (probe_relay_phone_ios.sh)
+# pre-seeds Documents/wyrd-seed.json with MCP creds + server URL + first-run flag.
+# initSecureStorage imports the seed into MMKV on first launch, App.tsx skips
+# Welcome (first_run_complete=true), and StandaloneNodeContext mounts straight
+# into the standalone room with serverClient already paired.
+#
+# Same three commands as the Android probe. NOTE: launchApp here does NOT use
+# clearState — the seed file was just written to the freshly-installed app's
+# Documents/, and clearState would erase it. The driver does pm-clear equivalent
+# (uninstall + install) before this flow runs.
+appId: org.wyrdsekai.rn
+---
+- launchApp
+
+# Wait for the standalone input. Welcome should be skipped because
+# @wyrd_first_run_complete is in the seed.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-input"
+    timeout: 90000
+
+# 1. Cross-zone tell
+- tapOn:
+    id: "standalone-input"
+- inputText: "tell beta.probe-beta hello from ios via relay-node"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 2. Library search
+- tapOn:
+    id: "standalone-input"
+- inputText: "library search rivers"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 3. Journal entry via slash
+- tapOn:
+    id: "standalone-input"
+- inputText: "/journal ios field note from relay test"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000

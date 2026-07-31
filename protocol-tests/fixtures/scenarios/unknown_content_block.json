@@ -1,0 +1,22 @@
+{
+  "description": "Client receives prose with unknown ContentBlock format — should render fallback text",
+  "message": {
+    "type": "prose",
+    "seq": 50,
+    "speaker": "Agent",
+    "text": "Here are the results.",
+    "hints": [],
+    "structured": null,
+    "priority": "normal",
+    "lang": "en",
+    "isAiGenerated": true,
+    "blocks": [
+      {
+        "format": "future.unknown_format",
+        "data": { "someField": "someValue" },
+        "fallback": "Results: 42 items processed, 3 errors"
+      }
+    ]
+  },
+  "expected_behavior": "Client does not crash. Renders prose text plus fallback text from the unknown block."
+}

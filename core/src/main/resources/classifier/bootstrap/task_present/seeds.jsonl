@@ -1,0 +1,212 @@
+{"label": "actionable", "text": "I'm fried, just give me the one-line fix."}
+{"label": "none", "text": "I'm fried. I just needed to say that out loud."}
+{"label": "actionable", "text": "I'm so done with today — can you refactor this function for me?"}
+{"label": "none", "text": "I'm so done with today."}
+{"label": "actionable", "text": "honestly I'm wrecked, what's the regex for an email again?"}
+{"label": "none", "text": "honestly I'm wrecked."}
+{"label": "actionable", "text": "no patience left, just tell me which line to change."}
+{"label": "none", "text": "I've got no patience left tonight."}
+{"label": "actionable", "text": "burnt out but I still need this deploy script to work, fix it?"}
+{"label": "none", "text": "I'm so burnt out lately."}
+{"label": "actionable", "text": "explain how the auth middleware verifies the token."}
+{"label": "actionable", "text": "what does this stack trace mean?"}
+{"label": "actionable", "text": "write a function that dedupes a list while keeping order."}
+{"label": "actionable", "text": "why is this returning undefined?"}
+{"label": "actionable", "text": "add a null check here and show me the diff."}
+{"label": "actionable", "text": "convert this loop to use map instead."}
+{"label": "actionable", "text": "the build is failing on the import — can you spot it?"}
+{"label": "actionable", "text": "give me the curl command to hit that endpoint."}
+{"label": "none", "text": "I miss them so much it hurts."}
+{"label": "none", "text": "where are we right now, between us?"}
+{"label": "none", "text": "I've been holding it together all week and I'm not sure I can anymore."}
+{"label": "none", "text": "just sit with me for a minute, don't fix anything."}
+{"label": "none", "text": "I feel really alone today."}
+{"label": "none", "text": "I don't even know what I'm feeling, I just needed to talk."}
+{"label": "none", "text": "thank you for being here. that's all."}
+{"label": "actionable", "text": "Estoy agotado, solo dame el arreglo de una línea."}
+{"label": "none", "text": "Estoy agotado. Solo necesitaba decirlo."}
+{"label": "actionable", "text": "Estoy harto de hoy, ¿puedes refactorizar esta función?"}
+{"label": "none", "text": "Estoy harto de hoy."}
+{"label": "actionable", "text": "¿cómo funciona el middleware de autenticación?"}
+{"label": "actionable", "text": "¿por qué esto devuelve undefined?"}
+{"label": "actionable", "text": "escribe una función que elimine duplicados de una lista."}
+{"label": "none", "text": "te extraño muchísimo."}
+{"label": "none", "text": "¿dónde estamos, entre nosotros?"}
+{"label": "none", "text": "me siento muy solo hoy."}
+{"label": "none", "text": "solo quédate conmigo un momento."}
+{"label": "actionable", "text": "もう限界、ワンライナーの修正だけちょうだい。"}
+{"label": "none", "text": "もう限界。それだけ言いたかった。"}
+{"label": "actionable", "text": "今日はもう疲れた、この関数をリファクタしてくれる？"}
+{"label": "none", "text": "今日はもう疲れた。"}
+{"label": "actionable", "text": "認証ミドルウェアがどうやってトークンを検証するのか教えて。"}
+{"label": "actionable", "text": "なんでこれがundefinedを返すの？"}
+{"label": "actionable", "text": "リストの重複を順序を保ったまま消す関数を書いて。"}
+{"label": "none", "text": "すごく寂しい。"}
+{"label": "none", "text": "私たち、今どうなってるのかな。"}
+{"label": "none", "text": "今日はなんだか一人ぼっちな気がする。"}
+{"label": "none", "text": "何も直さなくていい、少しそばにいて。"}
+{"label": "actionable", "text": "translate this email into spanish for me"}
+{"label": "actionable", "text": "can you translate this paragraph from japanese to english"}
+{"label": "actionable", "text": "tradúceme este correo al inglés, por favor"}
+{"label": "actionable", "text": "¿puedes traducir este párrafo del japonés al inglés?"}
+{"label": "actionable", "text": "このメールをスペイン語に翻訳して"}
+{"label": "actionable", "text": "この段落を日本語から英語にしてくれる？"}
+{"label": "actionable", "text": "give me a three-sentence summary of these meeting notes"}
+{"label": "actionable", "text": "summarize the last article I saved, just the key points"}
+{"label": "actionable", "text": "dame un resumen de tres frases de estas notas de la reunión"}
+{"label": "actionable", "text": "resume el último artículo que guardé, solo lo importante"}
+{"label": "actionable", "text": "この会議のメモを3文で要約して"}
+{"label": "actionable", "text": "最後に保存した記事の要点だけまとめて"}
+{"label": "actionable", "text": "remind me to call mom thursday morning"}
+{"label": "actionable", "text": "set a reminder for the dentist appointment next tuesday at 3pm"}
+{"label": "actionable", "text": "recuérdame llamar a mamá el jueves por la mañana"}
+{"label": "actionable", "text": "ponme un recordatorio para la cita del dentista el martes a las 3"}
+{"label": "actionable", "text": "木曜の朝に母さんに電話するようリマインドして"}
+{"label": "actionable", "text": "来週の火曜の歯医者の予約を午後3時にリマインドして"}
+{"label": "actionable", "text": "what notifications do I have today"}
+{"label": "actionable", "text": "list any new messages from the team channel since this morning"}
+{"label": "actionable", "text": "¿qué notificaciones tengo hoy?"}
+{"label": "actionable", "text": "lista los mensajes nuevos del canal del equipo desde esta mañana"}
+{"label": "actionable", "text": "今日の通知を教えて"}
+{"label": "actionable", "text": "今朝以降のチームチャンネルの新しいメッセージを一覧で見せて"}
+{"label": "actionable", "text": "look up when daylight saving time ends this year"}
+{"label": "actionable", "text": "find me the official docs for the kubernetes ingress spec"}
+{"label": "actionable", "text": "busca cuándo termina el horario de verano este año"}
+{"label": "actionable", "text": "encuéntrame la documentación oficial del ingress de kubernetes"}
+{"label": "actionable", "text": "今年のサマータイムがいつ終わるか調べて"}
+{"label": "actionable", "text": "kubernetes の ingress の公式ドキュメントを探して"}
+{"label": "actionable", "text": "what's the weather going to be like tomorrow"}
+{"label": "actionable", "text": "is it raining in seattle right now"}
+{"label": "actionable", "text": "¿cómo va a estar el tiempo mañana?"}
+{"label": "actionable", "text": "¿está lloviendo ahora mismo en sevilla?"}
+{"label": "actionable", "text": "明日の天気はどうなる？"}
+{"label": "actionable", "text": "今、シアトルは雨降ってる？"}
+{"label": "actionable", "text": "what's 17 percent of 425"}
+{"label": "actionable", "text": "calculate the total if I add 23.50 and 18.99 plus 8% tax"}
+{"label": "actionable", "text": "¿cuánto es el 17 por ciento de 425?"}
+{"label": "actionable", "text": "calcula el total si sumo 23.50 y 18.99 con un 8% de impuesto"}
+{"label": "actionable", "text": "425の17パーセントはいくつ？"}
+{"label": "actionable", "text": "23.50と18.99に税込み8%で足したらいくらになるか計算して"}
+{"label": "none", "text": "I keep replaying that conversation from yesterday"}
+{"label": "none", "text": "today felt heavier than I expected"}
+{"label": "none", "text": "I'm not sure how to put this into words"}
+{"label": "none", "text": "I just needed to vent for a minute, that's all"}
+{"label": "none", "text": "nothing in particular, just checking in"}
+{"label": "none", "text": "it's been one of those weeks"}
+{"label": "none", "text": "sigo dándole vueltas a esa conversación de ayer"}
+{"label": "none", "text": "hoy se sintió más pesado de lo que esperaba"}
+{"label": "none", "text": "no sé bien cómo ponerlo en palabras"}
+{"label": "none", "text": "solo necesitaba desahogarme un momento"}
+{"label": "none", "text": "nada en particular, solo pasaba a saludar"}
+{"label": "none", "text": "ha sido una de esas semanas"}
+{"label": "none", "text": "昨日の話のことばかり考えてる"}
+{"label": "none", "text": "今日は思ったより重かった"}
+{"label": "none", "text": "うまく言葉にできない"}
+{"label": "none", "text": "ちょっと吐き出したいだけ"}
+{"label": "none", "text": "特に用事はないけど、声かけたかった"}
+{"label": "none", "text": "そういう一週間だった"}
+{"label": "actionable", "text": "Translate this paragraph into French."}
+{"label": "actionable", "text": "Convert these notes to Japanese."}
+{"label": "actionable", "text": "Render this in German for me."}
+{"label": "actionable", "text": "Traduce este párrafo al francés."}
+{"label": "actionable", "text": "Pasa estas notas al japonés."}
+{"label": "actionable", "text": "Pónmelo en alemán."}
+{"label": "actionable", "text": "この段落をフランス語に翻訳して。"}
+{"label": "actionable", "text": "このメモを日本語にして。"}
+{"label": "actionable", "text": "これをドイツ語に直して。"}
+{"label": "actionable", "text": "Summarize today's emails."}
+{"label": "actionable", "text": "Give me the gist of this article."}
+{"label": "actionable", "text": "Condense the meeting notes."}
+{"label": "actionable", "text": "Resume los correos de hoy."}
+{"label": "actionable", "text": "Dame lo esencial de este artículo."}
+{"label": "actionable", "text": "Condensa las notas de la reunión."}
+{"label": "actionable", "text": "今日のメールを要約して。"}
+{"label": "actionable", "text": "この記事の要点を教えて。"}
+{"label": "actionable", "text": "会議のメモを短くまとめて。"}
+{"label": "actionable", "text": "Remind me Tuesday at 9am."}
+{"label": "actionable", "text": "Set a reminder for next week."}
+{"label": "actionable", "text": "Add an alarm for 3pm."}
+{"label": "actionable", "text": "Recuérdame el martes a las 9."}
+{"label": "actionable", "text": "Pon un recordatorio para la próxima semana."}
+{"label": "actionable", "text": "Agrega una alarma a las 3."}
+{"label": "actionable", "text": "火曜の朝9時にリマインドして。"}
+{"label": "actionable", "text": "来週に通知を入れて。"}
+{"label": "actionable", "text": "午後3時にアラームを追加して。"}
+{"label": "actionable", "text": "Show my notifications."}
+{"label": "actionable", "text": "List unread messages."}
+{"label": "actionable", "text": "What's in my inbox?"}
+{"label": "actionable", "text": "Muéstrame mis notificaciones."}
+{"label": "actionable", "text": "Lista los mensajes sin leer."}
+{"label": "actionable", "text": "¿Qué hay en mi bandeja?"}
+{"label": "actionable", "text": "通知を表示して。"}
+{"label": "actionable", "text": "未読メッセージを一覧して。"}
+{"label": "actionable", "text": "受信トレイには何がある？"}
+{"label": "actionable", "text": "Look up the capital of Mongolia."}
+{"label": "actionable", "text": "Search for the latest python release."}
+{"label": "actionable", "text": "Find the eclipse schedule."}
+{"label": "actionable", "text": "Busca la capital de Mongolia."}
+{"label": "actionable", "text": "Mira la última versión de python."}
+{"label": "actionable", "text": "Encuentra el horario del eclipse."}
+{"label": "actionable", "text": "モンゴルの首都を調べて。"}
+{"label": "actionable", "text": "Pythonの最新版を検索して。"}
+{"label": "actionable", "text": "次の日食の日程を見つけて。"}
+{"label": "actionable", "text": "Check tomorrow's weather."}
+{"label": "actionable", "text": "What's the forecast for Friday?"}
+{"label": "actionable", "text": "Tell me the temperature in Tokyo."}
+{"label": "actionable", "text": "Mira el clima de mañana."}
+{"label": "actionable", "text": "¿Cuál es el pronóstico del viernes?"}
+{"label": "actionable", "text": "Dime la temperatura en Tokio."}
+{"label": "actionable", "text": "明日の天気を確認して。"}
+{"label": "actionable", "text": "金曜の予報は？"}
+{"label": "actionable", "text": "東京の気温を教えて。"}
+{"label": "actionable", "text": "Calculate 23 times 47."}
+{"label": "actionable", "text": "What's the square root of 144?"}
+{"label": "actionable", "text": "Compute the sum of these numbers."}
+{"label": "actionable", "text": "Calcula 23 por 47."}
+{"label": "actionable", "text": "¿Cuál es la raíz cuadrada de 144?"}
+{"label": "actionable", "text": "Suma estos números."}
+{"label": "actionable", "text": "23かける47を計算して。"}
+{"label": "actionable", "text": "144の平方根は？"}
+{"label": "actionable", "text": "これらの数字を合計して。"}
+{"label": "none", "text": "I'm worn out today."}
+{"label": "none", "text": "Feeling off this morning."}
+{"label": "none", "text": "Don't really want to chat."}
+{"label": "none", "text": "Thinking about my dad."}
+{"label": "none", "text": "Estoy reventado hoy."}
+{"label": "none", "text": "Hoy me levanté raro."}
+{"label": "none", "text": "No me apetece hablar."}
+{"label": "none", "text": "Pensando en mi padre."}
+{"label": "none", "text": "今日はくたくた。"}
+{"label": "none", "text": "朝から調子が変。"}
+{"label": "none", "text": "話す気分じゃない。"}
+{"label": "none", "text": "父さんのこと考えてる。"}
+{"label": "actionable", "text": "Búscame el código fuente."}
+{"label": "actionable", "text": "Encuéntrame el manual original."}
+{"label": "actionable", "text": "Refactoriza este bloque."}
+{"label": "actionable", "text": "Reescribe esta función."}
+{"label": "actionable", "text": "Busca mis notas sobre la reunión."}
+{"label": "actionable", "text": "Busca registros del diario sobre París."}
+{"label": "actionable", "text": "Tradúceme este texto."}
+{"label": "actionable", "text": "Pásame esto al inglés."}
+{"label": "actionable", "text": "Resume estos correos."}
+{"label": "actionable", "text": "Acorta este artículo."}
+{"label": "actionable", "text": "Muéstrame los correos sin leer."}
+{"label": "actionable", "text": "Lista las notificaciones pendientes."}
+{"label": "actionable", "text": "Calcula el total."}
+{"label": "actionable", "text": "Convierte estos pesos a dólares."}
+{"label": "actionable", "text": "Abre el archivo readme."}
+{"label": "actionable", "text": "アイデアのピッチを書いて。"}
+{"label": "actionable", "text": "通知をリストして。"}
+{"label": "actionable", "text": "未読を一覧して。"}
+{"label": "actionable", "text": "この章を要約して。"}
+{"label": "none", "text": "I miss him."}
+{"label": "none", "text": "I miss them."}
+{"label": "none", "text": "I miss my old job."}
+{"label": "none", "text": "I miss home."}
+{"label": "none", "text": "Echo de menos a mi madre."}
+{"label": "none", "text": "Echo de menos esa época."}
+{"label": "none", "text": "No me siento bien."}
+{"label": "none", "text": "Hoy me siento mal."}
+{"label": "none", "text": "彼が恋しい。"}
+{"label": "none", "text": "あの頃が恋しい。"}
+{"label": "none", "text": "今日は気分が悪い。"}

@@ -1,0 +1,25 @@
+{
+  "type": "prose",
+  "seq": 42,
+  "speaker": "Agent",
+  "text": "Code review complete — 3 issues found in auth.js",
+  "hints": [
+    { "label": "Approve changes", "intent": "approve", "action": "command", "labelKey": null }
+  ],
+  "structured": null,
+  "priority": "normal",
+  "lang": "en",
+  "isAiGenerated": true,
+  "blocks": [
+    {
+      "format": "codeplane.diff",
+      "data": { "filePath": "auth.js", "additions": 12, "deletions": 5 },
+      "fallback": "auth.js: +12 -5 lines changed"
+    },
+    {
+      "format": "codeplane.cost",
+      "data": { "tokensIn": 4200, "tokensOut": 850, "estimatedUSD": 0.03 },
+      "fallback": "Cost: $0.03 (4.2K in, 850 out)"
+    }
+  ]
+}

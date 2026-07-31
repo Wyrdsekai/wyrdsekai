@@ -1,0 +1,16 @@
+# Quick: KMP — REMOTE ACCOUNT LOGIN via pasted URL lands in the user's Study.
+# This is the coverage the 2026-06 register/login rework was missing: a real
+# account login (ConnectScreen), distinct from the local "Use my server" path.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/login-via-url.yaml
+
+# Remote RoomScreen surface (NOT standalone-*). room-input proves remote login.
+- assertVisible:
+    id: "room-input"
+- assertVisible:
+    id: "room-name"
+- assertVisible:
+    id: "send-button"
+
+- takeScreenshot: kmp_quick_account_login

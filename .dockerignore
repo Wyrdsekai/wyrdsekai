@@ -1,0 +1,59 @@
+# Build outputs
+build/
+**/build/
+.gradle/
+**/.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Docs and specs (not needed in image)
+*.md
+!scripts/**/*.md
+PLAN_*.md
+SPEC_*.md
+REQ_*.md
+RESEARCH_*.md
+ROADMAP_*.md
+TESTING_*.md
+CONVERSATION_*.md
+AGENTS.md
+MODELS.md
+PROTOCOL.md
+
+# Client projects (server-only image)
+clients/
+e2e-test/
+
+# Experiment scripts (not production)
+scripts/kokoro-core/
+scripts/rwkv-soul/
+scripts/steering-vectors/
+scripts/diffusion-soul/
+scripts/persona-vectors/
+scripts/pcl-selfplay/
+scripts/jamba-soul/
+scripts/persona-moe/
+
+# Development artifacts
+*.log
+*.bak
+*.tmp
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker/docker-compose*.yml

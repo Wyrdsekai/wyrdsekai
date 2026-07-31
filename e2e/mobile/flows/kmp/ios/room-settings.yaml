@@ -1,0 +1,15 @@
+# Quick (iOS): KMP — open the node settings dialog from the standalone room.
+# iOS twin of ../quick/room-settings.yaml.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: _helpers/standalone-onboard.yaml
+
+- tapOn:
+    id: "standalone-settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+
+- takeScreenshot: kmp_ios_quick_room_settings

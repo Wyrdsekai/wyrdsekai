@@ -1,0 +1,87 @@
+# Tier-3 KMP — ACCOUNT LOGIN OVER A RELAY (#1263).
+#
+# The blocker operator named: the phone must log into a RUNNING wyrdsekai zone
+# with a real account, reaching it THROUGH a relay (here: relay-node). This is the
+# loginOverRelay path (#1261), distinct from BOTH:
+#   - login-via-url.yaml  (direct WS account login, lands `room-input`)
+#   - relay-invite-paste  (relay attach + auto-register, no account)
+#
+# Flow:
+#   Welcome → paste wyrdphone:// invite at welcome-server-url → Connect
+#         → "Log in to my account on this server" (welcome-login-account)
+#         → ConnectScreen with the invite pre-filled → username/password → Login
+#         → ConnectionViewModel.login() sees PhoneInvite.isPhoneInviteUrl()
+#         → loginOverRelay(): pins+persists the relay leg, saves the typed creds
+#           as MCP creds, raises relayLoginReady → WyrdApp mode=local
+#         → local-relay boot runs wyrd.zone.{zone}.mcp.login over the relay as
+#           the real account → lands in the user's Study (LocalRoomScreen).
+#
+# Landing signal: standalone-room-name (LocalRoomScreen / local-relay), NOT
+# room-input (that's the direct-WS remote path).
+#
+# Needs (all live):
+#   INVITE_URL   — wyrdphone:// minted by `wyrd phone invite --relay <relay-node>`,
+#                  carrying the relay-node relay leg + the zone's household.
+#   TEST_USER / TEST_PASS — a real account on the running zone (e2e_test).
+#   A reachable relay (relay-node) + the zone homed on it.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-server-url"
+    timeout: ${BOOT_TIMEOUT}
+
+# Step 0: paste the relay invite as the "server", then Connect. welcome-connect
+# does no validation (it just advances), so a wyrdphone:// URL is accepted and
+# carried into step 1.
+- tapOn:
+    id: "welcome-server-url"
+- inputText: "${INVITE_URL}"
+- tapOn:
+    id: "welcome-connect"
+
+# Step 1: choose the ACCOUNT-login path (not "Use my server" = relay-attach).
+- extendedWaitUntil:
+    visible:
+      id: "welcome-login-account"
+    timeout: 10000
+- tapOn:
+    id: "welcome-login-account"
+
+# ConnectScreen — the account login surface, opened with the invite pre-filled.
+- extendedWaitUntil:
+    visible:
+      id: "connect-screen"
+    timeout: 10000
+
+# The ConnectScreen's server-url-input is ALREADY pre-filled with the exact
+# wyrdphone:// invite carried over from welcome, and ConnectionViewModel.login()
+# reads that same value — so isPhoneInviteUrl() fires on Login without re-typing.
+# Do NOT erase + re-input here: the invite is ~1000+ chars, a bare `eraseText`
+# clears only 50 (Maestro default) and the re-input appends onto the stale tail
+# → corrupt double-payload → PhoneInvite.parse() throws "Invite payload is not
+# valid"; erasing the whole field char-by-char instead blows Maestro's 120s
+# command deadline. Trust the carry-over.
+
+- tapOn:
+    id: "username-input"
+- inputText: ${TEST_USER}
+- tapOn:
+    id: "password-input"
+- inputText: ${TEST_PASS}
+- hideKeyboard
+
+- tapOn:
+    id: "login-button"
+
+# Landing: local-relay Study. standalone-room-name is the reliable
+# "logged in over the relay, RPC model" signal.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}
+
+- takeScreenshot: kmp_login_over_relay

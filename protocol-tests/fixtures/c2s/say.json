@@ -1,0 +1,6 @@
+{
+  "type": "say",
+  "id": "msg-001",
+  "roomId": "nexus",
+  "text": "Hello everyone!"
+}

@@ -1,0 +1,37 @@
+# Full: KMP — Switch out of local mode lands on legacy FirstRunScreen
+# Replaces legacy "disconnect from remote" flow. In post-Welcome architecture,
+# disconnect = exit local mode via "Switch to remote server".
+#
+# Note: the full re-pair-from-FirstRunScreen → Standalone cycle requires
+# multi-step wizard navigation (companion name, server discovery, pair).
+# That's covered by the manual on-device run; here we verify the transition.
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- assertVisible:
+    id: "standalone-room-name"
+- takeScreenshot: kmp_full_disconnect_01_local
+
+- tapOn:
+    id: "standalone-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 5000
+
+# Switch to remote — drops node, lands on legacy FirstRunScreen for re-pairing
+- tapOn:
+    id: "switch-mode-button"
+- extendedWaitUntil:
+    visible:
+      id: "first-run-screen"
+    timeout: 10000
+
+# Confirm both local-mode-card and remote-mode-card are reachable from FirstRun
+- assertVisible:
+    id: "local-mode-card"
+- assertVisible:
+    id: "remote-mode-card"
+
+- takeScreenshot: kmp_full_disconnect_02_first_run

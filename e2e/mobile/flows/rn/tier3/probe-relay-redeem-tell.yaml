@@ -1,0 +1,43 @@
+# Same flow as probe-relay-tell.yaml but with explicit launchApp + longer wait
+# for the NATS handshake (probe → redeem → token cache) to complete before
+# the first tell goes out. KMP shares testIDs so we MUST launch RN explicitly
+# to avoid Maestro tapping into the wrong app.
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    appId: "org.wyrdsekai.rn"
+    clearState: false  # preserve seeded files
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-input"
+    timeout: 90000  # NATS handshake can take a beat over wss://
+
+# Give setupServerClient an extra moment after the input appears — the room
+# can render before the NATS chain completes.
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 1. Cross-zone tell via NATS
+- tapOn:
+    id: "standalone-input"
+- inputText: "tell beta.probe-beta hello from phone via NATS"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 2. Library search
+- tapOn:
+    id: "standalone-input"
+- inputText: "library search rivers"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 3. Journal write
+- tapOn:
+    id: "standalone-input"
+- inputText: "/journal field note from phone NATS test"
+- pressKey: "Enter"
+- waitForAnimationToEnd:
+    timeout: 5000

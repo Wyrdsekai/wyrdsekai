@@ -1,0 +1,206 @@
+# Wyrdsekai Inference Backends
+#
+# Usage:
+#   docker compose up                          # llama-server (default)
+#   docker compose --profile sglang up         # llama-server + SGLang
+#   docker compose --profile ollama up         # llama-server + Ollama (legacy)
+#
+# See .env.example for configurable environment variables.
+# Copy docker-compose.override.yml.example to docker-compose.override.yml
+# for local customization (multi-GPU, quantization, etc.).
+
+services:
+  # ─── llama-server — default inference backend ─────────────────────────
+  #
+  # llama.cpp server: works on CPU, NVIDIA CUDA, Apple Metal (via native install).
+  # OpenAI-compatible API with tool calling (--jinja).
+  # Model: Qwen3.5-4B SSD-trained GGUF (2.6GB).
+  llama-server:
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: wyrdsekai-llama
+    restart: unless-stopped
+    ports:
+      - "${LLAMA_PORT:-11525}:8080"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - "--model"
+      - "/models/${LLAMA_MODEL:-wyrdsekai-3.5-4b-v10-q4km.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "${LLAMA_CTX_SIZE:-16384}"
+      - "--jinja"
+      - "--reasoning"
+      - "off"
+      - "--reasoning-budget"
+      - "0"
+      - "--flash-attn"
+      - "on"
+      - "--parallel"
+      - "1"
+      - "-ngl"
+      - "${LLAMA_GPU_LAYERS:-99}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  # ─── SGLang — high-throughput inference for NVIDIA GPU ────────────────
+  #
+  # Per-request LoRA, RadixAttention prefix caching, native tool parsing.
+  # Recommended for multi-companion setups or development.
+  sglang:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.10.post1-cu130}
+    container_name: wyrdsekai-sglang
+    restart: unless-stopped
+    profiles: ["sglang"]
+    ports:
+      - "${SGLANG_PORT:-8000}:8000"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/huggingface:/root/.cache/huggingface
+      - ${WYRDSEKAI_DATA:-./data}/lora:/lora
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SGLANG_MODEL=${SGLANG_MODEL:-Qwen/Qwen3.5-4B}
+      - SGLANG_TP_SIZE=${SGLANG_TP_SIZE:-1}
+      - SGLANG_MAX_MODEL_LEN=${SGLANG_MAX_MODEL_LEN:-16384}
+      - SGLANG_GPU_MEM_UTIL=${SGLANG_GPU_MEM_UTIL:-0.88}
+      - SGLANG_TOOL_PARSER=${SGLANG_TOOL_PARSER:-qwen}
+      - SGLANG_EXTRA_ARGS=${SGLANG_EXTRA_ARGS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SGLANG_GPU_DEVICES:-0}"]
+              capabilities: [gpu]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        python3 -m sglang.launch_server
+        --model-path $$SGLANG_MODEL
+        --host 0.0.0.0
+        --port 8000
+        --tp-size $$SGLANG_TP_SIZE
+        --context-length $$SGLANG_MAX_MODEL_LEN
+        --mem-fraction-static $$SGLANG_GPU_MEM_UTIL
+        --tool-call-parser $$SGLANG_TOOL_PARSER
+        $$SGLANG_EXTRA_ARGS
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  # ─── Ollama — legacy fallback ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: wyrdsekai-ollama
+    restart: unless-stopped
+    profiles: ["ollama"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ─── vLLM — alternative high-throughput backend ─────────────────────
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.16.0-cu130}
+    container_name: wyrdsekai-vllm
+    restart: unless-stopped
+    profiles: ["vllm"]
+    ports:
+      - "${VLLM_PORT:-8100}:8000"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - LD_LIBRARY_PATH=/usr/local/lib/python3.12/dist-packages/nvidia/nvjitlink/lib
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_GPU_DEVICES:-0}"]
+              capabilities: [gpu]
+    command:
+      - "vllm"
+      - "serve"
+      - "${VLLM_MODEL:-Qwen/Qwen3.5-4B}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--tensor-parallel-size"
+      - "${VLLM_TP_SIZE:-1}"
+      - "--max-model-len"
+      - "${VLLM_MAX_MODEL_LEN:-16384}"
+      - "--gpu-memory-utilization"
+      - "${VLLM_GPU_MEM_UTIL:-0.90}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  # ─── wyrd-rendezvous — zone directory aggregator ──────────────────────
+  #
+  # Separate process from the tunnel relay ( process
+  # isolation). Runs on port 7071 by default so it can coexist with a
+  # main wyrdsekai server on 7070. NAT'd households publish here so they
+  # remain discoverable without a public URL.
+  #
+  # Enable with: docker compose --profile rendezvous up
+  rendezvous:
+    profiles: ["rendezvous"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rendezvous
+    image: ${RENDEZVOUS_IMAGE:-wyrdsekai/rendezvous:latest}
+    container_name: wyrd-rendezvous
+    ports:
+      - "${WYRDSEKAI_RENDEZVOUS_PORT:-7071}:7071"
+    environment:
+      - WYRDSEKAI_RENDEZVOUS_PORT=7071
+      - WYRDSEKAI_RENDEZVOUS_MAX_MANIFESTS=${WYRDSEKAI_RENDEZVOUS_MAX_MANIFESTS:-100000}
+      - WYRDSEKAI_RENDEZVOUS_PUBLISH_MIN_INTERVAL_MS=${WYRDSEKAI_RENDEZVOUS_PUBLISH_MIN_INTERVAL_MS:-60000}
+      - WYRDSEKAI_RENDEZVOUS_TTL_SEC=${WYRDSEKAI_RENDEZVOUS_TTL_SEC:-172800}
+      # Optional: point at an OpenAI-compatible /v1/embeddings endpoint to
+      # enable semantic search. Unset = keyword-only (Lucene BM25).
+      - WYRDSEKAI_EMBEDDING_URL=${WYRDSEKAI_EMBEDDING_URL:-}
+      - WYRDSEKAI_EMBEDDING_MODEL=${WYRDSEKAI_EMBEDDING_MODEL:-default}
+    restart: unless-stopped
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7071/health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s

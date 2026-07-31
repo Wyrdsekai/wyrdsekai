@@ -1,0 +1,11 @@
+{
+  "labels": [
+    "clean",
+    "leaky"
+  ],
+  "feature_dim": 384,
+  "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2-setfit",
+  "classifier": "LogisticRegression",
+  "training_examples": 705,
+  "validation_examples": 177
+}

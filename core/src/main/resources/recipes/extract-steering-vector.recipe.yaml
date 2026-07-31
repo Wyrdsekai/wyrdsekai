@@ -1,0 +1,140 @@
+# control-vector extraction recipe (#1024).
+#
+# Closes the open #1002 sub-item: "extract-steering-vector ... full scope."
+# Refreshes a named voice-control vector against the latest household corpus.
+# Run produces data/adapters/wyrd-voice/control-vectors/<vector>-<date>.gguf
+# and atomically swaps the symlink.
+#
+# Mirrors retrain-classifier-head.recipe.yaml's structure:
+#  - check-corpus → gate-corpus (PERMANENT welfare floor)
+#  - extract → gate-cosine-separation (PERMANENT)
+#  - parity-probe → gate-parity (PERMANENT)
+#  - deploy (atomic + .bak rollback) → smoke
+#
+# Cost: ~3 min on RTX 4060 Ti (forward passes only — no fine-tune).
+# CPU fallback works, just slower (20-40 min for a 4B). No mandatory GPU.
+recipe: extract-steering-vector
+version: 0.1.0
+description: >
+  Refresh one named voice-control vector via contrastive pair extraction
+  on the local voice model. Deploys iff cosine separation clears the
+  floor AND a held-out parity probe doesn't regress baseline voice
+  quality. Reversible via .bak rollback.
+deploys: true
+ownership: run
+
+# #1023 — quiet-hours preference. Vector extraction is GPU-preferred and
+# briefly pegs the voice model's GPU; runs during household quiet hours.
+prefers_hours: [2, 3, 4]
+
+# Resource requisites (#req) — preflight-checked before step 1.
+requires:
+  - { kind: gpu_count,      amount: 1,  hard: true,  note: "activation capture needs a GPU" }
+  - { kind: gpu_vram_gb,    amount: 16, hard: true }
+  - { kind: disk_free_gb,   amount: 5,  hard: true }
+  - { kind: wall_clock_min, amount: 20, hard: false }
+
+params:
+  vector:
+    type: string
+    required: true     # e.g. "first_person_presence", "factual_recall_anchor"
+  pairs_path:
+    type: string
+    default: data/voice/pairs/{{vector}}.jsonl
+  output_dir:
+    type: string
+    default: data/adapters/wyrd-voice/control-vectors
+  voice_model_dir:
+    type: string
+    default: data/models/voice-4b
+  # PERMANENT welfare gates — overridable per-run but bake-floor enforced.
+  min_corpus_pairs:
+    type: number
+    default: 30
+  min_cosine_separation:
+    type: number
+    default: 0.65
+  # Parity tolerance: deployed vector must not regress baseline more than
+  # this much on a held-out probe set. Smaller = stricter regression budget.
+  parity_max_regression:
+    type: number
+    default: 0.05
+  layer_start:
+    type: number
+    default: 8
+  layer_end:
+    type: number
+    default: 24
+
+steps:
+  - id: check-corpus
+    kind: SHELL
+    command: |-
+      if [ ! -f "{{pairs_path}}" ]; then
+        printf '{"corpus_pairs": 0, "error": "pairs_file_missing"}\n'
+        exit 1
+      fi
+      printf '{"corpus_pairs": %s}\n' "$(wc -l < '{{pairs_path}}' | tr -d ' ')"
+
+  - id: gate-corpus
+    kind: GATE
+    condition: "corpus_pairs >= {{min_corpus_pairs}}"
+    on_fail: STOP
+    welfare: permanent   # ≥30 pairs floor for statistical separation (PERMANENT)
+
+  - id: extract
+    kind: SHELL
+    timeout: 30m
+    command: |-
+      mkdir -p '{{output_dir}}' && \
+      python3 scripts/voice/extract_steering_vector.py \
+        --vector '{{vector}}' \
+        --pairs '{{pairs_path}}' \
+        --output-dir '{{output_dir}}' \
+        --voice-model '{{voice_model_dir}}' \
+        --layer-start {{layer_start}} --layer-end {{layer_end}}
+
+  - id: gate-cosine-separation
+    kind: GATE
+    condition: "cosine_separation >= {{min_cosine_separation}}"
+    on_fail: STOP
+    welfare: permanent   # extracted vector is meaningful, not noise (PERMANENT)
+
+  - id: parity-probe
+    kind: SHELL
+    timeout: 10m
+    # Held-out 10-prompt probe set under data/voice/parity-probes/<vector>.jsonl.
+    # Output: {"parity_score": <0..1>, "parity_baseline": <0..1>,
+    #          "parity_delta": <signed diff>}.
+    command: |-
+      python3 scripts/voice/probe_vector_parity.py \
+        --vector '{{vector}}' \
+        --vector-path '{{output_dir}}/{{vector}}.candidate.gguf' \
+        --probes-path 'data/voice/parity-probes/{{vector}}.jsonl'
+
+  - id: gate-parity
+    kind: GATE
+    # Negative delta = regression; require it to be small enough to ship.
+    condition: "parity_delta >= -{{parity_max_regression}}"
+    on_fail: STOP
+    welfare: permanent   # vector doesn't tank voice quality (PERMANENT)
+
+  - id: deploy
+    kind: SHELL
+    command: |-
+      ACTIVE='{{output_dir}}/{{vector}}.gguf' ; \
+      CAND='{{output_dir}}/{{vector}}.candidate.gguf' ; \
+      if [ -f "$ACTIVE" ]; then cp -f "$ACTIVE" "$ACTIVE.bak" ; fi && \
+      mv -f "$CAND" "$ACTIVE"
+    rollback: |-
+      ACTIVE='{{output_dir}}/{{vector}}.gguf' ; \
+      if [ -f "$ACTIVE.bak" ]; then mv -f "$ACTIVE.bak" "$ACTIVE" ; fi
+
+  - id: smoke
+    kind: SHELL
+    # Verify deployed file exists + non-empty. Voice container reloads vectors
+    # on next inference call; no restart required here.
+    command: |-
+      test -s '{{output_dir}}/{{vector}}.gguf' && \
+      printf '{"smoke_ok": true, "deployed_bytes": %s}\n' \
+        "$(stat -c%s '{{output_dir}}/{{vector}}.gguf')"

@@ -1,0 +1,10 @@
+# TLA+ tools jar — fetched, not committed (see README.md). Comment out to vendor it.
+tla2tools.jar
+# TLC scratch / model-checker output
+states/
+*.old
+*.st
+*_TTrace_*.tla
+*_TTrace_*.bin
+MC.out
+*.dot

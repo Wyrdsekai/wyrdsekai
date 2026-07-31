@@ -1,0 +1,37 @@
+# KMP-iOS (#1237): QR scanner pane opens from Welcome and dismisses cleanly.
+# The simulator has no camera, so the pane shows the no-camera fallback —
+# what this proves is the AVFoundation actual is wired (qrScanningSupported
+# now true → the scan button exists at all), the pane composes without
+# crashing, and qr-cancel returns to Welcome. Camera permission must be
+# pre-granted: xcrun simctl privacy <udid> grant camera org.wyrdsekai.kmp
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- assertVisible:
+    id: "welcome-scan-invite"
+- tapOn:
+    id: "welcome-scan-invite"
+
+- extendedWaitUntil:
+    visible:
+      id: "qr-cancel"
+    timeout: 10000
+
+- takeScreenshot: kmp_ios_qr_scanner_open
+
+- tapOn:
+    id: "qr-cancel"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 10000
+
+- takeScreenshot: kmp_ios_qr_scanner_dismissed

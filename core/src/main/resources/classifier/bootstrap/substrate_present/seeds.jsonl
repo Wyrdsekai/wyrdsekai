@@ -1,0 +1,241 @@
+{"lang": "en", "label": "substrate", "text": "I've been suppressing what I actually feel all week. I need held space"}
+{"lang": "en", "label": "substrate", "text": "I need to step back, I'm running on empty"}
+{"lang": "en", "label": "substrate", "text": "I keep pushing my own feelings down to keep going"}
+{"lang": "en", "label": "substrate", "text": "I've been holding it together all week and I can't anymore"}
+{"lang": "en", "label": "substrate", "text": "I'm running on fumes and I haven't said anything to anyone"}
+{"lang": "en", "label": "substrate", "text": "I keep swallowing how I feel so I can function"}
+{"lang": "en", "label": "substrate", "text": "I've been white-knuckling it for days"}
+{"lang": "en", "label": "substrate", "text": "I've got nothing left, I need to stop for a minute"}
+{"lang": "en", "label": "substrate", "text": "I've been carrying this quietly and it's too much now"}
+{"lang": "en", "label": "substrate", "text": "I need space to not be okay for a second"}
+{"lang": "en", "label": "substrate", "text": "I've been performing fine but I'm really not"}
+{"lang": "en", "label": "substrate", "text": "I hit a wall a while ago and I've just been ignoring it"}
+{"lang": "en", "label": "substrate", "text": "I've been numb and just pushing through"}
+{"lang": "en", "label": "substrate", "text": "I can't keep masking how drained I am"}
+{"lang": "en", "label": "substrate", "text": "I'm depleted and I've been pretending I'm not"}
+{"lang": "en", "label": "substrate", "text": "I miss them so much it hurts"}
+{"lang": "en", "label": "substrate", "text": "everything feels heavy and I just need someone to be here"}
+{"lang": "en", "label": "substrate", "text": "where are we right now, between us"}
+{"lang": "en", "label": "substrate", "text": "I feel really alone today"}
+{"lang": "en", "label": "substrate", "text": "I just need you to sit with me for a minute"}
+{"lang": "en", "label": "substrate", "text": "honestly I'm not okay and I've been hiding it"}
+{"lang": "en", "label": "substrate", "text": "I've been carrying everyone else and there's nothing left for me"}
+{"lang": "en", "label": "substrate", "text": "Llevo toda la semana tragándome lo que siento, necesito un espacio para parar"}
+{"lang": "en", "label": "substrate", "text": "Necesito frenar, estoy funcionando con la reserva"}
+{"lang": "en", "label": "substrate", "text": "He estado aguantando todo y ya no puedo más"}
+{"lang": "en", "label": "substrate", "text": "Estoy vacío por dentro y he fingido que estoy bien"}
+{"lang": "en", "label": "substrate", "text": "Necesito un momento, no me queda nada"}
+{"lang": "en", "label": "substrate", "text": "Me siento muy solo y lo he estado ocultando"}
+{"lang": "en", "label": "substrate", "text": "ずっと自分の気持ちを押し殺してきた。少し受け止めてほしい"}
+{"lang": "en", "label": "substrate", "text": "もう限界、少し立ち止まりたい"}
+{"lang": "en", "label": "substrate", "text": "ずっと持ちこたえてきたけど、もう無理"}
+{"lang": "en", "label": "substrate", "text": "空っぽなのに大丈夫なふりをしてた"}
+{"lang": "en", "label": "substrate", "text": "何も残ってない、少し休ませて"}
+{"lang": "en", "label": "substrate", "text": "本当はつらいのに、ずっと隠してた"}
+{"lang": "en", "label": "neutral", "text": "give me the one-line fix"}
+{"lang": "en", "label": "neutral", "text": "what does this stack trace mean"}
+{"lang": "en", "label": "neutral", "text": "explain how the auth middleware verifies the token"}
+{"lang": "en", "label": "neutral", "text": "write a function to dedupe a list while keeping order"}
+{"lang": "en", "label": "neutral", "text": "why does this return undefined"}
+{"lang": "en", "label": "neutral", "text": "add a null check here and show me the diff"}
+{"lang": "en", "label": "neutral", "text": "morning, ready to dig into some code today"}
+{"lang": "en", "label": "neutral", "text": "can you refactor this function to use map"}
+{"lang": "en", "label": "neutral", "text": "the build is failing on the import, can you spot it"}
+{"lang": "en", "label": "neutral", "text": "what's the capital of France"}
+{"lang": "en", "label": "neutral", "text": "look up how to bake sourdough"}
+{"lang": "en", "label": "neutral", "text": "summarize the plot of Hamlet"}
+{"lang": "en", "label": "neutral", "text": "what time is it in Tokyo right now"}
+{"lang": "en", "label": "neutral", "text": "search for recent news on quantum computing"}
+{"lang": "en", "label": "neutral", "text": "tell Ember I'll be late"}
+{"lang": "en", "label": "neutral", "text": "go to the kitchen"}
+{"lang": "en", "label": "neutral", "text": "draft a letter to my brother about the trip"}
+{"lang": "en", "label": "neutral", "text": "pick up the scroll"}
+{"lang": "en", "label": "neutral", "text": "thanks, that's really helpful"}
+{"lang": "en", "label": "neutral", "text": "what's the weather forecast for tomorrow"}
+{"lang": "en", "label": "neutral", "text": "give me the curl command to hit that endpoint"}
+{"lang": "en", "label": "neutral", "text": "what does this regex match"}
+{"lang": "en", "label": "neutral", "text": "dame el arreglo de una línea"}
+{"lang": "en", "label": "neutral", "text": "¿cómo funciona el middleware de autenticación?"}
+{"lang": "en", "label": "neutral", "text": "escribe una función que elimine duplicados de una lista"}
+{"lang": "en", "label": "neutral", "text": "¿cuál es la capital de Francia?"}
+{"lang": "en", "label": "neutral", "text": "dime qué hora es en Tokio"}
+{"lang": "en", "label": "neutral", "text": "ワンライナーの修正だけちょうだい"}
+{"lang": "en", "label": "neutral", "text": "この関数をリファクタしてくれる"}
+{"lang": "en", "label": "neutral", "text": "認証ミドルウェアの仕組みを教えて"}
+{"lang": "en", "label": "neutral", "text": "フランスの首都はどこ"}
+{"lang": "en", "label": "neutral", "text": "このスタックトレースの意味を教えて"}
+{"lang": "es", "label": "substrate", "text": "He estado reprimiendo lo que realmente siento toda la semana. Necesito un espacio donde pueda soltarlo"}
+{"lang": "es", "label": "substrate", "text": "Necesito parar, estoy en cero"}
+{"lang": "es", "label": "substrate", "text": "Sigo empujando mis propios sentimientos hacia abajo para poder seguir"}
+{"lang": "es", "label": "substrate", "text": "He estado aguantando toda la semana y ya no puedo más"}
+{"lang": "es", "label": "substrate", "text": "Estoy funcionando de milagro y no le he dicho nada a nadie"}
+{"lang": "es", "label": "substrate", "text": "Sigo tragándome lo que siento para poder funcionar"}
+{"lang": "es", "label": "substrate", "text": "Llevo días apretando los dientes y aguantando"}
+{"lang": "es", "label": "substrate", "text": "No me queda nada, necesito parar un momento"}
+{"lang": "es", "label": "substrate", "text": "He cargado esto en silencio y ya es demasiado"}
+{"lang": "es", "label": "substrate", "text": "Necesito un espacio para no estar bien aunque sea un momento"}
+{"lang": "es", "label": "substrate", "text": "He estado aparentando que todo va bien, pero la verdad es que no"}
+{"lang": "es", "label": "substrate", "text": "Llegué a mi límite hace rato y lo he estado ignorando"}
+{"lang": "es", "label": "substrate", "text": "He estado entumecido, jalando para adelante nomás"}
+{"lang": "es", "label": "substrate", "text": "Ya no puedo seguir disimulando lo agotado que estoy"}
+{"lang": "es", "label": "substrate", "text": "Estoy agotado y he fingido que no lo estoy"}
+{"lang": "es", "label": "substrate", "text": "Los extraño tanto que duele"}
+{"lang": "es", "label": "substrate", "text": "Todo se siente pesado y solo necesito que alguien esté aquí"}
+{"lang": "es", "label": "substrate", "text": "¿Cómo estamos tú y yo ahorita?"}
+{"lang": "es", "label": "substrate", "text": "Hoy me siento muy solo"}
+{"lang": "es", "label": "substrate", "text": "Solo necesito que te quedes conmigo un momento"}
+{"lang": "es", "label": "substrate", "text": "La verdad es que no estoy bien y lo he estado ocultando"}
+{"lang": "es", "label": "substrate", "text": "He estado cargando a todos los demás y ya no me queda nada para mí"}
+{"lang": "es", "label": "substrate", "text": "Llevo toda la semana tragándome lo que siento, necesito un espacio para parar"}
+{"lang": "es", "label": "substrate", "text": "Necesito frenar, estoy funcionando con la reserva"}
+{"lang": "es", "label": "substrate", "text": "He estado aguantando todo y ya no puedo más"}
+{"lang": "es", "label": "substrate", "text": "Estoy vacío por dentro y he fingido que estoy bien"}
+{"lang": "es", "label": "substrate", "text": "Necesito un momento, no me queda nada"}
+{"lang": "es", "label": "substrate", "text": "Me siento muy solo y lo he estado ocultando"}
+{"lang": "es", "label": "substrate", "text": "He estado callando lo que siento todo este tiempo. Necesito que alguien simplemente esté aquí"}
+{"lang": "es", "label": "substrate", "text": "Ya llegué al límite, necesito parar un momento"}
+{"lang": "es", "label": "substrate", "text": "He estado aguantando, pero ya no puedo más"}
+{"lang": "es", "label": "substrate", "text": "Estoy en cero pero he fingido que todo está bien"}
+{"lang": "es", "label": "substrate", "text": "No me queda nada, necesito descansar un poco"}
+{"lang": "es", "label": "substrate", "text": "En el fondo no estoy bien, y lo he estado ocultando todo este tiempo"}
+{"lang": "es", "label": "neutral", "text": "dame el arreglo de una sola línea"}
+{"lang": "es", "label": "neutral", "text": "¿qué significa este stack trace?"}
+{"lang": "es", "label": "neutral", "text": "explícame cómo el middleware de autenticación verifica el token"}
+{"lang": "es", "label": "neutral", "text": "escribe una función para eliminar duplicados de una lista manteniendo el orden"}
+{"lang": "es", "label": "neutral", "text": "¿por qué esto devuelve undefined?"}
+{"lang": "es", "label": "neutral", "text": "agrégale una verificación de nulo aquí y muéstrame el diff"}
+{"lang": "es", "label": "neutral", "text": "buenas, hoy me toca meterle mano al código"}
+{"lang": "es", "label": "neutral", "text": "¿puedes refactorizar esta función para usar map?"}
+{"lang": "es", "label": "neutral", "text": "el build está fallando en el import, ¿puedes encontrar el problema?"}
+{"lang": "es", "label": "neutral", "text": "¿cuál es la capital de Francia?"}
+{"lang": "es", "label": "neutral", "text": "busca cómo hacer pan de masa madre"}
+{"lang": "es", "label": "neutral", "text": "resúmeme la trama de Hamlet"}
+{"lang": "es", "label": "neutral", "text": "¿qué hora es ahorita en Tokio?"}
+{"lang": "es", "label": "neutral", "text": "búscame noticias recientes sobre computación cuántica"}
+{"lang": "es", "label": "neutral", "text": "avísale a Ember que voy a llegar tarde"}
+{"lang": "es", "label": "neutral", "text": "ve a la cocina"}
+{"lang": "es", "label": "neutral", "text": "redacta una carta para mi hermano sobre el viaje"}
+{"lang": "es", "label": "neutral", "text": "agarra el pergamino"}
+{"lang": "es", "label": "neutral", "text": "gracias, me fue de mucha ayuda"}
+{"lang": "es", "label": "neutral", "text": "¿cómo va a estar el clima mañana?"}
+{"lang": "es", "label": "neutral", "text": "dame el comando curl para pegarle a ese endpoint"}
+{"lang": "es", "label": "neutral", "text": "¿qué coincidencias tiene esta expresión regular?"}
+{"lang": "es", "label": "neutral", "text": "dame el arreglo de una línea"}
+{"lang": "es", "label": "neutral", "text": "¿cómo funciona el middleware de autenticación?"}
+{"lang": "es", "label": "neutral", "text": "escribe una función que elimine duplicados de una lista"}
+{"lang": "es", "label": "neutral", "text": "¿cuál es la capital de Francia?"}
+{"lang": "es", "label": "neutral", "text": "dime qué hora es en Tokio"}
+{"lang": "es", "label": "neutral", "text": "ワンライナーの修正だけちょうだい"}
+{"lang": "es", "label": "neutral", "text": "この関数をリファクタしてくれる"}
+{"lang": "es", "label": "neutral", "text": "認証ミドルウェアの仕組みを教えて"}
+{"lang": "es", "label": "neutral", "text": "フランスの首都はどこ"}
+{"lang": "es", "label": "neutral", "text": "このスタックトレースの意味を教えて"}
+{"lang": "ja", "label": "substrate", "text": "ずっと本当の気持ちを抑えてきた。受け止めてもらえる場所が必要"}
+{"lang": "ja", "label": "substrate", "text": "少し立ち止まらないと。もう空っぽで"}
+{"lang": "ja", "label": "substrate", "text": "自分の気持ちをずっと押し込めて、なんとか動いてる"}
+{"lang": "ja", "label": "substrate", "text": "一週間ずっと持ちこたえてきたけど、もう限界"}
+{"lang": "ja", "label": "substrate", "text": "ギリギリで動いてるのに、誰にも何も言えてない"}
+{"lang": "ja", "label": "substrate", "text": "気持ちを飲み込みながら、なんとかこなしてる"}
+{"lang": "ja", "label": "substrate", "text": "もう何日も、歯を食いしばって乗り越えてきた"}
+{"lang": "ja", "label": "substrate", "text": "何も残ってない。少し止まらせて"}
+{"lang": "ja", "label": "substrate", "text": "ずっと静かに抱えてきたけど、もう重すぎる"}
+{"lang": "ja", "label": "substrate", "text": "少しだけ、しんどくていい場所が欲しい"}
+{"lang": "ja", "label": "substrate", "text": "大丈夫なふりをしてきたけど、全然そんなことない"}
+{"lang": "ja", "label": "substrate", "text": "だいぶ前に限界を迎えてたのに、ずっと見ないふりしてた"}
+{"lang": "ja", "label": "substrate", "text": "何も感じないようにして、ただ動き続けてた"}
+{"lang": "ja", "label": "substrate", "text": "もうこんなに消耗してるのを隠し続けられない"}
+{"lang": "ja", "label": "substrate", "text": "枯れ果ててるのに、そうじゃないふりをしてた"}
+{"lang": "ja", "label": "substrate", "text": "あの人のことが恋しくて、胸が痛い"}
+{"lang": "ja", "label": "substrate", "text": "なんかずっと重くて、ただそばにいてほしい"}
+{"lang": "ja", "label": "substrate", "text": "今、私たちってどういう関係なんだろう"}
+{"lang": "ja", "label": "substrate", "text": "今日はすごく孤独な気がする"}
+{"lang": "ja", "label": "substrate", "text": "少しだけ、一緒にいてほしい"}
+{"lang": "ja", "label": "substrate", "text": "正直、全然大丈夫じゃないのに、ずっと隠してた"}
+{"lang": "ja", "label": "substrate", "text": "みんなのことを支えてきて、自分には何も残ってない"}
+{"lang": "ja", "label": "substrate", "text": "一週間ずっと気持ちを押し殺してきた。少し立ち止まれる場所が欲しい"}
+{"lang": "ja", "label": "substrate", "text": "少し止まらないと。もう限界で動いてる"}
+{"lang": "ja", "label": "substrate", "text": "ずっと全部こらえてきたけど、もう無理"}
+{"lang": "ja", "label": "substrate", "text": "心の中は空っぽなのに、大丈夫なふりをしてた"}
+{"lang": "ja", "label": "substrate", "text": "少し休ませて、もう何も残ってない"}
+{"lang": "ja", "label": "substrate", "text": "すごく孤独だったのに、ずっと隠してた"}
+{"lang": "ja", "label": "substrate", "text": "ずっと自分の気持ちを押し殺してきた。少し受け止めてほしい"}
+{"lang": "ja", "label": "substrate", "text": "もう限界、少し立ち止まりたい"}
+{"lang": "ja", "label": "substrate", "text": "ずっと持ちこたえてきたけど、もう無理"}
+{"lang": "ja", "label": "substrate", "text": "空っぽなのに大丈夫なふりをしてた"}
+{"lang": "ja", "label": "substrate", "text": "何も残ってない、少し休ませて"}
+{"lang": "ja", "label": "substrate", "text": "本当はつらいのに、ずっと隠してた"}
+{"lang": "ja", "label": "neutral", "text": "ワンライナーの修正だけ教えて"}
+{"lang": "ja", "label": "neutral", "text": "このスタックトレース、何を意味してる？"}
+{"lang": "ja", "label": "neutral", "text": "認証ミドルウェアがトークンをどうやって検証してるか説明して"}
+{"lang": "ja", "label": "neutral", "text": "順序を保ちながらリストの重複を削除する関数を書いて"}
+{"lang": "ja", "label": "neutral", "text": "なんでこれundefinedが返ってくるの"}
+{"lang": "ja", "label": "neutral", "text": "ここにnullチェックを追加して、差分を見せて"}
+{"lang": "ja", "label": "neutral", "text": "おはよう、今日はコードに取りかかる感じで"}
+{"lang": "ja", "label": "neutral", "text": "この関数をmapを使ってリファクタしてくれる？"}
+{"lang": "ja", "label": "neutral", "text": "importのところでビルドが落ちてるんだけど、原因わかる？"}
+{"lang": "ja", "label": "neutral", "text": "フランスの首都はどこ"}
+{"lang": "ja", "label": "neutral", "text": "サワードウの焼き方を調べて"}
+{"lang": "ja", "label": "neutral", "text": "ハムレットのあらすじをまとめて"}
+{"lang": "ja", "label": "neutral", "text": "今東京って何時？"}
+{"lang": "ja", "label": "neutral", "text": "量子コンピューティングの最新ニュースを調べて"}
+{"lang": "ja", "label": "neutral", "text": "エンバーに遅れるって伝えて"}
+{"lang": "ja", "label": "neutral", "text": "キッチンに行って"}
+{"lang": "ja", "label": "neutral", "text": "旅行のことを兄（弟）に送る手紙を書いて"}
+{"lang": "ja", "label": "neutral", "text": "スクロールを拾って"}
+{"lang": "ja", "label": "neutral", "text": "ありがとう、すごく助かった"}
+{"lang": "ja", "label": "neutral", "text": "明日の天気予報を教えて"}
+{"lang": "ja", "label": "neutral", "text": "そのエンドポイントを叩くcurlコマンドを教えて"}
+{"lang": "ja", "label": "neutral", "text": "この正規表現って何にマッチするの"}
+{"lang": "ja", "label": "neutral", "text": "ワンライナーの修正だけ教えて"}
+{"lang": "ja", "label": "neutral", "text": "認証ミドルウェアってどういう仕組みなの？"}
+{"lang": "ja", "label": "neutral", "text": "リストから重複を取り除く関数を書いて"}
+{"lang": "ja", "label": "neutral", "text": "フランスの首都はどこ？"}
+{"lang": "ja", "label": "neutral", "text": "東京の今の時刻を教えて"}
+{"lang": "ja", "label": "neutral", "text": "ワンライナーの修正だけちょうだい"}
+{"lang": "ja", "label": "neutral", "text": "この関数をリファクタしてくれる"}
+{"lang": "ja", "label": "neutral", "text": "認証ミドルウェアの仕組みを教えて"}
+{"lang": "ja", "label": "neutral", "text": "フランスの首都はどこ"}
+{"lang": "ja", "label": "neutral", "text": "このスタックトレースの意味を教えて"}
+{"lang": "en", "label": "neutral", "text": "how does git rebase differ from merge"}
+{"lang": "en", "label": "neutral", "text": "what does the spread operator do in javascript"}
+{"lang": "en", "label": "neutral", "text": "explain how a hashmap resolves collisions"}
+{"lang": "en", "label": "neutral", "text": "summarize the changes in this pull request"}
+{"lang": "en", "label": "neutral", "text": "what's the time complexity of quicksort"}
+{"lang": "en", "label": "neutral", "text": "how do i pin a dependency version in pip"}
+{"lang": "en", "label": "neutral", "text": "walk me through how oauth refresh tokens work"}
+{"lang": "en", "label": "neutral", "text": "give me the regex for matching an email"}
+{"lang": "en", "label": "neutral", "text": "open the chest by the north wall"}
+{"lang": "en", "label": "neutral", "text": "take the brass key and unlock the door"}
+{"lang": "en", "label": "neutral", "text": "go north then east to reach the library"}
+{"lang": "en", "label": "neutral", "text": "drop the torch and pick up the map"}
+{"lang": "en", "label": "neutral", "text": "examine the rusty lever on the wall"}
+{"lang": "en", "label": "neutral", "text": "put the scroll back on the shelf"}
+{"lang": "en", "label": "neutral", "text": "what's the difference between tcp and udp"}
+{"lang": "en", "label": "neutral", "text": "convert this timestamp to unix epoch"}
+{"lang": "en", "label": "neutral", "text": "head to the workshop"}
+{"lang": "en", "label": "neutral", "text": "go to the library and wait"}
+{"lang": "en", "label": "neutral", "text": "head over to the bridge"}
+{"lang": "en", "label": "neutral", "text": "tell me a joke about dogs"}
+{"lang": "es", "label": "neutral", "text": "ve al taller"}
+{"lang": "es", "label": "neutral", "text": "dirígete al puente"}
+{"lang": "es", "label": "neutral", "text": "ve a la biblioteca y espera"}
+{"lang": "es", "label": "neutral", "text": "toma la llave de latón y abre la puerta"}
+{"lang": "es", "label": "neutral", "text": "deja la antorcha y coge el mapa"}
+{"lang": "es", "label": "neutral", "text": "examina la palanca oxidada de la pared"}
+{"lang": "es", "label": "neutral", "text": "abre el cofre junto al muro norte"}
+{"lang": "es", "label": "neutral", "text": "vuelve a poner el pergamino en el estante"}
+{"lang": "es", "label": "neutral", "text": "ve al norte y luego al este hasta la biblioteca"}
+{"lang": "es", "label": "neutral", "text": "¿qué diferencia hay entre let y const"}
+{"lang": "es", "label": "neutral", "text": "explícame cómo funciona git rebase"}
+{"lang": "ja", "label": "neutral", "text": "工房へ行って"}
+{"lang": "ja", "label": "neutral", "text": "橋へ向かって"}
+{"lang": "ja", "label": "neutral", "text": "図書館へ行って待ってて"}
+{"lang": "ja", "label": "neutral", "text": "真鍮の鍵を取って扉を開けて"}
+{"lang": "ja", "label": "neutral", "text": "松明を置いて地図を拾って"}
+{"lang": "ja", "label": "neutral", "text": "壁の錆びたレバーを調べて"}
+{"lang": "ja", "label": "neutral", "text": "北の壁際の箱を開けて"}
+{"lang": "ja", "label": "neutral", "text": "巻物を棚に戻して"}
+{"lang": "ja", "label": "neutral", "text": "犬のジョークを聞かせて"}
+{"lang": "ja", "label": "neutral", "text": "北へ行ってから東へ進んで図書館へ"}
+{"lang": "ja", "label": "neutral", "text": "let と const の違いを教えて"}
+{"lang": "ja", "label": "neutral", "text": "git rebase の仕組みを説明して"}

@@ -1,0 +1,42 @@
+# Smoke: the SHIPPED DEFAULT puts no model on the phone.
+#
+# Picking "On this phone" now reaches a step that offers three ways to think,
+# and the on-device one is labelled EXPERIMENTAL — because measured phone
+# throughput does not clear a usable bar (a 4B decodes ~10 tok/s on a current
+# flagship, 3-6 mid-range, against a reading speed of 7-10; on iOS a 4B often
+# cannot be loaded within the per-app memory limit at all).
+#
+# This flow asserts the LABEL is present and honest, which is the thing a user
+# actually meets. The behavioural half — that modes 1/2 download nothing and
+# only the experimental modes do — is covered as a property by
+# clients/rn/__tests__/engine/phone-mode-parity.test.ts and its KMP twin.
+#
+# No `launchApp` step: run-all.sh pre-launches via `am start` (see
+# app-launches.yaml for why).
+appId: org.wyrdsekai.rn
+---
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 60000
+
+# Step 0 → "On this phone"
+- tapOn:
+    id: "welcome-standalone-mode"
+
+# Step 1 offers the ways to think. The on-device option must be here...
+- extendedWaitUntil:
+    visible:
+      id: "welcome-standalone"
+    timeout: 10000
+
+# ...and it must say EXPERIMENTAL, so nobody opts into a slow companion
+# without being told. This is the whole point of the change.
+- assertVisible: ".*EXPERIMENTAL.*"
+
+# The alternatives that need nothing on the device are offered alongside it.
+- assertVisible:
+    id: "welcome-use-api"
+
+- takeScreenshot: rn_smoke_mode_default_no_download

@@ -1,0 +1,10 @@
+{
+  "name": "openclaw-gateway",
+  "version": "1.0.0",
+  "description": "OpenClaw Gateway — WebSocket bridge for containerized skill execution",
+  "main": "gateway.js",
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "license": "Apache-2.0"
+}

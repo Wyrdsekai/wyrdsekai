@@ -1,0 +1,25 @@
+# Smoke: KMP app launches and shows the Welcome screen (step 0: "where does
+# your companion live?").
+#
+# 2026-07-29: this flow had asserted `welcome-server-url` on step 0. The screen
+# was redesigned to a two-card chooser and that field now lives behind the
+# server-inference toggle on a later step, so the assertion had been testing a
+# UI that no longer exists there. Re-pointed at the cards step 0 renders.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+# welcome-title is a leaf Text node — Compose surfaces leaf testTags reliably
+# to Maestro. (Container-level testTags on Column/Scaffold are fragile.)
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- assertVisible:
+    id: "welcome-home-zone"
+- assertVisible:
+    id: "welcome-standalone-mode"
+
+- takeScreenshot: kmp_smoke_app_launches

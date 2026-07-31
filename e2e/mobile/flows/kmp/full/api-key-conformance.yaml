@@ -1,0 +1,39 @@
+# Full: KMP — Cloud-API onboarding (Anthropic) end-to-end on emulator
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/api-key-onboard.yaml
+
+- takeScreenshot: kmp_apikey_conf_00_landed
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine me"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_apikey_conf_01_examine_me
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "rename me ClaudeUser"
+- tapOn:
+    id: "standalone-send-button"
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: kmp_apikey_conf_02_rename_me
+
+# Use say verb (leading apostrophe) — bare text falls through to
+# "Huh? unknown verb" in standalone mode. `'hello` routes through
+# the room engine's say handler, which on KMP triggers companion
+# inference if a companion is present and an inferenceUrl is configured.
+- tapOn:
+    id: "standalone-input"
+- inputText: "'hello"
+- tapOn:
+    id: "standalone-send-button"
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 60000
+- takeScreenshot: kmp_apikey_conf_03_companion_replied

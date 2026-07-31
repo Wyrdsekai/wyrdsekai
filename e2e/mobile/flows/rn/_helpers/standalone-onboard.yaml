@@ -1,0 +1,34 @@
+# Helper: RN — Welcome wizard → "Just explore on my own" → standalone room
+#
+# Pure-standalone path (no server, no API key). PhoneNode boots the local
+# engine and renders StandaloneRoomScreen. Used by the standalone-mode
+# conformance flow which exercises §2.2/§4/§7.4 against the engine directly.
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+# Step 0 → step 1: "I don't have a server"
+- tapOn:
+    id: "welcome-no-server"
+
+# Step 1 → standalone: "Just explore on my own"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-standalone"
+    timeout: 5000
+- tapOn:
+    id: "welcome-standalone"
+
+# RN routes Welcome → Birth (boots PhoneNode + model) → Standalone.
+# Birth-then-Standalone can take 30–90s on a cold start, so use the
+# CONNECT_TIMEOUT (default 120s) rather than a hardcoded 60s.
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: ${CONNECT_TIMEOUT}

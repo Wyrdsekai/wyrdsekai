@@ -1,0 +1,46 @@
+# Full: RN — Cloud-API onboarding (Anthropic) end-to-end on emulator
+#
+# Proves the "I have an API key" Welcome path works end-to-end:
+#   1. Wizard accepts Anthropic key + lands in Standalone
+#   2. Same §2.2/§4/§7.4 engine commands still work (local-engine logic
+#      doesn't change just because inferenceUrl is set)
+#   3. Companion replies to non-command input (inference fires through
+#      to api.anthropic.com/v1/chat/completions w/ x-api-key)
+#
+# Pass the key via env: maestro test -e ANTHROPIC_API_KEY=$(cat ~/claudeapi.txt)
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/api-key-onboard.yaml
+
+- takeScreenshot: rn_apikey_conf_00_landed
+
+# Engine conformance still holds under cloud-API mode.
+- tapOn:
+    id: "standalone-input"
+- inputText: "examine me"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_apikey_conf_01_examine_me
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "rename me ClaudeUser"
+- pressKey: Enter
+- assertVisible:
+    id: "standalone-prose-list"
+- takeScreenshot: rn_apikey_conf_02_rename_me
+
+# Inference fires: use the say verb (leading apostrophe) — bare text
+# falls through to "Huh? unknown verb" in standalone mode. `'hello`
+# routes through phoneNode.say → CompanionEngine → inference router →
+# api.anthropic.com /v1/chat/completions with x-api-key.
+- tapOn:
+    id: "standalone-input"
+- inputText: "'hello"
+- pressKey: Enter
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 60000
+- takeScreenshot: rn_apikey_conf_03_companion_replied

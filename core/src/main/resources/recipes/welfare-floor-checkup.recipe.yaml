@@ -1,0 +1,70 @@
+# welfare-floor checkup recipe (#1132).
+#
+# The first OBSERVABILITY recipe. Every other recipe is deploys:true — it runs
+# only when there's something to CHANGE. None periodically asks "are my floors
+# still met? is maintenance due?" and surfaces drift WITHOUT mutating anything.
+# This is that recipe.
+#
+# It scans the household's own SQL stores (soul_fragments + memory graph) and
+# emits a structured health report: total/stale/duplicate/overdue counts plus
+# a maintenance_due list naming which maintenance recipes the numbers suggest
+# running. The report flows to the steward via the scheduler's Chronicle/Forge
+# ingestion of completed runs. NOTHING is deployed, pruned, re-embedded, or
+# trained — hence deploys:false and no welfare gates (there's no destructive
+# action to gate). A scheduled staleness signal here would have flagged the
+# 2026-05-29 SetFit migration tail on its own.
+#
+# Cheap: pure SQLite COUNTs + an in-memory normalize pass, CPU-only, ~1s.
+# Ship-default-enrolled like consolidate-memory-graph (only needs agent_did);
+# read-only, so safe to auto-fire on cadence.
+recipe: welfare-floor-checkup
+version: 0.1.0
+description: >
+  Read-only household health checkup. Reports soul-fragment + memory-graph
+  staleness/duplication/overdue counts and recommends which maintenance
+  recipes are due. Deploys nothing, mutates nothing.
+deploys: false
+ownership: run
+
+# No prefers_hours — read-only and trivial, runs anytime.
+
+params:
+  jdbc_url:
+    type: string
+    default: ""
+  agent_did:
+    type: string
+    required: true
+  # Staleness baseline — must match EmbeddingModel.PARAPHRASE_L12.version().
+  target_model:
+    type: string
+    default: "multilingual-MiniLM-L12-v2-2026-04-30"
+
+steps:
+  - id: fragments-health
+    kind: SHELL
+    timeout: 2m
+    command: |-
+      python3 scripts/recipe/floor_checkup.py fragments-health \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}' \
+        --target-model '{{target_model}}'
+
+  - id: graph-health
+    kind: SHELL
+    timeout: 2m
+    command: |-
+      python3 scripts/recipe/floor_checkup.py graph-health \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'
+
+  - id: report
+    kind: SHELL
+    timeout: 1m
+    # Composes the two health passes into a single report with a
+    # maintenance_due list + checkup_ok flag. This is the deliverable the
+    # scheduler's Chronicle/Forge ingestion surfaces to the steward.
+    command: |-
+      python3 scripts/recipe/floor_checkup.py report \
+        --jdbc-url "${WYRDSEKAI_JDBC_URL:-{{jdbc_url}}}" \
+        --agent-did '{{agent_did}}'

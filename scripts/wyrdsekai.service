@@ -1,0 +1,32 @@
+[Unit]
+Description=Wyrdsekai Server
+Documentation=https://github.com/wyrdsekai/wyrdsekai
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=%h/.wyrdsekai/env
+WorkingDirectory=%h/.wyrdsekai
+
+ExecStart=%h/.wyrdsekai/bin/server
+ExecStartPre=/bin/sh -c 'echo "Starting Wyrdsekai server..."'
+
+# Crash recovery — restart on failure with backoff
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wyrdsekai
+
+# Resource limits
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

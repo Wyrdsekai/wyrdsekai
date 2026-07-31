@@ -1,0 +1,7 @@
+{
+  "type": "command",
+  "id": "msg-009",
+  "command": "inventory",
+  "args": [],
+  "payload": {}
+}

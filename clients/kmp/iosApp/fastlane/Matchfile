@@ -1,0 +1,7 @@
+storage_mode("local")
+local_storage_path("fastlane/certs")
+
+type("development")
+
+app_identifier("org.wyrdsekai.kmp")
+username(ENV["WYRD_APPLE_ID"] || "")

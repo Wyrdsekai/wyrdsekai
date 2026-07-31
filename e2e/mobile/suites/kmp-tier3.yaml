@@ -1,0 +1,14 @@
+# KMP Tier 3 — mirror of rn-tier3 against the KMP client.
+appId: org.wyrdsekai.kmp
+env:
+  SERVER_URL: "http://192.0.2.105:7099"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "180000"
+---
+- runFlow: ../flows/kmp/tier3/companion-reply.yaml
+- runFlow: ../flows/kmp/tier3/study-journal.yaml
+- runFlow: ../flows/kmp/tier3/cross-zone-tell.yaml
+- runFlow: ../flows/kmp/tier3/ember-library.yaml

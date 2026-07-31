@@ -1,0 +1,14 @@
+{
+  "type": "prose",
+  "seq": 2,
+  "speaker": "Guide",
+  "text": "Welcome, traveler. The Nexus connects all rooms in this zone.",
+  "hints": [
+    { "label": "Ask about rooms", "intent": "ask_rooms", "action": "say", "labelKey": null }
+  ],
+  "structured": null,
+  "priority": "normal",
+  "lang": "en",
+  "isAiGenerated": true,
+  "blocks": []
+}

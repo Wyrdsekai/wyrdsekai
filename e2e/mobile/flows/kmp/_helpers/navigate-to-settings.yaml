@@ -1,0 +1,12 @@
+# Helper: KMP — Connect and open settings
+appId: org.wyrdsekai.kmp
+---
+- runFlow: register-and-connect.yaml
+
+- tapOn:
+    id: "settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000

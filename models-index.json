@@ -1,0 +1,93 @@
+{
+  "index_version": 1,
+  "updated": "2026-07-27",
+  "notes": "Release index of model material blessed for THIS code release. Ships with every install (/opt/wyrdsekai/models-index.json). `wyrd model status` compares a node's local manifest against this file; `wyrd model update` downloads exactly these bytes (pinned hf_revision + sha256). Publishing a new model = new versioned entry + pinned revision here, gated by the release battery (see Append/replace entries only via that process. DOWNLOAD ORDER (2026-07-27): HuggingFace FIRST, built from hf_repo + the pinned hf_revision, then `url` as the fallback. HF is a global CDN and costs us nothing, which keeps a popular week from saturating the host that also serves the website. The 2026-07-13 note said the opposite — HF's Xet CAS backend was answering 403 to curl/wget, so weights were served from wyrdsekai.org instead. Re-tested 2026-07-27: plain curl now follows the Xet redirect to a 200 and range requests work, verified against the pinned revisions with matching content-length. Both mirrors stay wired precisely because that behaviour changed once and can change again; sha256 is verified after download whichever origin answered.",
+  "models": [
+    {
+      "id": "drive-9b",
+      "kind": "llm-drive",
+      "version": "v6",
+      "published_file": "wyrdsekai-3.5-9b-drive-v6-q4km.gguf",
+      "local_file": "wyrdsekai-3.5-9b-drive-v6-q4km.gguf",
+      "sha256": "ad0e2b8d925422912f2a2f32d95e93fdff55d3a014d8b7c51551a5891fb24355",
+      "size": 5629108672,
+      "hf_repo": "wyrdsekai/drive-3.5-9b-gguf",
+      "hf_revision": "23a997de7ae9ad5c1f485abb8d7510c3324c351a",
+      "url": "https://wyrdsekai.org/models/wyrdsekai-3.5-9b-drive-v6-q4km.gguf",
+      "notes": "Drive/reasoning model. 16GB-tier hosts. Immutable-per-version filename; tag v6.",
+      "hf_tag": "v6",
+      "mirror_url": "https://huggingface.co/wyrdsekai/drive-3.5-9b-gguf/resolve/23a997de7ae9ad5c1f485abb8d7510c3324c351a/wyrdsekai-3.5-9b-drive-v6-q4km.gguf"
+    },
+    {
+      "id": "companion-4b",
+      "kind": "llm-voice",
+      "version": "v10",
+      "published_file": "wyrdsekai-3.5-4b-v10-q4km.gguf",
+      "local_file": "wyrdsekai-3.5-4b-v10-q4km.gguf",
+      "sha256": "33f08fed2e86e69a75353e95567261f6524285693efb0c297cd5fbe3e25c663e",
+      "size": 2708803968,
+      "hf_repo": "wyrdsekai/companion-3.5-4b-gguf",
+      "hf_revision": "ae269d6b0ab803b3fd4e7786f73f9d181c06ad81",
+      "url": "https://wyrdsekai.org/models/wyrdsekai-3.5-4b-v10-q4km.gguf",
+      "notes": "Companion voice model (V10 targeted replay). Immutable-per-version filename; tag v10. local_file == published_file (rename-on-download abolished 2026-07-09).",
+      "hf_tag": "v10",
+      "mirror_url": "https://huggingface.co/wyrdsekai/companion-3.5-4b-gguf/resolve/ae269d6b0ab803b3fd4e7786f73f9d181c06ad81/wyrdsekai-3.5-4b-v10-q4km.gguf"
+    },
+    {
+      "id": "embedding-bge-m3",
+      "kind": "embedding",
+      "version": "bge-m3-2026-04-30",
+      "published_file": "onnx/model_quantized.onnx",
+      "local_file": "bge-m3-q8.onnx",
+      "sha256": "0826f8c1ab9edf1801db86c61919d4d108e8bfc0b809ec823ad366882ff0b77d",
+      "size": 569694530,
+      "hf_repo": "Xenova/bge-m3",
+      "hf_revision": "4de13258303883538bd53b696b452bf8099f0858",
+      "url": "https://wyrdsekai.org/models/bge-m3-q8.onnx",
+      "mirror_url": "https://huggingface.co/Xenova/bge-m3/resolve/4de13258303883538bd53b696b452bf8099f0858/onnx/model_quantized.onnx",
+      "tokenizer_url": "https://wyrdsekai.org/models/bge-m3-tokenizer.json",
+      "notes": "Retrieval embedding, 1024d. Third-party (Xenova); revision-pinned. sha256 captured from a verified node 2026-07-09. Mirrored on wyrdsekai.org 2026-07-28 (bytes copied from the pinned revision and hash-checked) so an HF outage cannot strand the encoder upgrade — previously both index URLs pointed at HF, which is no fallback at all."
+    },
+    {
+      "id": "embedding-paraphrase-l12",
+      "kind": "embedding",
+      "version": "multilingual-MiniLM-L12-v2",
+      "published_file": "onnx/model_quantized.onnx",
+      "local_file": "paraphrase-multilingual-MiniLM-L12-v2-q8.onnx",
+      "sha256": "66fc00f5f29afcaff34092e1bdd20008ca3918265a82fb9695a551e510cc4ebc",
+      "size": 118308126,
+      "hf_repo": "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+      "hf_revision": "2c4055b12046f11709e9df2c122e59ffbdc2f900",
+      "url": "https://wyrdsekai.org/models/paraphrase-multilingual-MiniLM-L12-v2-q8.onnx",
+      "notes": "Bundled-default embedding + classifier encoder, 384d. Third-party (Xenova); revision-pinned.",
+      "mirror_url": "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/onnx/model_quantized.onnx",
+      "tokenizer_url": "https://wyrdsekai.org/models/paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json"
+    },
+    {
+      "id": "voice-vectors-v8",
+      "kind": "voice-vectors",
+      "version": "v8",
+      "published_file": null,
+      "local_file": "vectors/v8/",
+      "sha256": null,
+      "size": null,
+      "hf_repo": null,
+      "hf_revision": null,
+      "url": null,
+      "notes": "V8 voice-steering vectors (anti_defiance, es_register_hold, refusal_stability, first_person_presence). Bundled in installers, git-tracked; trained FOR companion-4b v10 — re-bake required when the voice model changes."
+    },
+    {
+      "id": "classifier-setfit-encoder",
+      "kind": "classifier-encoder",
+      "version": "v1",
+      "published_file": "paraphrase-multilingual-MiniLM-L12-v2-setfit-q8.onnx",
+      "local_file": "paraphrase-multilingual-MiniLM-L12-v2-setfit-q8.onnx",
+      "sha256": "7fe54709262c75d4722f36b39e5caae73185303aafe41c37e47d3b94eba7402d",
+      "size": 118049319,
+      "hf_repo": "wyrdsekai/embedding-models",
+      "hf_revision": "6960f57fb07b037efd589ddbd4c71d7fa7f3705f",
+      "url": "https://wyrdsekai.org/models/paraphrase-multilingual-MiniLM-L12-v2-setfit-q8.onnx",
+      "note": "SetFit-tuned routing encoder. Not a general embedding model: it is the classifier head's encoder, and without it routing falls back to the stock retrieval encoder with measurably worse accuracy. Gitignored because it is 113MB of build output, which is why build-dist.sh fetches it rather than expecting it in the tree — before that, nobody outside the author's machines could build an installer at all."
+    }
+  ]
+}

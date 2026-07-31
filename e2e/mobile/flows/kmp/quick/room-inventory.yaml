@@ -1,0 +1,19 @@
+# Quick: KMP — local-mode "use library_card" basic interaction
+# (LocalRoomScreen has no separate inventory overlay — verifying typed verb path instead)
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "/inventory"
+
+- tapOn:
+    id: "standalone-send-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 5000
+
+- takeScreenshot: kmp_quick_room_inventory

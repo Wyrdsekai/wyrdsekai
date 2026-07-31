@@ -1,0 +1,1464 @@
+{
+  "version": 1,
+  "echoPolicy": "Every mapped SEND echoes the trimmed input as a muted system line: '> {input}'. Terminal-style, never a speech bubble \u2014 'You: l' read as the player SAYING l. Local/ignore mappings echo nothing. Conformance tests derive the expected echo as '> ' + trimmed input for every frame case.",
+  "comment": "EXECUTABLE client-parity contract for the LIVE-SESSION interaction layer (relay-tunnel terminals). Both clients' conformance tests read THIS file and drive their pure mappers against it: KMP shared/src/desktopTest/.../ParityConformanceTest.kt and RN __tests__/engine/transit/parity-conformance.test.ts. Change behavior HERE first; a client that drifts fails its build. Frames are compared on semantic fields only \u2014 id/roomId/seq are client-filled and stripped before comparison.",
+  "hintsFixture": [
+    {
+      "label": "Read the letter",
+      "intent": "use",
+      "action": "use:letter"
+    },
+    {
+      "label": "Sit by the fire",
+      "intent": "say",
+      "action": "say:I sit by the fire"
+    },
+    {
+      "label": "Look around",
+      "intent": "look",
+      "action": "look"
+    }
+  ],
+  "input": [
+    {
+      "name": "look-word",
+      "input": "look",
+      "expect": {
+        "frame": {
+          "type": "look"
+        }
+      }
+    },
+    {
+      "name": "look-l",
+      "input": "l",
+      "expect": {
+        "frame": {
+          "type": "look"
+        }
+      }
+    },
+    {
+      "name": "examine",
+      "input": "examine lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-ex",
+      "input": "ex lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-exam",
+      "input": "exam lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-inspect",
+      "input": "inspect lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-x",
+      "input": "x lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-look-at",
+      "input": "look at lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-l-at",
+      "input": "l at lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "lantern"
+        }
+      }
+    },
+    {
+      "name": "examine-case-preserved",
+      "input": "examine Brass Lantern",
+      "expect": {
+        "frame": {
+          "type": "examine",
+          "target": "Brass Lantern"
+        }
+      }
+    },
+    {
+      "name": "go-word",
+      "input": "go north",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "north"
+        }
+      }
+    },
+    {
+      "name": "go-move",
+      "input": "move north",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "north"
+        }
+      }
+    },
+    {
+      "name": "go-alias",
+      "input": "go n",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "north"
+        }
+      }
+    },
+    {
+      "name": "go-alias-case",
+      "input": "go NE",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "northeast"
+        }
+      }
+    },
+    {
+      "name": "bare-direction",
+      "input": "north",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "north"
+        }
+      }
+    },
+    {
+      "name": "bare-alias",
+      "input": "n",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "north"
+        }
+      }
+    },
+    {
+      "name": "bare-out",
+      "input": "out",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "out"
+        }
+      }
+    },
+    {
+      "name": "bare-back",
+      "input": "back",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "back"
+        }
+      }
+    },
+    {
+      "name": "bare-cjk-north",
+      "input": "\u5317",
+      "expect": {
+        "frame": {
+          "type": "go",
+          "direction": "north"
+        }
+      }
+    },
+    {
+      "name": "take",
+      "input": "take lantern",
+      "expect": {
+        "frame": {
+          "type": "take",
+          "objectName": "lantern"
+        }
+      }
+    },
+    {
+      "name": "take-get",
+      "input": "get lantern",
+      "expect": {
+        "frame": {
+          "type": "take",
+          "objectName": "lantern"
+        }
+      }
+    },
+    {
+      "name": "take-pick-up",
+      "input": "pick up lantern",
+      "expect": {
+        "frame": {
+          "type": "take",
+          "objectName": "lantern"
+        }
+      }
+    },
+    {
+      "name": "take-case-preserved",
+      "input": "take Brass Lantern",
+      "expect": {
+        "frame": {
+          "type": "take",
+          "objectName": "Brass Lantern"
+        }
+      }
+    },
+    {
+      "name": "drop",
+      "input": "drop lantern",
+      "expect": {
+        "frame": {
+          "type": "drop",
+          "objectName": "lantern"
+        }
+      }
+    },
+    {
+      "name": "drop-put-down",
+      "input": "put down lantern",
+      "expect": {
+        "frame": {
+          "type": "drop",
+          "objectName": "lantern"
+        }
+      }
+    },
+    {
+      "name": "use",
+      "input": "use lantern",
+      "expect": {
+        "frame": {
+          "type": "use",
+          "objectName": "lantern",
+          "target": null
+        }
+      }
+    },
+    {
+      "name": "say-word",
+      "input": "say hello there",
+      "expect": {
+        "frame": {
+          "type": "say",
+          "text": "hello there"
+        }
+      }
+    },
+    {
+      "name": "say-apostrophe",
+      "input": "'hello",
+      "expect": {
+        "frame": {
+          "type": "say",
+          "text": "hello"
+        }
+      }
+    },
+    {
+      "name": "say-quote",
+      "input": "\"hello",
+      "expect": {
+        "frame": {
+          "type": "say",
+          "text": "hello"
+        }
+      }
+    },
+    {
+      "name": "emote-colon",
+      "input": ":waves",
+      "expect": {
+        "frame": {
+          "type": "emote",
+          "text": "waves"
+        }
+      }
+    },
+    {
+      "name": "emote-semicolon",
+      "input": ";waves",
+      "expect": {
+        "frame": {
+          "type": "emote",
+          "text": "waves"
+        }
+      }
+    },
+    {
+      "name": "emote-word",
+      "input": "emote waves happily",
+      "expect": {
+        "frame": {
+          "type": "emote",
+          "text": "waves happily"
+        }
+      }
+    },
+    {
+      "name": "emote-blank-ignored",
+      "input": ":",
+      "expect": {
+        "local": {
+          "kind": "ignore"
+        }
+      }
+    },
+    {
+      "name": "tell-forwards-as-say",
+      "input": "tell riko hello there",
+      "expect": {
+        "frame": {
+          "type": "say",
+          "text": "tell riko hello there"
+        }
+      }
+    },
+    {
+      "name": "whisper-forwards-as-say",
+      "input": "whisper riko hello",
+      "expect": {
+        "frame": {
+          "type": "say",
+          "text": "whisper riko hello"
+        }
+      }
+    },
+    {
+      "name": "tell-gt-forwards-as-say",
+      "input": ">riko hello",
+      "expect": {
+        "frame": {
+          "type": "say",
+          "text": ">riko hello"
+        }
+      }
+    },
+    {
+      "name": "actions-menu",
+      "input": "actions",
+      "expect": {
+        "local": {
+          "kind": "text",
+          "speaker": "system",
+          "text": "Things to do here:\n  [1] Read the letter\n  [2] Sit by the fire\n  [3] Look around\n(type a number to choose)"
+        }
+      }
+    },
+    {
+      "name": "actions-menu-slash",
+      "input": "/actions",
+      "expect": {
+        "local": {
+          "kind": "text",
+          "speaker": "system",
+          "text": "Things to do here:\n  [1] Read the letter\n  [2] Sit by the fire\n  [3] Look around\n(type a number to choose)"
+        }
+      }
+    },
+    {
+      "name": "actions-menu-empty",
+      "input": "actions",
+      "hints": "none",
+      "expect": {
+        "local": {
+          "kind": "text",
+          "speaker": "system",
+          "text": "Nothing to do here right now."
+        }
+      }
+    },
+    {
+      "name": "number-selects-hint",
+      "input": "2",
+      "expect": {
+        "frame": {
+          "type": "hint_select",
+          "index": 1
+        }
+      }
+    },
+    {
+      "name": "number-first-hint",
+      "input": "1",
+      "expect": {
+        "frame": {
+          "type": "hint_select",
+          "index": 0
+        }
+      }
+    },
+    {
+      "name": "number-out-of-range-forwards",
+      "input": "9",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "9",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "number-zero-forwards",
+      "input": "0",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "0",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "number-no-hints-forwards",
+      "input": "2",
+      "hints": "none",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "2",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "map-forwards",
+      "input": "map",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "map",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "where-forwards",
+      "input": "where",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "where",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "who-forwards",
+      "input": "who",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "who",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "help-bare-forwards",
+      "input": "help",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "help",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "path-forwards-args",
+      "input": "path the forge",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "path",
+          "args": [
+            "the",
+            "forge"
+          ],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "unknown-verb-forwards",
+      "input": "dance with riko",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "dance",
+          "args": [
+            "with",
+            "riko"
+          ],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "rename-forwards",
+      "input": "rename me Ana",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "rename",
+          "args": [
+            "me",
+            "Ana"
+          ],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "slash-help-local",
+      "input": "/help",
+      "expect": {
+        "local": {
+          "kind": "text",
+          "speaker": "system",
+          "textStartsWith": "Commands:"
+        }
+      }
+    },
+    {
+      "name": "slash-socials-local",
+      "input": "/socials",
+      "expect": {
+        "local": {
+          "kind": "text",
+          "speaker": "system",
+          "textStartsWith": "Social emotes"
+        }
+      }
+    },
+    {
+      "name": "slash-inventory-normalized",
+      "input": "/inventory",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "inventory",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "slash-i-normalized",
+      "input": "/i",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "inventory",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "slash-unknown-forwards",
+      "input": "/who",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "who",
+          "args": [],
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "slash-unknown-args-forward",
+      "input": "/seal study",
+      "expect": {
+        "frame": {
+          "type": "command",
+          "command": "seal",
+          "args": [
+            "study"
+          ],
+          "payload": {}
+        }
+      }
+    }
+  ],
+  "s2cRender": [
+    {
+      "name": "prose-renders-speaker-text",
+      "frame": {
+        "type": "prose",
+        "seq": 1,
+        "speaker": "riko",
+        "text": "The kettle is warm.",
+        "hints": [],
+        "style": "normal"
+      },
+      "expect": {
+        "prose": [
+          {
+            "speaker": "riko",
+            "text": "The kettle is warm."
+          }
+        ],
+        "roomUpdate": false
+      }
+    },
+    {
+      "name": "room-state-prints-and-updates",
+      "frame": {
+        "type": "room_state",
+        "seq": 2,
+        "room": {
+          "roomId": "study-1",
+          "name": "The Study",
+          "description": "Shelves climb every wall \u2014 a lamp hums.",
+          "zone": "neo",
+          "aliases": [],
+          "exits": [
+            {
+              "direction": "out",
+              "label": "the hall",
+              "targetRoom": "hall-1"
+            }
+          ],
+          "entities": [
+            {
+              "id": "riko",
+              "name": "riko",
+              "type": "agent",
+              "description": "your companion"
+            }
+          ],
+          "objects": [],
+          "hints": []
+        },
+        "inventory": []
+      },
+      "expect": {
+        "prose": [
+          {
+            "speaker": "narrator",
+            "text": "The Study\nShelves climb every wall \u2014 a lamp hums."
+          }
+        ],
+        "roomUpdate": true
+      }
+    },
+    {
+      "name": "state-change-narrator",
+      "frame": {
+        "type": "state_change",
+        "seq": 3,
+        "objectId": "fire-1",
+        "description": "The fire settles into embers."
+      },
+      "expect": {
+        "prose": [
+          {
+            "speaker": "narrator",
+            "text": "The fire settles into embers."
+          }
+        ],
+        "roomUpdate": false
+      }
+    },
+    {
+      "name": "error-prefixed-system",
+      "frame": {
+        "type": "error",
+        "seq": 4,
+        "code": "no_exit",
+        "message": "There is no exit in that direction."
+      },
+      "expect": {
+        "prose": [
+          {
+            "speaker": "system",
+            "text": "Error: There is no exit in that direction."
+          }
+        ],
+        "roomUpdate": false
+      }
+    },
+    {
+      "name": "map-data-renders-text",
+      "frame": {
+        "type": "map_data",
+        "seq": 5,
+        "command": "map",
+        "textMap": "  [Study]--[Hall]  ",
+        "topology": null,
+        "path": []
+      },
+      "expect": {
+        "prose": [
+          {
+            "speaker": "system",
+            "text": "  [Study]--[Hall]  "
+          }
+        ],
+        "roomUpdate": false
+      }
+    },
+    {
+      "name": "map-data-blank-renders-nothing",
+      "frame": {
+        "type": "map_data",
+        "seq": 6,
+        "command": "map",
+        "textMap": "   ",
+        "topology": null,
+        "path": []
+      },
+      "expect": {
+        "prose": [],
+        "roomUpdate": false
+      }
+    }
+  ],
+  "inferenceRouting": {
+    "comment": "Per-role backend order. VOICE prefers the device \u2014 the on-device model IS voice-class. DRIVE borrows first because planning and tool emission want the 9B the phone does not have. `local` stays LAST in the drive chain rather than being removed: with nothing to borrow from, the phone is genuinely standalone and a 4B attempting drive beats refusing to think. That is the whole 'standalone attempts drive' rule \u2014 it falls out of the ordering, so there is no mode test to drift. A pin moves one backend to the front and never removes the others, so a pinned-but-unreachable backend degrades instead of failing the request.",
+    "cases": [
+      {
+        "name": "voice prefers the device",
+        "role": "voice",
+        "available": [
+          "local",
+          "remote",
+          "server"
+        ],
+        "expectChain": [
+          "local",
+          "remote",
+          "server"
+        ],
+        "expectServedBy": "local"
+      },
+      {
+        "name": "voice falls through when no model is loaded",
+        "role": "voice",
+        "available": [
+          "remote",
+          "server"
+        ],
+        "expectChain": [
+          "local",
+          "remote",
+          "server"
+        ],
+        "expectServedBy": "remote"
+      },
+      {
+        "name": "drive borrows first",
+        "role": "drive",
+        "available": [
+          "local",
+          "remote",
+          "server"
+        ],
+        "expectChain": [
+          "remote",
+          "server",
+          "local"
+        ],
+        "expectServedBy": "remote"
+      },
+      {
+        "name": "drive prefers the household over the cloud",
+        "role": "drive",
+        "available": [
+          "remote",
+          "server"
+        ],
+        "expectChain": [
+          "remote",
+          "server",
+          "local"
+        ],
+        "expectServedBy": "remote"
+      },
+      {
+        "name": "truly standalone: drive attempts the on-device model",
+        "role": "drive",
+        "available": [
+          "local"
+        ],
+        "expectChain": [
+          "remote",
+          "server",
+          "local"
+        ],
+        "expectServedBy": "local"
+      },
+      {
+        "name": "nothing configured is an error, not a silent no-op",
+        "role": "drive",
+        "available": [],
+        "expectChain": [
+          "remote",
+          "server",
+          "local"
+        ],
+        "expectServedBy": null
+      },
+      {
+        "name": "pin moves a backend up without removing the rest",
+        "role": "voice",
+        "pin": "server",
+        "available": [
+          "local",
+          "server"
+        ],
+        "expectChain": [
+          "server",
+          "local",
+          "remote"
+        ],
+        "expectServedBy": "server"
+      },
+      {
+        "name": "pinned-but-unreachable degrades to the next option",
+        "role": "voice",
+        "pin": "remote",
+        "available": [
+          "local"
+        ],
+        "expectChain": [
+          "remote",
+          "local",
+          "server"
+        ],
+        "expectServedBy": "local"
+      }
+    ]
+  },
+  "phoneMode": {
+    "comment": "Mode decision from TWO axes: does the phone want its own node, and where does inference come from. 'has a home zone' alone can never decide \u2014 modes 1 and 4 both have one, and assuming otherwise conflates a terminal with a phone that runs its own node. `expectMode: null` means undecided, which must surface as a finish-setup state, never a silent fallback. onDeviceModelViable is the gate on running a model on the device at all, and it is FALSE by default: measured phone throughput for a 4B is around 10 tok/s on a current flagship and 3-6 mid-range, against a reading speed of 7-10, and on iOS a 4B frequently cannot be loaded within the per-app memory limit at all. So the shipped default reaches only modes 1 and 2, where the thinking happens somewhere that can do it well. Today only an explicit user opt-in sets it true (labelled EXPERIMENTAL); when hardware catches up a measurement sets it instead, and none of these cases change shape.",
+    "cases": [
+      {
+        "name": "default: home zone becomes a terminal",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": true,
+        "hasHomeZone": true,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 1
+      },
+      {
+        "name": "default: home zone, terminal even if a model is downloaded",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": true,
+        "hasHomeZone": true,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "home",
+        "expectMode": 1
+      },
+      {
+        "name": "default: home zone wins over a cloud key for a terminal user",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": false,
+        "hasHomeZone": true,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 1
+      },
+      {
+        "name": "default: own node plus a cloud key is mode 2",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": true,
+        "hasHomeZone": false,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 2
+      },
+      {
+        "name": "default: own node plus a cloud key is mode 2 even with a home zone",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": true,
+        "hasHomeZone": true,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 2
+      },
+      {
+        "name": "default: cloud key alone is mode 2",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": false,
+        "hasHomeZone": false,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 2
+      },
+      {
+        "name": "default: nothing configured is undecided, never a local model",
+        "onDeviceModelViable": false,
+        "wantsOwnNode": true,
+        "hasHomeZone": false,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "home",
+        "expectMode": null
+      },
+      {
+        "name": "experimental: terminal onto the home zone",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": false,
+        "hasHomeZone": true,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 1
+      },
+      {
+        "name": "experimental: terminal ignores a cloud key",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": false,
+        "hasHomeZone": true,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "cloud",
+        "expectMode": 1
+      },
+      {
+        "name": "experimental: own node, home GPU behind it",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": true,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "home",
+        "expectMode": 4
+      },
+      {
+        "name": "experimental: own node, cloud behind it",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": true,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "cloud",
+        "expectMode": 5
+      },
+      {
+        "name": "experimental: backing is the user's call, not the hardware's",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": true,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "cloud",
+        "expectMode": 5
+      },
+      {
+        "name": "experimental: no home zone, cloud key",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": false,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": 2
+      },
+      {
+        "name": "experimental: no home zone, on-device only",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": false,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "home",
+        "expectMode": 3
+      },
+      {
+        "name": "experimental: cloud key beats on-device when both exist",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": false,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "home",
+        "expectMode": 2
+      },
+      {
+        "name": "experimental: terminal with nothing to terminal onto",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": false,
+        "hasHomeZone": false,
+        "hasCloudKey": true,
+        "hasOnDeviceModel": true,
+        "preferredBacking": "home",
+        "expectMode": null
+      },
+      {
+        "name": "experimental: own node but nothing can answer",
+        "onDeviceModelViable": true,
+        "wantsOwnNode": true,
+        "hasHomeZone": false,
+        "hasCloudKey": false,
+        "hasOnDeviceModel": false,
+        "preferredBacking": "home",
+        "expectMode": null
+      }
+    ]
+  },
+  "modeInputs": {
+    "description": "Mapping RAW persisted values to mode inputs. Both clients implement this as modeInputsFrom(): RN in src/engine/mode/currentMode.ts, KMP in engine/mode/CurrentMode.kt. This is the drift-prone half of mode selection \u2014 the decision table is abstract and easy to keep in step, but what counts as 'has a home zone' is where two clients quietly diverge. onDeviceModelViable is computed by onDeviceModelViable(), the single place that policy lives; today it reads the user's experimental opt-in and nothing else, and a future throughput measurement joins it there without touching the mode tree.",
+    "cases": [
+      {
+        "name": "mode 'local' runs a local node",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": "local",
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": true,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "mode 'remote' does not",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": "remote",
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "mode 'unset' does not",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": "unset",
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "absent mode does not",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "a zone id is a home zone",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": "testzone",
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": true,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "a relay url is a home zone",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": "wss://relay.example.org:4443",
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": true,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "a household id is a home zone",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": "hh-1",
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": true,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "empty strings are NOT a home zone",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": "",
+          "relayUrl": "",
+          "householdId": "",
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "an api key without a provider is unusable",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": "sk-test",
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "a provider without a key is unusable",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": "anthropic",
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "key plus provider is a cloud key",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": "sk-test",
+          "apiProvider": "anthropic",
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": true,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "backing defaults to home when absent",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "backing defaults to home when unrecognised",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": "nonsense",
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "backing is cloud only when chosen",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": "cloud",
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "cloud"
+        }
+      },
+      {
+        "name": "on-device model passes through",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": null,
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": true
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": false,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": true,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "invite-paired phone: own node AND a zone",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": "local",
+          "zoneId": "testzone",
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": true
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": true,
+          "hasHomeZone": true,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": true,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "the experimental opt-in is what makes a model viable",
+        "raw": {
+          "onDeviceModelOptIn": true,
+          "mode": "local",
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": true,
+          "wantsOwnNode": true,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      },
+      {
+        "name": "absent opt-in is off, never on",
+        "raw": {
+          "onDeviceModelOptIn": false,
+          "mode": "local",
+          "zoneId": null,
+          "relayUrl": null,
+          "householdId": null,
+          "apiKey": null,
+          "apiProvider": null,
+          "preferredBacking": null,
+          "hasOnDeviceModel": false
+        },
+        "expect": {
+          "onDeviceModelViable": false,
+          "wantsOwnNode": true,
+          "hasHomeZone": false,
+          "hasCloudKey": false,
+          "hasOnDeviceModel": false,
+          "preferredBacking": "home"
+        }
+      }
+    ]
+  }
+}

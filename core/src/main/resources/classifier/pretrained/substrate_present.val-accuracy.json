@@ -1,0 +1,9 @@
+{
+  "accuracy": 0.8228571428571428,
+  "training_examples": 697,
+  "validation_examples": 175,
+  "labels": [
+    "neutral",
+    "substrate"
+  ]
+}

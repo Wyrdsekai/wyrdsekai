@@ -1,0 +1,22 @@
+# phase B of the invite e2e: relaunch in local mode
+# (the wrapper reseeds @wyrd_app_mode=local; the relay credentials persisted
+# by phase A's paste survive in MMKV) and reach the standalone room. While
+# the room loads, StandaloneNodeContext.setupServerClient consumes the
+# invite-saved @wyrd_relay_url/@wyrd_nats_user/@wyrd_nats_pass and opens the
+# NATS websocket to the relay — the wrapper proves that server-side via the
+# relay's /connz and the app's [setup] logcat trace.
+appId: org.wyrdsekai.rn
+---
+- launchApp:
+    appId: "org.wyrdsekai.rn"
+    clearState: false  # preserve phase-A relay credentials + reseeded mode
+
+- extendedWaitUntil:
+    visible:
+      id: "standalone-input"
+    timeout: 90000
+
+# Give setupServerClient time to finish the NATS handshake after the room
+# renders (the chain runs in the background of the first frame).
+- waitForAnimationToEnd:
+    timeout: 5000

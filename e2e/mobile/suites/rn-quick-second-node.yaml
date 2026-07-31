@@ -1,0 +1,30 @@
+# RN Quick Suite vs SECOND_NODE (~2min) — Mode-1 LAN leg: Welcome wizard → Connect
+# to second-node's production server → "Use my server" → standalone room actions.
+# second-node = home-zone base, 198.51.100.64. Requires second-node installed + `wyrd start`
+# (see docs/) and the e2e user created (§3.4).
+appId: org.wyrdsekai.rn
+env:
+  SERVER_URL: "http://198.51.100.64:7070"
+  TEST_USER: "e2e_test"
+  TEST_PASS: "testpass123"
+  BOOT_TIMEOUT: "20000"
+  CONNECT_TIMEOUT: "120000"
+  INFERENCE_TIMEOUT: "30000"
+---
+# Smoke
+- runFlow: ../flows/rn/smoke/app-launches.yaml
+- runFlow: ../flows/rn/smoke/mode-selection.yaml
+
+# First-run wizard — three paths: server, api-key, standalone
+- runFlow: ../flows/rn/quick/first-run-local.yaml
+- runFlow: ../flows/rn/quick/first-run-api-key.yaml
+- runFlow: ../flows/rn/quick/first-run-skip.yaml
+
+# Connection to second-node
+- runFlow: ../flows/rn/quick/connect-register.yaml
+
+# Room interaction against the connected node
+- runFlow: ../flows/rn/quick/room-say.yaml
+- runFlow: ../flows/rn/quick/room-navigation.yaml
+- runFlow: ../flows/rn/quick/room-inventory.yaml
+- runFlow: ../flows/rn/quick/room-settings.yaml

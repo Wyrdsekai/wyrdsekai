@@ -1,0 +1,38 @@
+{
+  "description": "Full auth flow: register → login → WebSocket connect → room_state",
+  "steps": [
+    {
+      "step": 1,
+      "action": "POST /api/auth/register",
+      "request": {
+        "username": "testuser",
+        "password": "testpass123",
+        "display_name": "Test User"
+      },
+      "expected_status": 201,
+      "expected_response_fields": ["token", "user_id", "username"]
+    },
+    {
+      "step": 2,
+      "action": "POST /api/auth/login",
+      "request": {
+        "username": "testuser",
+        "password": "testpass123"
+      },
+      "expected_status": 200,
+      "expected_response_fields": ["token", "user_id", "username"]
+    },
+    {
+      "step": 3,
+      "action": "WebSocket connect",
+      "url": "wss://host:port/ws?token={token_from_step_2}",
+      "expected_first_message_type": "room_state"
+    },
+    {
+      "step": 4,
+      "action": "GET /api/auth/me?token={token}",
+      "expected_status": 200,
+      "expected_response_fields": ["user_id", "username", "display_name"]
+    }
+  ]
+}

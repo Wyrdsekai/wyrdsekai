@@ -1,0 +1,365 @@
+# Wyrdsekai — Standalone Docker Compose
+#
+# Usage:
+#   docker compose up                      # Wyrdsekai server only
+#   docker compose --profile nats up       # + NATS (multi-node mesh)
+#   docker compose --profile inference up  # + llama-server (default inference)
+#   docker compose --profile sglang up     # + SGLang (NVIDIA, multi-companion)
+#   docker compose --profile ollama up     # + Ollama (fallback only)
+#
+# Env vars (see .env.example):
+#   WYRDSEKAI_PORT         — HTTP/WS port (default: 7070)
+#   WYRDSEKAI_TELNET_PORT  — Telnet port (default: 7071)
+#   WYRDSEKAI_DATA         — Data directory (default: ./data)
+#   WYRDSEKAI_MODEL        — Default inference model name
+#
+# To add CodePlane (evolutionary soul search, ML training), see the codeplane
+# repository — it ships its own compose overlay to layer over this one.
+
+services:
+  wyrdsekai:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: wyrdsekai
+    ports:
+      - "${WYRDSEKAI_PORT:-7070}:7070"
+      - "${WYRDSEKAI_TELNET_PORT:-7071}:7071"
+      - "${WYRDSEKAI_TLS_PORT:-7443}:7443"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}:/data
+    environment:
+      - WYRDSEKAI_PORT=7070
+      - WYRDSEKAI_TELNET_PORT=7071
+      - WYRDSEKAI_DATA_DIR=/data
+      - WYRDSEKAI_HOSTNAME=${WYRDSEKAI_HOSTNAME:-localhost}
+      - WYRDSEKAI_MODEL=${WYRDSEKAI_MODEL:-default}
+      # Between (cluster mode) — enable when NATS profile is active
+      - WYRDSEKAI_BETWEEN_ENABLED=${WYRDSEKAI_BETWEEN_ENABLED:-false}
+      - WYRDSEKAI_NATS_URL=${WYRDSEKAI_NATS_URL:-nats://nats:4222}
+      - WYRDSEKAI_ZONE_ID=${WYRDSEKAI_ZONE_ID:-home}
+      - WYRDSEKAI_ZONE_NAME=${WYRDSEKAI_ZONE_NAME:-Home Zone}
+      # Inference — llama-server is the default (serves our SSD-trained GGUF)
+      - WYRDSEKAI_LLAMA_ENABLED=${WYRDSEKAI_LLAMA_ENABLED:-true}
+      - WYRDSEKAI_LLAMA_URL=${WYRDSEKAI_LLAMA_URL:-http://llama-server:8200}
+      # Fallbacks (enable via profile)
+      - WYRDSEKAI_SGLANG_ENABLED=${WYRDSEKAI_SGLANG_ENABLED:-false}
+      - WYRDSEKAI_SGLANG_URL=${WYRDSEKAI_SGLANG_URL:-http://sglang:8000}
+      - WYRDSEKAI_OLLAMA_ENABLED=${WYRDSEKAI_OLLAMA_ENABLED:-false}
+      - WYRDSEKAI_OLLAMA_URL=${WYRDSEKAI_OLLAMA_URL:-http://ollama:11434}
+      # TLS
+      - WYRDSEKAI_TLS_ENABLED=${WYRDSEKAI_TLS_ENABLED:-false}
+      # Rate limiting
+      - WYRDSEKAI_RATE_LIMIT_ENABLED=${WYRDSEKAI_RATE_LIMIT_ENABLED:-true}
+      # Search (Searxng)
+      - WYRDSEKAI_SEARXNG_URL=http://searxng:8080
+      # Oracle prediction engine
+      - ORACLE_URL=${ORACLE_URL:-http://oracle:7073}
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7070/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # Optional: NATS for Between (multi-node cluster)
+  nats:
+    image: nats:2-alpine
+    container_name: wyrdsekai-nats
+    restart: unless-stopped
+    profiles: ["nats", "cluster"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-c", "/etc/nats/nats.conf"]
+    volumes:
+      - ./docker/nats.conf:/etc/nats/nats.conf:ro
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Searxng — metasearch engine (aggregates Google, Bing, DDG, Wikipedia, etc.)
+  # No API keys needed. Provides web search + news search for agents.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: wyrdsekai-searxng
+    restart: unless-stopped
+    ports:
+      - "${SEARXNG_PORT:-8888}:8080"
+    volumes:
+      - ./docker/searxng-settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT:-8888}
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Optional: Oracle prediction engine (pattern detection, anomaly detection, forecasting)
+  oracle:
+    build:
+      context: ${ORACLE_CORE_PATH:-../oracle-core}
+      dockerfile: Dockerfile
+    container_name: wyrdsekai-oracle
+    profiles: ["full", "oracle"]
+    restart: unless-stopped
+    ports:
+      - "${ORACLE_PORT:-7073}:7073"
+    volumes:
+      - oracle-data:/app/data
+    environment:
+      - ORACLE_PORT=7073
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7073/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # llama-server — default inference backend
+  # Serves our SSD-trained Qwen3.5-4B GGUF with LoRA baked in.
+  # Works with CUDA (Linux) and CPU fallback. For Apple Silicon, use native llama-server.
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-llama
+    restart: unless-stopped
+    profiles: ["inference"]
+    ports:
+      - "${LLAMA_PORT:-8200}:8200"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+    command:
+      - "--model"
+      - "/models/${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf}"
+      - "--port"
+      - "8200"
+      - "--ctx-size"
+      - "${LLAMA_SKILLS_CTX:-16384}"
+      - "--n-gpu-layers"
+      - "${LLAMA_GPU_LAYERS:-99}"
+      - "--parallel"
+      - "1"
+      - "--host"
+      - "0.0.0.0"
+      - "--jinja"
+      - "--reasoning"
+      - "off"
+      - "--reasoning-budget"
+      - "0"
+      - "--flash-attn"
+      - "on"
+      - "--metrics"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # Dual-inference VOICE service — 4B model for personality/voice turns.
+  # Runs alongside `llama-server` which carries 9B skills. CompanionActor
+  # short-circuit path + ROUTINE-tier triage land here; REACT/COMPLEX-tier
+  # land on the skills server.
+  #
+  # Usage:
+  #   docker compose --profile inference --profile voice up -d
+  #
+  # Set LLAMA_VOICE_MODEL to either:
+  #   - A merged model (e.g. 4b-vitality-v5-q4km.gguf) — leave
+  #     LLAMA_VOICE_ADAPTER unset so --lora is skipped.
+  #   - A base 4B model (e.g. wyrdsekai-3.5-4b-balanced-q4km.gguf) — set
+  #     LLAMA_VOICE_ADAPTER=wyrd-voice/adapter.gguf to load the LoRA on top.
+  # Pre-V5 the adapter path was hardcoded; V5+ the model is merged at train
+  # time, so the adapter is the legacy path. Entrypoint script below picks
+  # automatically based on env.
+  llama-voice:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-llama-voice
+    restart: unless-stopped
+    profiles: ["voice", "dual"]
+    ports:
+      - "${LLAMA_VOICE_PORT:-8201}:8201"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+      - ${WYRDSEKAI_DATA:-./data}/adapters:/adapters:ro
+      # V8 control vectors (Qwen3.5-4B steering on top of V5 SSD weights).
+      # Mount is optional — if the dir is missing the vector loop below
+      # gracefully skips, so non-V8 deploys still work.
+      - ${WYRDSEKAI_DATA:-./data}/training/v8/vectors:/vectors:ro
+    # Voice-model context window. History: 4K → 8K (the PromptAssembler fed the
+    # same fat context to both backends, so the 4B 400'd on ~5K tells) → 16K.
+    #
+    # 2026-07-13: 8K blew again. Measured on second-node, prompts reaching this backend
+    # ran 9.7K–19.2K tokens, so the 4B took HTTP 400s in two places: the one-shot
+    # voice calls (felt / inner-monologue / cultural appraisal, which silently
+    # never rendered) and — worse — every drive turn when the 9B was down, which
+    # meant a 4B-only node could not produce a turn at all.
+    #
+    # Both halves of belt-and-suspenders are now real:
+    #   suspenders — InferenceRouter compacts an over-long prompt to the window the
+    #                backend reports and retries once, so an overflow can no longer
+    #                dead-end a turn on ANY backend;
+    #   belt       — this 16K window, matching the 9B drive, so the compactor is a
+    #                safety net rather than the common path. ~1GB extra KV cache for
+    #                4B q4km; second-node has ~7GB free alongside the 9B on a 16GB card.
+    # Source-side bounding of the voice prompts lives in StoryService (bounded beats).
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
+    command:
+      - |
+        set -e
+        ARGS="--model /models/$${LLAMA_VOICE_MODEL:-wyrdsekai-3.5-4b-v10-q4km.gguf} --port 8201 --ctx-size $${LLAMA_VOICE_CTX:-16384} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel 1 --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --metrics"
+        if [ -n "$${LLAMA_VOICE_ADAPTER:-}" ] && [ -f "/adapters/$${LLAMA_VOICE_ADAPTER}" ]; then
+          echo "[voice] loading LoRA adapter: $${LLAMA_VOICE_ADAPTER}"
+          ARGS="$$ARGS --lora /adapters/$${LLAMA_VOICE_ADAPTER}"
+        else
+          echo "[voice] no adapter — model is merged or adapter file missing"
+        fi
+        # V8 steering vectors (post-V5 SSD register/refusal corrections).
+        # Calibrated for combined application — see data/training/v8/PLAN.md
+        # Gate 3 finding: stacking these at individual α=0.3-0.4 catastrophically
+        # over-steers; halved alphas give graceful combined behavior.
+        # Per-vector files & alphas can be overridden via LLAMA_V8_VECTORS
+        # (comma-sep, format "file:alpha,file:alpha,..."). Defaults are the
+        # combined-test winner. Skips silently if file missing.
+        # IMPORTANT: llama.cpp expects ONE --control-vector-scaled with comma-
+        # separated FNAME:SCALE pairs. Passing multiple flags only applies the
+        # last (deprecation warning, now enforced).
+        # 2026-05-09: added first_person_presence at 0.15 to push back on
+        # voice-polish drift into floating poetic / third-person narration
+        # (Ember task10 EN 2026-05-08: 65-char "I crafted X" polished to
+        # 258-char romantic monologue). Other vectors retained.
+        DEFAULT_V8="anti_defiance.gguf:0.15,es_register_hold.gguf:0.20,refusal_stability.gguf:0.20,first_person_presence.gguf:0.15"
+        V8_PRESENT=""
+        IFS=',' ; for V8_PAIR in $${LLAMA_V8_VECTORS:-$$DEFAULT_V8}; do
+          V8_FILE="$${V8_PAIR%%:*}"
+          V8_SCALE="$${V8_PAIR##*:}"
+          if [ -f "/vectors/$$V8_FILE" ]; then
+            if [ -z "$$V8_PRESENT" ]; then
+              V8_PRESENT="/vectors/$$V8_FILE:$$V8_SCALE"
+            else
+              V8_PRESENT="$$V8_PRESENT,/vectors/$$V8_FILE:$$V8_SCALE"
+            fi
+            echo "[voice] V8 vector: $$V8_PAIR"
+          else
+            echo "[voice] V8 vector skipped (file not present): $$V8_PAIR"
+          fi
+        done ; unset IFS
+        if [ -n "$$V8_PRESENT" ]; then
+          ARGS="$$ARGS --control-vector-scaled $$V8_PRESENT"
+        fi
+        echo "[voice] exec: /app/llama-server $$ARGS"
+        exec /app/llama-server $$ARGS
+    environment:
+      - LLAMA_VOICE_MODEL=${LLAMA_VOICE_MODEL:-}
+      - LLAMA_VOICE_ADAPTER=${LLAMA_VOICE_ADAPTER:-}
+      - LLAMA_VOICE_CTX=${LLAMA_VOICE_CTX:-}
+      - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-}
+      - LLAMA_V8_VECTORS=${LLAMA_V8_VECTORS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8201/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # SGLang — high-performance NVIDIA inference (optional, for multi-companion setups)
+  sglang:
+    image: lmsysorg/sglang:v0.5.10.post1-cu130
+    container_name: wyrdsekai-sglang
+    restart: unless-stopped
+    profiles: ["sglang"]
+    ports:
+      - "${SGLANG_PORT:-8000}:8000"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+    command:
+      - "python3"
+      - "-m"
+      - "sglang.launch_server"
+      - "--model-path"
+      - "/models/wyrdsekai-3.5-4b-v10-q4km.gguf"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Ollama — last resort fallback (no LoRA support, known reliability issues)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: wyrdsekai-ollama
+    restart: unless-stopped
+    profiles: ["ollama"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  searxng-data:
+  oracle-data:
+
+networks:
+  wyrdsekai-net:
+    name: wyrdsekai-net
+    driver: bridge

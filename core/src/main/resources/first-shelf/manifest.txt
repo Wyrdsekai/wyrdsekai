@@ -1,0 +1,16 @@
+# bundled Tier-0 content, seeded at boot by FirstShelfSeeder.
+# Format: relative-path|language|category   (bump version to re-seed on next boot)
+version=1
+world-book/01-the-world.md|en|world-book
+world-book/02-bonds-and-people.md|en|world-book
+world-book/03-inner-life.md|en|world-book
+world-book/04-sleep-and-the-forge.md|en|world-book
+world-book/05-skills-and-the-workbench.md|en|world-book
+world-book/06-the-library.md|en|world-book
+world-book/07-world-api.md|en|world-book
+reference/units-and-conversions.md|en|reference
+reference/kitchen-reference.md|en|reference
+reference/dates-and-constants.md|en|reference
+culture/culture-en.md|en|culture
+culture/culture-es.md|es|culture
+culture/culture-ja.md|ja|culture

@@ -1,0 +1,29 @@
+# Full: Verify companion response quality via LLM oracle
+# Requires: test server with inference backend running
+# Time: ~30s (includes inference wait)
+
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+# Say a greeting that should trigger a companion response
+- tapOn:
+    id: "room-input"
+- inputText: "Hello, who are you?"
+- tapOn:
+    id: "send-button"
+
+# Wait for companion to respond (inference takes time)
+- extendedWaitUntil:
+    visible:
+      id: "prose-list"
+    timeout: ${INFERENCE_TIMEOUT}
+
+# Take screenshot for LLM oracle evaluation
+- takeScreenshot: rn_companion_response
+
+# Visual regression baseline
+- assertScreenshot:
+    path: "baselines/rn_room_with_prose.png"
+    thresholdPercentage: 80.0
+    optional: true

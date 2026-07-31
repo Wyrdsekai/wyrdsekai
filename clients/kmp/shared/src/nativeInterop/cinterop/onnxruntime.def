@@ -1,0 +1,12 @@
+# ONNX Runtime C API binding for the iOS targets.
+# Headers + library come from the onnxruntime-c CocoaPods archive, downloaded
+# by the `downloadOnnxRuntimeIos` gradle task; include/link paths are supplied
+# per-target slice in shared/build.gradle.kts.
+headers = onnxruntime_c_api.h
+headerFilter = onnxruntime_c_api.h
+language = C
+# The xcframework slice's framework binary IS a static archive; embedding it
+# here makes it ride inside the cinterop klib into the shared static
+# framework (plain linkerOpts never reach the app's Xcode link step).
+# The per-slice -libraryPath comes from shared/build.gradle.kts extraOpts.
+staticLibraries = libonnxruntime.a

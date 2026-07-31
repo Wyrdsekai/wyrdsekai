@@ -1,0 +1,95 @@
+# Wyrdsekai Full Stack — Server + Inference + NATS + PostgreSQL
+#
+# Usage:
+#   docker compose -f docker/docker-compose.full.yml up
+#   docker compose -f docker/docker-compose.full.yml --profile nats up     # + NATS
+#   docker compose -f docker/docker-compose.full.yml --profile postgres up  # + PostgreSQL
+#   docker compose -f docker/docker-compose.full.yml --profile nats --profile postgres up  # All
+#
+# See docker/.env.example for configurable environment variables.
+
+services:
+  # --- Wyrdsekai Server ---
+  wyrdsekai:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: wyrdsekai-server
+    ports:
+      # HTTP and WebSocket share ONE port (WYRDSEKAI_PORT, default 7070).
+      - "${WYRDSEKAI_PORT:-7070}:7070"
+      - "${WYRDSEKAI_TELNET_PORT:-7777}:7777"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/wyrdsekai:/data
+      - ../scripts:/app/scripts:ro
+    environment:
+      - WYRDSEKAI_INFERENCE_URL=http://ollama:11434
+      - WYRDSEKAI_NATS_URL=${WYRDSEKAI_NATS_URL:-}
+      - WYRDSEKAI_JDBC_URL=${WYRDSEKAI_JDBC_URL:-}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Inference Backend (Ollama) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: wyrdsekai-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # --- NATS (Federation / Between) ---
+  nats:
+    image: nats:2.10-alpine
+    container_name: wyrdsekai-nats
+    profiles: ["nats"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    command: ["--jetstream", "--store_dir", "/data/nats"]
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/nats:/data/nats
+    healthcheck:
+      test: ["CMD", "nats-server", "--help"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # --- PostgreSQL (Community Zones) ---
+  postgres:
+    image: postgres:17-alpine
+    container_name: wyrdsekai-postgres
+    profiles: ["postgres"]
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wyrdsekai}
+      POSTGRES_USER: ${POSTGRES_USER:-wyrd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wyrd_secret}
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wyrd}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  wyrdsekai-data:

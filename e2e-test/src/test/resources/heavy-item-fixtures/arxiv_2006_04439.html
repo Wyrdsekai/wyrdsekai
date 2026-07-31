@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>[2006.04439] Liquid Time-constant Networks</title>
+</head>
+<body>
+<header>
+  <h1>arXiv:2006.04439</h1>
+  <p class="dateline">Submitted on 8 Jun 2020 (v1)</p>
+</header>
+
+<main>
+<h2>Liquid Time-constant Networks</h2>
+<p class="authors">Ramin Hasani, Mathias Lechner, Alexander Amini, Daniela Rus, Radu Grosu</p>
+
+<section id="abstract">
+<h3>Abstract</h3>
+<p>We introduce a new class of time-continuous recurrent neural network models. Instead of declaring a learning system's dynamics by implicit nonlinearities, we construct networks of linear first-order dynamical systems modulated via nonlinear interlinked gates. The resulting models represent dynamical systems with varying (i.e., <em>liquid</em>) time-constants coupled to their hidden state, with outputs being computed by numerical differential equation solvers.</p>
+<p>These neural networks exhibit stable and bounded behaviour, yield superior expressivity within the family of neural ordinary differential equations (ODE), and give rise to improved performance on time-series prediction tasks. To demonstrate these properties and the superior performance of our models, we conduct a series of experiments characterising the universality of the proposed networks, and benchmark them on time-series prediction tasks against state-of-the-art recurrent neural networks.</p>
+<p>The continuous-time formulation produces models that are both more expressive and more parameter-efficient than fixed-time-constant counterparts, and the LTC's input-dependent time constants are the key element that makes them <em>liquid</em>: each neuron's reaction speed adapts to the input it is currently receiving.</p>
+</section>
+
+<section id="contributions">
+<h3>Contributions</h3>
+<ul>
+  <li>Define LTC neurons via input-dependent ODEs and prove bounded dynamics.</li>
+  <li>Show universal approximation on time-series under mild Lipschitz assumptions.</li>
+  <li>Benchmark on Walker, Hand-Gesture, Sequential MNIST, and Person Activity datasets — LTC matches or exceeds GRU/LSTM baselines with 5-10x fewer parameters.</li>
+  <li>Discuss numerical solvers (Fused, Hybrid, Adjoint) and the wallclock cost of continuous-time inference.</li>
+</ul>
+</section>
+</main>
+
+<footer>
+  <p>Cite as: arXiv:2006.04439 [cs.LG].</p>
+</footer>
+</body>
+</html>

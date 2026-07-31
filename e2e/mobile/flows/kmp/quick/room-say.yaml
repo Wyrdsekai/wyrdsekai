@@ -1,0 +1,19 @@
+# Quick: KMP — say something in standalone room
+appId: org.wyrdsekai.kmp
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+- tapOn:
+    id: "standalone-input"
+- inputText: "'Hello from KMP Maestro"
+
+- tapOn:
+    id: "standalone-send-button"
+
+# Verify prose list has content (exact echo may vary — server scripts handle output)
+- extendedWaitUntil:
+    visible:
+      id: "standalone-prose-list"
+    timeout: 5000
+
+- takeScreenshot: kmp_quick_room_say

@@ -1,0 +1,26 @@
+# Wyrdsekai rendezvous — zone directory aggregator process.
+# Deliberately minimal: Javalin + in-memory store + Lucene keyword index.
+# No llama-server, no NATS client, no Pekko actor system.
+
+FROM eclipse-temurin:25-jre-alpine AS runtime
+
+RUN apk add --no-cache bash wget curl
+
+# Copy the installDist output. Parent-dir build context so :rendezvous:installDist
+# has been run before `docker build -f docker/Dockerfile.rendezvous ..`
+COPY rendezvous/build/install/wyrd-rendezvous /opt/wyrd-rendezvous
+
+# Non-root runtime — the directory is an advisory service; no reason to run as root.
+RUN addgroup -S wyrd && adduser -S -G wyrd wyrd \
+ && chown -R wyrd:wyrd /opt/wyrd-rendezvous
+USER wyrd
+
+ENV WYRDSEKAI_RENDEZVOUS_PORT=7071 \
+    JAVA_OPTS="-Xms64m -Xmx512m"
+
+EXPOSE 7071
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \
+  CMD wget -qO- "http://localhost:${WYRDSEKAI_RENDEZVOUS_PORT}/health" || exit 1
+
+ENTRYPOINT ["/opt/wyrd-rendezvous/bin/wyrd-rendezvous"]

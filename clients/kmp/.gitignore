@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+build/
+
+# Local SDK config (machine-specific)
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Xcode user data
+**/xcuserdata/
+**/project.xcworkspace/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kotlin
+*.class
+.kotlin/
+
+# Gradle wrapper JAR must be checked in
+!gradle/wrapper/gradle-wrapper.jar
+
+# llama.cpp (cloned at build time)
+llama.cpp/
+
+# NDK CMake build cache
+shared/.cxx/
+
+# Fastlane
+**/fastlane/report.xml
+**/fastlane/README.md
+*.certSigningRequest

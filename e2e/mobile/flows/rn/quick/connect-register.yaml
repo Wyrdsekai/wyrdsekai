@@ -1,0 +1,12 @@
+# Quick: RN — Welcome → "Use my server" → Standalone room loaded
+appId: org.wyrdsekai.rn
+---
+- runFlow: ../_helpers/register-and-connect.yaml
+
+# Helper already asserted send-button is visible. Re-assert the input
+# (focusable) — Maestro can't reliably see non-interactive Text titles on
+# RN Fabric, so we don't assert standalone-room-name.
+- assertVisible:
+    id: "standalone-input"
+
+- takeScreenshot: rn_quick_connect_register

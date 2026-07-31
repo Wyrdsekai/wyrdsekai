@@ -1,0 +1,15 @@
+{
+  "type": "room_state",
+  "seq": 1,
+  "room": {
+    "roomId": "empty-chamber",
+    "name": "Empty Chamber",
+    "description": "A bare stone room. Dust motes drift in the still air.",
+    "zone": "home",
+    "exits": [],
+    "entities": [],
+    "objects": [],
+    "hints": []
+  },
+  "inventory": null
+}

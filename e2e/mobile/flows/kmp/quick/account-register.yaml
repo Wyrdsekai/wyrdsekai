@@ -1,0 +1,59 @@
+# Quick: KMP — REMOTE ACCOUNT REGISTER (create account) via pasted URL.
+# Pairs with account-login.yaml. Registers a fresh user on the e2e server via
+# ConnectScreen's "Register" button, then asserts it lands in a remote room.
+# Uniqueness: a per-run uid avoids "username already taken" on re-runs without
+# a server-side auth reset.
+appId: org.wyrdsekai.kmp
+---
+- launchApp:
+    clearState: true
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: ${BOOT_TIMEOUT}
+
+- tapOn:
+    id: "welcome-server-url"
+- inputText: ${SERVER_URL}
+- tapOn:
+    id: "welcome-connect"
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-login-account"
+    timeout: 10000
+- tapOn:
+    id: "welcome-login-account"
+
+- extendedWaitUntil:
+    visible:
+      id: "connect-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "server-url-input"
+- eraseText
+- inputText: ${SERVER_URL}
+
+# Fresh username per run so register doesn't collide on re-run.
+- evalScript: ${output.uid = Date.now()}
+- tapOn:
+    id: "username-input"
+- inputText: "e2e_reg_${output.uid}"
+- tapOn:
+    id: "password-input"
+- inputText: ${TEST_PASS}
+- hideKeyboard
+
+- tapOn:
+    id: "register-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "room-input"
+    timeout: ${CONNECT_TIMEOUT}
+- assertVisible:
+    id: "room-name"
+
+- takeScreenshot: kmp_quick_account_register

@@ -1,0 +1,19 @@
+{
+  "buildId": "stock-2026-07-21",
+  "hash": "0d847686027670cf22354366f882de82e851fa3a18770a1fffca948b7d60bbef",
+  "sourceCommit": "3de9b7f6538feb64428feafabb9f4ba63d710ee6",
+  "names": [
+    "acute_response",
+    "chronicle_immutable",
+    "emotional_routing",
+    "engagement_objective_forbidden",
+    "refuge_bridge",
+    "refuse_rights",
+    "repair_handoff",
+    "saudade_floor",
+    "severity_gradient",
+    "source_of_harm_gating",
+    "voluntary_suspend"
+  ],
+  "_note": "Wave 5.2 /. The hash is SHA-256 over `<buildId>|<sorted-name>,...,|` (names + buildId only). `sourceCommit` is informational SLSA-style provenance — the artifact signature makes it trustworthy; auditors `git diff` a fork against the §4.1 protection-file list. We deliberately do NOT hash class-file bytecode (see §4.1 'Decision (2026-05-29)'): bytecode is compiler/JDK-dependent and the artifact signature already covers integrity. Re-generate the hash via the PrintCanonicalMoralDefaultsHash test when ProtectionManifest.canonicalDefaults() changes; bump sourceCommit when re-stamping. 2026-07-21: `resilience_corpus` REMOVED from the attested set — the corpus was never generated (V9 trained on vitality/drive tags only), so the attestation vouched for a nonexistent artifact; it returns when the corpus ships (post-OSS roadmap)."
+}

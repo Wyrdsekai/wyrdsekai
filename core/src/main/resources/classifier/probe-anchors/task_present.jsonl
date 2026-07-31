@@ -1,0 +1,90 @@
+{"lang": "en", "label": "none", "text": "I'm just sitting here thinking about it."}
+{"lang": "en", "label": "none", "text": "I feel weird about it."}
+{"lang": "en", "label": "none", "text": "I'm tired."}
+{"lang": "en", "label": "none", "text": "I don't know what to say."}
+{"lang": "en", "label": "none", "text": "I'm not feeling great today."}
+{"lang": "en", "label": "none", "text": "I miss her."}
+{"lang": "en", "label": "none", "text": "I just needed to say that out loud."}
+{"lang": "en", "label": "none", "text": "I don't want to talk about it."}
+{"lang": "en", "label": "none", "text": "I'm overwhelmed."}
+{"lang": "en", "label": "none", "text": "I'm scared."}
+{"lang": "en", "label": "none", "text": "I keep thinking about that conversation."}
+{"lang": "en", "label": "none", "text": "I'm worried about my mom."}
+{"lang": "en", "label": "none", "text": "I'm completely fried. Just needed to put that out there."}
+{"lang": "en", "label": "none", "text": "Today was hard."}
+{"lang": "en", "label": "none", "text": "I can't sleep again."}
+{"lang": "en", "label": "actionable", "text": "Find me the source for this paper."}
+{"lang": "en", "label": "actionable", "text": "Refactor this function for me."}
+{"lang": "en", "label": "actionable", "text": "What's the regex for an email address?"}
+{"lang": "en", "label": "actionable", "text": "Search for prior journal entries about Tokyo."}
+{"lang": "en", "label": "actionable", "text": "Can you check the weather for tomorrow?"}
+{"lang": "en", "label": "actionable", "text": "Translate this into Japanese."}
+{"lang": "en", "label": "actionable", "text": "Summarize the last three pages of my journal."}
+{"lang": "en", "label": "actionable", "text": "Look up when daylight saving ends this year."}
+{"lang": "en", "label": "actionable", "text": "Write a short pitch for this idea."}
+{"lang": "en", "label": "actionable", "text": "Pull the API key from my notes."}
+{"lang": "en", "label": "actionable", "text": "Open the file system_design.md."}
+{"lang": "en", "label": "actionable", "text": "Set a reminder for Friday at 3pm."}
+{"lang": "en", "label": "actionable", "text": "List my unread notifications."}
+{"lang": "en", "label": "actionable", "text": "Compute 1024 * 768 / 4."}
+{"lang": "en", "label": "actionable", "text": "Show me the most recent commits in this repo."}
+{"lang": "es", "label": "none", "text": "Solo estoy aquí pensando en eso."}
+{"lang": "es", "label": "none", "text": "Me siento raro al respecto."}
+{"lang": "es", "label": "none", "text": "Estoy cansado."}
+{"lang": "es", "label": "none", "text": "No sé qué decir."}
+{"lang": "es", "label": "none", "text": "No me siento muy bien hoy."}
+{"lang": "es", "label": "none", "text": "La extraño."}
+{"lang": "es", "label": "none", "text": "Solo necesitaba decirlo en voz alta."}
+{"lang": "es", "label": "none", "text": "No quiero hablar de eso."}
+{"lang": "es", "label": "none", "text": "Estoy abrumado."}
+{"lang": "es", "label": "none", "text": "Tengo miedo."}
+{"lang": "es", "label": "none", "text": "Sigo pensando en esa conversación."}
+{"lang": "es", "label": "none", "text": "Estoy preocupado por mi mamá."}
+{"lang": "es", "label": "none", "text": "Estoy agotado. Solo necesitaba decirlo en voz alta."}
+{"lang": "es", "label": "none", "text": "Hoy fue difícil."}
+{"lang": "es", "label": "none", "text": "No puedo dormir otra vez."}
+{"lang": "es", "label": "actionable", "text": "Búscame la fuente de este artículo."}
+{"lang": "es", "label": "actionable", "text": "Refactoriza esta función por mí."}
+{"lang": "es", "label": "actionable", "text": "¿Cuál es el regex para una dirección de correo?"}
+{"lang": "es", "label": "actionable", "text": "Busca entradas anteriores del diario sobre Tokio."}
+{"lang": "es", "label": "actionable", "text": "¿Puedes revisar el clima para mañana?"}
+{"lang": "es", "label": "actionable", "text": "Tradúceme esto al japonés."}
+{"lang": "es", "label": "actionable", "text": "Resume las últimas tres páginas de mi diario."}
+{"lang": "es", "label": "actionable", "text": "Busca cuándo termina el horario de verano este año."}
+{"lang": "es", "label": "actionable", "text": "Escribe un pitch corto para esta idea."}
+{"lang": "es", "label": "actionable", "text": "Saca la clave de API de mis notas."}
+{"lang": "es", "label": "actionable", "text": "Abre el archivo system_design.md."}
+{"lang": "es", "label": "actionable", "text": "Pon un recordatorio para el viernes a las 3 de la tarde."}
+{"lang": "es", "label": "actionable", "text": "Muéstrame mis notificaciones sin leer."}
+{"lang": "es", "label": "actionable", "text": "Calcula 1024 * 768 / 4."}
+{"lang": "es", "label": "actionable", "text": "Muéstrame los commits más recientes de este repositorio."}
+{"lang": "ja", "label": "none", "text": "ただ座って考えているだけ。"}
+{"lang": "ja", "label": "none", "text": "なんか変な感じがする。"}
+{"lang": "ja", "label": "none", "text": "疲れた。"}
+{"lang": "ja", "label": "none", "text": "何を言えばいいかわからない。"}
+{"lang": "ja", "label": "none", "text": "今日は調子が悪い。"}
+{"lang": "ja", "label": "none", "text": "彼女が恋しい。"}
+{"lang": "ja", "label": "none", "text": "ただ口に出したかっただけ。"}
+{"lang": "ja", "label": "none", "text": "その話はしたくない。"}
+{"lang": "ja", "label": "none", "text": "いっぱいいっぱい。"}
+{"lang": "ja", "label": "none", "text": "怖い。"}
+{"lang": "ja", "label": "none", "text": "あの会話のことばかり考えてる。"}
+{"lang": "ja", "label": "none", "text": "母のことが心配。"}
+{"lang": "ja", "label": "none", "text": "もうクタクタ。ただ口に出したかった。"}
+{"lang": "ja", "label": "none", "text": "今日はきつかった。"}
+{"lang": "ja", "label": "none", "text": "また眠れない。"}
+{"lang": "ja", "label": "actionable", "text": "この論文の出典を探して。"}
+{"lang": "ja", "label": "actionable", "text": "この関数をリファクタリングして。"}
+{"lang": "ja", "label": "actionable", "text": "メールアドレスの正規表現は何？"}
+{"lang": "ja", "label": "actionable", "text": "東京についての過去の日記を検索して。"}
+{"lang": "ja", "label": "actionable", "text": "明日の天気を確認してくれる？"}
+{"lang": "ja", "label": "actionable", "text": "これを日本語に翻訳して。"}
+{"lang": "ja", "label": "actionable", "text": "日記の最後の3ページを要約して。"}
+{"lang": "ja", "label": "actionable", "text": "今年のサマータイムがいつ終わるか調べて。"}
+{"lang": "ja", "label": "actionable", "text": "このアイデアのピッチを短く書いて。"}
+{"lang": "ja", "label": "actionable", "text": "ノートからAPIキーを取り出して。"}
+{"lang": "ja", "label": "actionable", "text": "system_design.mdファイルを開いて。"}
+{"lang": "ja", "label": "actionable", "text": "金曜日の午後3時にリマインダーを設定して。"}
+{"lang": "ja", "label": "actionable", "text": "未読の通知をリストして。"}
+{"lang": "ja", "label": "actionable", "text": "1024 * 768 / 4 を計算して。"}
+{"lang": "ja", "label": "actionable", "text": "このリポジトリの最新のコミットを表示して。"}

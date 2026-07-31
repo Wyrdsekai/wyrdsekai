@@ -1,0 +1,38 @@
+[Unit]
+Description=Wyrdsekai Rendezvous — zone directory aggregator
+Documentation=https://github.com/wyrdsekai/wyrdsekai
+# Deliberately separate from wyrdsekai.service (the tunnel relay) so a
+# directory-side issue can't take down cross-zone federation, and vice
+# versa. They can live on the same host under different resource budgets.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=%h/.wyrdsekai/env
+WorkingDirectory=%h/.wyrdsekai
+
+ExecStart=%h/.wyrdsekai/bin/wyrd-rendezvous
+ExecStartPre=/bin/sh -c 'echo "Starting Wyrdsekai rendezvous on port ${WYRDSEKAI_RENDEZVOUS_PORT:-7071}..."'
+
+# Crash recovery
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wyrdsekai-rendezvous
+
+# Resource budget — rendezvous is designed to be cheap (~100MB process
+# ceiling holding 10k manifests in memory). Cap prevents runaway growth
+# from taking the tunnel relay down if they share a host.
+MemoryMax=512M
+LimitNOFILE=8192
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

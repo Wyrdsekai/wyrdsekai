@@ -1,0 +1,7 @@
+{
+  "type": "use",
+  "id": "msg-005",
+  "roomId": "nexus",
+  "objectName": "key",
+  "target": "locked_door"
+}
