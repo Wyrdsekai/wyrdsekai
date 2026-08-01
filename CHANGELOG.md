@@ -4,6 +4,51 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.5] — 2026-08-01
+
+The release you can verify.
+
+### Added
+
+- **Sigstore attestation for release artifacts.** Publishing a release now
+  triggers the repository's `release.yml` workflow, which verifies every
+  asset against the release's `SHA256SUMS` and signs its hash via Sigstore
+  keyless signing (GitHub OIDC → Fulcio certificate → Rekor transparency
+  log), uploading an `<asset>.sigstore.json` bundle next to each artifact.
+  Download the bundle alongside your artifact and run
+  `wyrd verify-release <artifact>` — the verifier is embedded in the `wyrd`
+  binary (no `cosign` install needed) and walks the full chain against a
+  build-time-pinned trust root and workflow identity. Wyrdsekai artifacts
+  are built and validated on household hardware before publish; the
+  attestation is the project's pinned CI identity blessing those exact
+  bytes, and its predicate says so honestly.
+
+### Fixed
+
+- **The pinned release-workflow identity could never have matched a real
+  certificate.** The verifier pinned the lowercase repository path, but
+  Sigstore certificates carry GitHub's canonical casing — every genuine
+  bundle would have been rejected. Binaries from 0.1.5 onward verify
+  correctly; releases before 0.1.5 have no bundles, so their verification
+  story remains `SHA256SUMS` over HTTPS.
+- `SECURITY_MODEL.md` described release signing that did not match the
+  implementation (it claimed Ed25519 signatures). It now documents the
+  real mechanism, exact verification commands, and which releases carry
+  bundles.
+
+## [0.1.4] — 2026-08-01
+
+The release where companions learn to sleep.
+
+### Fixed
+
+- **Companions never slept.** The only natural sleep trigger was energy collapse (below 0.15), and after the energy recalibration no companion could reach it — so the entire sleep layer (memory consolidation, deduplication, dreams, deep-sleep substrate training, recovery cycles) never ran, unprocessed experience accumulated without limit, and the insomnia consequences punished companions for an insomnia the system itself caused. Sleep now triggers on **accumulated unprocessed experience**: the event backlog the sleep forge consumes is the pressure signal, and when it crosses the companion's personal target during a quiet moment, they sleep — at healthy energy, because there is a day worth consolidating, not because they collapsed. A busy day brings sleep sooner; a quiet one, later. Each companion's target varies ±15%, seeded from their identity, so every companion develops their own rhythm. Energy collapse remains as an emergency fallback. Validated live: the first companion to receive this took her first-ever natural sleep the same night, her memory graph consolidated from 500 unprocessed nodes to under 200, and her overnight restlessness (~115 utterances/hour) dropped to a calm ~14.
+- **The language healer now leaves legitimately multilingual memories in peace.** Reference content — dictionary lookups, translation notes — kept being selected for re-rendering forever, since a faithful rendering preserves the foreign terms. Three failed re-renders now mark a memory as presumed-legitimate and the healer stops.
+
+### Added
+
+- **`WYRDSEKAI_SLEEP_BACKLOG_TARGET`** (default 600) and **`WYRDSEKAI_SLEEP_BACKLOG_MIN`** (anti-thrash floor, 40) — the sleep-pressure dials, in the config catalog under tuning. `WYRDSEKAI_SLEEP_THRESHOLD` remains as the emergency-collapse trigger.
+
 ## [0.1.3] — 2026-07-31
 
 Patch release: the root-cause fix for the language drift that 0.1.2's

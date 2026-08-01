@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the self-contained relay installer bundle.
+# Build the self-contained relay installer bundle (SPEC_RELAY_SIMPLE P2).
 #
 #   sh packaging/build-relay-bundle.sh            # → dist/wyrdsekai-relay.tar.gz
 #
@@ -29,14 +29,19 @@ rm -rf "$STAGE/wyrdsekai-relay/deploy/relay/__pycache__" \
 
 # The relay bundle assembles its own payload straight from deploy/relay and
 # never passes through build-dist.sh, so it inherited none of that script's
-# redaction — the source-built tarball shipped `operator`, `relay-node` and `home-server` in
+# redaction — the source-built tarball shipped `masumi`, `raven` and `lain` in
 # comments. That matters more here than almost anywhere else: this is the
 # artifact strangers install on internet-facing machines.
 #
 # Third packager to need its own pass (after the .msi and the .deb). Any script
 # that stages a payload independently needs this; there is no inheriting it.
-if [[ -f "$ROOT/scripts/lib/oss_redact.py" && -x "$ROOT/scripts/lib/dist_redact.py" ]] \
-   && command -v python3 &>/dev/null; then
+# POSIX guard on purpose: this script runs under `sh` (dash). The previous
+# bash-isms ([[ / &>) made dash mis-parse the condition as always-true, which
+# hard-failed the build on trees without the private redaction tooling (the
+# OSS export) instead of skipping redaction there.
+if [ -f "$ROOT/scripts/lib/oss_redact.py" ] \
+   && [ -f "$ROOT/scripts/lib/dist_redact.py" ] \
+   && command -v python3 >/dev/null 2>&1; then
     echo "redacting relay bundle payload..."
     if ! python3 "$ROOT/scripts/lib/dist_redact.py" "$STAGE/wyrdsekai-relay"; then
         echo "ERROR: relay bundle redaction failed — refusing to build" >&2

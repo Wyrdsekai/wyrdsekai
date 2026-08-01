@@ -798,8 +798,18 @@
         },
         {
           "key": "WYRDSEKAI_SLEEP_THRESHOLD",
-          "description": "energy level triggering sleep",
+          "description": "energy level triggering emergency sleep (collapse fallback)",
           "default": "0.15"
+        },
+        {
+          "key": "WYRDSEKAI_SLEEP_BACKLOG_TARGET",
+          "description": "unprocessed events that make sleep attractive; genome trait sleep_backlog_target overrides per companion",
+          "default": "600"
+        },
+        {
+          "key": "WYRDSEKAI_SLEEP_BACKLOG_MIN",
+          "description": "floor for the personal sleep-pressure target (anti-thrash)",
+          "default": "40"
         },
         {
           "key": "WYRDSEKAI_SLEEP_RECOVERY",

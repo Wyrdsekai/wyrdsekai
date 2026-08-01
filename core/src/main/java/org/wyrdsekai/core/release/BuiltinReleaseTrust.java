@@ -48,9 +48,15 @@ public final class BuiltinReleaseTrust {
      * Anything not matching this pattern (random branch tags, no tag, a
      * different repo, a different workflow file) fails verification —
      * which is the entire point.
+     *
+     * <p>The org segment accepts both {@code Wyrdsekai} and
+     * {@code wyrdsekai}: the SAN URI carries the repository's canonical
+     * casing (capital-W org on GitHub), and GitHub treats org/repo names
+     * case-insensitively — no distinct repo can exist under the other
+     * casing, so accepting both widens nothing.
      */
     public static final String WORKFLOW_IDENTITY_REGEX =
-        "^https://github\\.com/wyrdsekai/wyrdsekai/"
+        "^https://github\\.com/[Ww]yrdsekai/wyrdsekai/"
         + "\\.github/workflows/release\\.yml"
         + "@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-z0-9.]+)?$";
 

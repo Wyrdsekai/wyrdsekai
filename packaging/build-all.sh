@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.1.3}"
+VERSION="${WYRDSEKAI_VERSION:-0.1.5}"
 
 info()  { echo -e "\033[36m[pack]\033[0m $*"; }
 ok()    { echo -e "\033[32m[pack]\033[0m $*"; }

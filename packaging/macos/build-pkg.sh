@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.1.3}"
+VERSION="${WYRDSEKAI_VERSION:-0.1.5}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 PKG_BUILD="$PROJECT_DIR/build/pkg"

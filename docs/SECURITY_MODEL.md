@@ -104,8 +104,27 @@ deliberately excluding `SSH_AUTH_SOCK` and every `*_KEY` / `*_TOKEN` /
 **SSH public keys** submitted through relay registration are accepted only as a
 bare `ssh-ed25519 <base64> [comment]` line, with blob length and header
 verified, so a registrant cannot smuggle `command=` or `permitlisten` options
-into `authorized_keys`. **Release artifacts** are Ed25519-signed and verified by
-`wyrd verify-release`.
+into `authorized_keys`.
+
+**Release artifacts** are verified two ways. Every release publishes a
+`SHA256SUMS` file — check your download against it. From v0.1.5 onward,
+releases additionally carry Sigstore keyless attestations: publishing a
+release triggers the repository's `release.yml` workflow, which verifies each
+asset against `SHA256SUMS` and signs its hash via GitHub OIDC + Fulcio +
+Rekor, uploading an `<asset>.sigstore.json` bundle next to it. Download the
+bundle alongside the artifact and run
+
+```
+wyrd verify-release wyrdsekai_X.Y.Z_amd64.deb
+```
+
+The verifier is embedded in the `wyrd` binary (sigstore-java — no `cosign`
+install needed) and walks the full chain against a trust root baked in at
+build time: Fulcio certificate chain, Rekor inclusion proof, and a pinned
+workflow identity (`Wyrdsekai/wyrdsekai/.github/workflows/release.yml` at a
+`v*.*.*` tag). A bundle signed by any other repo, workflow, or ref fails
+closed. Releases before v0.1.5 have no bundles — for those, `SHA256SUMS`
+over HTTPS is the verification story.
 
 ## Per-household NATS accounts and ACL scoping
 

@@ -652,7 +652,9 @@ var SCROLL_GROUPS = [
   { id: "tuning", title: "tuning (advanced)", keys: [
     ["WYRDSEKAI_AUTONOMY_INTERVAL_MS", "autonomy tick interval (ms)", "600000"],
     ["WYRDSEKAI_TICK_ENERGY_RECOVERY", "per-tick energy delta", "-0.0002"],
-    ["WYRDSEKAI_SLEEP_THRESHOLD", "energy level triggering sleep", "0.15"],
+    ["WYRDSEKAI_SLEEP_THRESHOLD", "energy level triggering emergency sleep (collapse fallback)", "0.15"],
+    ["WYRDSEKAI_SLEEP_BACKLOG_TARGET", "unprocessed events that make sleep attractive; genome trait sleep_backlog_target overrides per companion", "600"],
+    ["WYRDSEKAI_SLEEP_BACKLOG_MIN", "floor for the personal sleep-pressure target (anti-thrash)", "40"],
     ["WYRDSEKAI_SLEEP_RECOVERY", "energy recovered by sleep", "0.3"],
     ["WYRDSEKAI_ENERGY_DRAIN", "activity energy drain rate", "0.08"],
     ["WYRDSEKAI_CONSOLIDATION_INTERVAL_MINUTES", "memory-consolidation interval", "30"],

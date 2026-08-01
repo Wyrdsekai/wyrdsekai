@@ -21,6 +21,16 @@ class BuiltinReleaseTrustTest {
             .isTrue();
     }
 
+    @Test void canonical_github_casing_matches() {
+        // The Fulcio cert SAN carries the repository's CANONICAL casing —
+        // the public repo lives at github.com/Wyrdsekai/wyrdsekai. A
+        // lowercase-only pin would reject every genuine release bundle.
+        var ok = "https://github.com/Wyrdsekai/wyrdsekai/.github/workflows/release.yml@refs/tags/v0.1.5";
+        assertThat(BuiltinReleaseTrust.matchesWorkflowIdentity(ok))
+            .as("canonical capital-W org casing must match — this is what real certs carry")
+            .isTrue();
+    }
+
     @Test void prerelease_tag_suffix_is_accepted() {
         for (var tag : new String[] {
                 "v0.2.0-rc1",
