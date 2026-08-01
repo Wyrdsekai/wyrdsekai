@@ -197,6 +197,17 @@ public record SoulManifest(
             affinityMap);
     }
 
+    /** Return a copy with updated consolidated memory (language reconciliation etc.). */
+    public SoulManifest withMemory(CompactedMemory newMemory) {
+        return new SoulManifest(did, publicKeyMultibase, keyLog, parentDid,
+            manifestVersion, forgedAt, signature, profile, residentIdentity,
+            soulFragments, retrievalK, soulSpecCompat, genome, mirrorCalibration,
+            newMemory, relationships, learnedPatterns, worldKnowledge,
+            vitalitySnapshot, fingerprint, bonds, decisionCapacity, skillCostGenome,
+            voiceProfile, codingPreferences, protectionManifest, personalManifest,
+            affinityMap);
+    }
+
     /** Return a copy with updated skill cost genome. */
     public SoulManifest withSkillCostGenome(Map<String, Double> newGenome) {
         return new SoulManifest(did, publicKeyMultibase, keyLog, parentDid,

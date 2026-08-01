@@ -18,7 +18,7 @@
     <RootNamespace>Wyrdsekai.Tray</RootNamespace>
     <AssemblyName>Wyrdsekai.Tray</AssemblyName>
     <ApplicationIcon>..\wyrdsekai.ico</ApplicationIcon>
-    <Version>0.1.2</Version>
+    <Version>0.1.3</Version>
     <Product>Wyrdsekai</Product>
     <Company>Wyrdsekai</Company>
   </PropertyGroup>

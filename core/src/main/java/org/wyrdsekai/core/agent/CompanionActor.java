@@ -45,6 +45,7 @@ import org.wyrdsekai.core.soul.Bond;
 import org.wyrdsekai.core.soul.BehavioralExtractor;
 import org.wyrdsekai.core.soul.BehavioralFingerprint;
 import org.wyrdsekai.core.soul.CompactedMemory;
+import org.wyrdsekai.core.soul.MemoryNode;
 import org.wyrdsekai.core.soul.DirectedHarmClassifier;
 import org.wyrdsekai.core.soul.EmotionalCharge;
 import org.wyrdsekai.core.soul.EmotionalChargeScorer;
@@ -353,6 +354,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -4307,6 +4309,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var priorEpisodic = rankPriorEpisodicForRecursion(scene, candidates, 3);
         // 3 + 4. Call the voice model with the §10 prompt (real one-shot voice pass).
         return callVoiceInnerMonologue(scene, focalName, priorEpisodic)
+            // 4b. Language write gate — an off-language monologue is
+            // re-rendered (or dropped) BEFORE it can crystallize into the
+            // recursion context. See the soul-language-reconciliation block.
+            .thenCompose(this::gateFragmentLanguage)
             .thenAccept(prose -> {
                 if (prose == null || prose.isBlank()) return;
                 // 5. Build EPISODIC SoulFragment + persist via the manifest path.
@@ -4386,6 +4392,271 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     private static double clamp01(double v) {
         return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    // ── Soul language reconciliation (2026-07-31) ─────────────────────────
+    // Root cause of the live language-drift arc: a companion's FIRST inner
+    // monologue code-switched (one unlucky roll — clean-context probes show
+    // no model bias), the EPISODIC fragment stored it, and the recursion
+    // context fed it to every later monologue — the soul crystallized a
+    // language the household can't read. Two mechanisms below:
+    //   1. gateFragmentLanguage — write gate at the fragment source, the
+    //      same pattern the themed-bake guard uses (which is why rooms
+    //      stayed clean while the soul got poisoned).
+    //   2. maybeReconcileFragmentLanguages — self-healing for already-
+    //      affected souls: re-render off-language EPISODIC fragments in the
+    //      household language, replacing them in the live manifest. The
+    //      originals stay preserved in the immutable soul_manifests version
+    //      history — replacement is non-destructive at the record level.
+    // This guards the automatic RENDERER only. A companion deliberately
+    // writing in another language through her own actions is untouched.
+
+    private static final Duration FRAGMENT_LANG_RECONCILE_INTERVAL = Duration.ofMinutes(30);
+    /** Re-arm fast while a backlog exists — an affected soul heals in hours, not days. */
+    private static final Duration FRAGMENT_LANG_RECONCILE_BUSY_INTERVAL = Duration.ofMinutes(5);
+    private static final int FRAGMENT_LANG_RECONCILE_BATCH = 5;
+    private static final int MEMORY_LANG_RECONCILE_BATCH = 15;
+    private Instant lastFragmentLangReconcile = Instant.EPOCH;
+    private boolean lastReconcileFoundWork = false;
+
+    /** WYRDSEKAI_SOUL_LANGUAGE_RECONCILE — default on; "false" disables. */
+    static boolean soulLanguageReconcileEnabled() {
+        var v = System.getenv("WYRDSEKAI_SOUL_LANGUAGE_RECONCILE");
+        return v == null || v.isBlank() || Boolean.parseBoolean(v);
+    }
+
+    /**
+     * Pure selection for the healing pass: un-superseded EPISODIC fragments
+     * whose text confidently reads as a different language than the
+     * household's. EPISODIC only — that is the proven poison vector (the
+     * recursion context) and the only kind the automatic renderer writes
+     * without review.
+     */
+    static List<SoulFragment> fragmentLanguageOffenders(
+            List<SoulFragment> fragments, String householdLang, int limit) {
+        // Tiered support: healing only for detector-verifiable household
+        // languages — the detector misreads e.g. French as "en" and would
+        // select the household's own fragments as offenders forever.
+        if (fragments == null || !detectorVerifiable(householdLang)) return List.of();
+        return fragments.stream()
+            .filter(f -> f != null
+                && f.kind() == FragmentKind.EPISODIC
+                && f.isCurrent()
+                && f.text() != null && !f.text().isBlank())
+            .filter(f -> {
+                var l = detectLanguage(f.text());
+                return l != null && !l.equals(householdLang);
+            })
+            .limit(limit)
+            .toList();
+    }
+
+    /** One-shot "say the same thing in the household language" re-render. */
+    private CompletionStage<String> rerenderNoteInLanguage(
+            String prose, String householdLang, String requestIdPrefix) {
+        var langName = languageName(householdLang);
+        var sys = "You speak " + langName + ". Every reply you write is in " + langName + ".\n\n"
+            + "The note below is a private first-person note that was written in the "
+            + "wrong language. Say the same thing in " + langName + ": keep its meaning, "
+            + "feeling, names, and numbers. Do not add new content. Do not reply to it. "
+            + "Output ONLY the rewritten note.";
+        // null capability → drive-model default. Live-probed: the 4B echoes
+        // deep-interiority off-language notes verbatim; the drive model
+        // translates them faithfully. Healing/gating is background work.
+        return fireOneShotVoicePrompt(sys, prose, 320, 0.3, requestIdPrefix,
+            INNER_VOICE_TIMEOUT, null);
+    }
+
+    /** Shared verification for a re-rendered note: right language, digits intact. */
+    private boolean rerenderIsSound(String original, String fixed, String householdLang) {
+        if (fixed == null || fixed.isBlank()) return false;
+        var still = detectLanguage(fixed);
+        if (still != null && !still.equals(householdLang)) return false;
+        for (var tok : extractRequiredNumbers(original)) {
+            if (!digitRunsSurvive(tok, fixed)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Write gate for the inner-monologue renderer: an off-language monologue
+     * is re-rendered once before it may become memory; if the re-render is
+     * unsound the fragment is DROPPED for this cycle (a lost note beats a
+     * corrupted record — the scene stays un-consolidated and retries on the
+     * next close).
+     */
+    private CompletionStage<String> gateFragmentLanguage(String prose) {
+        if (prose == null || prose.isBlank() || !soulLanguageReconcileEnabled()) {
+            return CompletableFuture.completedFuture(prose);
+        }
+        String household = (locale == null || locale.isBlank()) ? "en" : locale;
+        if (!detectorVerifiable(household)) {
+            return CompletableFuture.completedFuture(prose); // pin-only tier
+        }
+        var got = detectLanguage(prose);
+        if (got == null || got.equals(household)) {
+            return CompletableFuture.completedFuture(prose);
+        }
+        log.info("Fragment language gate: inner monologue rendered '{}' but the household "
+            + "language is '{}' — re-rendering before it becomes memory", got, household);
+        return rerenderNoteInLanguage(prose, household, "langgate-")
+            .handle((fixed, ex) -> {
+                if (ex != null || !rerenderIsSound(prose, fixed, household)) {
+                    log.warn("Fragment language gate: re-render unsound ({}) — dropping this "
+                        + "monologue rather than storing an off-language memory",
+                        ex != null ? ex.toString() : "still off-language or digits lost");
+                    return null;
+                }
+                return fixed;
+            });
+    }
+
+    /**
+     * Pure selection for the memory half of the healing pass: consolidated
+     * MemoryNodes whose content confidently reads as a different language
+     * than the household's. On the live-diagnosed node, 477/500 memory nodes
+     * carried the companion's own drift-era utterances — the memory graph
+     * was a bigger reservoir than the fragments.
+     */
+    static List<MemoryNode> memoryNodeLanguageOffenders(
+            CompactedMemory memory, String householdLang, int limit) {
+        if (memory == null || memory.nodes() == null
+                || !detectorVerifiable(householdLang)) return List.of();
+        return memory.nodes().stream()
+            .filter(n -> n != null && n.content() != null && !n.content().isBlank())
+            .filter(n -> {
+                var l = detectLanguage(n.content());
+                return l != null && !l.equals(householdLang);
+            })
+            .limit(limit)
+            .toList();
+    }
+
+    /**
+     * Self-healing pass, called from the vitality tick (not sleep-gated: a
+     * companion whose sleep cycle is failing must still heal). Covers BOTH
+     * reservoirs of the drift: EPISODIC soul fragments (the self-reinforcing
+     * recursion vector) and consolidated memory nodes (the bulk).
+     *
+     * <p>Re-renders run SEQUENTIALLY — the first live round fired five
+     * one-shots concurrently at an already-busy voice backend and four timed
+     * out; a serial chain converts nearly every attempt. While offenders
+     * remain the pass re-arms on the busy interval so an affected soul heals
+     * in hours, then settles back to the quiet interval as a cheap scan.
+     * One manifest bump + store per round, not per item.</p>
+     */
+    private void maybeReconcileFragmentLanguages() {
+        if (!soulLanguageReconcileEnabled() || inferenceRouter == null || isSleeping) return;
+        if (cachedManifest == null) return;
+        var interval = lastReconcileFoundWork
+            ? FRAGMENT_LANG_RECONCILE_BUSY_INTERVAL : FRAGMENT_LANG_RECONCILE_INTERVAL;
+        if (Duration.between(lastFragmentLangReconcile, Instant.now())
+                .compareTo(interval) < 0) return;
+        lastFragmentLangReconcile = Instant.now();
+        String household = (locale == null || locale.isBlank()) ? "en" : locale;
+        var fragOffenders = fragmentLanguageOffenders(
+            cachedManifest.soulFragments(), household, FRAGMENT_LANG_RECONCILE_BATCH);
+        var nodeOffenders = memoryNodeLanguageOffenders(
+            cachedManifest.memory(), household, MEMORY_LANG_RECONCILE_BATCH);
+        lastReconcileFoundWork = !fragOffenders.isEmpty() || !nodeOffenders.isEmpty();
+        if (!lastReconcileFoundWork) return;
+        log.info("Soul language reconciliation for '{}': {} fragment(s) + {} memory node(s) "
+            + "not in household language '{}' — re-rendering serially "
+            + "(originals preserved in manifest history)",
+            profile.name(), fragOffenders.size(), nodeOffenders.size(), household);
+        var healedCount = new AtomicInteger();
+        CompletionStage<Void> chain = CompletableFuture.completedFuture(null);
+        for (var f : fragOffenders) {
+            chain = chain.thenCompose(v -> reconcileFragmentStage(f, household, healedCount));
+        }
+        for (var n : nodeOffenders) {
+            chain = chain.thenCompose(v -> reconcileMemoryNodeStage(n, household, healedCount));
+        }
+        chain.thenRun(() -> {
+            // Actor thread (one-shot voice contract holds through the chain).
+            int healed = healedCount.get();
+            if (healed == 0) return;
+            cachedManifest = cachedManifest.bumpedVersion();
+            log.info("Soul language reconciliation round for '{}': {} item(s) re-rendered "
+                + "into '{}' (manifest v{})", profile.name(), healed, household,
+                cachedManifest.manifestVersion());
+            if (soulStore != null) {
+                try {
+                    soulStore.store(cachedManifest);
+                } catch (Exception e) {
+                    log.warn("Soul language reconciliation store failed: {}", e.getMessage());
+                }
+            }
+        });
+    }
+
+    /** One fragment re-render as a sequential chain stage; never fails the chain. */
+    private CompletionStage<Void> reconcileFragmentStage(
+            SoulFragment old, String household, AtomicInteger healed) {
+        return rerenderNoteInLanguage(old.text(), household, "langheal-")
+            .handle((fixed, ex) -> {
+                if (ex != null || !rerenderIsSound(old.text(), fixed, household)) {
+                    log.debug("Soul language reconciliation: fragment '{}' re-render unsound — "
+                        + "retrying next round", old.id());
+                    return null;
+                }
+                if (cachedManifest == null || cachedManifest.soulFragments() == null) return null;
+                var frags = new ArrayList<>(cachedManifest.soulFragments());
+                int idx = -1;
+                for (int i = 0; i < frags.size(); i++) {
+                    var g = frags.get(i);
+                    if (g != null && old.id().equals(g.id()) && g.isCurrent()) { idx = i; break; }
+                }
+                if (idx < 0) return null; // replaced or removed since selection
+                var restoredId = old.id() + "-lang-restored";
+                if (frags.stream().anyMatch(g -> g != null && restoredId.equals(g.id()))) {
+                    return null;
+                }
+                // Same slot, same scene lineage; embedding null → re-embedded
+                // lazily for the NEW text by the recursion ranker.
+                var restored = new SoulFragment(restoredId, old.category(), old.label(),
+                    fixed.strip(), null, null, old.formative(), old.confidence(),
+                    old.reinforcementCount(), old.firstObserved(), old.lastConfirmed(),
+                    old.validFrom(), null, null, old.kind(), old.sceneId());
+                frags.set(idx, restored);
+                cachedManifest = cachedManifest.withFragments(frags);
+                healed.incrementAndGet();
+                log.info("Soul language reconciliation: fragment '{}' re-rendered in '{}' as '{}'",
+                    old.id(), household, restoredId);
+                return null;
+            });
+    }
+
+    /** One memory-node re-render as a sequential chain stage; never fails the chain. */
+    private CompletionStage<Void> reconcileMemoryNodeStage(
+            MemoryNode old, String household, AtomicInteger healed) {
+        return rerenderNoteInLanguage(old.content(), household, "langheal-")
+            .handle((fixed, ex) -> {
+                if (ex != null || !rerenderIsSound(old.content(), fixed, household)) {
+                    log.debug("Soul language reconciliation: memory node '{}' re-render "
+                        + "unsound — retrying next round", old.id());
+                    return null;
+                }
+                if (cachedManifest == null || cachedManifest.memory() == null
+                        || cachedManifest.memory().nodes() == null) return null;
+                var mem = cachedManifest.memory();
+                var nodes = new ArrayList<>(mem.nodes());
+                int idx = -1;
+                for (int i = 0; i < nodes.size(); i++) {
+                    var g = nodes.get(i);
+                    if (g != null && old.id().equals(g.id())) { idx = i; break; }
+                }
+                if (idx < 0) return null;
+                // Keywords stay — retrieval refreshes them at the next
+                // consolidation; originLocale becomes truthful.
+                nodes.set(idx, new MemoryNode(old.id(), fixed.strip(), old.keywords(),
+                    old.importance(), old.impressionDepth(), old.formative(),
+                    old.primaryEmotion(), old.lastAccessed(), old.accessCount(), household));
+                cachedManifest = cachedManifest.withMemory(
+                    new CompactedMemory(nodes, mem.links(), mem.topicWeights()));
+                healed.incrementAndGet();
+                return null;
+            });
     }
 
     /**
@@ -8062,9 +8333,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // not the draft's: reject a polish that moves AWAY from expectedLang;
         // accept one that corrects an off-language draft toward it.
         boolean correction = false;
-        if (expectedLang == null) {
+        if (expectedLang == null || !detectorVerifiable(expectedLang)) {
+            // No expected language, or one the detector can't verify
+            // (pin-only tier) → the legacy symmetric rule is the safe shape.
             if (languageChanged(draft, polished)) {
-                return draft;   // legacy symmetric: voice switched language → raw draft
+                return draft;   // voice switched language → raw draft
             }
         } else {
             var polishLang = detectLanguage(polished);
@@ -8124,17 +8397,65 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return sawDigits || polished.contains(fact);
     }
 
-    /** Human name of a supported locale, for the voice-model language pin. */
+    /**
+     * Languages the heuristic detector can VERIFY (see {@link #detectLanguage}).
+     * Support is tiered (ruled 2026-07-31): any ISO 639-1 code is accepted in
+     * config and the prompt pin names it, but the detector-driven machinery —
+     * speech floor, fragment write gate, soul healing — only engages for
+     * these, because acting on a language the detector misreads (French
+     * classifies as "en") would churn corrections forever. Full translations
+     * ship for exactly this set; community i18n catalogs extend the rest.
+     */
+    static final Set<String> DETECTOR_VERIFIABLE_LANGS = Set.of("en", "es", "ja");
+
+    static boolean detectorVerifiable(String lang) {
+        return lang != null && DETECTOR_VERIFIABLE_LANGS.contains(lang);
+    }
+
+    /**
+     * Human name of a locale for the voice-model language pin. Broad ISO
+     * 639-1 table — the pin works for any language the underlying model
+     * knows, independent of the detector tier above. Unknown codes fall back
+     * to the raw code (the models understand "You speak pt" well enough,
+     * and naming the wrong language would be worse).
+     */
     static String languageName(String locale) {
         if (locale == null || locale.isBlank()) return "English";
-        return switch (locale.toLowerCase().split("[-_]")[0]) {
+        var code = locale.toLowerCase().split("[-_]")[0];
+        return switch (code) {
+            case "en" -> "English";
             case "ja" -> "Japanese";
             case "es" -> "Spanish";
             case "fr" -> "French";
             case "de" -> "German";
             case "zh" -> "Chinese";
             case "ko" -> "Korean";
-            default -> "English";
+            case "pt" -> "Portuguese";
+            case "it" -> "Italian";
+            case "nl" -> "Dutch";
+            case "ru" -> "Russian";
+            case "pl" -> "Polish";
+            case "sv" -> "Swedish";
+            case "no", "nb", "nn" -> "Norwegian";
+            case "da" -> "Danish";
+            case "fi" -> "Finnish";
+            case "tr" -> "Turkish";
+            case "ar" -> "Arabic";
+            case "he" -> "Hebrew";
+            case "hi" -> "Hindi";
+            case "bn" -> "Bengali";
+            case "id" -> "Indonesian";
+            case "ms" -> "Malay";
+            case "th" -> "Thai";
+            case "vi" -> "Vietnamese";
+            case "uk" -> "Ukrainian";
+            case "cs" -> "Czech";
+            case "el" -> "Greek";
+            case "ro" -> "Romanian";
+            case "hu" -> "Hungarian";
+            case "ca" -> "Catalan";
+            case "tl", "fil" -> "Filipino";
+            default -> code;
         };
     }
 
@@ -10543,6 +10864,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     private Behavior<Command> onVitalityTick(VitalityTick msg) {
+        // Soul language reconciliation — interval-gated inside, cheap no-op
+        // when the manifest is clean. Deliberately on the tick, not the
+        // sleep path: a companion whose sleep cycle is failing must still
+        // heal (live 2026-07-31: the affected companion had not slept).
+        maybeReconcileFragmentLanguages();
         var preTick = vitality.energy();
         var now = Instant.now();
         double deltaTime = Duration.between(lastTickTime, now).toMillis() / 1000.0;
@@ -11422,7 +11748,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // NOT floored — exploring languages there is hers to do.
         String expectedLang = effectiveTurnLang();
         String draftLang = detectLanguage(text);
-        boolean wrongLanguage = draftLang != null && !draftLang.equals(expectedLang);
+        // Tiered support: the floor only engages for detector-verifiable
+        // languages — for e.g. a French household the detector reads French
+        // as "en" and would churn rewrites forever. Pin-only there.
+        boolean wrongLanguage = detectorVerifiable(expectedLang)
+            && draftLang != null && !draftLang.equals(expectedLang);
         if (wrongLanguage && inferenceRouter != null) {
             log.info("Language floor: draft reads '{}' but this turn's language is '{}' "
                 + "— forcing a rewrite pass", draftLang, expectedLang);
@@ -11704,6 +12034,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private CompletionStage<String> fireOneShotVoicePrompt(
             String systemPrompt, String userPrompt, int maxTokens, double temperature,
             String requestIdPrefix, Duration timeout) {
+        return fireOneShotVoicePrompt(systemPrompt, userPrompt, maxTokens, temperature,
+            requestIdPrefix, timeout, "cap:quick");
+    }
+
+    /**
+     * @param capability inference capability route. "cap:quick" = the 4B voice
+     *     backend (the default, per the §10 memo). Pass {@code null} for
+     *     default backend selection (the drive model) — the language
+     *     re-render path needs this: live-probed 2026-07-31, the 4B echoes
+     *     deep-interiority off-language notes VERBATIM (3/3) while the drive
+     *     model translates them faithfully (3/3). Healing is background work,
+     *     so the heavier model is the right trade.
+     */
+    private CompletionStage<String> fireOneShotVoicePrompt(
+            String systemPrompt, String userPrompt, int maxTokens, double temperature,
+            String requestIdPrefix, Duration timeout, String capability) {
         var fut = new CompletableFuture<String>();
         if (inferenceRouter == null) {
             fut.completeExceptionally(new IllegalStateException(
@@ -11737,11 +12083,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     + languageName(locale) + ".\n\n" + systemPrompt));
         }
         messages.add(new InferenceClient.ChatMessage("user", userPrompt));
-        // cap:quick routes to the 4B voice backend (home-server :8201 in production).
-        // The §10 design memo's load-bearing constraint: "voice :8201 just
-        // like FeltSynthesizer" — both prose passes use the same backend.
+        // "cap:quick" routes to the 4B voice backend (home-server :8201 in
+        // production) — the §10 memo's load-bearing constraint for prose
+        // passes. Callers that need the drive model pass a different
+        // capability (see the language re-render overload note above).
         inferenceRouter.tell(new InferenceRouter.ChatRequest(
-            requestId, "cap:quick", messages,
+            requestId, capability, messages,
             maxTokens, temperature,
             inferenceResponseAdapter, null, null, null,
             List.of(), "none",

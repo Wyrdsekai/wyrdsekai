@@ -12,8 +12,13 @@
         },
         {
           "key": "WYRDSEKAI_LANG",
-          "description": "household language companions speak to users (en/ja/es); per-message language still mirrors the user",
+          "description": "household language companions speak to users; any ISO 639-1 code accepted — en/ja/es ship with full translations + drift protection, other languages are prompt-level only (add catalogs in scripts/i18n)",
           "default": "en"
+        },
+        {
+          "key": "WYRDSEKAI_SOUL_LANGUAGE_RECONCILE",
+          "description": "auto-repair companion memories rendered in the wrong language (gate new + heal existing; originals kept in manifest history)",
+          "default": "true"
         },
         {
           "key": "WYRDSEKAI_ZONE_ID",

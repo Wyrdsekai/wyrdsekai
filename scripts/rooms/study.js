@@ -486,7 +486,8 @@ function doNostrSigil(entityId, target) {
 var SCROLL_GROUPS = [
   { id: "identity", title: "identity & world", keys: [
     ["WYRDSEKAI_NODE_NAME", "this node's display name", "(hostname)"],
-    ["WYRDSEKAI_LANG", "household language companions speak to users (en/ja/es); per-message language still mirrors the user", "en"],
+    ["WYRDSEKAI_LANG", "household language companions speak to users; any ISO 639-1 code accepted — en/ja/es ship with full translations + drift protection, other languages are prompt-level only (add catalogs in scripts/i18n)", "en"],
+    ["WYRDSEKAI_SOUL_LANGUAGE_RECONCILE", "auto-repair companion memories rendered in the wrong language (gate new + heal existing; originals kept in manifest history)", "true"],
     ["WYRDSEKAI_ZONE_ID", "the zone label (the @name in your prompt)", "home"],
     ["WYRDSEKAI_ZONE_NAME", "human-readable zone name", "Home Zone"],
     ["WYRDSEKAI_ZONE_THEME", "aesthetic theme applied to room descriptions", "(from hostname)"],
