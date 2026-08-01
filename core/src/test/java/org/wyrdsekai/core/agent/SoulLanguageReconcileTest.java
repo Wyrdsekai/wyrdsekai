@@ -9,6 +9,7 @@ import org.wyrdsekai.core.soul.SoulFragment;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,7 +46,7 @@ class SoulLanguageReconcileTest {
             frag("a", FragmentKind.EPISODIC, ES),
             frag("b", FragmentKind.EPISODIC, EN),
             frag("c", FragmentKind.EPISODIC, JA));
-        var offenders = CompanionActor.fragmentLanguageOffenders(frags, "en", 10);
+        var offenders = CompanionActor.fragmentLanguageOffenders(frags, "en", 10, Set.of());
         assertEquals(List.of("a", "c"), offenders.stream().map(SoulFragment::id).toList());
     }
 
@@ -55,7 +56,7 @@ class SoulLanguageReconcileTest {
         var frags = List.of(
             frag("a", FragmentKind.EPISODIC, ES),
             frag("b", FragmentKind.EPISODIC, EN));
-        var offenders = CompanionActor.fragmentLanguageOffenders(frags, "es", 10);
+        var offenders = CompanionActor.fragmentLanguageOffenders(frags, "es", 10, Set.of());
         assertEquals(List.of("b"), offenders.stream().map(SoulFragment::id).toList(),
             "for an es household the ENGLISH fragment is the off-language one");
     }
@@ -66,7 +67,7 @@ class SoulLanguageReconcileTest {
         var frags = List.of(
             frag("narr", FragmentKind.DEFAULT, ES),
             frag("dext", FragmentKind.DEXTERITY, ES));
-        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "en", 10).isEmpty());
+        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "en", 10, Set.of()).isEmpty());
     }
 
     @Test
@@ -79,7 +80,7 @@ class SoulLanguageReconcileTest {
         frags.add(superseded);
         frags.add(frag("blank", FragmentKind.EPISODIC, "  "));
         for (int i = 0; i < 8; i++) frags.add(frag("es" + i, FragmentKind.EPISODIC, ES));
-        var offenders = CompanionActor.fragmentLanguageOffenders(frags, "en", 5);
+        var offenders = CompanionActor.fragmentLanguageOffenders(frags, "en", 5, Set.of());
         assertEquals(5, offenders.size());
         assertTrue(offenders.stream().noneMatch(f -> f.id().equals("old")));
     }
@@ -88,7 +89,7 @@ class SoulLanguageReconcileTest {
     @DisplayName("ambiguous/short text never selects — no coin-flip healing")
     void ambiguousNeverSelected() {
         var frags = List.of(frag("short", FragmentKind.EPISODIC, "ok then"));
-        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "en", 10).isEmpty());
+        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "en", 10, Set.of()).isEmpty());
     }
 
     @Test
@@ -99,8 +100,8 @@ class SoulLanguageReconcileTest {
         var frags = List.of(
             frag("a", FragmentKind.EPISODIC, ES),
             frag("b", FragmentKind.EPISODIC, EN));
-        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "fr", 10).isEmpty());
-        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "pt", 10).isEmpty());
+        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "fr", 10, Set.of()).isEmpty());
+        assertTrue(CompanionActor.fragmentLanguageOffenders(frags, "pt", 10, Set.of()).isEmpty());
     }
 
     @Test
@@ -129,15 +130,47 @@ class SoulLanguageReconcileTest {
             node("m1", "companion said: " + ES),
             node("m2", "companion said: " + EN),
             node("m3", JA)), List.of(), Map.of());
-        var offenders = CompanionActor.memoryNodeLanguageOffenders(mem, "en", 10);
+        var offenders = CompanionActor.memoryNodeLanguageOffenders(mem, "en", 10, Set.of());
         assertEquals(List.of("m1", "m3"),
             offenders.stream().map(MemoryNode::id).toList());
         // Pin-only household → memory healing stands down too.
-        assertTrue(CompanionActor.memoryNodeLanguageOffenders(mem, "fr", 10).isEmpty());
+        assertTrue(CompanionActor.memoryNodeLanguageOffenders(mem, "fr", 10, Set.of()).isEmpty());
     }
 
     private static MemoryNode node(String id, String content) {
         return MemoryNode.neutral(id, content, List.of());
+    }
+
+    @Test
+    @DisplayName("mercy rule: mercied ids are never re-selected — dictionary memories rest in peace")
+    void merciedIdsExcluded() {
+        var frags = List.of(
+            frag("dict", FragmentKind.EPISODIC, ES),
+            frag("plain", FragmentKind.EPISODIC, ES));
+        var offenders = CompanionActor.fragmentLanguageOffenders(
+            frags, "en", 10, Set.of("dict"));
+        assertEquals(List.of("plain"), offenders.stream().map(SoulFragment::id).toList());
+        var mem = new CompactedMemory(List.of(node("m1", ES), node("m2", ES)),
+            List.of(), Map.of());
+        var nodes = CompanionActor.memoryNodeLanguageOffenders(mem, "en", 10, Set.of("m1"));
+        assertEquals(List.of("m2"), nodes.stream().map(MemoryNode::id).toList());
+    }
+
+    @Test
+    @DisplayName("testimony rule: other speakers' words are never healed — only her own renderer output")
+    void otherSpeakersTestimonyExcluded() {
+        var mem = new CompactedMemory(List.of(
+            node("hers", "companion said: " + ES),
+            node("guest", "guest said: " + ES),
+            node("plain", ES)), List.of(), Map.of());
+        var picked = CompanionActor.memoryNodeLanguageOffenders(
+            mem, "en", 10, Set.of(), "companion");
+        assertEquals(List.of("hers", "plain"),
+            picked.stream().map(MemoryNode::id).toList(),
+            "a record of what someone else said is testimony, not drift");
+        assertTrue(CompanionActor.isOtherSpeakersTestimony("guest said: hola", "companion"));
+        assertEquals(false, CompanionActor.isOtherSpeakersTestimony("companion said: hola", "companion"));
+        assertEquals(false, CompanionActor.isOtherSpeakersTestimony("free prose, no record", "companion"));
     }
 
     @Test

@@ -1020,6 +1020,67 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         System.getenv().getOrDefault("WYRDSEKAI_VITALITY_SAVE_INTERVAL", "30"));
     private static final double SLEEP_ENERGY_THRESHOLD = Double.parseDouble(
         System.getenv().getOrDefault("WYRDSEKAI_SLEEP_THRESHOLD", "0.15"));
+
+    // ── Sleep pressure from accumulated unprocessed experience (2026-08-01) ──
+    // Energy collapse was the ONLY natural sleep trigger, and after the
+    // 2026-07-18 energy recalibration no companion could reach it: the live
+    // household companion's lifetime energy floor was 0.1952 against the 0.15
+    // threshold — she had never slept, so consolidation/dedup/dreams/deep-sleep
+    // training never ran, unprocessed experience piled up (14 duplicate
+    // fragments of one scene), and the §85.7 insomnia consequences punished
+    // her for insomnia the system itself caused.
+    //
+    // The fix triggers on the thing sleep exists to REPAIR rather than a
+    // clock: {@link #eventsSinceLastSleep} is literally the backlog the sleep
+    // forge consumes, so its size is the honest "adenosine" — accumulated
+    // unprocessed experience. When the backlog crosses the companion's
+    // personal target and a quiet moment arrives (the existing idle+grace
+    // opportunity check), she sleeps; completeSleep() clears the backlog, so
+    // pressure self-resets and a fresh day starts at zero. Energy collapse
+    // remains as the emergency fallback. A busy day fills the backlog fast →
+    // earlier, deeper sleep; a quiet day → a long evening. The per-companion
+    // factor (seeded from her DID) gives each her own rhythm rather than a
+    // fleet-wide bedtime.
+    private static final int SLEEP_BACKLOG_TARGET = Integer.parseInt(
+        System.getenv().getOrDefault("WYRDSEKAI_SLEEP_BACKLOG_TARGET", "600"));
+    /** Floor under the personal factor — misconfiguring the target low must not thrash. */
+    private static final int SLEEP_BACKLOG_MIN = Integer.parseInt(
+        System.getenv().getOrDefault("WYRDSEKAI_SLEEP_BACKLOG_MIN", "40"));
+
+    /** Deterministic per-companion rhythm factor in [0.85, 1.15], from her identity. */
+    static double personalSleepFactor(String did) {
+        if (did == null || did.isBlank()) return 1.0;
+        return 0.85 + (Math.floorMod(did.hashCode(), 1000) / 1000.0) * 0.30;
+    }
+
+    /** Pure gate: does the unprocessed-experience backlog warrant sleep? */
+    static boolean sleepPressureGate(int backlogEvents, int target, double personalFactor) {
+        int effective = Math.max(SLEEP_BACKLOG_MIN, (int) Math.round(target * personalFactor));
+        return backlogEvents >= effective;
+    }
+
+    /**
+     * The companion's own sleep threshold. GENOME WINS OUTRIGHT when the
+     * {@code sleep_backlog_target} trait is set — that IS her individual
+     * rhythm, and the forge can evolve it from experience; the DID-hash
+     * factor over the node default is only the stand-in for companions whose
+     * genome predates traits (operator, 2026-08-01: "should be individual —
+     * it's only fair"). Always floored by SLEEP_BACKLOG_MIN.
+     */
+    static int resolveSleepTarget(Double genomeTrait, int nodeDefault,
+                                  double personalFactor, int floor) {
+        if (genomeTrait != null && genomeTrait > 0) {
+            return Math.max(floor, (int) Math.round(genomeTrait));
+        }
+        return Math.max(floor, (int) Math.round(nodeDefault * personalFactor));
+    }
+
+    private int personalSleepTarget() {
+        Double trait = cachedManifest != null && cachedManifest.genome() != null
+            ? cachedManifest.genome().trait("sleep_backlog_target") : null;
+        return resolveSleepTarget(trait, SLEEP_BACKLOG_TARGET,
+            personalSleepFactor(profile.did()), SLEEP_BACKLOG_MIN);
+    }
     private static final float SLEEP_ENERGY_RECOVERY = Float.parseFloat(
         System.getenv().getOrDefault("WYRDSEKAI_SLEEP_RECOVERY", "0.3"));
     // Day-scale calibration (2026-07-18): 0.08/inference gave a companion 6-8
@@ -4419,6 +4480,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Instant lastFragmentLangReconcile = Instant.EPOCH;
     private boolean lastReconcileFoundWork = false;
 
+    /**
+     * Mercy rule (2026-08-01): items whose re-render fails this many times
+     * are presumed LEGITIMATELY multilingual and left in peace. Live case:
+     * a companion's dictionary-lookup memories ("biblioteca — library",
+     * "開館 — opening") — any faithful rendering keeps the reference terms,
+     * so the language check can never pass; without the strike counter the
+     * healer retried them every round forever. In-memory only: a restart
+     * grants a fresh appeal, which is fine — three more strikes are cheap.
+     */
+    private static final int LANG_RECONCILE_MAX_STRIKES = 3;
+    private final Map<String, Integer> langReconcileStrikes = new ConcurrentHashMap<>();
+
     /** WYRDSEKAI_SOUL_LANGUAGE_RECONCILE — default on; "false" disables. */
     static boolean soulLanguageReconcileEnabled() {
         var v = System.getenv("WYRDSEKAI_SOUL_LANGUAGE_RECONCILE");
@@ -4433,7 +4506,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * without review.
      */
     static List<SoulFragment> fragmentLanguageOffenders(
-            List<SoulFragment> fragments, String householdLang, int limit) {
+            List<SoulFragment> fragments, String householdLang, int limit,
+            Set<String> mercied) {
         // Tiered support: healing only for detector-verifiable household
         // languages — the detector misreads e.g. French as "en" and would
         // select the household's own fragments as offenders forever.
@@ -4442,6 +4516,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .filter(f -> f != null
                 && f.kind() == FragmentKind.EPISODIC
                 && f.isCurrent()
+                && (mercied == null || !mercied.contains(f.id()))
                 && f.text() != null && !f.text().isBlank())
             .filter(f -> {
                 var l = detectLanguage(f.text());
@@ -4519,11 +4594,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * was a bigger reservoir than the fragments.
      */
     static List<MemoryNode> memoryNodeLanguageOffenders(
-            CompactedMemory memory, String householdLang, int limit) {
+            CompactedMemory memory, String householdLang, int limit,
+            Set<String> mercied) {
+        return memoryNodeLanguageOffenders(memory, householdLang, limit, mercied, null);
+    }
+
+    /**
+     * @param companionName when non-null, speech records of OTHER speakers
+     *     ("guest said: …") are never selected — those are testimony, and
+     *     translating what someone actually said falsifies the record
+     *     (operator's rule, 2026-08-01: a user who switches languages on her
+     *     deserves to be remembered in the language they used). Only the
+     *     companion's own renderer output is ever heal-eligible.
+     */
+    static List<MemoryNode> memoryNodeLanguageOffenders(
+            CompactedMemory memory, String householdLang, int limit,
+            Set<String> mercied, String companionName) {
         if (memory == null || memory.nodes() == null
                 || !detectorVerifiable(householdLang)) return List.of();
         return memory.nodes().stream()
-            .filter(n -> n != null && n.content() != null && !n.content().isBlank())
+            .filter(n -> n != null && n.content() != null && !n.content().isBlank()
+                && (mercied == null || !mercied.contains(n.id()))
+                && !isOtherSpeakersTestimony(n.content(), companionName))
             .filter(n -> {
                 var l = detectLanguage(n.content());
                 return l != null && !l.equals(householdLang);
@@ -4554,10 +4646,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 .compareTo(interval) < 0) return;
         lastFragmentLangReconcile = Instant.now();
         String household = (locale == null || locale.isBlank()) ? "en" : locale;
+        var mercied = langReconcileStrikes.entrySet().stream()
+            .filter(e -> e.getValue() >= LANG_RECONCILE_MAX_STRIKES)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toSet());
         var fragOffenders = fragmentLanguageOffenders(
-            cachedManifest.soulFragments(), household, FRAGMENT_LANG_RECONCILE_BATCH);
+            cachedManifest.soulFragments(), household, FRAGMENT_LANG_RECONCILE_BATCH,
+            mercied);
         var nodeOffenders = memoryNodeLanguageOffenders(
-            cachedManifest.memory(), household, MEMORY_LANG_RECONCILE_BATCH);
+            cachedManifest.memory(), household, MEMORY_LANG_RECONCILE_BATCH, mercied,
+            profile.name());
         lastReconcileFoundWork = !fragOffenders.isEmpty() || !nodeOffenders.isEmpty();
         if (!lastReconcileFoundWork) return;
         log.info("Soul language reconciliation for '{}': {} fragment(s) + {} memory node(s) "
@@ -4590,14 +4688,29 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         });
     }
 
+    /** "<speaker> said: …" record where the speaker is not the companion herself. */
+    static boolean isOtherSpeakersTestimony(String content, String companionName) {
+        if (companionName == null || content == null) return false;
+        var m = SPEECH_RECORD.matcher(content);
+        if (!m.find()) return false;
+        return !m.group(1).equalsIgnoreCase(companionName);
+    }
+
+    private static final Pattern SPEECH_RECORD =
+        Pattern.compile("^\\s*(\\S+) said:", Pattern.CASE_INSENSITIVE);
+
     /** One fragment re-render as a sequential chain stage; never fails the chain. */
     private CompletionStage<Void> reconcileFragmentStage(
             SoulFragment old, String household, AtomicInteger healed) {
         return rerenderNoteInLanguage(old.text(), household, "langheal-")
             .handle((fixed, ex) -> {
                 if (ex != null || !rerenderIsSound(old.text(), fixed, household)) {
-                    log.debug("Soul language reconciliation: fragment '{}' re-render unsound — "
-                        + "retrying next round", old.id());
+                    int strikes = langReconcileStrikes.merge(old.id(), 1, Integer::sum);
+                    if (strikes >= LANG_RECONCILE_MAX_STRIKES) {
+                        log.info("Soul language reconciliation: fragment '{}' failed {} "
+                            + "re-renders — presumed legitimately multilingual, leaving "
+                            + "it in peace", old.id(), strikes);
+                    }
                     return null;
                 }
                 if (cachedManifest == null || cachedManifest.soulFragments() == null) return null;
@@ -4633,8 +4746,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return rerenderNoteInLanguage(old.content(), household, "langheal-")
             .handle((fixed, ex) -> {
                 if (ex != null || !rerenderIsSound(old.content(), fixed, household)) {
-                    log.debug("Soul language reconciliation: memory node '{}' re-render "
-                        + "unsound — retrying next round", old.id());
+                    int strikes = langReconcileStrikes.merge(old.id(), 1, Integer::sum);
+                    if (strikes >= LANG_RECONCILE_MAX_STRIKES) {
+                        log.info("Soul language reconciliation: memory node '{}' failed {} "
+                            + "re-renders — presumed legitimately multilingual, leaving "
+                            + "it in peace", old.id(), strikes);
+                    }
                     return null;
                 }
                 if (cachedManifest == null || cachedManifest.memory() == null
@@ -11401,21 +11518,35 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
 
-        // Sleep trigger: energy below threshold, not already sleeping, not mid-conversation
-        if (vitality.energy() < SLEEP_ENERGY_THRESHOLD && !isSleeping) {
+        // Sleep trigger: PRESSURE (unprocessed-experience backlog at her
+        // personal target — the natural path) OR energy collapse (emergency
+        // fallback) — and in either case only at a quiet moment (idle +
+        // conversation grace). See the sleep-pressure design note above
+        // SLEEP_BACKLOG_TARGET.
+        boolean exhausted = vitality.energy() < SLEEP_ENERGY_THRESHOLD;
+        boolean pressured = eventsSinceLastSleep.size() >= personalSleepTarget();
+        if ((exhausted || pressured) && !isSleeping) {
             var sinceLastEvent = Duration.between(lastEventTime, Instant.now());
             // Log which conditions pass/fail for debugging sleep issues
             if (vitalityTickCount % 60 == 0) { // log once per minute
-                log.info("Sleep check for '{}': energy={} (threshold={}), state={}, " +
-                    "manifest={}, soulStore={}, sinceLastEvent={}s, grace={}s",
+                log.info("Sleep check for '{}': energy={} (threshold={}), backlog={} " +
+                    "(pressured={}), state={}, manifest={}, soulStore={}, " +
+                    "sinceLastEvent={}s, grace={}s",
                     profile.name(),
                     String.format("%.3f", vitality.energy()), SLEEP_ENERGY_THRESHOLD,
+                    eventsSinceLastSleep.size(), pressured,
                     state, cachedManifest != null ? "yes" : "NULL",
                     soulStore != null ? "yes" : "NULL",
                     sinceLastEvent.toSeconds(), SLEEP_CONVERSATION_GRACE.toSeconds());
             }
             if (state == State.IDLE && cachedManifest != null && soulStore != null
                     && sinceLastEvent.compareTo(SLEEP_CONVERSATION_GRACE) >= 0) {
+                if (pressured && !exhausted) {
+                    log.info("Sleep (pressure) for '{}': backlog {} events ready to "
+                        + "consolidate at energy {}", profile.name(),
+                        eventsSinceLastSleep.size(),
+                        String.format("%.2f", vitality.energy()));
+                }
                 initiateSleep();
             }
         }

@@ -41,10 +41,33 @@ public record GenomeProfile(
     @JsonProperty("sensitivity") Map<String, Double> sensitivity,
     @JsonProperty("coupling") Map<String, Double> coupling,
     @JsonProperty("baselines") Map<String, Double> baselines,
-    @JsonProperty("decayRates") Map<String, Double> decayRates
+    @JsonProperty("decayRates") Map<String, Double> decayRates,
+    @JsonProperty("traits") Map<String, Double> traits
 ) {
     @JsonCreator
     public GenomeProfile {}
+
+    /**
+     * Backward-compatible 5-arg constructor — traits default to null. Every
+     * pre-traits call site keeps working; old persisted genomes deserialize
+     * with traits == null and every read goes through {@link #trait}.
+     *
+     * <p>Traits (2026-08-01) are heritable NON-TANK biology — the first is
+     * {@code sleep_backlog_target} (each companion's own sleep-pressure
+     * threshold). Deliberately NOT in {@link #baselines}: the decay loop in
+     * {@link #applyAndDescribe} treats every baselines key as a tank and
+     * would mint a phantom clamped-to-1.0 tank out of a trait.</p>
+     */
+    public GenomeProfile(String name, Map<String, Double> sensitivity,
+                         Map<String, Double> coupling, Map<String, Double> baselines,
+                         Map<String, Double> decayRates) {
+        this(name, sensitivity, coupling, baselines, decayRates, null);
+    }
+
+    /** A heritable non-tank trait, or null when this genome doesn't carry it. */
+    public Double trait(String key) {
+        return traits == null ? null : traits.get(key);
+    }
 
     /**
      * Apply this genome to a set of tank perturbations, producing
