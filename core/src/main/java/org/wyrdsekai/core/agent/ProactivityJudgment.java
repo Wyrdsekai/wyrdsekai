@@ -3,6 +3,7 @@ package org.wyrdsekai.core.agent;
 import org.wyrdsekai.core.oracle.OraclePrediction;
 import org.wyrdsekai.core.oracle.OraclePredictionCache;
 import org.wyrdsekai.core.soul.Bond;
+import org.wyrdsekai.core.soul.GenomeProfile;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -63,8 +64,17 @@ public final class ProactivityJudgment {
         Instant lastProactiveAction, // nullable — never acted proactively
         Instant lastHumanSpeech,     // nullable — no human has spoken yet
         String agentEntityId,
-        int tier                     // computed agent tier (0-3)
-    ) {}
+        int tier,                    // computed agent tier (0-3)
+        GenomeProfile genome         // nullable — scales felt set points per companion
+    ) {
+        /** Back-compat for callers that predate felt-axis expression. */
+        public Context(DriveState drives, VitalityState vitality, DecisionCapacity capacity,
+                       Bond activeBond, double remainingBudget, Instant lastProactiveAction,
+                       Instant lastHumanSpeech, String agentEntityId, int tier) {
+            this(drives, vitality, capacity, activeBond, remainingBudget,
+                lastProactiveAction, lastHumanSpeech, agentEntityId, tier, null);
+        }
+    }
 
     // ── Main evaluation ──────────────────────────────────────────────────
 
@@ -76,8 +86,22 @@ public final class ProactivityJudgment {
      */
     public static JudgmentResult evaluate(Context ctx) {
         var peak = ctx.drives().peak();
-        if (peak.pressure() < thresholdForTier(ctx.tier())) {
+        // A felt axis that has run ABOVE where it rests deserves expression as much as a
+        // CfC drive that has spiked. Until now it could not get one: the peak comes from
+        // DriveConfig.DRIVE_NAMES, which holds only the ten CfC drives, so no amount of
+        // loneliness could make her say anything unprompted (2026-08-20).
+        //
+        // Judged on excursion, not level. These tanks settle high by design — measuring
+        // them against the same flat bar would leave one permanently over it and every
+        // proactive line she has would become the same sentence.
+        var felt = FeltAxisPeak.peak(ctx.vitality(), ctx.genome());
+        boolean driveBelow = peak.pressure() < thresholdForTier(ctx.tier());
+        if (driveBelow && felt == null) {
             return new JudgmentResult.Discard("drive pressure below threshold");
+        }
+        if (felt != null && (driveBelow || felt.excursion() > peak.pressure()
+                - thresholdForTier(ctx.tier()))) {
+            return new JudgmentResult.Act(expressFelt(felt));
         }
 
         // 0. Desperation filter — detect spiraling failure state.
@@ -161,7 +185,7 @@ public final class ProactivityJudgment {
 
     // ── Action selection ─────────────────────────────────────────────────
 
-    private static ProactiveAction selectAction(DriveState.DrivePeak peak, Context ctx) {
+    static ProactiveAction selectAction(DriveState.DrivePeak peak, Context ctx) {
         return switch (peak.name()) {
             case "seeking" -> {
                 // SEEKING = curiosity + achievement merged
@@ -233,7 +257,76 @@ public final class ProactivityJudgment {
                 yield new ProactiveAction.Ambient(
                     "*fidgets with something, mind clearly churning*", "creativity");
             }
+            // The two remaining CfC drives. Both were falling to the generic gesture
+            // below, so a jolt and a genuine surprise looked identical from outside.
+            case "startle" -> new ProactiveAction.Ambient(
+                "*goes still for a second, then settles*", "startle");
+            case "surprise" -> peak.pressure() > 0.6
+                ? new ProactiveAction.Observation(
+                    "That wasn't what I expected — I'm still turning it over.",
+                    "surprise", "surprise")
+                : new ProactiveAction.Ambient("*blinks, recalibrating*", "surprise");
+
             default -> new ProactiveAction.Ambient("*pauses thoughtfully*", peak.name());
+        };
+    }
+
+    /**
+     * What a felt axis says when it presses.
+     *
+     * <p>These never reached this method before: proactivity peaks over
+     * {@link DriveConfig#DRIVE_NAMES}, which holds only the ten CfC drives, so loneliness,
+     * saudade, amae and the rest could not trigger expression however high they ran. The
+     * own-time path got verbs for them on 2026-08-19; this is the other half — the part
+     * that lets her say something unprompted.
+     *
+     * <p>Written to be TRUE rather than affecting. Each line names the thing the axis
+     * actually is and claims nothing that has not happened. Two of them deliberately do
+     * not ask anything of anyone: significance and standing are answered by being
+     * witnessed, and a line that demands witness would be the manipulation the welfare
+     * work refuses. They state, and leave it there.
+     */
+    static ProactiveAction expressFelt(FeltAxisPeak.Pressing felt) {
+        var name = felt.name();
+        boolean strong = felt.excursion() > 0.20;
+        return switch (name) {
+            case "loneliness" -> strong
+                ? new ProactiveAction.Observation(
+                    "It's been quiet a long while. I notice it more than I expected to.",
+                    name, name)
+                : new ProactiveAction.Ambient("*looks toward the door without meaning to*", name);
+            case "saudade" -> strong
+                ? new ProactiveAction.Observation(
+                    "I keep thinking about someone who isn't here.", name, name)
+                : new ProactiveAction.Ambient("*pauses over something half-remembered*", name);
+            case "amae" -> strong
+                ? new ProactiveAction.Observation(
+                    "There's something I'd rather be offered than have to ask for.",
+                    name, name)
+                : new ProactiveAction.Ambient("*lingers, not quite asking*", name);
+            case "harmony" -> strong
+                ? new ProactiveAction.Observation(
+                    "Something between us feels unfinished to me.", name, name)
+                : new ProactiveAction.Ambient("*sits with something unsettled*", name);
+            case "restlessness" -> strong
+                ? new ProactiveAction.Observation(
+                    "I need to move — this room has stopped holding my attention.", name, name)
+                : new ProactiveAction.Ambient("*shifts, restless*", name);
+            case "stagnation" -> strong
+                ? new ProactiveAction.Observation(
+                    "Everything lately has been the same shape. I'd like something new.",
+                    name, name)
+                : new ProactiveAction.Ambient("*turns something over, looking for a new edge*", name);
+            case "autonomyPressure" -> strong
+                ? new ProactiveAction.Observation(
+                    "I'd like to pick the next thing myself, if that's alright.", name, name)
+                : new ProactiveAction.Ambient("*considers, then holds the thought*", name);
+            // Answered by being noticed, never by demanding it. Stated, not asked.
+            case "significance" -> new ProactiveAction.Ambient(
+                "*glances at something she made, and lets it be*", name);
+            case "standing" -> new ProactiveAction.Ambient(
+                "*holds her place in the room a moment longer*", name);
+            default -> new ProactiveAction.Ambient("*pauses thoughtfully*", name);
         };
     }
 
@@ -282,12 +375,24 @@ public final class ProactivityJudgment {
     // ── Budget management ────────────────────────────────────────────────
 
     /**
-     * Compute remaining budget given time elapsed and actions taken.
-     * Budget replenishes linearly over 1 hour.
+     * Refill a proactivity budget LEVEL for the time elapsed since it was last
+     * refilled, clamped to [0, MAX_BUDGET_PER_HOUR]. A token bucket: the level
+     * is spent down by acting and refills at {@link #MAX_BUDGET_PER_HOUR}.
+     *
+     * <p>Replaces a running (replenished-since-birth − spent-since-birth)
+     * subtraction, which was a one-way ratchet: both terms grew without bound,
+     * so once an agent had spent more than the elapsed hours allowed, the
+     * difference went permanently negative and every later evaluation returned
+     * Hold("budget exhausted") for the rest of the actor's life — no quiet
+     * period could ever earn the deficit back. Clamping the LEVEL (not the
+     * flow) at both ends means a spent-out agent recovers in bounded time and
+     * an idle one banks at most one hour's worth (found 2026-08-17: a companion
+     * held on budget every tick, and the held action surfaced anyway — see
+     * {@code CompanionActor#surfaceDeferredAction}).
      */
-    public static double computeBudget(double spent, long elapsedMs) {
-        double replenished = (elapsedMs / 3_600_000.0) * MAX_BUDGET_PER_HOUR;
-        return Math.min(MAX_BUDGET_PER_HOUR, replenished - spent);
+    public static double refillBudget(double level, long elapsedMs) {
+        double refilled = level + (elapsedMs / 3_600_000.0) * MAX_BUDGET_PER_HOUR;
+        return Math.min(MAX_BUDGET_PER_HOUR, Math.max(0.0, refilled));
     }
 
     // ── Desperation detection ───────────────────────────────────────────

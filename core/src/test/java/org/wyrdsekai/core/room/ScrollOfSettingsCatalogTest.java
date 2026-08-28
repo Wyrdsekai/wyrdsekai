@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
 
 /**
  * W15 — the Scroll of Settings config catalog, driven
@@ -97,7 +98,7 @@ class ScrollOfSettingsCatalogTest {
 
     private record Harness(
         EventSourcedBehaviorTestKit<RoomCommand, RoomEvent, RoomState> kit,
-        org.apache.pekko.actor.testkit.typed.javadsl.TestProbe<RoomNotification> probe) {
+        TestProbe<RoomNotification> probe) {
 
         void useScroll(String target) {
             kit.<RoomResponse>runCommand(ref -> new RoomCommand.UseObject(

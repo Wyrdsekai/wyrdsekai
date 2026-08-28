@@ -9,6 +9,7 @@ import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import java.time.LocalTime;
 
 /**
  * Unit tests for {@link AmbientPhase} — the Layer 5 phase mapper.
@@ -42,17 +43,17 @@ class AmbientPhaseTest {
     void fromInstantUsesGivenZone() {
         // 2026-05-24 13:00 UTC → MIDDAY in UTC, but NIGHT in UTC-13 (overflow case)
         // Stick with normal zones to keep the test deterministic.
-        var noonUtc = LocalDateTime.of(LocalDate.of(2026, 5, 24), java.time.LocalTime.of(13, 0))
+        var noonUtc = LocalDateTime.of(LocalDate.of(2026, 5, 24), LocalTime.of(13, 0))
             .atZone(ZoneId.of("UTC")).toInstant();
         assertThat(AmbientPhase.fromInstant(noonUtc, ZoneId.of("UTC")))
             .isEqualTo(AmbientPhase.MIDDAY);
 
-        var dawn = LocalDateTime.of(LocalDate.of(2026, 5, 24), java.time.LocalTime.of(6, 30))
+        var dawn = LocalDateTime.of(LocalDate.of(2026, 5, 24), LocalTime.of(6, 30))
             .atZone(ZoneId.of("UTC")).toInstant();
         assertThat(AmbientPhase.fromInstant(dawn, ZoneId.of("UTC")))
             .isEqualTo(AmbientPhase.DAWN);
 
-        var nightLate = LocalDateTime.of(LocalDate.of(2026, 5, 24), java.time.LocalTime.of(23, 30))
+        var nightLate = LocalDateTime.of(LocalDate.of(2026, 5, 24), LocalTime.of(23, 30))
             .atZone(ZoneId.of("UTC")).toInstant();
         assertThat(AmbientPhase.fromInstant(nightLate, ZoneId.of("UTC")))
             .isEqualTo(AmbientPhase.NIGHT);

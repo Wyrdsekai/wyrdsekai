@@ -113,7 +113,7 @@
 {"label": "tell_someone", "text": "relay to Jenna that the meeting is cancelled", "source": "seed"}
 {"label": "tell_someone", "text": "talk to Wyrd at beta.wyrd for me", "source": "seed"}
 {"label": "tell_someone", "text": "reach out to Dr. Patel and confirm tomorrow", "source": "seed"}
-{"label": "tell_someone", "text": "send a note to Masumi saying thanks", "source": "seed"}
+{"label": "tell_someone", "text": "send a note to Operator saying thanks", "source": "seed"}
 {"label": "tell_someone", "text": "ask Kai what time works for him", "source": "seed"}
 {"label": "tell_someone", "text": "let the trader know the deal is off", "source": "seed"}
 {"label": "tell_someone", "text": "tell Yuki I miss her", "source": "seed"}
@@ -3035,7 +3035,7 @@
 {"label": "tell_someone", "text": "forward my apology to Rebecca", "source": "claude"}
 {"label": "tell_someone", "text": "ask the team if anyone is free Thursday afternoon", "source": "claude"}
 {"label": "tell_someone", "text": "tell my neighbor the noise needs to stop by nine", "source": "claude"}
-{"label": "tell_someone", "text": "message Hiro and let him know the order is delayed", "source": "claude"}
+{"label": "tell_someone", "text": "message Kestan and let him know the order is delayed", "source": "claude"}
 {"label": "tell_someone", "text": "let the kids know dinner is almost ready", "source": "claude"}
 {"label": "tell_someone", "text": "send this to Priya: the files are in the shared folder", "source": "claude"}
 {"label": "tell_someone", "text": "flag down Jonas and tell him I need five minutes", "source": "claude"}
@@ -3100,7 +3100,7 @@
 {"label": "tell_someone", "text": "relay this to whoever is managing the warehouse: shipment delayed by two days", "source": "claude"}
 {"label": "tell_someone", "text": "message Auntie Ruth and wish her happy birthday from me", "source": "claude"}
 {"label": "tell_someone", "text": "let my thesis advisor know I've submitted the draft", "source": "claude"}
-{"label": "tell_someone", "text": "pls tell Hiro sorry I couldn't make it", "source": "claude"}
+{"label": "tell_someone", "text": "pls tell Kestan sorry I couldn't make it", "source": "claude"}
 {"label": "tell_someone", "text": "convey to the board that the proposal is under revision", "source": "claude"}
 {"label": "tell_someone", "text": "signal Petra that we're ready to proceed", "source": "claude"}
 {"label": "tell_someone", "text": "tell wyrd's other instance that the sync failed", "source": "claude"}
@@ -3262,7 +3262,7 @@
 {"label": "tell_someone", "text": "tell chloe i was thinking about her hope shes doing ok", "source": "claude"}
 {"label": "tell_someone", "text": "send a heads up to the whole crew: dock at pier 7 not pier 9", "source": "claude"}
 {"label": "tell_someone", "text": "let him know. i cant talk right now but im okay.", "source": "claude"}
-{"label": "tell_someone", "text": "forward to uncle Hiro that I landed safe", "source": "claude"}
+{"label": "tell_someone", "text": "forward to uncle Kestan that I landed safe", "source": "claude"}
 {"label": "tell_someone", "text": "drop Nav a line and say the shipment arrived", "source": "claude"}
 {"label": "tell_someone", "text": "get word to the nurse that mom's fever broke", "source": "claude"}
 {"label": "tell_someone", "text": "notify Leon the build failed", "source": "claude"}

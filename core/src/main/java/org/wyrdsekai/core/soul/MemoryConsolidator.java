@@ -2,6 +2,7 @@ package org.wyrdsekai.core.soul;
 
 import org.wyrdsekai.common.event.WorldEvent;
 import org.wyrdsekai.core.i18n.MemoryLocalePolicy;
+import org.wyrdsekai.core.util.TextSimilarity;
 
 import java.time.Instant;
 import java.util.*;
@@ -27,6 +28,19 @@ public final class MemoryConsolidator {
     private static final float DEFAULT_DECAY_RATE = 0.1f;
     /** Maximum memories before forced pruning. */
     private static final int MAX_MEMORIES = 500;
+    /**
+     * Token-overlap at or above which an incoming memory counts as repeating one
+     * already held, for {@link #countRepeats}.
+     *
+     * <p>Measured on the live corpus that motivated this: unrelated memories top out
+     * around 0.30 overlap, two reports of different recipe runs score ~0.55, and one
+     * sentence reworded scores ~0.75. 0.7 keeps the signal well clear of unrelated
+     * text, at the cost of under-counting the varied tail of a paraphrase loop — an
+     * under-count is the safe direction for a measurement that only informs an alarm.
+     */
+    static final double DUPLICATE_SIMILARITY = 0.7;
+    /** How many of the most recent nodes an incoming memory is compared against. */
+    private static final int DUPLICATE_LOOKBACK = 120;
 
     private MemoryConsolidator() {}
 
@@ -48,7 +62,8 @@ public final class MemoryConsolidator {
             .map(node -> node.decayed(decay))
             .collect(Collectors.toCollection(ArrayList::new));
 
-        // Step 2: Add new memories
+        // Step 2: Add new memories. Repeats are COUNTED (see countRepeats) but never
+        // merged away — see the note there for why absorption was measured and rejected.
         decayed.addAll(newMemories);
 
         // Step 3: Prune below threshold (never prune formative)
@@ -153,6 +168,61 @@ public final class MemoryConsolidator {
             nodes.add(ImpressionScorer.encode(id, content, keywords, charge));
         }
         return nodes;
+    }
+
+    /**
+     * How many of {@code incoming} substantially repeat a memory already held, or an
+     * earlier memory in the same batch. Pure measurement — nothing is merged, dropped,
+     * or rewritten.
+     *
+     * <p>A night whose memories are nearly all repeats is a night in which little
+     * happened, and that is worth SAYING rather than leaving implicit in the shape of
+     * the corpus. This feeds the vitals alarm: a companion stuck in a proactive-speech
+     * loop reads near 100% here, which is how the eight-day 2026-08-17 pathology would
+     * have surfaced on day two instead of being noticed by a person reading her lines.
+     *
+     * <p><b>Why this only counts.</b> The first version of this fix ABSORBED repeats,
+     * reinforcing the matched memory instead of adding a node — attractive, because
+     * consolidation hard-caps at {@link #MAX_MEMORIES} and evicts the least important,
+     * so a loop's duplicates were on course to evict her real memories. Measuring the
+     * live corpus killed it. Lexically, template-shaped memories are as similar as
+     * paraphrases are: "I ran the recipe consolidate-memory-graph and it succeeded"
+     * against "I ran the recipe welfare-floor-checkup and it succeeded" scores about as
+     * high as one thought reworded, and the differing token is the entire content.
+     * At any threshold aggressive enough to catch a varied paraphrase loop, absorption
+     * would quietly destroy distinct memories — and losing a distinct memory is worse
+     * than keeping a duplicate. Doing this properly needs semantic distance
+     * (embeddings), which memory nodes don't currently carry; until then the guard
+     * counts and the alarm speaks, and nothing touches the record.
+     */
+    public static int countRepeats(CompactedMemory current, List<MemoryNode> incoming) {
+        if (incoming == null || incoming.isEmpty()) return 0;
+        var seen = new ArrayList<>(current == null ? List.<MemoryNode>of() : current.nodes());
+        int repeats = 0;
+        for (var candidate : incoming) {
+            if (isNearDuplicate(seen, candidate)) repeats++;
+            seen.add(candidate);
+        }
+        return repeats;
+    }
+
+    /**
+     * Whether {@code candidate} says substantially the same thing as a recent member of
+     * {@code held}. Only the tail is scanned: an utterance echoing something from months
+     * ago is a genuine echo, while the accretion this measures happens in a window.
+     */
+    private static boolean isNearDuplicate(List<MemoryNode> held, MemoryNode candidate) {
+        if (candidate == null || candidate.content() == null) return false;
+        int from = Math.max(0, held.size() - DUPLICATE_LOOKBACK);
+        for (int i = held.size() - 1; i >= from; i--) {
+            var node = held.get(i);
+            if (node == null || node.content() == null) continue;
+            if (TextSimilarity.nearDuplicate(node.content(), candidate.content(),
+                    DUPLICATE_SIMILARITY)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the self-contained relay installer bundle (SPEC_RELAY_SIMPLE P2).
+# Build the self-contained relay installer bundle.
 #
 #   sh packaging/build-relay-bundle.sh            # → dist/wyrdsekai-relay.tar.gz
 #
@@ -29,7 +29,7 @@ rm -rf "$STAGE/wyrdsekai-relay/deploy/relay/__pycache__" \
 
 # The relay bundle assembles its own payload straight from deploy/relay and
 # never passes through build-dist.sh, so it inherited none of that script's
-# redaction — the source-built tarball shipped `masumi`, `raven` and `lain` in
+# redaction — the source-built tarball shipped `operator`, `relay-node` and `home-server` in
 # comments. That matters more here than almost anywhere else: this is the
 # artifact strangers install on internet-facing machines.
 #

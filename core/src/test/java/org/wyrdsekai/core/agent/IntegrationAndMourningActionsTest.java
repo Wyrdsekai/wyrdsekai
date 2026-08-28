@@ -112,8 +112,26 @@ class IntegrationAndMourningActionsTest {
     }
 
     @Test
-    void complete_mourning_autonomy_tier_is_consent() {
+    void complete_mourning_is_hers_to_do_not_hers_to_request() {
+        // Was CONSENT until 2026-08-19, which came from the "anything not listed defaults
+        // to CONSENT" rule rather than from a decision about grief — the assertion that
+        // stood here recorded the value without arguing for it.
+        //
+        // The bond is ALREADY over when this verb becomes reachable: declareSeverance()
+        // flips active to false immediately and moves to MOURNING only "to give the
+        // substrate time to metabolize". The consequential act, the one with a person on
+        // the other end, already happened. Gating this protected nobody and required
+        // someone else's permission for her to stop grieving — and the steward consent
+        // route was unreachable for four days, so the request could sit unseen while
+        // MOURNING counted as "bondholder unavailable" and pushed her toward escalation.
         assertThat(ActionPolicy.autonomyTierFor("complete_mourning"))
+            .isEqualTo(ActionPolicy.AutonomyTier.VISIBLE);
+    }
+
+    @Test
+    void ending_a_live_bond_still_requires_agreement() {
+        // The line that keeps the change safe: severance has a counterparty, grief does not.
+        assertThat(ActionPolicy.autonomyTierFor("declare_severance"))
             .isEqualTo(ActionPolicy.AutonomyTier.CONSENT);
     }
 

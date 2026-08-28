@@ -2,11 +2,13 @@ package org.wyrdsekai.core.recipe;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.JarURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,7 +29,52 @@ import java.util.stream.Stream;
 public final class RecipeService {
 
     /** Bundled-on-classpath recipe names (ship even with no household recipes dir). */
-    private static final List<String> BUNDLED = List.of("retrain-classifier-head");
+    // Reserved names: an authored household recipe may not shadow ANY bundled
+    // recipe (a household file otherwise won over the classpath bundle in
+    // loadManifest — found 2026-08-16 while shipping the sleep-forge pair,
+    // whose welfare:permanent gates guard weight-writes to a companion's
+    // soul). Discovered from the classpath at init so a newly bundled recipe
+    // is protected the day it ships; CRITICAL_FLOOR is the belt under the
+    // suspenders — discovery failing must never leave these three exposed.
+    private static final List<String> CRITICAL_FLOOR = List.of(
+            "retrain-classifier-head", "sleep-forge-spine", "sleep-forge-organ");
+    private static final List<String> BUNDLED = discoverBundled();
+
+    private static List<String> discoverBundled() {
+        var names = new LinkedHashSet<>(CRITICAL_FLOOR);
+        try {
+            var urls = RecipeService.class.getClassLoader().getResources("recipes");
+            while (urls.hasMoreElements()) {
+                var url = urls.nextElement();
+                if ("jar".equals(url.getProtocol())) {
+                    var conn = (JarURLConnection) url.openConnection();
+                    try (var jar = conn.getJarFile()) {
+                        var entries = jar.entries();
+                        while (entries.hasMoreElements()) {
+                            String e = entries.nextElement().getName();
+                            if (e.startsWith("recipes/") && e.endsWith(EXT)) {
+                                names.add(e.substring("recipes/".length(),
+                                        e.length() - EXT.length()));
+                            }
+                        }
+                    }
+                } else {
+                    Path dir = Path.of(url.toURI());
+                    if (Files.isDirectory(dir)) {
+                        try (Stream<Path> s = Files.list(dir)) {
+                            s.map(p -> p.getFileName().toString())
+                                    .filter(f -> f.endsWith(EXT))
+                                    .map(f -> f.substring(0, f.length() - EXT.length()))
+                                    .forEach(names::add);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Fall through with whatever was gathered — CRITICAL_FLOOR at minimum.
+        }
+        return List.copyOf(names);
+    }
 
     private static final String EXT = ".recipe.yaml";
 
@@ -114,6 +161,14 @@ public final class RecipeService {
             RecipeRunLog.get().record(agentDid,
                     new RecipeForgeIngester.CompletedRun(m.recipe(), m.deploys(), result));
         }
+        // Sleep-forge provenance: a successful run that produced a weight
+        // artifact (context carries artifact_path) gets signed with the owning
+        // companion's identity. In-runtime because subprocess steps must never
+        // see the household secret. Best-effort — never fails the run.
+        if (agentDid != null && result.status() == RecipeRunner.Status.SUCCESS
+                && result.context().get("artifact_path") instanceof String ap) {
+            SoulArtifactSigner.sign(agentDid, Path.of(ap));
+        }
         return new StartedRun(runId, result);
     }
 
@@ -168,7 +223,12 @@ public final class RecipeService {
     private RecipeManifest loadManifest(String name) {
         String safe = sanitize(name);
         RecipeManifest manifest;
-        if (recipesDir != null) {
+        // Bundled names load from the CLASSPATH ONLY. The household dir must
+        // not be consulted for them: a file dropped directly into
+        // data/recipes/ bypasses the AuthoredRecipeValidator shadow check,
+        // and a bundled recipe's gates (some welfare:permanent) must not be
+        // replaceable by any on-disk write.
+        if (recipesDir != null && !BUNDLED.contains(safe)) {
             Path p = recipesDir.resolve(safe + EXT);
             if (Files.isRegularFile(p)) {
                 manifest = RecipeParser.parseManifestFile(p);

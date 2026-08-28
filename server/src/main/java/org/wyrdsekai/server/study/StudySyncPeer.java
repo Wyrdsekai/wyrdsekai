@@ -8,6 +8,7 @@ import io.nats.client.Dispatcher;
 import io.nats.client.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.identity.StudyOwnerGuard;
 import org.wyrdsekai.core.library.StudyService;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.PairingService;
@@ -111,6 +112,18 @@ public final class StudySyncPeer {
             if (!authenticates(body.path("token").asText(""), userDid)) {
                 log.debug("[StudySync] dropped unauthenticated {} for {} (src={})",
                     type, userDid, src);
+                return;
+            }
+
+            // QUARANTINE unresolvable owners rather than merging them. Without
+            // this, one un-upgraded device still holding a placeholder identity
+            // (the mobile 'local-user' default) pushes its items back after the
+            // household has migrated, and the split silently regrows — undoing
+            // the migration for everyone.
+            // No-op until person provisioning is enabled.
+            if (!StudyOwnerGuard.isAcceptable(userDid)) {
+                log.warn("[StudySync] QUARANTINED {} from {} — owner '{}' does not resolve "
+                    + "to a person on this node; not merging", type, src, userDid);
                 return;
             }
 

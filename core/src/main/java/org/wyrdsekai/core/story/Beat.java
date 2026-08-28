@@ -16,7 +16,7 @@ import java.util.List;
  * @param rangeStart  inclusive start instant
  * @param rangeEnd    inclusive end instant
  * @param eventIds    ids of WorldEvents inside this beat (for journal recall)
- * @param anchor      pure-text rendering: "Masumi settled into the worn
+ * @param anchor      pure-text rendering: "Operator settled into the worn
  *                    leather chair." or "They spoke about the OSS push."
  */
 public record Beat(

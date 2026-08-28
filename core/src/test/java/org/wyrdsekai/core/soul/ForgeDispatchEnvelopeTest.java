@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ForgeDispatchEnvelopeTest {
 
-    private static final String FAMILIAR = "did:wyrd:familiar:codeplane:did:wyrd:user:operator";
+    private static final String FAMILIAR = "did:wyrd:familiar:codezaiku:did:wyrd:user:operator";
     private static final String BONDHOLDER = "did:wyrd:user:operator";
 
     @Test void newDispatch_assigns_id_and_status() {

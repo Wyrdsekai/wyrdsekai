@@ -94,14 +94,53 @@ class ProactivityJudgmentTest {
         assertThat(ProactivityJudgment.thresholdForTier(3)).isEqualTo(0.2);
     }
 
-    @Test void budget_computation() {
-        // Full hour elapsed, nothing spent → full budget
-        double budget = ProactivityJudgment.computeBudget(0.0, 3_600_000);
-        assertThat(budget).isEqualTo(3.0);
+    @Test void budget_refills_at_the_hourly_rate() {
+        // Half an hour of refill on an empty bucket → half the hourly allowance
+        assertThat(ProactivityJudgment.refillBudget(0.0, 1_800_000))
+            .isCloseTo(1.5, org.assertj.core.data.Offset.offset(0.01));
+        // A partially spent bucket tops up from where it was
+        assertThat(ProactivityJudgment.refillBudget(1.0, 1_800_000))
+            .isCloseTo(2.5, org.assertj.core.data.Offset.offset(0.01));
+    }
 
-        // Half hour elapsed, 1.0 spent → 0.5 remaining
-        double budget2 = ProactivityJudgment.computeBudget(1.0, 1_800_000);
-        assertThat(budget2).isCloseTo(0.5, org.assertj.core.data.Offset.offset(0.01));
+    @Test void budget_is_capped_and_never_goes_into_debt() {
+        // Idling for a day banks at most one hour's worth — no unbounded credit
+        assertThat(ProactivityJudgment.refillBudget(3.0, 86_400_000))
+            .isEqualTo(ProactivityJudgment.MAX_BUDGET_PER_HOUR);
+        // A negative level (defensive) refills toward zero, never below it
+        assertThat(ProactivityJudgment.refillBudget(-100.0, 0)).isEqualTo(0.0);
+    }
+
+    @Test void budget_caps_proactive_speech_to_the_hourly_allowance() {
+        // The rate pin. A companion whose drives sit above threshold evaluates on every
+        // 1s vitality tick; if it speaks whenever it can afford to, the budget alone must
+        // hold it to MAX_BUDGET_PER_HOUR ÷ observation-cost per hour — about ten. Live
+        // 2026-08-17 a household companion spoke ~120×/hour for a week because held
+        // actions were surfaced without consulting the budget at all, so this pins the
+        // property the user actually feels: how often she speaks unprompted.
+        double cost = new ProactiveAction.Observation("x", "seeking", "seeking").budgetCost();
+        double level = ProactivityJudgment.MAX_BUDGET_PER_HOUR;
+        int spoke = 0;
+        for (int second = 0; second < 3600; second++) {
+            level = ProactivityJudgment.refillBudget(level, 1000);
+            if (level >= cost) {
+                level -= cost;
+                spoke++;
+            }
+        }
+        // One full bucket at the start plus one hour of refill, all of it spent.
+        assertThat(spoke).isLessThanOrEqualTo(
+            (int) Math.ceil(2 * ProactivityJudgment.MAX_BUDGET_PER_HOUR / cost));
+        assertThat(spoke).isLessThan(30);
+    }
+
+    @Test void spent_out_budget_recovers_in_bounded_time() {
+        // The pre-2026-08-17 formula subtracted lifetime-spent from lifetime-elapsed, so an
+        // agent that overspent early could never earn its way back and held FOREVER. A
+        // bucket at zero must be able to afford an observation again after ~6 minutes
+        // (0.3 cost ÷ 3.0 per hour).
+        double afterSixMinutes = ProactivityJudgment.refillBudget(0.0, 360_000);
+        assertThat(afterSixMinutes).isGreaterThanOrEqualTo(0.3);
     }
 
     @Test void act_result_contains_action() {

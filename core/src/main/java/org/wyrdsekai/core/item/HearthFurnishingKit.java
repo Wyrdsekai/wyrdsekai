@@ -135,7 +135,7 @@ public final class HearthFurnishingKit {
                     lines.push("  " + pad(k, 18) + barFor(v) + "  " + v.toFixed(2));
                 });
 
-// the 10 deprivation-shape
+                //  — the 10 deprivation-shape
                 // tanks, grouped by tier with locale-resolved descriptions.
                 var ph = snap.phase1aTanks;
                 if (ph && ph.length > 0) {
@@ -173,7 +173,7 @@ public final class HearthFurnishingKit {
                 lines.push("Strongest pull: " + top.name + " (" + top.value.toFixed(2) + ")");
                 lines.push("Energy:        " + barFor(energy) + "  " + energy.toFixed(2));
             }
-// the honest limit. Verbose only.
+            //  — the honest limit. Verbose only.
             // The Mirror surfaces the architectural acknowledgement so the
             // agent (and bondholder reading over their shoulder) can read
             // it directly: engineered resilience is a bridge, not a

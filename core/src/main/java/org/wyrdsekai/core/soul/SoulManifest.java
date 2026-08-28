@@ -548,16 +548,37 @@ public record SoulManifest(
      * Sorted keys, no whitespace, UTF-8.
      */
     public byte[] canonicalBytes() {
-        // Deterministic string: did|version|residentIdentity|genome.name|memory.size|fingerprint.length
+        // THE SIGNATURE COVERS ONLY WHAT THE MANIFEST OWNS.
+        //
+        // The previous form included memory.nodes().size(), relationships.size()
+        // and bonds.size() — live counts that change OUTSIDE manifest versioning
+        // (a bond ratchets whenever two beings interact) and that do not even
+        // round-trip through storage: storageView nulls bonds/fragments out of
+        // the blob and hydrateFromCanonical refills them from their own tables,
+        // so the count at verify time is whatever those tables say NOW, not
+        // whatever it was at signing time. Signing that is signing the weather:
+        // the first bond she formed would make her own soul verify as
+        // "tampered", falsely, on every load, forever.
+        //
+        // So the canonical form is the immutable identity core — who this is,
+        // which revision, born when, of what temperament, with what identity
+        // text and key lineage. Everything here is (a) owned by exactly this
+        // manifest version and (b) preserved verbatim by the storage round-trip.
+        // A version bump legitimately changes it, which is why every store
+        // re-signs (see SqlSoulStore.store).
+        //
+        // Changed 2026-08-09, deliberately timed to the household wipe: a fresh
+        // install has no existing signatures to invalidate, which makes this
+        // the one free moment to change signature semantics.
         var canonical = new StringBuilder();
+        canonical.append("wyrdsekai:soul:v2").append('|');
         canonical.append(did).append('|');
         canonical.append(manifestVersion).append('|');
-        canonical.append(residentIdentity != null ? residentIdentity : "").append('|');
+        canonical.append(forgedAt != null ? forgedAt.getEpochSecond() : 0).append('|');
+        canonical.append(publicKeyMultibase != null ? publicKeyMultibase : "").append('|');
+        canonical.append(parentDid != null ? parentDid : "").append('|');
         canonical.append(genome != null ? genome.name() : "default").append('|');
-        canonical.append(memory != null ? memory.nodes().size() : 0).append('|');
-        canonical.append(relationships != null ? relationships.size() : 0).append('|');
-        canonical.append(bonds != null ? bonds.size() : 0).append('|');
-        canonical.append(forgedAt != null ? forgedAt.getEpochSecond() : 0);
+        canonical.append(residentIdentity != null ? residentIdentity : "");
         return canonical.toString().getBytes(StandardCharsets.UTF_8);
     }
 

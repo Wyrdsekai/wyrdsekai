@@ -506,6 +506,55 @@ public final class PairingService {
     }
 
     /**
+     * Direct mint for an AUTHENTICATED account's own device — the hermod
+     * consent path: flipping "lend compute" mints the device identity, no
+     * ceremony, because the logged-in session IS the proof of belonging.
+     * Idempotent per (user, device name): re-consent returns the existing
+     * unrevoked device's token instead of breeding registry rows, so the
+     * capability table keeps ONE stable id per physical device.
+     */
+    public PairingResult pairForUser(String userId, String deviceName, String deviceType) {
+        var name = deviceName != null ? deviceName : "Unknown Device";
+        var type = deviceType != null ? deviceType : "phone";
+        try (var conn = getConnection()) {
+            var find = "SELECT token FROM paired_devices"
+                + " WHERE user_id = ? AND name = ? AND revoked = 0 LIMIT 1";
+            try (var sel = conn.prepareStatement(find)) {
+                sel.setString(1, userId);
+                sel.setString(2, name);
+                try (var rs = sel.executeQuery()) {
+                    if (rs.next()) {
+                        return new PairingResult(rs.getString("token"),
+                            householdId, householdName, serverDid, natsUrl, serverUrl,
+                            relayUrl, relayToken);
+                    }
+                }
+            }
+            var deviceId = UUID.randomUUID().toString();
+            var token = "wyrd_dev_" + generateHexToken(64);
+            var now = Instant.now();
+            var sql = "INSERT INTO paired_devices"
+                + " (id, name, type, public_key, token, user_id, paired_at, last_seen, revoked)"
+                + " VALUES (?, ?, ?, '', ?, ?, ?, ?, 0)";
+            try (var ins = conn.prepareStatement(sql)) {
+                ins.setString(1, deviceId);
+                ins.setString(2, name);
+                ins.setString(3, type);
+                ins.setString(4, token);
+                ins.setString(5, userId);
+                ins.setLong(6, now.getEpochSecond());
+                ins.setLong(7, now.getEpochSecond());
+                ins.executeUpdate();
+            }
+            log.info("Device identity minted for account {}: {} ({})", userId, name, type);
+            return new PairingResult(token, householdId, householdName,
+                serverDid, natsUrl, serverUrl, relayUrl, relayToken);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to mint device for user", e);
+        }
+    }
+
+    /**
      * Validate a presented household key against the active (non-revoked) keys.
      * This is the EXACT predicate {@link #pairWithKey} uses to admit a device;
      * the household-join enrollment path ({@code POST /api/household/join})

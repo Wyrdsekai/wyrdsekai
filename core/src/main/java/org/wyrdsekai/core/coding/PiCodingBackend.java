@@ -1,7 +1,9 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,6 +13,9 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.wyrdsekai.core.inference.LocalInferenceEndpoint;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -112,18 +117,33 @@ public final class PiCodingBackend implements CodingTaskBackend {
             return future;
         }
 
+        LocalPi localPi = null;
         var auth = authResolver.resolveAuth(NAME);
         if (auth instanceof AuthMode.AuthMissing missing) {
-            future.complete(new TaskResult(taskId, NAME, TaskStatus.FAILED,
-                "LOGIN_REQUIRED: " + missing.reason()
-                    + " (recovery: " + missing.recoveryCommand() + ")",
-                List.of(), 0L, System.currentTimeMillis() - started));
-            return future;
+            // No cloud key is not the end: pi supports LOCAL OpenAI-compatible
+            // providers through ~/.pi/agent/models.json ("apiKey is required
+            // but any value works" -- their docs, verbatim). This adapter used
+            // to refuse here unconditionally, which made a local-llama-capable
+            // tool read as LOGIN_REQUIRED against the household's own drive.
+            // If the node has a drive, wire it as a managed provider entry and
+            // proceed keyless; only when there is no drive either is this a
+            // real refusal.
+            var local = LocalPiProvider.ensure();
+            if (local == null) {
+                future.complete(new TaskResult(taskId, NAME, TaskStatus.FAILED,
+                    "LOGIN_REQUIRED: " + missing.reason()
+                        + " (recovery: " + missing.recoveryCommand()
+                        + " -- or start a local drive; pi runs keyless against it)",
+                    List.of(), 0L, System.currentTimeMillis() - started));
+                return future;
+            }
+            auth = local.auth();
+            localPi = local.selection();
         }
 
         List<String> args;
         try {
-            args = buildArgs(spec, auth);
+            args = buildArgs(spec, auth, localPi);
         } catch (Exception e) {
             future.complete(failed(taskId,
                 "Failed to construct pi invocation: " + e.getMessage(), started));
@@ -137,7 +157,7 @@ public final class PiCodingBackend implements CodingTaskBackend {
                 var rawDescription = spec != null ? spec.description() : null;
                 var promptBody = (rawDescription != null && !rawDescription.isBlank())
                     ? rawDescription : "";
-                var description = OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE
+                var description = OpenHandsBackend.itemsAsToolsPreambleCwd(ItemCapabilitySet.craftedDefault())
                     + "\n\n--- TASK ---\n" + promptBody;
                 // Pi reads the prompt from stdin when -p has no positional
                 // (mirrors claude's headless mode); see pi.dev/docs/usage.
@@ -145,7 +165,11 @@ public final class PiCodingBackend implements CodingTaskBackend {
                 // write/edit/bash tools land artifacts in a place the
                 // caller can scan after — matches the OpenHands V1 Agent
                 // Server's bind-mount workspace contract.
-                var workspaceHint = spec != null ? spec.workspaceHint() : null;
+                // Never the process's own directory: on a packaged node the JVM cwd is
+                // the INSTALL ROOT. CodingWorkspace gives each task a private scratch dir
+                // and still honours an explicit hint.
+                var workspaceHint = CodingWorkspace.pathFor(
+                    spec != null ? spec.workspaceHint() : null, taskId.toString());
                 var result = runWithWorkspace(args, description,
                     workspaceHint, config.maxWallclock());
                 long durationMs = System.currentTimeMillis() - started;
@@ -167,6 +191,26 @@ public final class PiCodingBackend implements CodingTaskBackend {
                 }
 
                 var parsed = parsePiResponse(taskId, spec, result);
+
+                // CONTRACT REPAIR. Pi takes its prompt on STDIN, not as a trailing
+                // argument, so it supplies the Reprompt directly rather than through
+                // rerunWithPrompt — which is the point of Reprompt being a one-method
+                // seam: the repair is shared, only "run yourself again" is per-backend.
+                ItemContractRepair.repairRun(parsed.artifacts,
+                    workspaceHint == null || workspaceHint.isBlank()
+                        ? null : Path.of(workspaceHint),
+                    taskId.toString(), Instant.ofEpochMilli(started),
+                    repairPrompt -> {
+                        try {
+                            var r = runWithWorkspace(args, repairPrompt,
+                                workspaceHint, config.maxWallclock());
+                            return !r.timedOut() && r.exitCode() == 0;
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    },
+                    spec == null ? null : spec.description());
+                parsed = parsePiResponse(taskId, spec, result);
                 artifactCache.put(taskId.toString(), parsed.artifacts);
                 var ids = new ArrayList<UUID>();
                 for (var a : parsed.artifacts) ids.add(a.artifactId());
@@ -308,15 +352,30 @@ public final class PiCodingBackend implements CodingTaskBackend {
      * [--no-session] [--api-key <k>] [extra flags]}. Prompt is fed via
      * stdin (pi accepts either positional or stdin in {@code -p} mode).
      */
+    /** Cloud-mode shape, kept for existing callers/tests. */
     public List<String> buildArgs(TaskSpec spec, AuthMode auth) {
+        return buildArgs(spec, auth, null);
+    }
+
+    List<String> buildArgs(TaskSpec spec, AuthMode auth, LocalPi localPi) {
         var args = new ArrayList<String>();
         args.add(config.executablePath());
         args.add("-p");
         args.add("--mode");
         args.add("json");
         args.add("--model");
-        args.add(config.model());
-        if (config.provider() != null && !config.provider().isBlank()) {
+        args.add(localPi != null ? localPi.model() : config.model());
+        if (localPi != null) {
+            // Local mode selects the managed models.json provider and MUST be
+            // the only --provider on the line: the comment here used to say
+            // config.provider() "is skipped" while the code below still added
+            // it, so pi received two --provider flags and last-wins handed it
+            // the config default — "Unknown provider" on the very box the
+            // local mode was built for. A comment describing a skip is not a
+            // skip.
+            args.add("--provider");
+            args.add(localPi.provider());
+        } else if (config.provider() != null && !config.provider().isBlank()) {
             args.add("--provider");
             args.add(config.provider());
         }
@@ -331,6 +390,64 @@ public final class PiCodingBackend implements CodingTaskBackend {
         }
         args.addAll(config.extraFlags());
         return List.copyOf(args);
+    }
+
+
+    /**
+     * Local-drive mode: pi as the household's keyless coding hand.
+     *
+     * <p>pi reads custom providers from {@code ~/.pi/agent/models.json}
+     * (openai-completions API, any apiKey accepted for local servers). We
+     * MANAGE ONE ENTRY in that file — provider {@code wyrd-local} — and merge
+     * around whatever else the person has configured: their file, their other
+     * providers, untouched. Returns an {@link AuthMode.ApiKey} whose value is
+     * the literal {@code "local"} plus the provider/model to select, or null
+     * when no local drive answers.</p>
+     */
+    record LocalPi(String provider, String model) { }
+
+    /** What local mode yields: the keyless auth plus the provider/model to select. */
+    record LocalWiring(AuthMode.ApiKey auth, LocalPi selection) { }
+
+    static final class LocalPiProvider {
+        private LocalPiProvider() { }
+
+        static LocalWiring ensure() {
+            var ep = LocalInferenceEndpoint.resolve().orElse(null);
+            if (ep == null) return null;
+            try {
+                var dir = Path.of(System.getProperty("user.home"), ".pi", "agent");
+                Files.createDirectories(dir);
+                var file = dir.resolve("models.json");
+                var mapper = new ObjectMapper();
+                ObjectNode root;
+                if (Files.exists(file)) {
+                    var parsed = mapper.readTree(Files.readString(file));
+                    root = parsed != null && parsed.isObject()
+                        ? (ObjectNode) parsed : mapper.createObjectNode();
+                } else {
+                    root = mapper.createObjectNode();
+                }
+                var providers = root.has("providers") && root.get("providers").isObject()
+                    ? (ObjectNode) root.get("providers")
+                    : root.putObject("providers");
+                var p = providers.putObject("wyrd-local");
+                var base = ep.url().endsWith("/v1") ? ep.url() : ep.url() + "/v1";
+                p.put("baseUrl", base);
+                p.put("api", "openai-completions");
+                p.put("apiKey", "local");
+                var compat = p.putObject("compat");
+                compat.put("supportsDeveloperRole", false);
+                compat.put("supportsReasoningEffort", false);
+                p.putArray("models").addObject().put("id", ep.modelId());
+                Files.writeString(file,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root));
+                return new LocalWiring(new AuthMode.ApiKey("local"),
+                    new LocalPi("wyrd-local", ep.modelId()));
+            } catch (Exception e) {
+                return null;
+            }
+        }
     }
 
     // -- output parsing ---------------------------------------------------
@@ -349,9 +466,12 @@ public final class PiCodingBackend implements CodingTaskBackend {
      */
     private PiResponse parsePiResponse(UUID taskId, TaskSpec spec,
                                        ClaudeSdkBackend.ProcessResult result) {
-        var workspace = spec != null && spec.workspaceHint() != null
-            ? spec.workspaceHint()
-            : System.getProperty("user.dir", ".");
+        // The workspace REPORTED on the artifact is what CodingTaskItemBridge scans for
+        // the item's .js. Falling back to the process directory pointed that scan at the
+        // install root on a packaged node — the same defect as running there.
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null,
+            taskId == null ? null : taskId.toString());
         var files = new ArrayList<String>();
         long cuConsumed = 0L;
         String resultText = "";

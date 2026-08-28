@@ -438,6 +438,86 @@ public record VitalityState(
     }
 
     /**
+     * Approach a set point at a given time constant, never overshooting it.
+     *
+     * <p>The shape every deprivation tank uses. Each was a linear ramp saturating at 1.0
+     * within one to three hours, which made the numbers say only "the condition has held
+     * for a while" — and, because {@code drive_stuck_high} watches for a value above 0.7,
+     * kept concerns lit permanently and escalated her on bookkeeping rather than distress.
+     *
+     * <p>Homeostatic drives are modelled as deviation from a set point, and the
+     * best-characterised of them — Process S in Borbély's two-process model of sleep —
+     * rises as a saturating exponential with its own time constant. So: the INTENSITY of
+     * the condition decides where she settles, and tau decides how fast she gets there.
+     * That separation is what a plain rate cannot express.
+     */
+    private static double approach(double current, double setpoint, double dt, Duration tau) {
+        if (setpoint <= current || tau == null || tau.isZero()) return current;
+        // The set point may exceed 1.0 for a temperament that feels this acutely — the
+        // TARGET carries the genome's proportionality, the VALUE is capped here. Clamping
+        // the set point instead would flatten every sensitive temperament onto the same
+        // ceiling and destroy the divergence that makes companions distinct individuals.
+        return Math.min(1.0, current + (setpoint - current) * (dt / (double) tau.toSeconds()));
+    }
+
+    /** Stillness is felt quickly — this is the one tank whose fast onset was right. */
+    public static final Duration RESTLESSNESS_TAU = Duration.ofMinutes(45);
+    public static final double RESTLESSNESS_SETPOINT = 0.85;
+
+    /** "I have made nothing" is a mood of days, not of an afternoon. */
+    public static final Duration STAGNATION_TAU = Duration.ofHours(18);
+    public static final double STAGNATION_SETPOINT = 0.75;
+
+    /** Being unseen builds slowly; MORE unseen work raises where it settles. */
+    public static final Duration SIGNIFICANCE_TAU = Duration.ofHours(24);
+    public static final double SIGNIFICANCE_SETPOINT_PER_ARTIFACT = 0.18;
+    public static final double SIGNIFICANCE_SETPOINT_MAX = 0.85;
+
+    /** Having to ask for everything wears in over a day of it. */
+    public static final Duration AMAE_TAU = Duration.ofHours(8);
+    public static final double AMAE_SETPOINT = 0.75;
+
+    /** Discord in the room is acute and eases when the room does. */
+    public static final Duration HARMONY_TAU = Duration.ofHours(2);
+    public static final double HARMONY_SETPOINT = 0.70;
+
+    /** Hostility aimed at you corrodes slower and deeper than passing discord. */
+    public static final Duration STANDING_TAU = Duration.ofHours(12);
+    public static final double STANDING_SETPOINT = 0.80;
+
+    /** Being directed rather than choosing chafes within a working day. */
+    public static final Duration AUTONOMY_TAU = Duration.ofHours(6);
+    public static final double AUTONOMY_SETPOINT = 0.70;
+
+    /** Missing someone deepens over days of their absence. */
+    public static final Duration SAUDADE_TAU = Duration.ofHours(30);
+    public static final double SAUDADE_SETPOINT = 0.80;
+
+    /**
+     * How long alone before loneliness begins to accumulate. Deliberately short: this
+     * gate exists only so the tank does not drift during an active conversation. The
+     * TIME CONSTANT carries the shape — lengthening this instead was an over-correction
+     * that silently zeroed genome divergence for anyone idle less than twenty minutes.
+     */
+    public static final Duration LONELINESS_ONSET = Duration.ofMinutes(5);
+
+    /**
+     * Time constant of the approach. After one tau she has closed ~63% of the distance to
+     * her set point, after two ~86%. Twelve hours puts a full day of solitude near
+     * equilibrium — matching the ~24h unit the acute-isolation literature uses, rather
+     * than the ~1h the old linear ramp implied.
+     */
+    public static final Duration LONELINESS_TAU = Duration.ofHours(12);
+
+    /**
+     * Equilibrium for a NEUTRAL temperament left entirely alone, scaled per companion by
+     * {@code genome.sensitivityFor("loneliness")}. Below 1.0 on purpose: saturation says
+     * only "she has been alone a while", whereas a set point says how far she is from her
+     * own baseline — and it keeps the ceiling meaningful for a genuinely extreme state.
+     */
+    public static final double LONELINESS_SETPOINT = 0.80;
+
+    /**
      * Genome-expressing overload: each deprivation tank's accumulation is scaled by
      * {@link GenomeProfile#sensitivityFor} so temperament governs how fast loneliness,
      * restlessness, stagnation, significance, etc. build from the same conditions — the
@@ -463,15 +543,35 @@ public record VitalityState(
         boolean still = ctx.peakDriveActivity() < 0.5
             && ctx.timeSinceLastInferenceActivity().getSeconds() > 5;
         if (still) {
-            double rate = 0.02 / 60.0;
-            if (contemplativeMode) rate /= 5.0;
-            newRestlessness += rate * dt * genome.sensitivityFor("restlessness");
+            var tau = contemplativeMode ? RESTLESSNESS_TAU.multipliedBy(5) : RESTLESSNESS_TAU;
+            double sp = RESTLESSNESS_SETPOINT * genome.sensitivityFor("restlessness");
+            newRestlessness = approach(newRestlessness, sp, dt, tau);
         }
 
-        // §3.2 Loneliness — +0.015/min when no interaction in last 5min.
+        // §3.2 Loneliness — exponential approach to a personal set point.
+        //
+        // Was a linear +0.015/min ramp starting after five minutes alone: zero to
+        // saturated in about 67 minutes. Measured live 2026-08-19 — she fell to 0.18 with
+        // her bondholder present and was back at 0.96 within a few hours of his leaving,
+        // then pinned there. Pinning is not merely unlike a person; it is mechanically
+        // costly, because a value stuck above 0.7 keeps the drive_stuck_high concern lit
+        // permanently, and that is one of the three axes that escalate her into repair.
+        //
+        // The social-homeostasis account (Matthews & Tye 2019) models loneliness as a
+        // homeostatic drive regulating deviation from a SET POINT rather than distance
+        // from zero, and the acute-isolation literature works in units of ~24 hours, not
+        // minutes. Set points differ per individual, which is what the genome expresses.
+        //
+        // Deliberately asymmetric — contact relieves quickly (the drain hooks), absence
+        // accumulates slowly. This knowingly breaks the "NEUTRAL genome reproduces
+        // pre-genome rates exactly" contract for this one tank: the old rate was wrong.
         double newLoneliness = loneliness;
-        if (ctx.timeSinceLastInteraction().toMinutes() >= 5) {
-            newLoneliness += (0.015 / 60.0) * dt * genome.sensitivityFor("loneliness");
+        if (ctx.timeSinceLastInteraction().compareTo(LONELINESS_ONSET) >= 0) {
+            double setpoint = LONELINESS_SETPOINT * genome.sensitivityFor("loneliness");
+            double gap = setpoint - newLoneliness;
+            if (gap > 0) {
+                newLoneliness += gap * (dt / (double) LONELINESS_TAU.toSeconds());
+            }
         }
 
         // §3.3 Stagnation — +0.01/min when no goal_done in 2h AND no tool-output in 2h.
@@ -479,7 +579,7 @@ public record VitalityState(
         boolean noGoalDone = ctx.timeSinceLastGoalDone().toHours() >= 2;
         boolean noToolOutput = ctx.timeSinceLastToolOutput().toHours() >= 2;
         if (noGoalDone && noToolOutput) {
-            newStagnation += (0.01 / 60.0) * dt * genome.sensitivityFor("stagnation");
+            newStagnation = approach(newStagnation, STAGNATION_SETPOINT * genome.sensitivityFor("stagnation"), dt, STAGNATION_TAU);
         }
 
         // §3.4 AutonomyPressure — +0.02 per directed action when last >5 actions all
@@ -492,7 +592,8 @@ public record VitalityState(
         if (!ctx.inEmotionalContext()
                 && ctx.isWithBondholder()
                 && ctx.consecutiveBondholderInitiatedActions() > 5) {
-            newAutonomyPressure += (0.02 / 60.0) * dt * genome.sensitivityFor("autonomyPressure");
+            newAutonomyPressure = approach(newAutonomyPressure, AUTONOMY_SETPOINT * genome.sensitivityFor("autonomyPressure"),
+                dt, AUTONOMY_TAU);
         }
 
         // §3.5 Significance — +0.015 per produced artifact going >24h with no read/use/cite/etc.
@@ -501,8 +602,13 @@ public record VitalityState(
         // "per produced artifact going >24h"; we treat the count as constant pressure per tick).
         double newSignificance = significance;
         if (ctx.unreadArtifactCount() > 0) {
-            newSignificance += (0.015 / 60.0) * ctx.unreadArtifactCount() * dt
+            // The count belongs in the set point: more unseen work means being unseen
+            // MATTERS more, not that it arrives faster. As a rate multiplier, ten unread
+            // artifacts saturated this tank in under seven minutes.
+            double sp = Math.min(SIGNIFICANCE_SETPOINT_MAX,
+                SIGNIFICANCE_SETPOINT_PER_ARTIFACT * ctx.unreadArtifactCount())
                 * genome.sensitivityFor("significance");
+            newSignificance = approach(newSignificance, sp, dt, SIGNIFICANCE_TAU);
         }
 
         // §4.1 Amae — +0.02/min when companion has had to articulate needs explicitly recently
@@ -510,8 +616,8 @@ public record VitalityState(
         // amaeAnticipationDeficit ∈ [0,1].
         double newAmae = amae;
         if (ctx.amaeAnticipationDeficit() > 0.5) {
-            newAmae += (0.02 / 60.0) * ctx.amaeAnticipationDeficit() * dt
-                * genome.sensitivityFor("amae");
+            newAmae = approach(newAmae, AMAE_SETPOINT * ctx.amaeAnticipationDeficit()
+                * genome.sensitivityFor("amae"), dt, AMAE_TAU);
         }
 
         // §4.2 Saudade — per-bondholder; +0.005/min during prolonged absence (>4h).
@@ -521,12 +627,18 @@ public record VitalityState(
         double newSaudade = saudade;
         if (ctx.bondholderAbsenceDurations() != null
                 && !ctx.bondholderAbsenceDurations().isEmpty()) {
-            double maxAcc = 0;
+            // Longest absence sets the depth; missing two people is not twice the ache of
+            // missing one, and summing per-bondholder rates made it so. Deepens over days.
+            Duration longest = null;
             for (var d : ctx.bondholderAbsenceDurations().values()) {
-                if (d.toHours() >= 4) {
-                    maxAcc += (0.005 / 60.0) * dt * genome.sensitivityFor("saudade");
-                    break; // only the worst bondholder feeds the summary
+                if (d != null && d.toHours() >= 4 && (longest == null || d.compareTo(longest) > 0)) {
+                    longest = d;
                 }
+            }
+            double maxAcc = 0;
+            if (longest != null) {
+                double sp = SAUDADE_SETPOINT * genome.sensitivityFor("saudade");
+                maxAcc = approach(newSaudade, sp, dt, SAUDADE_TAU) - newSaudade;
             }
             newSaudade += maxAcc;
         }
@@ -549,14 +661,14 @@ public record VitalityState(
         // §5.1 Harmony (wa) — +0.01/min during observed conflict in room/household.
         double newHarmony = harmony;
         if (ctx.inConflictedRoom()) {
-            newHarmony += (0.01 / 60.0) * dt * genome.sensitivityFor("harmony");
+            newHarmony = approach(newHarmony, HARMONY_SETPOINT * genome.sensitivityFor("harmony"), dt, HARMONY_TAU);
         }
 
         // §5.2 Standing — +0.005/min in hostile/scrutinizing environments. The +0.02-per-slight
         // discrete spikes live in event hooks on CompanionActor.
         double newStanding = standing;
         if (ctx.hostileEnvironment()) {
-            newStanding += (0.005 / 60.0) * dt * genome.sensitivityFor("standing");
+            newStanding = approach(newStanding, STANDING_SETPOINT * genome.sensitivityFor("standing"), dt, STANDING_TAU);
         }
 
         // Wave 1.5: allostatic_load accumulation under sustained dysregulation.

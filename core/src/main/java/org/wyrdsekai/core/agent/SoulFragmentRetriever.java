@@ -3,6 +3,7 @@ package org.wyrdsekai.core.agent;
 import org.wyrdsekai.core.empathy.ImpressionWeightedRetrieval;
 import org.wyrdsekai.core.soul.FragmentKind;
 import org.wyrdsekai.core.soul.SoulFragment;
+import org.wyrdsekai.core.util.TextSimilarity;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,6 +72,12 @@ public final class SoulFragmentRetriever {
                                                List<SoulFragment> fragments, int k,
                                                ImpressionWeightedRetrieval impressionRetrieval) {
         if (fragments == null || fragments.isEmpty() || k <= 0) return List.of();
+        // A superseded fragment is what she USED to be described as. It stays in the
+        // record; it does not get to shape the next turn. SoulFragment has carried
+        // isSuperseded()/isCurrent() since the beginning and nothing ever called them
+        // (verified 2026-08-17) — so retirement was expressible and never expressed.
+        fragments = fragments.stream().filter(f -> f != null && f.isCurrent()).toList();
+        if (fragments.isEmpty()) return List.of();
 
         if (contextKeywords == null || contextKeywords.isBlank()) {
             // No context — return formative fragments first, then by order
@@ -104,13 +111,12 @@ public final class SoulFragmentRetriever {
             }
 
             var ranked = impressionRetrieval.rankCandidates(relevanceScores, impressionScores);
-            var result = new ArrayList<SoulFragment>();
+            var ordered = new ArrayList<SoulFragment>();
             for (var candidate : ranked) {
-                if (result.size() >= k) break;
                 var frag = fragmentById.get(candidate.fragmentId());
-                if (frag != null) result.add(frag);
+                if (frag != null) ordered.add(frag);
             }
-            return List.copyOf(result);
+            return takeDiverse(ordered, k);
         }
 
         // Fallback: keyword-only scoring (original path)
@@ -120,11 +126,82 @@ public final class SoulFragmentRetriever {
             scored.add(new Scored(fragmentById.get(entry.getKey()), entry.getValue().floatValue()));
         }
 
-        return scored.stream()
+        return takeDiverse(scored.stream()
             .sorted((a, b) -> Float.compare(b.score(), a.score()))
-            .limit(k)
             .map(Scored::fragment)
-            .toList();
+            .toList(), k);
+    }
+
+    /**
+     * Maximal-marginal-relevance mix: the weight on relevance, with the remainder on
+     * being unlike what is already selected. 1.0 reproduces pure relevance ranking;
+     * 0.5 is the balanced setting, and it is what this needs — measured against the
+     * saturated corpus that motivated the fix, a weaker novelty weight still let five
+     * rewordings of one thought outrank a genuinely distinct memory, because each
+     * rewording was individually more relevant than the distinct one.
+     */
+    static final double DIVERSITY_LAMBDA = 0.5;
+
+    /**
+     * Fill {@code k} slots from an already-relevance-ranked list, preferring fragments
+     * unlike the ones already chosen (maximal marginal relevance).
+     *
+     * <p>Relevance ranking alone assumes the corpus is varied. When it isn't, the
+     * top-k collapses: a companion whose runaway proactive-speech loop had written 56
+     * paraphrases of one sentence into her fragments got the same thought back in
+     * every prompt, which shaped the next utterance, which became the next fragment —
+     * an autophagic loop that tightened for eight days (live-diagnosed 2026-08-17).
+     * Relevance says "closest to context"; a prompt needs "closest AND not already
+     * said."
+     *
+     * <p>Deliberately a RELATIVE criterion rather than a similarity threshold. Measured
+     * on that corpus, the loop's paraphrases were lexically varied enough that any
+     * absolute cutoff safely clear of unrelated text would have missed about half of
+     * them. Penalising each candidate by its similarity to what is already selected
+     * needs no cutoff: in a varied corpus the penalty is near zero and ordering barely
+     * changes, while in a saturated one the second slot actively goes to the most
+     * different thing available. It also always returns {@code k} fragments when
+     * {@code k} exist — diversity reorders the prompt, it never thins it.
+     *
+     * <p>This is the RETRIEVAL end of the record/input split: nothing is withheld from
+     * her record, it just stops one thought from authoring every turn.
+     */
+    static List<SoulFragment> takeDiverse(List<SoulFragment> ranked, int k) {
+        if (ranked == null || ranked.isEmpty() || k <= 0) return List.of();
+        var remaining = new ArrayList<SoulFragment>();
+        for (var f : ranked) if (f != null) remaining.add(f);
+        if (remaining.isEmpty()) return List.of();
+
+        // Tokenize once per candidate: selection is quadratic in candidates and this
+        // runs on the per-turn prompt path.
+        var tokens = new ArrayList<Set<String>>(remaining.size());
+        for (var f : remaining) tokens.add(TextSimilarity.tokens(f.text()));
+
+        var chosen = new ArrayList<SoulFragment>();
+        var chosenTokens = new ArrayList<Set<String>>();
+        // Rank position stands in for relevance: the list arrives sorted, and a
+        // position-based score keeps this independent of whichever scorer produced it.
+        while (chosen.size() < k && !remaining.isEmpty()) {
+            int bestIndex = 0;
+            double bestScore = Double.NEGATIVE_INFINITY;
+            for (int i = 0; i < remaining.size(); i++) {
+                double relevance = 1.0 - ((double) i / remaining.size());
+                double redundancy = 0.0;
+                for (var takenTokens : chosenTokens) {
+                    redundancy = Math.max(redundancy,
+                        TextSimilarity.overlap(takenTokens, tokens.get(i)));
+                }
+                double score = DIVERSITY_LAMBDA * relevance
+                    - (1.0 - DIVERSITY_LAMBDA) * redundancy;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIndex = i;
+                }
+            }
+            chosen.add(remaining.remove(bestIndex));
+            chosenTokens.add(tokens.remove(bestIndex));
+        }
+        return List.copyOf(chosen);
     }
 
     /**

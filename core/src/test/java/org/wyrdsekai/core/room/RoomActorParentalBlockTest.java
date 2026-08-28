@@ -57,7 +57,7 @@ class RoomActorParentalBlockTest {
 
         var jdbcUrl = TestDb.createInMemory();
         auth = new AuthService(jdbcUrl);
-        stewardId = auth.register("operator", "password123", "Masumi").orElseThrow().userId();
+        stewardId = auth.register("operator", "password123", "Operator").orElseThrow().userId();
         memberId = auth.register("kaz", "password123", "Kaz").orElseThrow().userId();
         ParentalControlService.init(jdbcUrl, new SqlDialect.SQLite(), auth);
     }
@@ -119,7 +119,7 @@ class RoomActorParentalBlockTest {
 
         assertThat(enter(memberId, "Kaz")).isInstanceOf(RoomResponse.Ok.class);
         // And a member with no controls at all.
-        assertThat(enter(stewardId, "Masumi")).isInstanceOf(RoomResponse.Ok.class);
+        assertThat(enter(stewardId, "Operator")).isInstanceOf(RoomResponse.Ok.class);
     }
 
     @Test

@@ -213,6 +213,8 @@ public class ItemWorldApi {
     @HostAccess.Export public final InviteApi invite;
     /** Room wards — list / grant / revoke (WardService-backed). */
     @HostAccess.Export public final WardApi ward;
+    /** hermod data-domain grants — list / revoke (flat-file backed, steward-gated). */
+    @HostAccess.Export public final HermodApi hermod;
     /** Enrolled household nodes (Between mesh topology snapshot). */
     @HostAccess.Export public final NodesApi nodes;
     /** Household-level resource usage (AgentCostTracker-backed). */
@@ -317,6 +319,7 @@ public class ItemWorldApi {
         this.maintenance = new MaintenanceApi(provider, c);
         this.invite = new InviteApi(provider, c);
         this.ward = new WardApi(provider, c);
+        this.hermod = new HermodApi(provider, c);
         this.nodes = new NodesApi(provider);
         this.treasury = new TreasuryApi(provider, c);
         this.adapterResolver = new AdapterProxyResolver(provider, c);
@@ -341,6 +344,21 @@ public class ItemWorldApi {
         SelfApi(ItemWorldApiProvider provider) { this.provider = provider; }
         @HostAccess.Export public String did() { return provider.selfDid(); }
         @HostAccess.Export public String name() { return provider.selfName(); }
+
+        /**
+         * Who is USING the item, as opposed to whose item it is.
+         *
+         * <p>The items-as-tools contract has documented {@code world.self.callerDid()}
+         * all along and this class never exposed it, so a backend writing exactly what it
+         * was told produced {@code TypeError: Unknown identifier: callerDid} on first use.
+         * Live 2026-08-21: {@code library_storyteller} died on this line, and the steward
+         * got no tool.
+         *
+         * <p>The provider has had {@code callerDid()} the whole time. This is the
+         * document and the runtime disagreeing, which is the defect class the generated
+         * surface exists to end — the hand-written half can still drift, and did.
+         */
+        @HostAccess.Export public String callerDid() { return provider.callerDid(); }
     }
 
     /**
@@ -452,9 +470,9 @@ public class ItemWorldApi {
 
         /** §4.2 library.tag(chunkId, tags) — replace tags on an existing chunk. */
         @HostAccess.Export
-        public Map<String, Object> tag(String chunkId, List<String> tagList) {
+        public Map<String, Object> tag(String chunkId, Object tagList) {
             caps.require("library.tag");
-            return provider.libraryTag(chunkId, tagList == null ? List.of() : tagList);
+            return provider.libraryTag(chunkId, strings(tagList));
         }
 
         /** §4.2 library.delete — Tier 5 (sensitive: same-zone agents share library). */
@@ -490,10 +508,10 @@ public class ItemWorldApi {
         }
 
         @HostAccess.Export
-        public Map<String, Object> add(String content, List<String> tags) {
+        public Map<String, Object> add(String content, Object tags) {
             caps.require("memory.add");
             provider.agentRemember(content);
-            return Map.of("ok", true, "tags", tags == null ? List.of() : tags);
+            return Map.of("ok", true, "tags", strings(tags));
         }
 
         @HostAccess.Export
@@ -574,9 +592,9 @@ public class ItemWorldApi {
         }
 
         @HostAccess.Export
-        public Map<String, Object> add(String content, List<String> tags) {
+        public Map<String, Object> add(String content, Object tags) {
             caps.require("notes.add");
-            return provider.notesAdd(content, tags == null ? List.of() : tags);
+            return provider.notesAdd(content, strings(tags));
         }
 
         @HostAccess.Export
@@ -742,7 +760,7 @@ public class ItemWorldApi {
         /**
          * broadcast a body-language line attributed to
          * {@code actorId} in the current room. Use when the narration is felt
-         * body-text rather than speech — e.g. a chair script narrating "Masumi
+         * body-text rather than speech — e.g. a chair script narrating "Operator
          * leans back, watching the embers" after sit. Emitted as {@code Emoted}
          * with a body-language flavor.
          */
@@ -877,7 +895,16 @@ public class ItemWorldApi {
                     && arguments[0].hasMembers()) {
                 var copy = new LinkedHashMap<String, Object>();
                 for (var k : arguments[0].getMemberKeys()) {
-                    copy.put(k, arguments[0].getMember(k).as(Object.class));
+                    var member = arguments[0].getMember(k);
+                    // A JS `undefined` (or an absent property) converts to a Java null,
+                    // and AdapterRequest copies args into an IMMUTABLE map — which
+                    // rejects nulls with a bare NullPointerException. Live 2026-08-21 an
+                    // item calling world.nominatim.geocode({...}) died as
+                    // "Script error: null" before the adapter was ever reached. An
+                    // argument the script did not set is an argument it did not send.
+                    if (member == null || member.isNull()) continue;
+                    var value = member.as(Object.class);
+                    if (value != null) copy.put(k, value);
                 }
                 args = copy;
             }
@@ -1164,6 +1191,29 @@ public class ItemWorldApi {
         /** §4.4 — open-ended completion. {@code opts} may include
          *  {@code maxTokens, temperature, stop, system, model}. Returns
          *  {@code {text, latencyMs, tokensIn, tokensOut}}. */
+        /**
+         * The options-object form: {@code world.llm.complete({ prompt: "..." })}.
+         *
+         * <p>Not in the contract, but it is the convention every chat API uses, so it is
+         * what a model reaches for. Live 2026-08-21 an item shipped calling exactly this
+         * and died on first use with <i>"no applicable overload found"</i> — after
+         * passing every gate, because the smoke had only ever run its empty-query early
+         * return. Accepting the shape costs nothing and turns a fatal TypeError into a
+         * working tool.
+         */
+        @HostAccess.Export
+        public Map<String, Object> complete(Map<String, Object> options) {
+            if (options == null) return complete("");
+            var prompt = options.get("prompt");
+            if (prompt == null) prompt = options.get("text");
+            if (prompt == null) prompt = options.get("input");
+            var rest = new LinkedHashMap<>(options);
+            rest.remove("prompt");
+            rest.remove("text");
+            rest.remove("input");
+            return complete(prompt == null ? "" : String.valueOf(prompt), rest);
+        }
+
         @HostAccess.Export
         public Map<String, Object> complete(String prompt) {
             caps.require("llm.complete");
@@ -1178,9 +1228,9 @@ public class ItemWorldApi {
 
         /** §4.4 — one-of classification. Returns {@code {label, confidence}}. */
         @HostAccess.Export
-        public Map<String, Object> classify(String text, List<String> labels) {
+        public Map<String, Object> classify(String text, Object labels) {
             caps.require("llm.classify");
-            return provider.llmClassify(text, labels == null ? List.of() : labels);
+            return provider.llmClassify(text, strings(labels));
         }
 
         /** §4.4 — schema-constrained extraction. Returns Map of extracted fields. */
@@ -1513,6 +1563,30 @@ public class ItemWorldApi {
                 out.add(Map.of("error", "regex_timeout", "message", e.getMessage()));
             }
             return out;
+        }
+
+        /**
+         * Every match, always — the documented {@code world.regex.matchAll}.
+         *
+         * <p>The contract has listed this since the surface was written and the class
+         * only ever exported {@code match} and {@code replace}, so a script following the
+         * documentation died on {@code Unknown identifier: matchAll}. Same defect as
+         * {@code world.self.callerDid()}, found the same way on 2026-08-21: by scanning
+         * the contract for calls and asking the API whether they exist.
+         *
+         * <p>Deliberately delegates to {@link #match(String, String, String)} with the
+         * global flag rather than re-implementing the scan — including its timeout guard,
+         * which a second copy would have been free to forget.
+         */
+        @HostAccess.Export
+        public List<Map<String, Object>> matchAll(String text, String pattern) {
+            return matchAll(text, pattern, "");
+        }
+
+        @HostAccess.Export
+        public List<Map<String, Object>> matchAll(String text, String pattern, String flags) {
+            var withGlobal = flags == null ? "g" : (flags.contains("g") ? flags : flags + "g");
+            return match(text, pattern, withGlobal);
         }
 
         @HostAccess.Export
@@ -1994,8 +2068,8 @@ public class ItemWorldApi {
          * the map is what gives the agent navigational knowledge of those rooms.
          */
         @HostAccess.Export
-        public void recordKnown(List<String> roomIds) {
-            provider.recordMappedRooms(roomIds);
+        public void recordKnown(Object roomIds) {
+            provider.recordMappedRooms(strings(roomIds));
         }
     }
 
@@ -2999,6 +3073,39 @@ public class ItemWorldApi {
         public Map<String, Object> revoke(String roomId, String subject, String capability) {
             caps.require("ward.revoke");
             return provider.wardRevoke(roomId, subject, capability);
+        }
+    }
+
+    // ─── hermod grants API (Ward Room grant stone) ───────────────
+
+    /**
+     * The household's hermod data-domain grants — the signed files a
+     * device carries so domain-scoped errands may be routed to it.
+     * Reading is open; revocation is Tier 6 and steward-gated in the
+     * provider. Revoking tombstones the household's copy (stops new
+     * distribution) — an already-carried copy stays valid until its own
+     * expiry; there is no recall of a signature.
+     */
+    public static class HermodApi {
+        private final ItemWorldApiProvider provider;
+        private final ItemCapabilitySet caps;
+
+        HermodApi(ItemWorldApiProvider provider, ItemCapabilitySet caps) {
+            this.provider = provider;
+            this.caps = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
+        }
+
+        /** Grants held: {@code grantId, dataDomain, deviceClass, issuedAt, expiresAt, status, file}. */
+        @HostAccess.Export
+        public List<Map<String, Object>> grants() {
+            return provider.hermodGrantsList();
+        }
+
+        /** Tombstone a grant by id or {@code domain-class} stem. Tier 6, steward only. */
+        @HostAccess.Export
+        public Map<String, Object> revoke(String grantIdOrStem) {
+            caps.require("hermod.grant.revoke");
+            return provider.hermodGrantRevoke(grantIdOrStem);
         }
     }
 
@@ -4413,10 +4520,10 @@ public class ItemWorldApi {
         /** §4.22 — generic ceremony entry. Tier 6. */
         @HostAccess.Export
         public Map<String, Object> ceremony(String target, String ceremonyType,
-                                              List<String> witnesses) {
+                                              Object witnesses) {
             caps.require("chapel.ceremony");
             return provider.chapelCeremony(target, ceremonyType,
-                witnesses == null ? List.of() : witnesses);
+                strings(witnesses));
         }
 
         @HostAccess.Export
@@ -4486,5 +4593,83 @@ public class ItemWorldApi {
             caps.require("host.file_find");
             return provider.hostFind(pattern, maxResults);
         }
+
+        /**
+         * The directories the steward has actually granted — so an item can say what it
+         * can see instead of guessing at a path. No capability: it is the grant itself,
+         * and an item that cannot read it invents paths (live 2026-08-22).
+         */
+        @HostAccess.Export
+        public List<String> roots() {
+            return provider.hostRoots();
+        }
+
+        /**
+         * Move or rename a file inside the open-roots — {@code world.host.move(from, to)}.
+         * Requires {@code host.file_move}. Never overwrites; both ends must be inside a
+         * granted root.
+         */
+        @HostAccess.Export
+        public Map<String, Object> move(String from, String to) {
+            caps.require("host.file_move");
+            return provider.hostMove(from, to);
+        }
+
+        /** Create a directory inside the open-roots. Requires {@code host.dir_make}. */
+        @HostAccess.Export
+        public Map<String, Object> mkdir(String path) {
+            caps.require("host.dir_make");
+            return provider.hostMkdir(path);
+        }
     }
+
+    /**
+     * Coerce whatever a script passed into a list of strings.
+     *
+     * <h2>Why every list parameter is {@code Object}</h2>
+     * Ten exported methods took {@code List<String>}. A JS array does not reliably bind to
+     * that overload, and GraalJS answers with
+     * {@code TypeError: no applicable overload found} — naming the Java signatures, which
+     * means nothing to the person holding the item. Live on staging 2026-08-22 an item
+     * called {@code world.memory.add(content, tags)} exactly as the contract documents it
+     * and died on that error.
+     *
+     * <p>So the arity picks the method and this decides the meaning: a list, a polyglot
+     * array, a Java array, a comma-separated string, or a single value all become a list.
+     * Null becomes empty. A documented call has to be a callable one.
+     */
+    static List<String> strings(Object v) {
+        if (v == null) return List.of();
+        var out = new ArrayList<String>();
+        if (v instanceof List<?> list) {
+            for (var e : list) if (e != null) out.add(String.valueOf(e));
+            return List.copyOf(out);
+        }
+        if (v instanceof Object[] arr) {
+            for (var e : arr) if (e != null) out.add(String.valueOf(e));
+            return List.copyOf(out);
+        }
+        if (v instanceof Value val && val.hasArrayElements()) {
+            for (long i = 0; i < val.getArraySize(); i++) {
+                var e = val.getArrayElement(i);
+                if (e != null && !e.isNull()) out.add(e.toString());
+            }
+            return List.copyOf(out);
+        }
+        if (v instanceof Iterable<?> it) {
+            for (var e : it) if (e != null) out.add(String.valueOf(e));
+            return List.copyOf(out);
+        }
+        var single = String.valueOf(v);
+        if (single.isBlank()) return List.of();
+        if (single.indexOf(',') >= 0) {
+            for (var part : single.split(",")) {
+                var t = part.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
+            return List.copyOf(out);
+        }
+        return List.of(single);
+    }
+
 }

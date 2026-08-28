@@ -22,6 +22,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import jakarta.mail.Authenticator;
+import jakarta.mail.PasswordAuthentication;
 
 /**
  * outbound email via SMTP.
@@ -188,10 +190,10 @@ public final class EmailAdapter implements ExternalAdapter {
             props.put("mail.smtp.connectiontimeout", "10000");
             props.put("mail.smtp.timeout", "30000");
 
-            var session = Session.getInstance(props, new jakarta.mail.Authenticator() {
+            var session = Session.getInstance(props, new Authenticator() {
                 @Override
-                protected jakarta.mail.PasswordAuthentication getPasswordAuthentication() {
-                    return new jakarta.mail.PasswordAuthentication(creds.user(), creds.pass());
+                protected PasswordAuthentication getPasswordAuthentication() {
+                    return new PasswordAuthentication(creds.user(), creds.pass());
                 }
             });
 

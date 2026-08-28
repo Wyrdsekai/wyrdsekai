@@ -15,7 +15,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.launch
 import org.wyrdsekai.app.i18n.LocalUiStrings
+import org.wyrdsekai.app.hermod.ConsentMint
 import org.wyrdsekai.app.network.WyrdWebSocket
 import org.wyrdsekai.app.state.TokenStore
 import org.wyrdsekai.app.viewmodel.HouseholdViewModel
@@ -67,6 +69,7 @@ fun SettingsScreen(
     // Advanced state
     var inferenceUrlOverride by remember { mutableStateOf(tokenStore?.loadInferenceUrl() ?: "") }
     var debugMode by remember { mutableStateOf(tokenStore?.loadDebugMode() ?: false) }
+    var hermodConsent by remember { mutableStateOf(tokenStore?.loadHermodConsent() ?: false) }
 
     // OpenRouter PKCE dialog state. `showOpenRouterAuth` opens the
     // full-screen WebView; the result (key or error) lands back via the
@@ -424,6 +427,33 @@ fun SettingsScreen(
                         tokenStore?.saveDebugMode(enabled)
                     },
                     modifier = Modifier.testTag("debug-mode-toggle"),
+                )
+            }
+
+            // hermod consent: lend this device's model to household errands
+            // while charging. Consent is exercised by connecting/disconnecting
+            // the listener; the zone only ever ASKS. Many doors, one identity:
+            // if this device has no pairing identity yet, saying yes MINTS one
+            // through the authenticated session — the consent moment is the
+            // identity moment. Without a session either, consent is saved and
+            // identity arrives whenever the device next pairs or logs in.
+            val hermodScope = rememberCoroutineScope()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(strings.hermodConsent)
+                Switch(
+                    checked = hermodConsent,
+                    onCheckedChange = { enabled ->
+                        hermodConsent = enabled
+                        tokenStore?.saveHermodConsent(enabled)
+                        if (enabled && tokenStore != null) {
+                            hermodScope.launch { ConsentMint.mintWithSession(tokenStore) }
+                        }
+                    },
+                    modifier = Modifier.testTag("hermod-consent-toggle"),
                 )
             }
 

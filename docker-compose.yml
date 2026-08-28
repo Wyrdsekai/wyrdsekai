@@ -13,8 +13,14 @@
 #   WYRDSEKAI_DATA         — Data directory (default: ./data)
 #   WYRDSEKAI_MODEL        — Default inference model name
 #
-# To add CodePlane (evolutionary soul search, ML training), see the codeplane
-# repository — it ships its own compose overlay to layer over this one.
+# CodeZaiku integrates as an installed BINARY, not a compose service: the
+# installers bundle it (0.2.0+), `wyrd coding install codezaiku` fetches it,
+# and the backend drives this node's own inference. A compose overlay named
+# docker-compose.codezaiku.yml used to sit beside this file — it described a
+# pre-release CodeZaiku service architecture (HTTP on :9090, ML services)
+# that was abandoned before it shipped, and upstream confirmed it would fail
+# if run. Deleted rather than repaired: a repaired file would describe a
+# topology that does not exist either.
 
 services:
   wyrdsekai:
@@ -139,27 +145,47 @@ services:
       - "${LLAMA_PORT:-8200}:8200"
     volumes:
       - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+    # Entrypoint-script pattern (same shape as llama-voice below) so MoE
+    # residency flags can be appended conditionally. Sparse-active models
+    # (e.g. 32B-A9B, 8B-A1B) run well with attention/KV on GPU and expert
+    # tensors in system RAM — that split is exactly what these flags select.
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
     command:
-      - "--model"
-      - "/models/${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf}"
-      - "--port"
-      - "8200"
-      - "--ctx-size"
-      - "${LLAMA_SKILLS_CTX:-16384}"
-      - "--n-gpu-layers"
-      - "${LLAMA_GPU_LAYERS:-99}"
-      - "--parallel"
-      - "1"
-      - "--host"
-      - "0.0.0.0"
-      - "--jinja"
-      - "--reasoning"
-      - "off"
-      - "--reasoning-budget"
-      - "0"
-      - "--flash-attn"
-      - "on"
-      - "--metrics"
+      - |
+        set -e
+        ARGS="--model /models/$${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf} --port 8200 --ctx-size $${LLAMA_SKILLS_CTX:-16384} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel 1 --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --flash-attn on --metrics"
+        # LLAMA_CPU_MOE=all|on  -> --cpu-moe   (ALL expert tensors in system RAM)
+        # LLAMA_CPU_MOE=<N>     -> --n-cpu-moe N (experts of the first N layers in RAM)
+        # unset/0               -> dense placement, no flag
+        case "$${LLAMA_CPU_MOE:-}" in
+          ""|0) : ;;
+          all|on) ARGS="$$ARGS --cpu-moe"; echo "[skills] MoE residency: all experts -> system RAM" ;;
+          *) ARGS="$$ARGS --n-cpu-moe $${LLAMA_CPU_MOE}"; echo "[skills] MoE residency: first $${LLAMA_CPU_MOE} layers' experts -> system RAM" ;;
+        esac
+        # Word-split ARGS deliberately, then append quoted-safe extras: the
+        # chat-template kwargs value is a JSON object and must stay ONE argv
+        # entry even if it contains spaces.
+        set -- $$ARGS
+        if [ -n "$${LLAMA_CHAT_TEMPLATE_KWARGS:-}" ]; then
+          set -- "$$@" --chat-template-kwargs "$${LLAMA_CHAT_TEMPLATE_KWARGS}"
+          echo "[skills] chat-template kwargs: $${LLAMA_CHAT_TEMPLATE_KWARGS}"
+        fi
+        # Escape hatch for flags we didn't anticipate (word-split by design).
+        if [ -n "$${LLAMA_SKILLS_EXTRA_ARGS:-}" ]; then
+          set -- "$$@" $${LLAMA_SKILLS_EXTRA_ARGS}
+          echo "[skills] extra args: $${LLAMA_SKILLS_EXTRA_ARGS}"
+        fi
+        echo "[skills] exec: /app/llama-server $$*"
+        exec /app/llama-server "$$@"
+    environment:
+      - LLAMA_SKILLS_MODEL=${LLAMA_SKILLS_MODEL:-}
+      - LLAMA_SKILLS_CTX=${LLAMA_SKILLS_CTX:-}
+      - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-}
+      - LLAMA_CPU_MOE=${LLAMA_CPU_MOE:-}
+      - LLAMA_CHAT_TEMPLATE_KWARGS=${LLAMA_CHAT_TEMPLATE_KWARGS:-}
+      - LLAMA_SKILLS_EXTRA_ARGS=${LLAMA_SKILLS_EXTRA_ARGS:-}
     deploy:
       resources:
         reservations:

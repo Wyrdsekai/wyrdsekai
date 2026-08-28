@@ -22,7 +22,7 @@ class CodingFamiliarIdentityTest {
         var id = CodingFamiliarIdentity.newBorn(BONDHOLDER, PARENT, null);
 
         assertThat(id.did()).isEqualTo(
-            "did:wyrd:familiar:codeplane:did:wyrd:user:operator");
+            "did:wyrd:familiar:codezaiku:did:wyrd:user:operator");
         assertThat(id.name()).isEqualTo("Coder");
         assertThat(id.kindSubtype()).isEqualTo("coding-familiar");
         assertThat(id.bondholderDid()).isEqualTo(BONDHOLDER);
@@ -52,7 +52,7 @@ class CodingFamiliarIdentityTest {
 
     @Test void didFor_buildsCanonicalDid() {
         assertThat(CodingFamiliarIdentity.didFor(BONDHOLDER))
-            .isEqualTo("did:wyrd:familiar:codeplane:did:wyrd:user:operator");
+            .isEqualTo("did:wyrd:familiar:codezaiku:did:wyrd:user:operator");
     }
 
     @Test void bondholderDidFromFamiliarDid_extractsBondholder() {
@@ -66,7 +66,7 @@ class CodingFamiliarIdentityTest {
 
     @Test void rejectsBlankRequiredFields() {
         assertThatThrownBy(() -> new CodingFamiliarIdentity(
-            "did:wyrd:familiar:codeplane:x", "",
+            "did:wyrd:familiar:codezaiku:x", "",
             "coding-familiar", BONDHOLDER, PARENT,
             Instant.now(), false, null, null, null, null, null, null, null, null))
             .isInstanceOf(IllegalArgumentException.class)

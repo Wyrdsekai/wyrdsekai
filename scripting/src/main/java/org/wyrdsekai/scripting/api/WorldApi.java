@@ -1622,7 +1622,7 @@ public class WorldApi {
     /**
      * Pick a coding backend for a delegated task.
      * §4.4 / Phase 1a step 17. Returns the stable backend name string
-     * ({@code "codeplane"}, …) or {@code null} when no backend is configured
+     * ({@code "codezaiku"}, …) or {@code null} when no backend is configured
      * / healthy / allowed for this entity.
      *
      * <p>The Workshop room consults this before dispatching a zone command:

@@ -56,6 +56,15 @@ data/coding-cli-bundle/*
 !data/coding-cli-bundle/manifest.json
 # Docker volume data (models, lora, huggingface cache)
 docker/data/
+# M3 prediction ledger — append-only RUNTIME output, written relative to the CWD,
+# so a gradle run drops one in whichever module dir it ran from (core/, e2e-test/).
+# The `data/*` rule above contains a slash and is therefore anchored to the repo
+# root, which never matched these. Tracking them meant every test run dirtied the
+# tree, and any build run after tests stamped gitDirty=true on the artifact —
+# defeating the 2026-08-16 fix that made that flag mean something. The writer
+# calls Files.createDirectories, and the calibrator tests use @TempDir, so nothing
+# depends on these being present.
+**/data/m3/
 logs/
 *.log
 

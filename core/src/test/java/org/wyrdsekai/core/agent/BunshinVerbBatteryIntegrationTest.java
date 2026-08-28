@@ -17,6 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.common.model.Exit;
 import org.wyrdsekai.common.model.RoomSnapshot;
 import org.wyrdsekai.core.home.ActionGrants;
+import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.library.LibraryServices;
 import org.wyrdsekai.core.room.RoomCommand;
@@ -30,6 +31,16 @@ import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.wyrdsekai.common.model.Entity;
+import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.familiar.BunshinActor;
+import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.room.RoomActor;
+import org.wyrdsekai.core.room.RoomRegistry;
 
 /**
  * PER-VERB battery: every tool a bunshin is offered, emitted from a real bunshin
@@ -128,10 +139,25 @@ class BunshinVerbBatteryIntegrationTest {
     }
 
     @AfterAll
-    static void teardownClass() { if (testKit != null) testKit.shutdownTestKit(); }
+    static void teardownClass() {
+        if (testKit != null) testKit.shutdownTestKit();
+    }
+
+    /**
+     * A CLASS-scoped directory for the world, not a per-test one. The companion actor
+     * lives in the static testKit and outlives every test; a per-test @TempDir holding
+     * world.db was deleted after each case while that actor still held it — "Failed to
+     * delete temp directory … world.db" on three different cases across 2026-08-22/23,
+     * never with an assertion error. The earlier fixes stopped the item watcher, which
+     * was never the holder. JUnit deletes a static @TempDir after @AfterAll, i.e. after
+     * testKit.shutdownTestKit() — the only order in which this can be clean.
+     */
+    @TempDir
+    static Path worldDir;
 
     @BeforeEach
-    void spawnCompanion(@TempDir Path tmp) throws Exception {
+    void spawnCompanion() throws Exception {
+        var tmp = worldDir;
         LibraryServices.reset();
         LibraryServices.init(tmp);
         EntityRegistry.init();
@@ -153,15 +179,15 @@ class BunshinVerbBatteryIntegrationTest {
         // the test spawning a RoomActor itself and registering it. "Cannot be
         // done" deserved a check before it went in a report.
         var liveRoom = testKit.spawn(
-            org.wyrdsekai.core.room.RoomActor.create("nexus"), "room-nexus-" + SUBJ.get());
-        org.wyrdsekai.core.room.RoomRegistry.get().register("nexus", liveRoom);
+            RoomActor.create("nexus"), "room-nexus-" + SUBJ.get());
+        RoomRegistry.get().register("nexus", liveRoom);
         companion = testKit.spawn(CompanionActor.create(
             world.profile, roomProbe.ref(), ROOM_ID, routerProbe.ref(),
             // add_script refuses outright when roomCreator is null ("I can't modify
             // room scripts right now"). A no-arg RoomCreator satisfies that guard;
             // it still cannot SPAWN a room under a bare ActorTestKit, which is why
             // create_room is proven in AuthoringPromiseLiveE2ETest instead.
-            new org.wyrdsekai.core.agent.RoomCreator(),
+            new RoomCreator(),
             null, null, world.userScriptsDir, world.soulStore, world.capabilities));
         roomProbe.expectMessageClass(RoomCommand.Subscribe.class, Duration.ofSeconds(5));
         roomProbe.expectMessageClass(RoomCommand.EnterRoom.class, Duration.ofSeconds(5));
@@ -190,7 +216,7 @@ class BunshinVerbBatteryIntegrationTest {
      * in {@code ActionParser}, so this map is a mirror of the parser and will drift
      * if the parser changes. {@link #everyVerbHasAnEmission} guards that.</p>
      */
-    private static final java.util.Map<String, String> EMIT = new java.util.HashMap<>();
+    private static final Map<String, String> EMIT = new HashMap<>();
     static {
         EMIT.put("acquire", "{" + "\"action\":\"acquire\",\"summary\":\"battery\",\"topic\":\"battery\",\"trust_tier\":\"open\",\"why_relevant\":\"battery\"" + "}");
         EMIT.put("add_script", "{" + "\"action\":\"add_script\",\"room_id\":\"nexus\",\"script\":\"1 + 1\"" + "}");
@@ -226,8 +252,8 @@ class BunshinVerbBatteryIntegrationTest {
     }
 
     /** Distinct subject per invocation — a reused name takes a different path. */
-    private static final java.util.concurrent.atomic.AtomicInteger SUBJ =
-        new java.util.concurrent.atomic.AtomicInteger();
+    private static final AtomicInteger SUBJ =
+        new AtomicInteger();
 
     private static String emission(String verb) {
         var json = EMIT.get(verb);
@@ -281,7 +307,7 @@ class BunshinVerbBatteryIntegrationTest {
             }
             boolean isBunshin = req.maxTokens() == BUNSHIN_TOKEN_SENTINEL;
             observation = req.messages().stream()
-                .map(org.wyrdsekai.core.inference.InferenceClient.ChatMessage::content)
+                .map(InferenceClient.ChatMessage::content)
                 .filter(t -> t != null && (t.startsWith("[result]") || t.startsWith("[failed]")))
                 .reduce((a, b) -> b)
                 .orElse("");
@@ -311,15 +337,15 @@ class BunshinVerbBatteryIntegrationTest {
         // ENV half of that was true.
         var fakeHome = grantTmp.resolve("home");
         var workRoot = grantTmp.resolve("work");
-        java.nio.file.Files.createDirectories(fakeHome.resolve(".wyrdsekai"));
-        java.nio.file.Files.createDirectories(workRoot);
-        java.nio.file.Files.writeString(
+        Files.createDirectories(fakeHome.resolve(".wyrdsekai"));
+        Files.createDirectories(workRoot);
+        Files.writeString(
             fakeHome.resolve(".wyrdsekai").resolve("profile.toml"),
             "[host]\nopen_roots = \"" + workRoot + "\"\n");
 
         var oldHome = System.getProperty("user.home");
         System.setProperty("user.home", fakeHome.toString());
-        org.wyrdsekai.core.config.WyrdConfig.reload();
+        WyrdConfig.reload();
         DISPATCH_WORKSPACE = workRoot.toString();
         try {
             var obs = driveVerb("dispatch_task");
@@ -337,7 +363,7 @@ class BunshinVerbBatteryIntegrationTest {
         } finally {
             DISPATCH_WORKSPACE = null;
             System.setProperty("user.home", oldHome);
-            org.wyrdsekai.core.config.WyrdConfig.reload();
+            WyrdConfig.reload();
         }
     }
 
@@ -528,7 +554,7 @@ class BunshinVerbBatteryIntegrationTest {
             }
             boolean isBunshin = req.maxTokens() == BUNSHIN_TOKEN_SENTINEL;
             observation = req.messages().stream()
-                .map(org.wyrdsekai.core.inference.InferenceClient.ChatMessage::content)
+                .map(InferenceClient.ChatMessage::content)
                 .filter(t -> t != null && (t.startsWith("[result]") || t.startsWith("[failed]")))
                 .reduce((a, b) -> b)
                 .orElse("");
@@ -616,13 +642,13 @@ class BunshinVerbBatteryIntegrationTest {
 
     /** Avoids importing BunshinActor just for its marker constant. */
     private static final class BunshinActorDone {
-        static final String MARKER = org.wyrdsekai.core.familiar.BunshinActor.DONE_MARKER;
+        static final String MARKER = BunshinActor.DONE_MARKER;
     }
 
     private RoomSnapshot snapshot() {
         // A peer PRESENT in the room: trade answered "I can't find X to trade
         // with" because there was nobody there. Give it a counterparty.
-        var peer = new org.wyrdsekai.common.model.Entity(
+        var peer = new Entity(
             "agent-peer", "battery-peer", "agent", "A peer for the verb battery",
             PopulatedWorld.PEER_DID, List.of(), null);
         return new RoomSnapshot(ROOM_ID, "Workshop", "The workbench, tools laid out.", "foundation",

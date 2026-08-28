@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -57,6 +58,40 @@ public class StandardItemLibrary {
      *                      crystal" instead of "scrying crystal") makes literal-only
      *                      matching brittle; aliases absorb that drift.
      */
+    /**
+     * Config keys this template has no home for.
+     *
+     * <p>Generated setters are wrapped in a {@code typeof} guard, because an unguarded
+     * {@code item.set_X()} for a setter the base script lacks throws and kills the WHOLE
+     * item — dead on first use (second-node 2026-07-08). That guard is right, but it turns
+     * a crash into SILENCE: config the template cannot hold is dropped and nobody is told.
+     *
+     * <p>Live 2026-08-19: asked for an item that queries the library and tells a story
+     * aloud, the companion chose {@code scrying-crystal} and expressed the whole request
+     * through config — {@code query_mode}, {@code max_paragraphs}, {@code output_style}.
+     * That template declares one param ({@code topic}) and one config key
+     * ({@code source}). Every other setting vanished without a word, so she believed she
+     * had built what was asked for and handed over an item that does nothing. Naming the
+     * dropped keys lets her notice, and reach for a script instead.
+     *
+     * @return the keys that are neither a declared param nor a default-config entry.
+     */
+    public static List<String> unsupportedConfigKeys(ItemTemplate template,
+            Map<String, String> config) {
+        if (template == null || config == null || config.isEmpty()) return List.of();
+        var known = new HashSet<String>();
+        if (template.defaultConfig() != null) known.addAll(template.defaultConfig().keySet());
+        if (template.params() != null) {
+            for (var prm : template.params()) if (prm != null) known.add(prm.name());
+        }
+        known.add("name");            // always honoured — set_name is on every base script
+        var out = new ArrayList<String>();
+        for (var key : config.keySet()) {
+            if (key != null && !known.contains(key)) out.add(key);
+        }
+        return List.copyOf(out);
+    }
+
     public record ItemTemplate(
         String name,
         String displayName,
@@ -510,7 +545,7 @@ public class StandardItemLibrary {
         ));
 
         register(new ItemTemplate(
-            "code-terminal", "Code Terminal", "CodePlane MCP integration as a room object",
+            "code-terminal", "Code Terminal", "CodeZaiku MCP integration as a room object",
             "portal", "std/portal",
             List.of(
                 param("action", "string", "view, refresh, or last", true, List.of("view", "refresh", "last")),

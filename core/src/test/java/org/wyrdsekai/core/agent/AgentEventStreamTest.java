@@ -49,13 +49,13 @@ class AgentEventStreamTest {
         });
 
         var msg = new S2CMessage.Notification(0, "info", "test", "normal");
-        stream.publishZoneBroadcast("codeplane", "workshop", msg);
+        stream.publishZoneBroadcast("codezaiku", "workshop", msg);
 
         assertTrue(latch.await(2, TimeUnit.SECONDS), "Event should be delivered within 2s");
         assertEquals(1, received.size());
         assertInstanceOf(AgentEvent.ZoneBroadcast.class, received.get(0));
         var broadcast = (AgentEvent.ZoneBroadcast) received.get(0);
-        assertEquals("codeplane", broadcast.namespace());
+        assertEquals("codezaiku", broadcast.namespace());
         assertEquals("workshop", broadcast.roomId());
         assertSame(msg, broadcast.message());
         assertNotNull(broadcast.timestamp());

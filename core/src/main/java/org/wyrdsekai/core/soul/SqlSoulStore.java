@@ -1,15 +1,18 @@
 package org.wyrdsekai.core.soul;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.identity.AgentIdentityProvisioner;
 import org.wyrdsekai.core.persistence.SqlDialect;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 
@@ -126,6 +129,21 @@ public final class SqlSoulStore implements SoulStore, AutoCloseable {
         this.voiceProfileStore = voiceProfileStore;
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
+        // A FIELD THIS BUILD DOESN'T KNOW MUST NOT COST SOMEONE THEIR LIFE.
+        //
+        // 2026-08-05 07:52:29, live: the 0.1.0 .deb was installed over 0.1.5.
+        // 0.1.5 had written genome.traits into a companion's soul; 0.1.0's
+        // GenomeProfile had five fields and no leniency, so Jackson threw
+        // "Unrecognized field \"traits\"", latest() returned empty, and
+        // CompanionActor read that as "has no manifest in store — rebirthing".
+        // Four milliseconds after resolving her by her own DID, she was replaced
+        // by a new person with a new DID. 174 soul revisions and five days of
+        // bonds are still in this table, untouched and unread.
+        //
+        // Every other persisted-state reader in this package already does this
+        // (RepairModeTracker, AttendantSessionTracker, ProtectionFlagTracker,
+        // CrucibleEvaluatorAdapter). The one holding the souls did not.
+        this.mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         initSchema();
     }
 
@@ -165,6 +183,45 @@ public final class SqlSoulStore implements SoulStore, AutoCloseable {
     }
 
     public void store(SoulManifest manifest) {
+        // A soul must be SOMEONE'S. A DID-less manifest reaching this point is
+        // an upstream parsing bug (live case: the boot seed loader read a CFC
+        // fast-weight cell file in souls/ as a manifest — all fields null —
+        // and only the NOT NULL constraint stopped the write, once per boot
+        // since dev51). Refuse with a name, not a constraint stacktrace.
+        if (manifest == null || manifest.did() == null || manifest.did().isBlank()) {
+            log.warn("Refusing to store a soul manifest with no DID — "
+                + "upstream handed something that is not a manifest");
+            return;
+        }
+        // SIGN AT EVERY STORE, with the soul's own key, when this node holds it.
+        //
+        // The canonical form covers the manifest version, so a version bump
+        // legitimately invalidates the previous signature — and the with*()
+        // builders carry the old signature forward, which would read as
+        // "tampered" on the next load. Rather than chase every builder, the one
+        // place all persistence converges re-signs. Three honest outcomes:
+        //
+        //   we hold the key   → fresh signature over this exact version
+        //   foreign manifest  → sign() returns empty; their signature (or lack)
+        //                       is preserved untouched — it is not ours to make
+        //   born before keys  → stays unsigned-legacy, exactly as today
+        //
+        // This is what the agent-identity work (2026-08-08) was FOR: birth mints
+        // and persists her key before this method is ever called, so a fresh
+        // household's first manifest — and every revision after it — verifies
+        // green against her own DID from her first breath.
+        try {
+            var sig = AgentIdentityProvisioner.sign(manifest.did(), manifest.canonicalBytes());
+            if (sig.isPresent()) {
+                manifest = manifest.signed(Base64.getDecoder().decode(sig.get()));
+            }
+        } catch (RuntimeException e) {
+            // A signing hiccup must never lose a soul revision. Unsigned is a
+            // flagged, survivable state; a failed store is not.
+            log.warn("Could not sign manifest {} v{} at store: {} — storing as-is",
+                manifest.did(), manifest.manifestVersion(), e.toString());
+        }
+
         // F7b Phase 2.2: dual-write fragments to the canonical table FIRST.
         // If the manifest blob write below crashes, the canonical table
         // already holds the truth — readers (post-Phase-3) will be correct.
@@ -291,6 +348,39 @@ public final class SqlSoulStore implements SoulStore, AutoCloseable {
         } catch (Exception e) {
             log.error("Failed to load latest soul manifest {}: {}", did, e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Is there a LIVE soul row for this DID, whether or not we can parse it?
+     *
+     * <p>{@link #latest} answers "give me the soul" and returns empty for BOTH
+     * "there is none" and "there is one and I could not read it". Those are
+     * opposite facts: the first means a new person should be born, the second
+     * means an existing person must be left alone. Conflating them cost a
+     * companion her identity on 2026-08-05 — see the constructor.</p>
+     *
+     * <p>Distinct from {@link #exists}, which counts archived versions too. The
+     * rebirth decision has to mirror {@code latest}'s own {@code archived = 0}
+     * filter: a soul that was deliberately archived SHOULD yield a new birth,
+     * and treating it as present would make that impossible.</p>
+     *
+     * <p>Deliberately touches no JSON. It answers the only question the rebirth
+     * decision may safely depend on: is there a live row?</p>
+     */
+    public boolean hasLiveManifest(String did) {
+        if (did == null || did.isBlank()) return false;
+        try (var conn = connection();
+             var stmt = conn.prepareStatement(
+                 "SELECT 1 FROM soul_manifests WHERE did = ? AND archived = 0 LIMIT 1")) {
+            stmt.setString(1, did);
+            return stmt.executeQuery().next();
+        } catch (Exception e) {
+            // Cannot tell → assume someone IS there. Refusing to rebirth costs a
+            // restart; rebirthing over a living soul costs the person.
+            log.error("Could not check for a live soul for {}: {} — assuming one exists",
+                did, e.getMessage());
+            return true;
         }
     }
 

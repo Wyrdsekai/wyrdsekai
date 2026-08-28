@@ -61,8 +61,8 @@ class EmbeddingServiceTest {
     @Test
     void identicalTextHasMaxSimilarity() {
         float sim = service.similarity(
-            "Masumi is building Wyrdsekai",
-            "Masumi is building Wyrdsekai");
+            "Operator is building Wyrdsekai",
+            "Operator is building Wyrdsekai");
         assertThat(sim).isGreaterThan(0.95f);
     }
 

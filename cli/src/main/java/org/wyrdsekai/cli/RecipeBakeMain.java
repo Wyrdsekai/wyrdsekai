@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.typesafe.config.ConfigFactory;
 import org.wyrdsekai.core.coding.AuthMode;
 import org.wyrdsekai.core.coding.AuthResolver;
+import org.wyrdsekai.core.coding.CodeZaikuBackend;
+import org.wyrdsekai.core.coding.CodeZaikuRuntimeConfig;
 import org.wyrdsekai.core.coding.CodingBackendBootstrap;
+import org.wyrdsekai.core.coding.CodingTaskBackend;
 import org.wyrdsekai.core.coding.GooseBackend;
 import org.wyrdsekai.core.coding.GooseRuntimeConfig;
 import org.wyrdsekai.core.recipe.CodingBackendDispatcher;
@@ -203,39 +206,67 @@ public final class RecipeBakeMain {
         var procRunner = new ProcessCommandRunner(
             projectDir.toFile(), Duration.ofMinutes(30));
 
-        // Direct GooseBackend construction — mirrors the production-
-        // verified shape of A2 (RetrainClassifierHeadLiveE2ETest from
-        // 2026-05-24). Why direct instead of CodingBackendBootstrap?
-        // The bundle manifest's goose entry lacks a `key_chest_slot`,
-        // so DefaultAuthResolver returns AuthMissing → GooseBackend
-        // rejects every task in <5ms with LOGIN_REQUIRED. The bake
-        // targets the bundled local llama-server (provider=openai +
-        // OPENAI_HOST=localhost:8200/v1), so the OPENAI_API_KEY value
-        // never crosses the household boundary — a {@code "not-required"}
-        // sentinel is correct AND safe. Pi/OpenCode fallback is
-        // intentionally NOT wired: only goose was live-validated on
-        // 2026-05-24 against this recipe; an unverified fallback would
-        // mask shipping bugs.
-        var gooseConfig = GooseRuntimeConfig.fromConfig(base);
-        if (!gooseConfig.enabled()) {
-            log("ERROR: goose disabled in config (wyrdsekai.coding.backends.goose.enabled). "
-                + "Set in ~/.wyrdsekai/wyrdsekai.conf or $WYRDSEKAI_CONF.");
-            System.exit(2);
+        // Direct backend construction — mirrors the production-verified
+        // shape of A2 (RetrainClassifierHeadLiveE2ETest from 2026-05-24).
+        // Why direct instead of CodingBackendBootstrap? The bundle
+        // manifest's entries lack a `key_chest_slot`, so
+        // DefaultAuthResolver returns AuthMissing → the backend rejects
+        // every task in <5ms with LOGIN_REQUIRED. The bake targets the
+        // bundled local llama-server, so no key ever crosses the
+        // household boundary — a {@code "not-required"} sentinel is
+        // correct AND safe.
+        //
+        // CODEZAIKU FIRST, GOOSE FALLBACK (2026-08-24). Goose held this
+        // slot alone since 2026-05-24 because it was the only backend
+        // live-validated against the recipe. CodeZaiku 01de82d2 has since
+        // been proven across the full staging battery (artifact mode, one
+        // file per build, honest exit codes, in-place repairs) and their
+        // own measurements halve dispatch and repair counts vs goose —
+        // and the bake's steps are exactly that shape of work. Goose
+        // stays as the fallback; a box with neither still aborts loudly.
+        CodingTaskBackend backend = null;
+        var cpConfig = CodeZaikuRuntimeConfig.fromConfig(base);
+        if (cpConfig.enabled()
+                && Files.isExecutable(Path.of(cpConfig.executablePath()))) {
+            backend = new CodeZaikuBackend(cpConfig, null);
+            log("codezaiku backend wired direct: exe=" + cpConfig.executablePath()
+                + " drive=" + cpConfig.effectiveDriveUrl()
+                + " model=" + cpConfig.effectiveModel());
+        } else {
+            log("codezaiku not available (enabled=" + cpConfig.enabled()
+                + ", exe=" + cpConfig.executablePath() + ") — trying goose");
         }
-        if (!Files.isExecutable(Path.of(gooseConfig.executablePath()))) {
-            log("ERROR: goose binary not found / not executable at "
-                + gooseConfig.executablePath()
-                + " (configure via wyrdsekai.coding.backends.goose.executable_path).");
-            System.exit(2);
+        if (backend == null) {
+            var gooseConfig = GooseRuntimeConfig.fromConfig(base);
+            if (!gooseConfig.enabled()) {
+                log("ERROR: no coding backend for the bake — codezaiku binary not "
+                    + "found and goose disabled in config "
+                    + "(wyrdsekai.coding.backends.goose.enabled). "
+                    + "Set in ~/.wyrdsekai/wyrdsekai.conf or $WYRDSEKAI_CONF.");
+                System.exit(2);
+            }
+            if (!Files.isExecutable(Path.of(gooseConfig.executablePath()))) {
+                log("ERROR: no coding backend for the bake — codezaiku binary not "
+                    + "found and goose binary not found / not executable at "
+                    + gooseConfig.executablePath()
+                    + " (configure via wyrdsekai.coding.backends.goose.executable_path, "
+                    + "or install codezaiku under $WYRDSEKAI_DATA_DIR/coding-cli-bundle/).");
+                System.exit(2);
+            }
+            AuthResolver sentinel = name -> new AuthMode.ApiKey("not-required");
+            backend = new GooseBackend(gooseConfig, sentinel);
+            log("goose backend wired direct: exe=" + gooseConfig.executablePath()
+                + " provider=" + gooseConfig.provider()
+                + " model=" + gooseConfig.model()
+                + " base_url=" + gooseConfig.baseUrl());
         }
-        AuthResolver sentinel = name -> new AuthMode.ApiKey("not-required");
-        var backend = new GooseBackend(gooseConfig, sentinel);
-        log("goose backend wired direct: exe=" + gooseConfig.executablePath()
-            + " provider=" + gooseConfig.provider()
-            + " model=" + gooseConfig.model()
-            + " base_url=" + gooseConfig.baseUrl());
+        // The recipe's BACKEND steps name project-relative paths, so the
+        // backend must run in the project — same root the SHELL steps use.
+        // The per-task scratch default left the backend in an empty sandbox
+        // where the 9B fabricated the script it was told to run (2026-08-24).
         var dispatcher = new CodingBackendDispatcher(
-            backend, RELEASE_BAKE_DID, Duration.ofMinutes(30));
+            backend, RELEASE_BAKE_DID, Duration.ofMinutes(30),
+            projectDir.toAbsolutePath().toString());
         var runner = new RecipeRunner(procRunner, dispatcher);
         var recipesDir = projectDir.resolve("recipes"); // may not exist
         var scriptsRoot = projectDir.resolve("scripts");

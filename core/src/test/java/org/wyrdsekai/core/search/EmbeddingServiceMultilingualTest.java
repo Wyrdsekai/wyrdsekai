@@ -94,8 +94,8 @@ class EmbeddingServiceMultilingualTest {
     @Test
     void identicalTextHasMaxSimilarity() {
         // Sanity — model is at least deterministic and self-similar.
-        float sim = service.similarity("Masumi is building Wyrdsekai",
-            "Masumi is building Wyrdsekai");
+        float sim = service.similarity("Operator is building Wyrdsekai",
+            "Operator is building Wyrdsekai");
         assertThat(sim).isGreaterThan(0.95f);
     }
 

@@ -151,12 +151,12 @@ describe('S2C Protocol Conformance', () => {
       structured: null, priority: 'normal', lang: 'en', isAiGenerated: true,
       blocks: [
         {
-          format: 'codeplane.diff',
+          format: 'codezaiku.diff',
           data: { filePath: 'auth.js', additions: 12, deletions: 5 },
           fallback: 'auth.js: +12 -5 lines changed',
         },
         {
-          format: 'codeplane.cost',
+          format: 'codezaiku.cost',
           data: { tokensIn: 4200, tokensOut: 850, estimatedUSD: 0.03 },
           fallback: 'Cost: $0.03 (4.2K in, 850 out)',
         },
@@ -166,9 +166,9 @@ describe('S2C Protocol Conformance', () => {
     const msg = parseS2CMessage(json)!;
     if (msg.type !=='prose') return;
     expect(msg.blocks).toHaveLength(2);
-    expect(msg.blocks![0].format).toBe('codeplane.diff');
+    expect(msg.blocks![0].format).toBe('codezaiku.diff');
     expect(msg.blocks![0].fallback).toBe('auth.js: +12 -5 lines changed');
-    expect(msg.blocks![1].format).toBe('codeplane.cost');
+    expect(msg.blocks![1].format).toBe('codezaiku.cost');
   });
 
   test('deserialize prose with structured', () => {
@@ -224,7 +224,7 @@ describe('S2C Protocol Conformance', () => {
       type: 'state_change', seq: 20, description: 'Board updated',
       structured: null,
       blocks: [{
-        format: 'codeplane.board_card',
+        format: 'codezaiku.board_card',
         data: { boardId: 'board-7', name: 'Auth refactor', status: 'in_progress' },
         fallback: 'Card: Auth refactor → in_progress',
       }],
@@ -233,7 +233,7 @@ describe('S2C Protocol Conformance', () => {
     const msg = parseS2CMessage(json)!;
     if (msg.type !=='state_change') return;
     expect(msg.blocks).toHaveLength(1);
-    expect(msg.blocks![0].format).toBe('codeplane.board_card');
+    expect(msg.blocks![0].format).toBe('codezaiku.board_card');
   });
 
   // --- ReplayDone ---

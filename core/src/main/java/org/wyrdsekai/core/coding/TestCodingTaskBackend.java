@@ -6,7 +6,7 @@ import java.util.stream.Stream;
 /**
  * Non-sealed permit of {@link CodingTaskBackend} reserved for test
  * fakes. Production code MUST NOT subclass this — the eight concrete
- * permits ({@link CodePlaneBackend}, {@link OpenCodeBackend},
+ * permits ({@link CodeZaikuBackend}, {@link OpenCodeBackend},
  * {@link OpenHandsBackend}, etc.) are the only legitimate
  * implementations of the interface.
  *

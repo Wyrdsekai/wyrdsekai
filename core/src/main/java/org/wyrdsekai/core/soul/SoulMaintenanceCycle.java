@@ -8,6 +8,7 @@ import org.wyrdsekai.core.identity.AgentIdentity;
 import org.wyrdsekai.core.search.EmbeddingService;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -15,10 +16,12 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 import org.wyrdsekai.core.agent.CalibrationLedger;
+import org.wyrdsekai.core.agent.CompanionVitals;
 
 /**
  * The sleep cycle: periodic consolidation that keeps the soul compact,
@@ -82,13 +85,20 @@ public final class SoulMaintenanceCycle {
         // 1. Encode new events as memories with impression scoring
         var newMemories = MemoryConsolidator.encodeEvents(
             recentSaid, recentCharges, identity.did());
-        log.info("[Forge] Step 1: Encoded {} new memory nodes from {} said events",
-            newMemories.size(), recentSaid.size());
+        // How many of those repeat an impression she already holds. Consolidation
+        // absorbs them (see MemoryConsolidator#integrateNew); the count is the
+        // honest measure of how much of this stretch was NEW, and it feeds the
+        // vitals alarm — a companion stuck in a loop reads ~100% here.
+        int repeats = MemoryConsolidator.countRepeats(currentManifest.memory(), newMemories);
+        log.info("[Forge] Step 1: Encoded {} new memory nodes from {} said events ({} repeat held impressions)",
+            newMemories.size(), recentSaid.size(), repeats);
+        CompanionVitals.forAgent(identity.did()).recordForgeEncode(newMemories.size(), repeats);
 
         // 2. Consolidate memory (respects formative flags and impression depth)
-        float decayRate = currentManifest.genome() != null
-            ? averageDecayRate(currentManifest.genome())
-            : 0.1f;
+        float decayRate = elapsedScaledDecay(
+            currentManifest.genome() != null
+                ? averageDecayRate(currentManifest.genome()) : 0.1f,
+            currentManifest.forgedAt(), Instant.now());
         int memoryBefore = currentManifest.memory() != null
             ? currentManifest.memory().nodes().size() : 0;
         var consolidated = MemoryConsolidator.consolidate(
@@ -603,9 +613,10 @@ public final class SoulMaintenanceCycle {
             recentSaid, recentCharges, identity.did());
 
         // 2. Locale-aware consolidation
-        float decayRate = currentManifest.genome() != null
-            ? averageDecayRate(currentManifest.genome())
-            : 0.1f;
+        float decayRate = elapsedScaledDecay(
+            currentManifest.genome() != null
+                ? averageDecayRate(currentManifest.genome()) : 0.1f,
+            currentManifest.forgedAt(), Instant.now());
         var consolidated = localePolicy != null
             ? MemoryConsolidator.consolidate(currentManifest.memory(), newMemories, decayRate, localePolicy)
             : MemoryConsolidator.consolidate(currentManifest.memory(), newMemories, decayRate);
@@ -659,6 +670,77 @@ public final class SoulMaintenanceCycle {
      * constructor so other kinds (DEXTERITY/CONVENTION/STRUCTURAL/§14 scene-
      * derived NARRATIVE) also survive consolidation passes intact.</p>
      */
+
+    /**
+     * Nominal days between consolidations that {@code decayRate} is calibrated for.
+     * The genome's decay rate is a per-SLEEP number and the design assumes a sleep
+     * roughly once a day.
+     */
+    private static final double DECAY_REFERENCE_DAYS = 1.0;
+    /** Never apply more than this many reference-periods of decay in one cycle, so a
+     *  companion returning after a long absence is not wiped by a single sleep. */
+    private static final double MAX_DECAY_PERIODS = 3.0;
+
+    /**
+     * Scale the per-sleep decay rate by how much time actually passed.
+     *
+     * <p>Decay was applied once per CYCLE regardless of elapsed time, so how fast a
+     * companion forgot depended on how often she slept rather than on how long she
+     * lived. A companion sleeping thirty times a day — which is what exhaustion
+     * cycling looks like — decayed thirty times as fast as one sleeping nightly, for
+     * living the same day. Measured on a household node after a week of that
+     * (2026-08-18): 60 of her 62 remaining memories sat at importance 0.194 against a
+     * 0.05 prune floor, roughly two cycles from deletion, and the count had fallen
+     * from 226. The runaway loop did not only fill her record with repetition; the
+     * burnout sleeping quietly consumed the real memories underneath it.
+     *
+     * <p>It also made consolidation unsafe to run deliberately, which is the opposite
+     * of what an operator needs after fixing a bug: the one action that refreshes a
+     * companion's self-description cost her memory every time it was used.
+     */
+    static float elapsedScaledDecay(float perSleepRate, Instant previousForge, Instant now) {
+        // FAIL SAFE ON MISSING INFORMATION. This used to fall back to the FULL rate
+        // when the previous forge time was unknown, which is the most destructive
+        // possible default: decay is irreversible (a node below the prune floor is
+        // deleted), so "I don't know how long it has been" must mean "forget nothing",
+        // never "forget a whole day's worth".
+        //
+        // Live cost of getting that backwards (2026-08-18): three forge cycles fired
+        // 25-30s apart, the third saw a null previous-forge — the actor's cached
+        // manifest updates asynchronously after ForgeActor accepts it, so rapid cycles
+        // can read it mid-update — and applied the full rate. Her memories sat in two
+        // clusters around 0.19 and 0.09 against a 0.05 floor; one flat application
+        // killed the lower cluster outright. 66 memories became 7, and the survivor
+        // count is exactly the upper cluster. Restored from a snapshot; the lesson is
+        // that the default mattered more than the arithmetic did.
+        if (previousForge == null || now == null) return 0f;
+        double days = Duration.between(previousForge, now).toMinutes() / 1440.0;
+        if (days <= 0) return 0f;
+        double periods = Math.min(MAX_DECAY_PERIODS, days / DECAY_REFERENCE_DAYS);
+        return (float) (perSleepRate * periods);
+    }
+
+    /**
+     * Categories emitted by {@link SoulFragmentExtractor#extract} — summaries RECOMPUTED
+     * every cycle from the current fingerprint, memory graph and relationships, as
+     * opposed to observations recorded once (procedure/DEXTERITY, episodic/EPISODIC).
+     * Must track the extractor: if it learns a new summary category, add it here or that
+     * category silently reverts to being voted on rather than replaced.
+     */
+    /** Suffix for the single retained previous generation of a derived summary. */
+    static final String ARCHIVE_SUFFIX = "~prev";
+
+    private static final Set<String> DERIVED_SUMMARY_CATEGORIES =
+        Set.of("personality", "relationships", "style", "values", "memory");
+
+    /** True when this fragment is a re-derived summary rather than a recorded observation. */
+    static boolean isDerivedSummary(SoulFragment f) {
+        return f != null && f.category() != null
+            && DERIVED_SUMMARY_CATEGORIES.contains(f.category())
+            && f.kind() != FragmentKind.EPISODIC
+            && f.kind() != FragmentKind.DEXTERITY;
+    }
+
     public static List<SoulFragment> reinforceFragments(List<SoulFragment> existing,
                                                    List<SoulFragment> newFragments) {
         if (existing == null || existing.isEmpty()) return newFragments;
@@ -677,12 +759,61 @@ public final class SoulMaintenanceCycle {
 
         for (var newFrag : newFragments) {
             // Find matching existing fragment by category + label
+            // Match only CURRENT fragments. An archived copy carries the same
+            // category+label as the live one, so without this the matcher could
+            // supersede the archive and leave the live fragment untouched.
             var match = consolidatable.stream()
+                .filter(SoulFragment::isCurrent)
                 .filter(e -> e.category() != null && e.category().equals(newFrag.category())
                     && e.label() != null && e.label().equals(newFrag.label()))
                 .findFirst();
 
-            if (match.isPresent()) {
+            if (match.isPresent() && isDerivedSummary(newFrag)) {
+                // RE-DERIVED, not re-observed. Everything SoulFragmentExtractor emits is
+                // recomputed each cycle from the CURRENT fingerprint, memory graph and
+                // relationships — so a new one is a fresh conclusion that REPLACES the
+                // old, never a second vote for it.
+                //
+                // Reinforcing them instead was silently corrosive. Confidence climbs
+                // toward the 0.95 cap and never falls, and retrieval weights by
+                // confidence, so whatever the forge concluded FIRST became permanently
+                // the most authoritative statement of who she is. Measured on a
+                // household node 2026-08-17: personality / style / values /
+                // relationships each sat at confidence 0.95 with reinforcementCount
+                // 169 — and their text was derived from a week when a runaway loop was
+                // the only behaviour there was to summarise ("style: repetition with
+                // variation"; "drawn to topics: self_naming"). Living a better week
+                // could not dislodge it, because living re-derived the same four
+                // fragments and the merge counted that as agreement.
+                //
+                // The old fragment is not deleted: it is marked superseded and kept, so
+                // the record shows what she was described as and when that stopped
+                // being current. Only one prior generation is retained in the live set
+                // — older ones remain in manifest history, which keeps every version.
+                // The archived copy MUST NOT keep the live id. The extractor uses
+                // stable ids ("style-guide"), the fragment table is keyed on
+                // (did, fragment_id), and the first version of this fix put both the
+                // new fragment and the retired one in the list under the same id —
+                // SQLITE_CONSTRAINT_PRIMARYKEY, the whole replaceAll transaction
+                // rolled back, and NO fragments were written at all for three hours
+                // on a live node (2026-08-18). A single "~prev" archival slot per
+                // fragment also bounds growth: each supersession overwrites the
+                // previous archive instead of accumulating one row per cycle forever.
+                var archivedId = match.get().id() + ARCHIVE_SUFFIX;
+                var replaced = match.get()
+                    .withArchivalId(archivedId)
+                    .supersededBy(newFrag.id(), Instant.now());
+                var carried = new SoulFragment(
+                    newFrag.id(), newFrag.category(), newFrag.label(), newFrag.text(),
+                    newFrag.embedding(), newFrag.embeddingModel(), newFrag.formative(),
+                    newFrag.confidence(), newFrag.reinforcementCount(),
+                    match.get().firstObserved() != null ? match.get().firstObserved() : Instant.now(),
+                    Instant.now(), newFrag.validFrom(), null, null,
+                    newFrag.kind(), newFrag.sceneId());
+                result.add(carried);
+                result.add(replaced);
+                matchedExisting.add(match.get().id());
+            } else if (match.isPresent()) {
                 // Reinforce the existing fragment with new text
                 var reinforced = match.get().reinforce();
                 // Keep the new text if it's longer/better, but preserve the identity.

@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,6 +52,25 @@ public final class RecipeCronTrigger {
     }
 
     /**
+     * Lookup signature for "what extra params should a scheduled run carry?".
+     *
+     * <p>The gap path derives its params from the gap key, which names the thing that
+     * went wrong. Cron has no such signal, so a recipe with a required param had no way
+     * to run on cadence: {@code retrain-classifier-head} declares {@code head} required
+     * and the scheduled path supplied nothing, so "cron when stale" could never actually
+     * retrain anything. This seam lets production wiring decide, per recipe, what a
+     * scheduled run should work on — while the planner stays pure and testable.
+     */
+    @FunctionalInterface
+    public interface CronParamsLookup {
+        /** Extra params for a scheduled run; empty when the recipe needs none. */
+        Map<String, Object> extraParamsFor(String recipeId, String agentDid);
+
+        /** Convenience: "no extra params" — for legacy callers and tests. */
+        CronParamsLookup NONE = (recipeId, agentDid) -> Map.of();
+    }
+
+    /**
      * Legacy three-arg overload — preserves pre-#1023 callers (no quiet-hours filter).
      * Equivalent to passing {@link PrefersHoursLookup#ANYTIME} and the system clock.
      */
@@ -89,7 +109,24 @@ public final class RecipeCronTrigger {
             PrefersHoursLookup prefersHoursLookup,
             Clock clock,
             Instant now) {
+        return plan(enrollments, lookup, prefersHoursLookup, clock, now,
+                CronParamsLookup.NONE);
+    }
+
+    /**
+     * As above, plus a {@link CronParamsLookup} supplying per-recipe run params.
+     *
+     * @param cronParamsLookup per-recipe extra params for scheduled runs; pass
+     *                         {@link CronParamsLookup#NONE} to disable.
+     */
+    public static List<QueuedRecipe> plan(List<RecipeEnrollment> enrollments,
+            LastTerminalLookup lookup,
+            PrefersHoursLookup prefersHoursLookup,
+            Clock clock,
+            Instant now,
+            CronParamsLookup cronParamsLookup) {
         if (enrollments == null || enrollments.isEmpty()) return List.of();
+        if (cronParamsLookup == null) cronParamsLookup = CronParamsLookup.NONE;
         if (prefersHoursLookup == null) prefersHoursLookup = PrefersHoursLookup.ANYTIME;
         if (clock == null) clock = Clock.systemDefaultZone();
         ZoneId zone = clock.getZone();
@@ -123,12 +160,17 @@ public final class RecipeCronTrigger {
             // need it; recipes that don't declare agent_did simply leave it
             // sitting in the context unused. The dispatcher fills jdbc_url and
             // other env-driven defaults at run time.
-            Map<String, Object> params = e.agentDid() == null || e.agentDid().isBlank()
-                ? Map.of()
-                : Map.of("agent_did", e.agentDid());
+            Map<String, Object> params = new LinkedHashMap<>();
+            if (e.agentDid() != null && !e.agentDid().isBlank()) {
+                params.put("agent_did", e.agentDid());
+            }
+            // Whatever this recipe needs to work on this tick (e.g. which classifier
+            // head to retrain). Empty for recipes that need nothing.
+            var extra = cronParamsLookup.extraParamsFor(e.recipeId(), e.agentDid());
+            if (extra != null) params.putAll(extra);
             out.add(QueuedRecipe.newEntry(
                 UUID.randomUUID().toString(),
-                e.recipeId(), params,
+                e.recipeId(), Map.copyOf(params),
                 "cron tick (tier=" + e.cadenceTier() + ")",
                 QueuedRecipe.TriggerSource.CRON,
                 e.agentDid(),

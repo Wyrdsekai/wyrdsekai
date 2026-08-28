@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.*;
 /**
  * Tests for the periodic OrtSession recycle behavior — wyrdsekai's defense
  * against ONNX Runtime's documented memory accumulation in long-running services
- * (CodePlane diagnostic Issue 2; ORT issues #5176, #6058, #11118, #22271, #26831).
+ * (CodeZaiku diagnostic Issue 2; ORT issues #5176, #6058, #11118, #22271, #26831).
  *
  * <p>Strategy: rebuild OrtSession from disk every {@code RECYCLE_HOURS}, atomic
  * volatile-swap, close the previous session after a grace period so in-flight

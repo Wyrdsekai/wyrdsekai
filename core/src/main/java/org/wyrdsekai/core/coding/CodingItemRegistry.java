@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.coding;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -56,6 +57,30 @@ public final class CodingItemRegistry {
         return byRoomObjectId.values().stream()
             .filter(m -> artifactId.equals(m.artifactId()))
             .findFirst();
+    }
+
+    /**
+     * Every RoomObject id this task placed.
+     *
+     * <h2>Why the caller cannot just read the description</h2>
+     * {@code CompanionActor}'s dispatch hand-off found the freshly placed object by
+     * scanning the room for a description CONTAINING the task id — which worked only
+     * because the description used to be the codex boilerplate
+     * {@code "A goose codex containing 1 file(s) for task <uuid>"}. On 2026-08-20 the
+     * description was replaced with what the item says about itself, so the uuid vanished
+     * and the hand-off went blind: <i>"nothing placed for task … after 4 looks"</i>, logged
+     * seconds after the same task's <i>"Placed 1 goose item(s)"</i>. She had made the thing
+     * and could not give it to the person who asked.
+     *
+     * <p>Making a description prettier must not be able to sever a lookup. The registry is
+     * already stamped with the link at placement time; ask it.
+     */
+    public List<String> roomObjectsForTask(String taskId) {
+        if (taskId == null || taskId.isBlank()) return List.of();
+        return byRoomObjectId.values().stream()
+            .filter(m -> taskId.equals(m.taskId()))
+            .map(CodingItemMetadata::roomObjectId)
+            .toList();
     }
 
     /** Drop the entry for a RoomObject id. */

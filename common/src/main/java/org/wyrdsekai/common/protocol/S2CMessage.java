@@ -143,12 +143,12 @@ public sealed interface S2CMessage {
     record Error(long seq, String code, String message, String requestId) implements S2CMessage {}
 
     /**
-     * Response to a zone command (codeplane.status, codeplane.create, etc.).
+     * Response to a zone command (codezaiku.status, codezaiku.create, etc.).
      * Carries requestId for correlation so clients can match responses to requests
      * even when broadcasts from active pipelines flood the WebSocket.
      *
      * @param requestId  Correlation ID matching the original C2S Command
-     * @param namespace  Zone namespace that handled the command (e.g. "codeplane")
+     * @param namespace  Zone namespace that handled the command (e.g. "codezaiku")
      * @param text       Human-readable response text
      * @param data       Structured JSON response data (nullable)
      * @param blocks     Zone-type content blocks (nullable)

@@ -3,6 +3,7 @@ package org.wyrdsekai.between.inference;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Wire protocol for cross-zone inference over NATS relay.
@@ -74,7 +75,7 @@ public final class NatsInferenceProtocol {
             + (sourceZone == null ? "" : sourceZone) + "|"
             + (sourceNode == null ? "" : sourceNode) + "|"
             + authTs;
-        return s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return s.getBytes(StandardCharsets.UTF_8);
     }
 
     public record Message(

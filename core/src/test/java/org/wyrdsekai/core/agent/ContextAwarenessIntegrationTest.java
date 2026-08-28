@@ -171,7 +171,7 @@ class ContextAwarenessIntegrationTest {
         assertThat(calendarCtx.isInMeeting()).isTrue();
 
         // A routine zone broadcast should be filtered during a meeting
-        var routine = new AgentEvent.ZoneBroadcast("codeplane", "room-1",
+        var routine = new AgentEvent.ZoneBroadcast("codezaiku", "room-1",
             new S2CMessage.Prose(1L, "zone", "Heartbeat: all nominal",
                 List.of(), null, null, null, false, List.of()),
             now);

@@ -92,21 +92,21 @@ class MemoryEmbeddingIntegrationTest {
 
     @Test
     void exactDuplicateHasLowestNovelty() {
-        var embedding = embeddingService.embed("Masumi is building Wyrdsekai");
+        var embedding = embeddingService.embed("Operator is building Wyrdsekai");
         store.insertFragment("frag-2", "agent-test", "fact",
-            "Masumi is building Wyrdsekai",
+            "Operator is building Wyrdsekai",
             embedding, System.currentTimeMillis(), 0.9f);
         store.commitAll();
 
         // Exact same text
         var exactDup = controller.evaluate(
-            "Masumi is building Wyrdsekai",
+            "Operator is building Wyrdsekai",
             AdmissionController.ContentType.USER_STATEMENT,
             -1, Instant.now(), "agent-test");
 
         // Paraphrased
         var paraphrase = controller.evaluate(
-            "Masumi works on the Wyrdsekai project",
+            "Operator works on the Wyrdsekai project",
             AdmissionController.ContentType.USER_STATEMENT,
             -1, Instant.now(), "agent-test");
 
@@ -130,10 +130,10 @@ class MemoryEmbeddingIntegrationTest {
     void fullPipelineWithEmbeddedFragments() {
         // Step 1: Admit and embed several memories
         var memories = List.of(
-            "Masumi is a software engineer from Tokyo",
+            "Operator is a software engineer from Tokyo",
             "Wyrdsekai uses Apache Pekko for actor system",
             "The soul substrate has 8 drives based on Panksepp",
-            "Masumi prefers dark mode and Earl Grey tea",
+            "Operator prefers dark mode and Earl Grey tea",
             "CfC neural network runs drive dynamics at sub-microsecond"
         );
 
@@ -160,10 +160,10 @@ class MemoryEmbeddingIntegrationTest {
                 null, Instant.now(), 0, null));
         }
         var links = List.of(
-            new CompactedMemory.MemoryLink("mem-0", "mem-1", 0.8f, "causal"),   // Masumi → Pekko
+            new CompactedMemory.MemoryLink("mem-0", "mem-1", 0.8f, "causal"),   // Operator → Pekko
             new CompactedMemory.MemoryLink("mem-1", "mem-2", 0.7f, "thematic"), // Pekko → drives
             new CompactedMemory.MemoryLink("mem-2", "mem-4", 0.9f, "thematic"), // drives → CfC
-            new CompactedMemory.MemoryLink("mem-0", "mem-3", 0.3f, "personal")  // Masumi → preferences
+            new CompactedMemory.MemoryLink("mem-0", "mem-3", 0.3f, "personal")  // Operator → preferences
         );
         var memory = new CompactedMemory(nodes, links, Map.of("engineering", 0.9f));
 
@@ -171,10 +171,10 @@ class MemoryEmbeddingIntegrationTest {
         var traverser = MemoryGraphTraverser.fromMemory(memory);
         var expanded = traverser.expand(List.of("mem-2"), 2);
 
-        // Should reach CfC (1 hop), Pekko (1 hop), and Masumi (2 hops)
+        // Should reach CfC (1 hop), Pekko (1 hop), and Operator (2 hops)
         var ids = expanded.stream().map(r -> r.node().id()).toList();
         assertThat(ids).contains("mem-4", "mem-1"); // CfC and Pekko
-        assertThat(ids).contains("mem-0"); // Masumi at 2 hops
+        assertThat(ids).contains("mem-0"); // Operator at 2 hops
 
         // Step 4: Verify semantic search finds related content
         var queryEmbedding = embeddingService.embed("neural network drives");
@@ -224,7 +224,7 @@ class MemoryEmbeddingIntegrationTest {
     void identityMemoriesRetrievable() {
         // Store identity fragments with embeddings
         var fragments = Map.of(
-            "identity-name", "User's name is Masumi, born in Tokyo 1973",
+            "identity-name", "User's name is Operator, born in Tokyo 1973",
             "identity-career", "VP Engineering at Mercari US, O'Reilly author",
             "identity-project", "Building Wyrdsekai, a distributed text-native OS",
             "identity-passion", "The Empathy Engine from 2003 — 23 years of the same vision"
@@ -247,7 +247,7 @@ class MemoryEmbeddingIntegrationTest {
         System.out.println("Query: '" + query + "' → " + allContent);
         // Should find identity-relevant results somewhere in top-3
         var joined = String.join(" ", allContent);
-        assertThat(joined).containsAnyOf("Masumi", "Wyrdsekai", "Empathy", "Mercari");
+        assertThat(joined).containsAnyOf("Operator", "Wyrdsekai", "Empathy", "Mercari");
     }
 
     @Test

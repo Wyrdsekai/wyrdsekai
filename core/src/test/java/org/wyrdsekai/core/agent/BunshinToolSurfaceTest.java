@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.TreeSet;
 
 /**
  * The bunshin tool surface, and the human-directed bypass, tested in BOTH
@@ -74,7 +75,7 @@ class BunshinToolSurfaceTest {
                 + "confused deputy.");
         }
         // The bypass adds exactly one verb, nothing more.
-        var added = new java.util.TreeSet<>(granted);
+        var added = new TreeSet<>(granted);
         added.removeAll(surface(false));
         assertEquals(HUMAN_DIRECTED, added,
             "the human-directed surface should differ from the autonomous one by "

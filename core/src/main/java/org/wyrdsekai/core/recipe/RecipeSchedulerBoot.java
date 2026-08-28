@@ -6,6 +6,7 @@ import org.apache.pekko.actor.typed.Props;
 import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.coding.CodingBackendPreference;
 import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.soul.RepairModeTracker;
 
@@ -17,7 +18,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Collection;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.UnaryOperator;
 
 /**
@@ -112,7 +115,7 @@ public final class RecipeSchedulerBoot {
                         new File(System.getProperty("user.dir")),
                         Duration.ofMinutes(5));
                     var backend = CodingBackendDispatcher
-                        .usingPreferred(List.of("goose", "pi"), did,
+                        .usingPreferred(CodingBackendPreference.chain(), did,
                             Duration.ofMinutes(10))
                         .orElse(null);
                     var runner = backend == null
@@ -162,6 +165,63 @@ public final class RecipeSchedulerBoot {
                     return List.of();
                 }
             };
+            // A recipe whose required params can never be satisfied on the scheduled
+            // path is misconfigured, not failing — see RecipeScheduler.RequiredParamCheck.
+            // Manifest defaults and stored per-agent overrides both count as satisfying;
+            // anything unreadable fails OPEN so a bad lookup can't silently mute a recipe.
+            var overridesForCheck = new SqlRecipeParamOverrides(args.jdbcUrl());
+            RecipeScheduler.RequiredParamCheck paramCheck = (did, recipeName, params) -> {
+                try {
+                    var declared = manifestLookup.inspect(recipeName).params();
+                    if (declared == null || declared.isEmpty()) return List.of();
+                    var stored = overridesForCheck.effectiveFor(recipeName, did);
+                    var missing = new ArrayList<String>();
+                    for (var e : declared.entrySet()) {
+                        if (!e.getValue().required()) continue;
+                        if (e.getValue().defaultValue() != null) continue;
+                        if (params != null && params.containsKey(e.getKey())) continue;
+                        if (stored != null && stored.containsKey(e.getKey())) continue;
+                        missing.add(e.getKey());
+                    }
+                    return missing;
+                } catch (Exception ex) {
+                    return List.of();
+                }
+            };
+
+            // What a SCHEDULED run should work on. The gap path reads its head off the
+            // gap key; cron has no equivalent signal, so a recipe declaring `cron_heads`
+            // gets the stalest candidate — the one longest without a successful run.
+            // Staleness, not "worst score": the recorded per-head accuracies are not
+            // comparable (two heads report train-set accuracy with zero validation
+            // examples), and the set is DECLARED because some heads must never be picked
+            // automatically — retraining substrate_present regresses it, and request_type
+            // sits below its own gate, so choosing either would produce genuine failures
+            // that legitimately burn the deploy ceiling.
+            RecipeCronTrigger.CronParamsLookup cronParamsLookup = (recipeId, agentDid) -> {
+                try {
+                    var declared = manifestLookup.inspect(recipeId).params();
+                    if (declared == null || !declared.containsKey("cron_heads")) {
+                        return Map.of();
+                    }
+                    var stored = overridesForCheck.effectiveFor(recipeId, agentDid);
+                    Object raw = stored != null && stored.get("cron_heads") != null
+                        ? stored.get("cron_heads")
+                        : declared.get("cron_heads").defaultValue();
+                    var candidates = CronHeadSelection.parseCandidates(raw);
+                    if (candidates.isEmpty()) return Map.of();   // explicitly disabled
+                    var lastByHead =
+                        budgetRef.lastSuccessByParam(recipeId, agentDid, "head");
+                    return CronHeadSelection.stalest(candidates, lastByHead)
+                        .<Map<String, Object>>map(h -> Map.of("head", h))
+                        .orElseGet(Map::of);
+                } catch (Exception ex) {
+                    log.warn("cron head selection for {} failed: {} — scheduled run will "
+                        + "be skipped rather than guessed", recipeId, ex.toString());
+                    return Map.of();
+                }
+            };
+
             // Use the household's local timezone (system default). Override
             // via -Duser.timezone= at zone server JVM start if needed.
             final Clock localClock = Clock.systemDefaultZone();
@@ -170,7 +230,8 @@ public final class RecipeSchedulerBoot {
                 budgetRef::lastTerminalAt,
                 prefersHoursLookup,
                 localClock,
-                now);
+                now,
+                cronParamsLookup);
 
             // resource-requisites (option b) — wrap the local
             // dispatcher with the cross-zone peer-borrow decorator when the
@@ -191,7 +252,7 @@ public final class RecipeSchedulerBoot {
             }
 
             var behavior = RecipeScheduler.create(
-                queue, effectiveDispatcher, schedCfg, welfare, cronTicker);
+                queue, effectiveDispatcher, schedCfg, welfare, cronTicker, paramCheck);
             @SuppressWarnings("rawtypes")
             var rawSystem = (ActorSystem) args.system();
             var ref = (ActorRef<RecipeScheduler.Command>)

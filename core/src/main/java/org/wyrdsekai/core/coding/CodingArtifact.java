@@ -12,9 +12,9 @@ import java.util.UUID;
  *   <li>{@link BuildArtifact} — a build/test/deploy output derived from a SourceArtifact.</li>
  * </ul>
  *
- * <p>The legacy CodePlane-specific shims ({@code CodexItem} /
+ * <p>The legacy CodeZaiku-specific shims ({@code CodexItem} /
  * {@code ArtifactItem}) were removed in the Phase 2 cleanup pass — the
- * canonical shape is now this sealed family. CodePlane-specific extras
+ * canonical shape is now this sealed family. CodeZaiku-specific extras
  * (board ID, host node, language) live under
  * {@link SourceArtifact#backendMetadata() backendMetadata}.</p>
  */

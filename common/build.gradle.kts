@@ -24,7 +24,12 @@ val generateVersionProperties = tasks.register("generateVersionProperties") {
         isIgnoreExitValue = true
     }.standardOutput.asText.map { it.trim() }
     inputs.property("gitHeadSha", gitOutput("rev-parse", "HEAD"))
-    inputs.property("gitDirtyState", gitOutput("status", "--porcelain").map { it.isNotBlank() })
+    // -uno: TRACKED changes only. Bare --porcelain counts untracked files,
+    // and the repo root carries dozens of untracked plan/research docs — so
+    // every build stamped gitDirty=true regardless of the actual source
+    // state (found 2026-08-16 while verifying the 0.2.0 second-node artifact). A
+    // dirty flag that is always on protects nothing.
+    inputs.property("gitDirtyState", gitOutput("status", "--porcelain", "-uno").map { it.isNotBlank() })
     doLast {
         val dir = outputDir.get().asFile
         dir.mkdirs()
@@ -35,7 +40,7 @@ val generateVersionProperties = tasks.register("generateVersionProperties") {
         } catch (_: Exception) { "unknown" }
         val gitHashShort = git("rev-parse", "--short", "HEAD")
         val gitSha = git("rev-parse", "HEAD")
-        val gitDirty = git("status", "--porcelain").isNotBlank()
+        val gitDirty = git("status", "--porcelain", "-uno").isNotBlank()
         val now = System.currentTimeMillis().toString()
         propsFile.writeText(
             "version=${project.version}\n" +

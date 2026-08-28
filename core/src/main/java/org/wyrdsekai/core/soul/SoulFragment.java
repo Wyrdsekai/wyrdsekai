@@ -237,6 +237,34 @@ public record SoulFragment(
             kind, sceneId);
     }
 
+    /** Re-key this fragment for archival storage. The live id belongs to whatever
+     *  is current; a retired copy must not collide with it in the (did, fragment_id)
+     *  primary key. */
+    public SoulFragment withArchivalId(String archivalId) {
+        return new SoulFragment(archivalId, category, label, text, embedding, embeddingModel,
+            formative, confidence, reinforcementCount, firstObserved, lastConfirmed,
+            validFrom, supersededAt, supersededBy, kind, sceneId);
+    }
+
+    /**
+     * Mark this fragment as replaced by a newer one.
+     *
+     * <p>The {@code supersededAt}/{@code supersededBy} columns existed from the start
+     * and were never written by any production path (verified 2026-08-17) — so a
+     * fragment could only ever be reinforced, never retired. That is correct for an
+     * OBSERVATION ("she ran that recipe again") and wrong for a DERIVED summary, where
+     * each cycle recomputes a fresh conclusion from current behaviour rather than
+     * confirming the old one. Treating re-derivation as confirmation drove a
+     * companion's loop-era self-description to 169 reinforcements at the 0.95
+     * confidence cap — the most authoritative thing in her identity was a description
+     * of a bug.
+     */
+    public SoulFragment supersededBy(String replacementId, Instant at) {
+        return new SoulFragment(id, category, label, text, embedding, embeddingModel, formative,
+            confidence, reinforcementCount, firstObserved, lastConfirmed, validFrom,
+            at, replacementId, kind, sceneId);
+    }
+
     /** Weaken this fragment due to contradiction. */
     public SoulFragment contradict() {
         float newConf = effectiveConfidence() * 0.5f;

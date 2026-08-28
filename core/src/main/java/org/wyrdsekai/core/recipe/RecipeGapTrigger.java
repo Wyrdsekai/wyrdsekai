@@ -53,7 +53,7 @@ public final class RecipeGapTrigger {
             if (!applies) continue;
             out.add(QueuedRecipe.newEntry(
                 UUID.randomUUID().toString(),
-                e.recipeId(), Map.of(),
+                e.recipeId(), paramsFor(gapKey),
                 "gap:" + gapKey
                     + (sourceAgentDid != null ? " (agent=" + sourceAgentDid + ")"
                                               : ""),
@@ -63,5 +63,26 @@ public final class RecipeGapTrigger {
                 e.consecutiveSuccesses()));
         }
         return out;
+    }
+
+    /**
+     * Derive run params from the gap key.
+     *
+     * <p>The key convention is {@code "<classifier>.<failure-mode>"}, so the key already
+     * names the head that misrouted — and {@code retrain-classifier-head} declares
+     * {@code head} as a required param with no default for exactly that reason. The
+     * trigger passed {@link Map#of()} instead, so every gap-fired run failed fast on
+     * "missing required params: head", and three of those tripped the consecutive-deploy
+     * -failure ceiling, pausing the recipe until a steward cleared it (found live
+     * 2026-08-18 after 14 failed runs). The one piece of information the gap key exists
+     * to carry was being dropped one line before it was needed.
+     *
+     * <p>A key with no {@code .} yields no params rather than a guess.
+     */
+    static Map<String, Object> paramsFor(String gapKey) {
+        int dot = gapKey.lastIndexOf('.');
+        if (dot <= 0) return Map.of();
+        var head = gapKey.substring(0, dot);
+        return head.isBlank() ? Map.of() : Map.of("head", head);
     }
 }

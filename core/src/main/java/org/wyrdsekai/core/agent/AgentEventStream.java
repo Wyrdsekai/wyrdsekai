@@ -84,7 +84,7 @@ public class AgentEventStream {
     /**
      * Publish a zone service broadcast to all subscribers.
      *
-     * @param namespace the zone service namespace (e.g. "codeplane", "iot")
+     * @param namespace the zone service namespace (e.g. "codezaiku", "iot")
      * @param roomId    the originating room
      * @param message   the S2C message payload
      */

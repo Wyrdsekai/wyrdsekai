@@ -19,6 +19,7 @@ import java.util.Map;
     @JsonSubTypes.Type(value = C2SMessage.Go.class, name = "go"),
     @JsonSubTypes.Type(value = C2SMessage.Take.class, name = "take"),
     @JsonSubTypes.Type(value = C2SMessage.Drop.class, name = "drop"),
+    @JsonSubTypes.Type(value = C2SMessage.Retire.class, name = "retire"),
     @JsonSubTypes.Type(value = C2SMessage.Use.class, name = "use"),
     @JsonSubTypes.Type(value = C2SMessage.Examine.class, name = "examine"),
     @JsonSubTypes.Type(value = C2SMessage.Rename.class, name = "rename"),
@@ -73,6 +74,15 @@ public sealed interface C2SMessage {
     /** Drop an object. */
     record Drop(String id, String roomId, String objectName) implements C2SMessage {}
 
+    /**
+     * Take an object out of the world for good — the counterpart {@code drop} never had.
+     *
+     * <p>Dropping leaves it in the room, so nothing could ever be removed. Every client
+     * surface carries this verb: adding it to one and not the others is how a
+     * client-parity gap starts.
+     */
+    record Retire(String id, String roomId, String objectName) implements C2SMessage {}
+
     /** Use an object, optionally on a target. */
     record Use(String id, String roomId, String objectName, String target) implements C2SMessage {}
 
@@ -108,7 +118,7 @@ public sealed interface C2SMessage {
 
     /**
      * System command — extensible dispatch for zone-type actions (§83.7).
-     * Namespaced commands (e.g. "codeplane.approve", "homekit.toggle") route to zone handlers.
+     * Namespaced commands (e.g. "codezaiku.approve", "homekit.toggle") route to zone handlers.
      * Unprefixed commands ("who", "inventory") are core Wyrdsekai commands.
      *
      * @param payload Structured key-value data for zone-type actions. Empty for core commands.

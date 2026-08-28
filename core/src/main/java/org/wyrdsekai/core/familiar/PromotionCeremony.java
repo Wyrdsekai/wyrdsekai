@@ -3,7 +3,7 @@ package org.wyrdsekai.core.familiar;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.agent.AgentProfile;
-import org.wyrdsekai.core.identity.DidKey;
+import org.wyrdsekai.core.identity.AgentIdentityProvisioner;
 import org.wyrdsekai.core.soul.BehavioralFingerprint;
 import org.wyrdsekai.core.soul.CompactedMemory;
 import org.wyrdsekai.core.soul.GenomeProfile;
@@ -140,23 +140,39 @@ public final class PromotionCeremony {
         }
 
         try {
-            // Stage 2 first: key ceremony (DID depends on fresh keys)
-            var identity = DidKey.generate();
-            var multibase = identity.did().substring("did:key:".length());
+            // Stage 2 first: key ceremony (DID depends on fresh keys).
+            // Minted and PERSISTED — a familiar promoted to a resident is being
+            // told it is now someone, and it used to be handed a did:key whose
+            // private half was discarded on the next line. Same defect, same fix
+            // as at companion birth; mint() falls back to the old generate-only
+            // behaviour when provisioning is off, so the ceremony never fails
+            // because of this.
+            var minted = AgentIdentityProvisioner.mint(null);
+            var newDid = minted.did();
+            var multibase = minted.publicKeyMultibase();
 
             // Stage 1: manifest drafting
-            var manifest = draftManifest(input, identity.did(), multibase);
+            var manifest = draftManifest(input, newDid, multibase);
+
+            // The entityId is derived from the DID, so it could not be known at
+            // mint time. Link it now, or a promoted resident that loses its
+            // souls/<entityId>.did file has no second record of who it is.
+            if (manifest.profile() != null) {
+                AgentIdentityProvisioner.linkEntity(newDid, manifest.profile().entityId());
+            }
 
             // Stage 4: inheritance — fork every bequeathed form under the new DID
-            var inherited = forkForInheritance(input.inheritedForms(), identity.did());
+            var inherited = forkForInheritance(input.inheritedForms(), newDid);
 
             // Stage 5: compose farewell narration
-            var farewell = farewellNarration(input.named(), identity.did());
+            var farewell = farewellNarration(input.named(), newDid);
 
-            log.info("PromotionCeremony: {} promoted to new resident {} ({} inherited forms)",
-                input.named().name(), identity.did(), inherited.size());
+            log.info("PromotionCeremony: {} promoted to new resident {} ({} inherited forms, "
+                    + "signing key {})",
+                input.named().name(), newDid, inherited.size(),
+                minted.persisted() ? "kept" : "NOT kept");
 
-            return new Outcome.Promoted(manifest, identity.did(), inherited, farewell);
+            return new Outcome.Promoted(manifest, newDid, inherited, farewell);
         } catch (Exception e) {
             log.warn("PromotionCeremony failed: {}", e.getMessage(), e);
             return new Outcome.Declined(Refusal.INVALID_INPUTS,

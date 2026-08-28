@@ -520,14 +520,14 @@
 {"label": "tell_someone", "text": "relay to Jenna that the meeting is cancelled", "source": "seed"}
 {"label": "tell_someone", "text": "talk to Wyrd at beta.wyrd for me", "source": "seed"}
 {"label": "tell_someone", "text": "reach out to Dr. Patel and confirm tomorrow", "source": "seed"}
-{"label": "tell_someone", "text": "send a note to Masumi saying thanks", "source": "seed"}
+{"label": "tell_someone", "text": "send a note to Operator saying thanks", "source": "seed"}
 {"label": "tell_someone", "text": "ask Kai what time works for him", "source": "seed"}
 {"label": "tell_someone", "text": "let the trader know the deal is off", "source": "seed"}
 {"label": "tell_someone", "text": "tell Yuki I miss her", "source": "seed"}
 {"label": "tell_someone", "text": "pass this on to Theo: run the tests", "source": "seed"}
 {"label": "tell_someone", "text": "dile a Ember que voy a llegar tarde", "source": "seed"}
 {"label": "tell_someone", "text": "mándale un mensaje a Aya", "source": "seed"}
-{"label": "tell_someone", "text": "avísale a Masumi que necesito ayuda", "source": "seed"}
+{"label": "tell_someone", "text": "avísale a Operator que necesito ayuda", "source": "seed"}
 {"label": "tell_someone", "text": "susúrrale al capitán del muelle", "source": "seed"}
 {"label": "tell_someone", "text": "escríbele a Sarah lo de la cena", "source": "seed"}
 {"label": "tell_someone", "text": "dile a mi pareja: ya voy para allá", "source": "seed"}
@@ -535,7 +535,7 @@
 {"label": "tell_someone", "text": "avísale a Jenna que la reunión se canceló", "source": "seed"}
 {"label": "tell_someone", "text": "habla con Wyrd en beta.wyrd de mi parte", "source": "seed"}
 {"label": "tell_someone", "text": "contáctale al Dr. Patel y confírmale lo de mañana", "source": "seed"}
-{"label": "tell_someone", "text": "mándale una nota a Masumi dándole las gracias", "source": "seed"}
+{"label": "tell_someone", "text": "mándale una nota a Operator dándole las gracias", "source": "seed"}
 {"label": "tell_someone", "text": "pregúntale a Kai qué hora le viene bien", "source": "seed"}
 {"label": "tell_someone", "text": "avísale al comerciante que el trato se cayó", "source": "seed"}
 {"label": "tell_someone", "text": "dile a Yuki que la extraño", "source": "seed"}

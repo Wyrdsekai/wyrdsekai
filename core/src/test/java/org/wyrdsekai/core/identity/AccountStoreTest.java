@@ -20,26 +20,26 @@ class AccountStoreTest {
     }
 
     @Test void save_and_find_by_did() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
         store.save(account);
 
         var found = store.findByDid(account.did());
         assertThat(found).isPresent();
         assertThat(found.get().did()).isEqualTo(account.did());
-        assertThat(found.get().displayName()).isEqualTo("Masumi");
+        assertThat(found.get().displayName()).isEqualTo("Operator");
     }
 
     @Test void find_by_name() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
         store.save(account);
 
-        var found = store.findByName("Masumi");
+        var found = store.findByName("Operator");
         assertThat(found).isPresent();
         assertThat(found.get().did()).isEqualTo(account.did());
     }
 
     @Test void find_by_name_case_insensitive() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
         store.save(account);
 
         var found = store.findByName("operator");
@@ -57,7 +57,7 @@ class AccountStoreTest {
     }
 
     @Test void update_last_seen() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
         store.save(account);
 
         var later = Instant.now().plusSeconds(3600);
@@ -69,7 +69,7 @@ class AccountStoreTest {
     }
 
     @Test void device_auto_login_mapping() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
         store.save(account);
 
         store.registerDevice(account.did(), "device-home-server");
@@ -88,7 +88,7 @@ class AccountStoreTest {
     }
 
     @Test void save_preserves_device_ids() {
-        var account = PlayerAccount.create("Masumi")
+        var account = PlayerAccount.create("Operator")
             .withDevice("device-home-server")
             .withDevice("device-phone");
         store.save(account);
@@ -99,7 +99,7 @@ class AccountStoreTest {
     }
 
     @Test void multiple_devices_per_account() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
         store.save(account);
 
         store.registerDevice(account.did(), "device-1");

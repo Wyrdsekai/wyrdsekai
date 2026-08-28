@@ -4,6 +4,90 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.0] — unreleased
+
+The household stops being one machine.
+
+### Added
+
+- **The Between — a household mesh across machines.** Nodes reach each other
+  directly instead of through a single box, and a phone that walks out of the
+  house keeps the same conversation: the LAN channel and the relay channel are
+  two doors onto one identity, and moving between them supersedes the channel
+  rather than re-introducing you. Identity is minted once and travels.
+- **Coding backends you can choose — and CodeZaiku is the bundled default.**
+  `wyrd coding` lists, installs, updates and removes the coding agents a
+  companion can build with; `wyrd coding use <backend>` picks the default and
+  then prints the chain the node will actually use, because this setting has
+  silently failed before; and `wyrd coding probe` submits one small real task
+  through the selected backend and judges it by what lands on disk — because
+  "installed" is a claim about bytes, and a probe is a claim about work.
+  CodeZaiku ships inside every installer (one platform-independent artifact,
+  verified against the manifest's own checksum at build time) and is the
+  default of record; Goose and the rest are a `wyrd coding install` away. A
+  backend whose binary cannot be found does not register — absence is visible,
+  never a task-time surprise.
+- **ACP v1 client.** Wyrdsekai speaks the Agent Client Protocol over stdio, so
+  any ACP agent can be a coding backend.
+- **Your own library, reachable from inside the world.** `wyrd library ingest`
+  reads a directory of documents — epub, pdf, docx, markdown, plain text — into
+  your Study, and `wyrd library publish <collection>` projects a shelf onto the
+  household's shared knowledge surface so every companion and item can find it.
+  A Calibre library is understood as a catalogue rather than a heap of files.
+
+### Changed
+
+- **Giving something away means you no longer have it.** Handing an item to
+  someone used to copy it: the recipient gained one, the room kept one, and the
+  giver's own copy came back on the next restart. A hand-off is now a move.
+- **A person's own shelves answer their own tools.** Searching from an item you
+  are holding searches what *you* can see — your own documents, plus anything
+  granted to you — instead of being answered as a placeholder identity that owns
+  nothing. Companions keep reading through their bondholder's consent, per
+  collection, exactly as before.
+- **Subprocess coding backends run with a scrubbed environment.** A backend
+  spawns a real shell; it no longer inherits the daemon's ambient credentials.
+- **CodeZaiku is now CodeZaiku.** The rename is complete: the binary, the
+  `CODEZAIKU_*` environment variables, the `~/.codezaiku` state directory, the
+  `codezaiku` backend id and the `codezaiku.*` zone-command namespace all became
+  `codezaiku`. A host still exporting the old environment variable names keeps
+  working -- both spellings are read and the new one wins -- and those aliases
+  go away at 1.0.
+
+### Fixed
+
+- **Rooms you made survived the restart but nobody was home.** Player-created
+  rooms came back as data with no actor behind them, so they existed and did
+  nothing. They are respawned at boot.
+- **Publishing a large shelf took hours it did not need.** Indexing refreshed
+  the search index once per document — one tiny segment per passage — which on a
+  74,000-volume library meant the machine spent its time merging rather than
+  indexing. Bulk indexing batches the work: a 13.7-million-passage shelf now
+  indexes about twenty-five times faster.
+- **A shutdown during a long index no longer narrates every remaining item.** It
+  stops with one line saying where it stopped, and a closed index can no longer
+  quietly reopen a writer behind a completed shutdown.
+- **A shelf ingest indexes books, not the files beside them.** Calibre keeps a
+  `metadata.opf` next to every volume; those were indexed as documents and, being
+  pure title-and-author, outranked the books they described. Sidecars are skipped,
+  and `wyrd library prune-sidecars` removes any an earlier ingest already took in.
+- **The documented way to choose a coding backend never worked.** The setting was
+  bound to one configuration key and read from another, so it wrote something
+  nothing consulted.
+
+### Security
+
+- **An item now acts with the authority of whoever is holding it.** Content
+  surfaces used by player-held items were served by a single shared object built
+  with a placeholder identity, so note ownership, filesystem audit records,
+  library filing and inference spend were all attributed to that placeholder
+  rather than to the person. Each caller now gets its own view.
+- **Library entries can only be edited by whoever wrote them.** `library.tag` and
+  `library.delete` accepted any entry id with no ownership check, and
+  `library.delete` is available to crafted items — so an item could have removed
+  any entry in the household's knowledge base. You may now edit what you wrote;
+  the household's steward may curate anything, and it is logged.
+
 ## [0.1.5] — 2026-08-01
 
 The release you can verify.

@@ -8,10 +8,10 @@ import org.wyrdsekai.common.model.RoomObject;
 import java.util.List;
 
 /**
- * Provisions per-bondholder CodePlane Workshop rooms.
+ * Provisions per-bondholder CodeZaiku Workshop rooms.
  *
- * <p>: each bondholder with CodePlane
- * installed gets a private {@code workshop-codeplane-{userId}} room. The
+ * <p>: each bondholder with CodeZaiku
+ * installed gets a private {@code workshop-codezaiku-{userId}} room. The
  * workshop holds the bondholder's Coding Familiar, a workbench for form
  * shaping, the Library shelves, a Chronicle stone surfacing the familiar's
  * story slice, and the rack of project portals linking to external git
@@ -33,7 +33,10 @@ public final class WorkshopProvisioner {
     private static final Logger log = LoggerFactory.getLogger(WorkshopProvisioner.class);
 
     /** Workshop room ID prefix. Per-bondholder rooms are {@code PREFIX + userId}. */
-    public static final String ROOM_ID_PREFIX = "workshop-codeplane-";
+    public static final String ROOM_ID_PREFIX = "workshop-codezaiku-";
+
+    /** The pre-rename room-id prefix. A room already in the world keeps it. */
+    public static final String LEGACY_ROOM_ID_PREFIX = "workshop-codeplane-";
 
     /**
      * what the Workshop's ambient state contributes.
@@ -53,26 +56,30 @@ public final class WorkshopProvisioner {
         return ROOM_ID_PREFIX + bondholderId;
     }
 
-    /** True if the room ID looks like a CodePlane workshop room. */
+    /** True if the room ID looks like a CodeZaiku workshop room. */
     public static boolean isWorkshopRoom(String roomId) {
-        return roomId != null && roomId.startsWith(ROOM_ID_PREFIX);
+        return roomId != null
+            && (roomId.startsWith(ROOM_ID_PREFIX)
+                || roomId.startsWith(LEGACY_ROOM_ID_PREFIX));
     }
 
     /** Extract the bondholder ID from a workshop room ID, or {@code null}. */
     public static String bondholderIdFromWorkshop(String roomId) {
         if (!isWorkshopRoom(roomId)) return null;
-        return roomId.substring(ROOM_ID_PREFIX.length());
+        return roomId.startsWith(ROOM_ID_PREFIX)
+            ? roomId.substring(ROOM_ID_PREFIX.length())
+            : roomId.substring(LEGACY_ROOM_ID_PREFIX.length());
     }
 
     /**
-     * Build the {@link ZoneGuardian.RoomSeed} for a bondholder's CodePlane
+     * Build the {@link ZoneGuardian.RoomSeed} for a bondholder's CodeZaiku
      * workshop. The seed is deterministic — calling twice with the same
      * inputs produces identical room state — so re-provisioning is safe.
      */
     public static ZoneGuardian.RoomSeed createWorkshopSeed(String bondholderId,
                                                             String bondholderName) {
         var roomId = workshopRoomId(bondholderId);
-        var name = bondholderName + "'s CodePlane Workshop";
+        var name = bondholderName + "'s CodeZaiku Workshop";
 
         var description =
             "A long, well-lit room with the air of a working studio. A heavy "
@@ -134,12 +141,12 @@ public final class WorkshopProvisioner {
                 false)
         );
 
-        log.info("Provisioning CodePlane workshop for bondholder {} ({}): {}",
+        log.info("Provisioning CodeZaiku workshop for bondholder {} ({}): {}",
             bondholderName, bondholderId, roomId);
 
         return new ZoneGuardian.RoomSeed(
             roomId, name, description,
-            List.of("workshop", "codeplane", "code", "studio"),
+            List.of("workshop", "codezaiku", "code", "studio"),
             exits, objects, null);
     }
 }

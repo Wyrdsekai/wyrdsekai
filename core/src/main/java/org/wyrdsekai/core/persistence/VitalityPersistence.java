@@ -8,6 +8,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,6 +63,19 @@ public final class VitalityPersistence {
         new String[]{"equanimity",         "REAL NOT NULL DEFAULT 0.2"}
     );
 
+    /**
+     * Sleep-pressure columns (2026-08-11). The backlog that gates natural
+     * sleep was a plain in-memory list: seven restarts in the fresh install's
+     * first two days zeroed it seven times, and the companion could never
+     * accumulate toward her target — the adenosine evaporated on every
+     * deploy. The COUNT is what pressure needs; the events themselves still
+     * live in memory and the event store for consolidation.
+     */
+    private static final List<String[]> SLEEP_COLUMNS = List.of(
+        new String[]{"sleep_backlog",  "INTEGER NOT NULL DEFAULT 0"},
+        new String[]{"last_sleep_at",  "INTEGER"}
+    );
+
     private final String jdbcUrl;
     private final SqlDialect dialect;
     private volatile boolean migrated = false;
@@ -102,7 +117,76 @@ public final class VitalityPersistence {
                 }
             }
         }
+        for (var col : SLEEP_COLUMNS) {
+            if (!hasColumn(conn, "vitality_snapshots", col[0])) {
+                try (var stmt = conn.createStatement()) {
+                    stmt.execute("ALTER TABLE vitality_snapshots ADD COLUMN " + col[0] + " " + col[1]);
+                    log.info("Vitality migration: added column {}", col[0]);
+                } catch (SQLException e) {
+                    if (!hasColumn(conn, "vitality_snapshots", col[0])) {
+                        throw e;
+                    }
+                }
+            }
+        }
         migrated = true;
+    }
+
+    /** Persisted sleep pressure: the backlog count and when she last slept. */
+    public record SleepPressure(int backlog, Optional<Instant> lastSleepAt) {}
+
+    /**
+     * Persist the sleep-pressure backlog alongside the vitality snapshot.
+     * UPDATE-only by design: the row is created by {@link #save}, which runs
+     * on the same tick cadence just before this — a missing row means the
+     * first snapshot hasn't landed yet, and the next tick covers it.
+     */
+    public void saveSleepPressure(String agentId, int backlog, Instant lastSleepAt) {
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensureMigrated(conn);
+            try (var ps = conn.prepareStatement(
+                    "UPDATE vitality_snapshots SET sleep_backlog = ?, last_sleep_at = ? "
+                    + "WHERE agent_id = ?")) {
+                ps.setInt(1, backlog);
+                if (lastSleepAt != null) {
+                    ps.setLong(2, lastSleepAt.toEpochMilli());
+                } else {
+                    ps.setNull(2, Types.BIGINT);
+                }
+                ps.setString(3, agentId);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            log.debug("Failed to save sleep pressure for agent {}: {}", agentId, e.getMessage());
+        }
+    }
+
+    /** Load the persisted sleep pressure, if a snapshot row exists. */
+    public Optional<SleepPressure> loadSleepPressure(String agentId) {
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensureMigrated(conn);
+            try (var ps = conn.prepareStatement(
+                    "SELECT sleep_backlog, last_sleep_at FROM vitality_snapshots "
+                    + "WHERE agent_id = ?")) {
+                ps.setString(1, agentId);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        // Read order matters: wasNull() reports on the LAST
+                        // column read, so backlog must be read before the
+                        // nullable timestamp (the test caught exactly this —
+                        // a never-slept companion came back as epoch 1970).
+                        int backlog = rs.getInt(1);
+                        long at = rs.getLong(2);
+                        return Optional.of(new SleepPressure(backlog,
+                            rs.wasNull() ? Optional.empty()
+                                : Optional.of(Instant.ofEpochMilli(at))));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            log.debug("Failed to load sleep pressure for agent {}: {}", agentId, e.getMessage());
+        }
+        return Optional.empty();
     }
 
     private static boolean hasTable(Connection conn, String table) throws SQLException {

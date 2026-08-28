@@ -1039,7 +1039,7 @@ CREATE TABLE IF NOT EXISTS recipe_queue(
   enqueued_at            INTEGER NOT NULL,
   attempted_at           INTEGER,
   completed_at           INTEGER,
-  status                 TEXT NOT NULL DEFAULT 'PENDING', -- PENDING | IN_PROGRESS | SUCCEEDED | FAILED
+  status                 TEXT NOT NULL DEFAULT 'PENDING', -- PENDING | IN_PROGRESS | SUCCEEDED | FAILED | SKIPPED
   agent_did              TEXT,                         -- companion DID for Forge attribution
   cadence_tier           TEXT NOT NULL DEFAULT 'WARMUP', -- WARMUP | SETTLING | MATURE
   consecutive_successes  INTEGER NOT NULL DEFAULT 0,

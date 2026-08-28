@@ -1,6 +1,9 @@
 package org.wyrdsekai.server.http;
 
 import io.javalin.http.Context;
+import org.wyrdsekai.core.library.StudyService;
+import org.wyrdsekai.core.home.HomeClients;
+import org.wyrdsekai.core.home.ActionGrants;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +37,7 @@ import java.util.concurrent.CompletableFuture;
  * Steward proposal endpoints ( — REST parity with
  * the Study bookshelf / Library card catalog):
  *   GET  /api/library/proposals?status={pending|all}   — agent acquisition proposals
+ *   POST /api/library/prune-sidecars                   — drop metadata.opf &c from a shelf
  *   POST /api/library/proposals/{id}/approve           — approve (id or unique prefix); ingest runs async
  *   POST /api/library/proposals/{id}/reject            — reject with optional {"reason": "..."}
  *   GET  /api/library/misses                           — repeated library-search misses
@@ -59,6 +63,8 @@ public final class LibraryKnowledgeRoutes {
         app.get("/api/library/status", this::handleStatus);
         app.get("/api/library/available", this::handleAvailable);
         app.post("/api/library/install", this::handleInstall);
+        app.post("/api/library/share-collection", this::handleShareCollection);
+        app.post("/api/library/prune-sidecars", this::handlePruneSidecars);
         app.delete("/api/library/packs/{name}", this::handleRemovePack);
 
         // Steward proposal endpoints
@@ -190,6 +196,77 @@ public final class LibraryKnowledgeRoutes {
      *   {"pack": "pack-name"}         — install from built-in registry
      *   {"pack": "my-name", "url": "https://..."} — install from any URL
      */
+    /** Share a Study collection zone-wide as a local pack — see
+     *  StudyService.shareCollection (2026-08-25). Runs IN the server because
+     *  the Lucene index has one writer; an offline CLI could never take the
+     *  lock while the zone is up. Body: {"collection": "...", "owner": "..."}
+     *  — owner defaults to the zone owner. */
+    private void handleShareCollection(Context ctx) {
+        var body = ctx.bodyAsClass(ShareRequest.class);
+        if (body.collection() == null || body.collection().isBlank()) {
+            ctx.status(400).json(Map.of("error", "collection field required"));
+            return;
+        }
+        var owner = body.owner() != null && !body.owner().isBlank()
+            ? body.owner()
+            : (ActionGrants.get() != null ? ActionGrants.get().fallbackOwnerDid() : null);
+        if (owner == null) {
+            ctx.status(400).json(Map.of(
+                "error", "no owner given and no zone owner configured"));
+            return;
+        }
+        try {
+            var svc = new StudyService(store, HomeClients.get());
+            int chunks = svc.shareCollection(owner, body.collection(), packsDir, indexer);
+            ctx.json(Map.of(
+                "status", chunks > 0 ? "shared" : "empty",
+                "collection", body.collection(),
+                "pack", "study-share-" + body.collection().toLowerCase()
+                    .replaceAll("[^a-z0-9_-]", "-"),
+                "chunks", chunks));
+        } catch (Exception e) {
+            ctx.status(500).json(Map.of("error", String.valueOf(e.getMessage())));
+        }
+    }
+
+    record ShareRequest(String collection, String owner) {}
+
+    /**
+     * Remove sidecar documents ({@code metadata.opf} and friends) that an
+     * older ingest swept into a Study collection, and from the pack published
+     * from it. Runs in-server because Lucene has one writer.
+     */
+    private void handlePruneSidecars(Context ctx) {
+        var body = ctx.bodyAsClass(ShareRequest.class);
+        if (body.collection() == null || body.collection().isBlank()) {
+            ctx.status(400).json(Map.of("error", "collection field required"));
+            return;
+        }
+        var owner = body.owner() != null && !body.owner().isBlank()
+            ? body.owner()
+            : (ActionGrants.get() != null ? ActionGrants.get().fallbackOwnerDid() : null);
+        if (owner == null) {
+            ctx.status(400).json(Map.of(
+                "error", "no owner given and no zone owner configured"));
+            return;
+        }
+        var pack = "study-share-" + body.collection().toLowerCase()
+            .replaceAll("[^a-z0-9_-]", "-");
+        try {
+            var result = new StudyService(store, HomeClients.get())
+                .pruneSidecars(owner, body.collection(), pack);
+            ctx.json(Map.of(
+                "status", "pruned",
+                "collection", body.collection(),
+                "pack", pack,
+                "scanned", result.scanned(),
+                "studyRemoved", result.studyRemoved(),
+                "knowledgeRemoved", result.knowledgeRemoved()));
+        } catch (Exception e) {
+            ctx.status(500).json(Map.of("error", String.valueOf(e.getMessage())));
+        }
+    }
+
     private void handleInstall(Context ctx) {
         var body = ctx.bodyAsClass(InstallRequest.class);
         if (body.pack() == null || body.pack().isBlank()) {

@@ -143,7 +143,7 @@ public final class McpGrantAdmin implements McpGrantAdminProvider {
         return g.resource() != null
             && ResourceTypeRegistry.MCP_TOOL.equals(g.resource().type())
             && g.capability() == Capability.use
-            && g.isActive(java.time.Instant.now());
+            && g.isActive(Instant.now());
     }
 
     private boolean isAdmin(String actorId) {

@@ -34,6 +34,25 @@ class SqlSoulStorePhase3aTest {
             profile, GenomeProfile.defaults());
     }
 
+    /**
+     * A soul must be SOMEONE'S. The boot seed loader once parsed a CFC
+     * fast-weight cell file ({@code souls/<did>_cfc.json}) as a manifest —
+     * every field null — and only the DB's NOT NULL constraint stopped the
+     * write, as an ERROR stacktrace on every boot (found on the home zone,
+     * 2026-08-14, present since dev51). The store now refuses DID-less
+     * manifests quietly and by name.
+     */
+    @Test
+    void storeRefusesManifestWithoutDid() {
+        var jdbc = SchemaInitializer.initialize(workspace.resolve("nodid.db"));
+        try (var soulStore = new SqlSoulStore(jdbc,
+                SqlDialect.fromJdbcUrl(jdbc), null, null, null, null)) {
+            var ghost = birth(null);
+            soulStore.store(ghost);   // must not throw, must not write
+            assertThat(soulStore.latest(null)).isEmpty();
+        }
+    }
+
     @Test
     void hydrateReplacesBlobFragmentsWithCanonical() {
         var jdbc = SchemaInitializer.initialize(workspace.resolve("p3a.db"));

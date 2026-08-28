@@ -4,9 +4,9 @@ import java.time.Instant;
 import java.util.*;
 
 /**
- * Bridge between Wyrdsekai's Crucible and CodePlane's MCP tools (§85.17.2).
+ * Bridge between Wyrdsekai's Crucible and CodeZaiku's MCP tools (§85.17.2).
  *
- * The Forge is the face. CodePlane is the engine. The Between is the nervous system.
+ * The Forge is the face. CodeZaiku is the engine. The Between is the nervous system.
  *
  * MCP Server contracts:
  * - Experiment MCP (Trackio, Q1): Track growth experiments, compare variants

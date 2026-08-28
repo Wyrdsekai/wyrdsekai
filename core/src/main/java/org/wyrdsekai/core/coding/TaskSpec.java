@@ -27,7 +27,7 @@ import java.util.UUID;
  *                      task should focus on. Empty list = whole workspace.
  * @param maxCu         soft compute-unit ceiling for the task. Backends
  *                      that meter (Cloud, OpenHands) abort once exceeded;
- *                      backends that don't meter (Aider, CodePlane local)
+ *                      backends that don't meter (Aider, CodeZaiku local)
  *                      treat this as advisory.
  * @param deadline      optional wallclock cutoff. Backends with a
  *                      timeout knob honor this; otherwise the caller's

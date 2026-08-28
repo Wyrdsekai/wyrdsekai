@@ -42,13 +42,18 @@ export function StudyScreen({ navigation, route }: Props) {
   const [isSearchMode, setIsSearchMode] = useState(false);
 
   const studyStore: StudyStore | null = route.params?.studyStore ?? null;
-  const userDid: string = route.params?.userDid ?? 'local-user';
+  // NO PLACEHOLDER IDENTITY. This previously defaulted to 'local-user', which
+  // meant every phone opened without a userDid route param wrote journal
+  // entries — the encrypted, irreplaceable kind — under a string that referred
+  // to nobody. No identity now means no
+  // write, surfaced to the person rather than swallowed.
+  const userDid: string | null = route.params?.userDid ?? null;
   const onSay: ((text: string) => void) | undefined = route.params?.onSay;
   const ageBracket: string | null = route.params?.ageBracket ?? null;
 
   // Load recent entries on mount
   useEffect(() => {
-    if (!studyStore) return;
+    if (!studyStore || !userDid) return;
     (async () => {
       const entries = await studyStore.recentJournal(userDid, 50);
       setJournalEntries(entries);
@@ -58,7 +63,7 @@ export function StudyScreen({ navigation, route }: Props) {
   }, [studyStore, userDid]);
 
   const handleWriteJournal = useCallback(async () => {
-    if (!inputText.trim() || !studyStore) return;
+    if (!inputText.trim() || !studyStore || !userDid) return;
     await studyStore.writeJournal(userDid, inputText.trim());
     setInputText('');
     // Refresh
@@ -68,7 +73,7 @@ export function StudyScreen({ navigation, route }: Props) {
   }, [inputText, studyStore, userDid]);
 
   const handleSearch = useCallback(async () => {
-    if (!searchQuery.trim() || !studyStore) return;
+    if (!searchQuery.trim() || !studyStore || !userDid) return;
     const results = await studyStore.searchJournal(userDid, searchQuery.trim(), 20);
     setSearchResults(results);
   }, [searchQuery, studyStore, userDid]);
@@ -90,6 +95,29 @@ export function StudyScreen({ navigation, route }: Props) {
 
   const displayItems = isSearchMode && searchResults ? searchResults : journalEntries;
   const styles = makeStyles(colors);
+
+  // No identity means no write — and the person must be TOLD, not left tapping a
+  // dead button. A silent no-op is the same failure mode as inventing an owner.
+  if (!userDid) {
+    return (
+      <View style={styles.container} testID="study-no-identity">
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} testID="study-back">
+            <Text style={styles.backButton}>{strings.common.back}</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>{title}</Text>
+          <View style={styles.headerActions} />
+        </View>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>
+            {'This device is not signed in to a person yet, so nothing can be '
+              + 'written to your Study.\n\nSign in first — your writing needs an '
+              + 'owner that will still mean you tomorrow.'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

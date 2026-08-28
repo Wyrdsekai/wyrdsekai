@@ -553,6 +553,12 @@ class WorkbenchFormAuthoringIntegrationTest {
             ```""",
             40, 20));
 
+        // dev47 embodiment: the split is a PHYSICAL beat first — the room
+        // watches the body divide before any words about the errand.
+        var splitEmote = roomProbe.expectMessageClass(
+            RoomCommand.EmoteInRoom.class, Duration.ofSeconds(5));
+        assertThat(splitEmote.text()).contains("splits in two");
+
         // Dispatch confirmation speak
         var dispatchSay = roomProbe.expectMessageClass(
             RoomCommand.SayInRoom.class, Duration.ofSeconds(5));
@@ -568,6 +574,12 @@ class WorkbenchFormAuthoringIntegrationTest {
             "Found: Kobe earthquake (Jan 17 1995).\n"
                 + BunshinActor.DONE_MARKER,
             60, 30));
+
+        // dev47 embodiment: the merge is physical too — the copy is absorbed
+        // back before the companion speaks its findings.
+        var mergeEmote = roomProbe.expectMessageClass(
+            RoomCommand.EmoteInRoom.class, Duration.ofSeconds(10));
+        assertThat(mergeEmote.text()).contains("absorb");
 
         // Companion narrates what bunshin brought back
         var reportSay = roomProbe.expectMessageClass(
@@ -650,6 +662,8 @@ class WorkbenchFormAuthoringIntegrationTest {
             {"action":"dispatch_bunshin","task":"overnight research on kobe 1995"}
             ```""",
             40, 20));
+        // dev47 embodiment: physical split beat precedes the dispatch words.
+        roomProbe.expectMessageClass(RoomCommand.EmoteInRoom.class, Duration.ofSeconds(5));
         roomProbe.expectMessageClass(RoomCommand.SayInRoom.class, Duration.ofSeconds(5));
 
         // A persistent task should now exist and be alive
@@ -663,6 +677,8 @@ class WorkbenchFormAuthoringIntegrationTest {
             bunshinReq.requestId(),
             "Found 3 sources.\n" + BunshinActor.DONE_MARKER,
             60, 30));
+        // dev47 embodiment: absorb beat precedes the report words.
+        roomProbe.expectMessageClass(RoomCommand.EmoteInRoom.class, Duration.ofSeconds(10));
         roomProbe.expectMessageClass(RoomCommand.SayInRoom.class, Duration.ofSeconds(10));
 
         // Task should transition to COMPLETED and be off the alive list

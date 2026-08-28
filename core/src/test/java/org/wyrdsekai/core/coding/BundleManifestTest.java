@@ -41,11 +41,19 @@ class BundleManifestTest {
         assertThat(m.manifestVersion())
             .isBetween(BundleManifest.MIN_SUPPORTED_MANIFEST_VERSION,
                        BundleManifest.SUPPORTED_MANIFEST_VERSION);
-        assertThat(m.backends()).containsKeys("opencode", "goose", "codex",
+        assertThat(m.backends()).containsKeys("opencode", "goose", "codezaiku", "codex",
                 "claude-sdk", "gemini-cli", "cline", "continue", "openhands", "devin");
-        // OpenCode is the bundled default-of-record.
-        assertThat(m.get("opencode")).isPresent();
-        assertThat(m.get("opencode").get().bundled()).isTrue();
+        // CodeZaiku is the bundled default-of-record as of 0.2.0. This line
+        // used to pin OpenCode as bundled — a claim no build ever staged: the
+        // entry listed as "(bundled)" while a clean install had nothing, and
+        // this very assertion held the lie in place. bundled:true is now
+        // enforced against the DIST by build-dist.sh's bundled-backend gate,
+        // and here we only pin which backend carries the claim.
+        assertThat(m.get("codezaiku")).isPresent();
+        assertThat(m.get("codezaiku").get().bundled()).isTrue();
+        // OpenCode is honest now: npm-distributed, never bundled.
+        assertThat(m.get("opencode").get().bundled()).isFalse();
+        assertThat(m.get("opencode").get().isNpmDistribution()).isTrue();
         // Goose is downloadable.
         assertThat(m.get("goose").get().bundled()).isFalse();
         assertThat(m.get("goose").get().downloadUrlTemplate()).isNotBlank();

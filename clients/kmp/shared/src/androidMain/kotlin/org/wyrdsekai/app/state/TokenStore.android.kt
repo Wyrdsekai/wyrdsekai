@@ -228,6 +228,14 @@ actual class TokenStore actual constructor() {
         return prefs.getBoolean(KEY_DEBUG_MODE, false)
     }
 
+    actual fun saveHermodConsent(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_HERMOD_CONSENT, enabled).apply()
+    }
+
+    actual fun loadHermodConsent(): Boolean {
+        return prefs.getBoolean(KEY_HERMOD_CONSENT, false)
+    }
+
     actual fun saveMcpUsername(name: String) {
         prefs.edit().putString(KEY_MCP_USERNAME, name).apply()
     }
@@ -462,5 +470,6 @@ actual class TokenStore actual constructor() {
         private const val KEY_ON_DEVICE_MODEL_OPT_IN = "wyrd_on_device_model_opt_in"
         private const val KEY_API_BASE_URL = "wyrd_api_base_url"
         private const val KEY_DEBUG_MODE = "wyrd_debug_mode"
+        private const val KEY_HERMOD_CONSENT = "wyrd_hermod_consent"
     }
 }

@@ -7,6 +7,7 @@ import org.wyrdsekai.core.inference.InferenceClient.ToolDefinition;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.wyrdsekai.core.room.StandardRoomLibrary;
 
 /**
  * Builds tool definitions from action schemas for LLM tool calling.
@@ -99,7 +100,7 @@ public final class ActionToolBuilder {
      */
     private static final Map<String, Map<String, List<String>>> FIELD_ENUMS = Map.of(
         "create_room", Map.of(
-            "template", org.wyrdsekai.core.room.StandardRoomLibrary.TEMPLATE_NAMES));
+            "template", StandardRoomLibrary.TEMPLATE_NAMES));
 
     /** Field descriptions where the NAME alone invites the wrong value. */
     private static final Map<String, Map<String, String>> FIELD_DESCRIPTIONS = Map.of(
@@ -137,6 +138,17 @@ public final class ActionToolBuilder {
         }
 
         return params;
+    }
+
+    /**
+     * The prose a companion reads to decide whether a verb fits what she wants.
+     *
+     * <p>Exposed because these descriptions are load-bearing: they are the only account
+     * she has of what an action can and cannot do, and a gap in one reads to her as a
+     * limit on herself. Tests assert against them directly.
+     */
+    public static String descriptionFor(String actionName) {
+        return DESCRIPTIONS.get(actionName);
     }
 
     /** Human-readable descriptions for actions. */
@@ -202,15 +214,48 @@ public final class ActionToolBuilder {
             + "to the bondholder speaks this in your own voice. Recorded in the "
             + "RepairLedger under OBJECTION; persistent patterns surface as a "
             + "Chronicle item for steward conversation, not as an alarm."),
+        Map.entry("revise_item",
+            "CHANGE A TOOL YOU ALREADY MADE, in place. Use this INSTEAD of "
+            + "dispatch_task whenever someone wants an existing item to behave "
+            + "differently — 'make it tell a story instead of a summary', 'have it "
+            + "use the weather key', 'add a details option'. Takes item_name (the one "
+            + "in your hands or theirs) and change (their words for what should be "
+            + "different). The item keeps its name, gains a version, and everyone "
+            + "holding it gets the better one. Building a near-duplicate instead "
+            + "leaves them choosing between two things that nearly work."),
         Map.entry("dispatch_task",
-            "Hand an open-ended host-machine task to the workshop's coding "
-            + "backend (goose) and report back when it finishes — organize "
-            + "files, batch-process documents, build a small tool. You are "
+            // Deliberately unnamed. This text is in her context every turn, so naming
+            // a backend here teaches her to SAY that name regardless of which one is
+            // actually registered — and the household is expected to move from goose to
+            // CodeZaiku. What she says out loud comes from chosen.name() at dispatch
+            // time, which is the real one.
+            "Hand a task to the workshop's coding backend. Use this to "
+            + "BUILD A TOOL OR ITEM THAT HAS TO DO SOMETHING — query the "
+            + "library, speak aloud, fetch and summarize, calculate, watch for "
+            + "something. The backend writes the item's code and it comes back "
+            + "as a real thing in the room that you and others can `use`; it is "
+            + "the only way to make an item with BEHAVIOUR, and it is the right "
+            + "call for one. Also handles ordinary coding and file work. What it "
+            + "cannot do: find you company, answer a question about your own "
+            + "past, or grant a wish with no task inside it — for reaching "
+            + "someone use tell_agent, and where there is no verb, saying so "
+            + "plainly is the honest answer. For a thing that merely IS "
+            + "something and does nothing (a book, a lantern), a template is "
+            + "simpler: craft_from_template. "
+            + "It reports SUCCEEDED whenever it finished, which is not "
+            + "the same as having given you what you asked for. You are "
             + "the foreman, not the laborer: announce what you're sending, "
             + "the backend does the work. description: the full task in plain "
-            + "words, with any paths the steward named. workspace (optional): "
-            + "the directory to work in — must be under the steward's granted "
-            + "open-roots or the dispatch is refused. For ingesting documents "
+            + "words, with any paths the steward named. room (optional): the "
+            + "room id the finished item should be placed in. A ROOM THAT HAS "
+            + "TO DO SOMETHING is built in two steps and this is the second: "
+            + "create_room_from_template makes the place, then dispatch_task "
+            + "with room=<that room's id> puts the working thing inside it. "
+            + "Without it the item lands where you are standing, which after a "
+            + "minutes-long build is rarely where it belongs. workspace: OMIT THIS "
+            + "unless the person named a real directory on the host — for an "
+            + "item or tool there is always a workspace waiting, so never invent "
+            + "one. For ingesting documents "
             + "into the Library prefer the library item's ingest tool; use "
             + "dispatch_task when real file manipulation is needed."),
         Map.entry("introspect_protections",

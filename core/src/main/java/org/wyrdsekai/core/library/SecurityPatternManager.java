@@ -19,7 +19,7 @@ import java.util.List;
  *   <li>USER — added manually, trusted because the user added them</li>
  *   <li>REMOTE — fetched from configured URL, must be signed (future)</li>
  * </ul>
- * Adapted from CodePlane. Self-contained — no domain-specific imports.
+ * Adapted from CodeZaiku. Self-contained — no domain-specific imports.
  */
 public final class SecurityPatternManager {
 

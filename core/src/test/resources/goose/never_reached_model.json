@@ -1,0 +1,38 @@
+{
+  "messages": [
+    {
+      "id": null,
+      "role": "user",
+      "created": 1787362270,
+      "content": [
+        {
+          "type": "text",
+          "text": "Write a file hello.js containing: exports.x = 1;"
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": null,
+      "role": "assistant",
+      "created": 1787362276,
+      "content": [
+        {
+          "type": "text",
+          "text": "Network error: Could not connect to localhost:8200 — check your network connection and try again.\n\nPlease resend your message to try again."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    }
+  ],
+  "metadata": {
+    "total_tokens": null,
+    "status": "completed"
+  }
+}

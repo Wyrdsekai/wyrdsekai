@@ -9,7 +9,7 @@ package org.wyrdsekai.scripting.api;
  * reference core); core supplies the implementation that wraps the
  * {@code BackendRegistry}.</p>
  *
- * <p>Phase 1a returns a fixed default ({@code "codeplane"} when healthy,
+ * <p>Phase 1a returns a fixed default ({@code "codezaiku"} when healthy,
  * else {@code null}). Phase 1b promotes the policy to a live-tunable
  * GraalJS script ( question 6).</p>
  */

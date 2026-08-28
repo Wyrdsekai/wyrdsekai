@@ -191,8 +191,29 @@ public final class TunnelSessionHandler {
         // Register a buffer so uplink frames arriving during the connect race
         // are held (and so unsolicited up-frames with no prior open are ignored).
         pending.putIfAbsent(session, new CopyOnWriteArrayList<>());
-        String token = extractToken(openPayload);
         var downSubject = subjPrefix + session + ".down";
+        // The tunnel is the universal door — and not only for presence.
+        // `door` selects WHICH loopback endpoint carries this session; the
+        // whitelist is deliberate (never a caller-supplied path). Absent or
+        // unknown door = the classic /ws session, byte-identical to before.
+        //   "hermod": the phone's mesh listener leg (/ws/hermod). Task plane,
+        //   device-token authed, no presence session created. A phone roaming
+        //   home↔away lands on the SAME PhoneDoorProxy either way — roaming
+        //   is a channel supersede, not a second identity.
+        var door = extractField(openPayload, "door");
+        if ("hermod".equals(door)) {
+            var deviceToken = extractField(openPayload, "deviceToken");
+            if (deviceToken == null || deviceToken.isBlank()) {
+                pending.remove(session);
+                publishDown(downSubject,
+                    "{\"type\":\"error\",\"seq\":0,\"code\":\"tunnel_auth\",\"message\":\"hermod door requires a device token\"}");
+                return;
+            }
+            openLoopback(session, downSubject, "/ws/hermod?device_token="
+                + URLEncoder.encode(deviceToken, StandardCharsets.UTF_8));
+            return;
+        }
+        String token = extractField(openPayload, "token");
         try {
             // `home=1`: a phone tunnel is a fresh device session — land the user
             // in their Study (so the bonded companion is co-present) instead of
@@ -202,7 +223,16 @@ public final class TunnelSessionHandler {
             var q = (token == null || token.isBlank())
                 ? "?guest=1"
                 : "?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8) + "&home=1";
-            var uri = URI.create("ws://127.0.0.1:" + httpPort + "/ws" + q);
+            openLoopback(session, downSubject, "/ws" + q);
+        } catch (Exception e) {
+            log.warn("Tunnel session {} open error: {}", session, e.getMessage());
+        }
+    }
+
+    /** Connect the loopback leg to one of the whitelisted local endpoints. */
+    private void openLoopback(String session, String downSubject, String pathAndQuery) {
+        try {
+            var uri = URI.create("ws://127.0.0.1:" + httpPort + pathAndQuery);
             http.newWebSocketBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .buildAsync(uri, new LoopbackListener(session, downSubject))
@@ -221,7 +251,9 @@ public final class TunnelSessionHandler {
                             }
                         }
                         scheduleKeepalive(session, ws);
-                        log.info("Tunnel session {} opened (loopback /ws on :{})", session, httpPort);
+                        log.info("Tunnel session {} opened (loopback {} on :{})",
+                            session, pathAndQuery.substring(0, pathAndQuery.indexOf('?') > 0
+                                ? pathAndQuery.indexOf('?') : pathAndQuery.length()), httpPort);
                     }
                 });
         } catch (Exception e) {
@@ -287,11 +319,11 @@ public final class TunnelSessionHandler {
         }
     }
 
-    private static String extractToken(String payload) {
+    static String extractField(String payload, String field) {
         if (payload == null) return null;
         try {
             var node = Json.mapper().readTree(payload);
-            return node.path("token").asText(null);
+            return node.path(field).asText(null);
         } catch (Exception e) {
             return null;
         }

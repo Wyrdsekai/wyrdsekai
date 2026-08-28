@@ -60,12 +60,25 @@ import org.wyrdsekai.core.mcp.transport.McpTransportHandler;
 import org.wyrdsekai.core.mcp.transport.HttpTransportHandler;
 import org.wyrdsekai.core.inference.InferenceConfig;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.between.layer.NodeCapabilities;
+import org.wyrdsekai.server.hermod.HermodService;
+import org.wyrdsekai.server.hermod.NatsGossip;
+import org.wyrdsekai.server.hermod.NatsDoors;
+import org.wyrdsekai.server.hermod.PhoneDoorProxy;
+import org.wyrdsekai.server.hermod.HermodPhoneWs;
+import org.wyrdsekai.core.inference.HermodInferenceExecutor;
+import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.MeshDispatch;
 import org.wyrdsekai.core.inference.CapabilityRegistry;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.MeshDispatch;
 import org.wyrdsekai.core.inference.StaticApiKeyProvider;
 import org.wyrdsekai.core.agent.LexiconService;
 import org.wyrdsekai.core.agent.WorldDnaHarvester;
 import org.wyrdsekai.core.naming.FederationSubjects;
+import org.wyrdsekai.core.identity.AgentIdentityBootstrap;
+import org.wyrdsekai.core.identity.PersonIdentityBootstrap;
+import org.wyrdsekai.core.coding.ConsentBroker;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.BridgeDataProviderImpl;
 import org.wyrdsekai.core.persistence.InventoryService;
@@ -196,6 +209,10 @@ import org.wyrdsekai.server.http.OpenRouterOAuthRoutes;
 import org.wyrdsekai.server.http.RecipeAuthorRoutes;
 import org.wyrdsekai.server.http.RecipeBondholderRoutes;
 import org.wyrdsekai.server.http.RecipeTuneRoutes;
+import org.wyrdsekai.server.http.ConsentRoutes;
+import org.wyrdsekai.server.http.ForgeRoutes;
+import org.wyrdsekai.server.http.RepairRoutes;
+import org.wyrdsekai.server.http.OperatorToken;
 import org.wyrdsekai.server.http.RecipesRoutes;
 import org.wyrdsekai.server.http.ResidentRoutes;
 import org.wyrdsekai.server.http.SkillAuthorRoutes;
@@ -269,6 +286,10 @@ import org.wyrdsekai.core.interop.TrustTierResolver;
 import org.wyrdsekai.core.interop.VitalityRedactor;
 import org.wyrdsekai.core.issue.IssueService;
 import org.wyrdsekai.core.item.CompanionCodexView;
+import org.wyrdsekai.core.item.EquipmentService;
+import org.wyrdsekai.core.item.HouseholdItemContent;
+import org.wyrdsekai.core.item.HouseholdResources;
+import org.wyrdsekai.core.item.ItemWorldApiProviderImpl;
 import org.wyrdsekai.core.item.ItemScheduleService;
 import org.wyrdsekai.core.item.StudyFurnishingKit;
 import org.wyrdsekai.core.naming.CompositeZoneDirectory;
@@ -304,6 +325,7 @@ import org.wyrdsekai.core.voice.TextToSpeechService;
 import java.io.IOException;
 import java.io.File;
 import java.lang.management.ManagementFactory;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.nio.file.Files;
@@ -335,6 +357,8 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.security.MessageDigest;
+import java.time.Clock;
+import org.wyrdsekai.hermod.TaskEnvelope;
 
 /**
  * Wyrdsekai server entry point.
@@ -1003,6 +1027,7 @@ public class Main {
         // started further below, once the ClientConnectionRegistry exists.
         ParentalControlService.init(jdbcUrl, dialect, authService);
 
+
         // Maintenance subsystem — maintenance mode (steward-only login while
         // on), in-world backup-now + persisted backup schedule, and staged
         // restore (the Study maintenance dial's and key chest's promises,
@@ -1309,6 +1334,20 @@ public class Main {
             log.warn("ZoneAddressResolverService init failed — docks.js / CLI zone lookup will degrade: {}",
                 e.getMessage());
         }
+
+        // Person identity — mint a real identity for each human and bring legacy
+        // accounts across. MUST come after ZoneSecrets.bootstrapLocalZone above:
+        // the household secret that encrypts person private keys is derived from
+        // the zone master, so calling this earlier (as an initial version did)
+        // could only ever report "zone master not installed yet" and stay off.
+        // Agent identity — the same thing for companions, who until now were born
+        // holding a did:key with the private half thrown away. Runs BEFORE the
+        // person bootstrap so that its rebind-attestation reconcile can prefer a
+        // companion's own signature over the steward's witness where one exists.
+        // Same ordering rule: after ZoneSecrets.bootstrapLocalZone.
+        AgentIdentityBootstrap.run(jdbcUrl);
+
+        PersonIdentityBootstrap.run(jdbcUrl);
 
         // Plugin event bus plugins (CoreServices inits the bus; plugin wiring is deployment-specific)
         var pluginEventBus = InProcessEventBus.get();
@@ -1761,6 +1800,52 @@ public class Main {
                 embedDim
             );
             luceneStore.ensureAllCollections();
+            // Study content was written under whatever string the ingest CLI had
+            // — usually $(whoami). Move it onto the person identity, or the
+            // companion's Study corridor resolves an owner that owns nothing.
+            // BACKGROUND: the first live run took 69 minutes over 13.7M documents
+            // and, being synchronous here, kept the whole household offline for
+            // all of it. The server now comes up immediately and the pass runs
+            // behind it.
+            PersonIdentityBootstrap.migrateStudyOwnersAsync(luceneStore);
+
+            // Give every chunk its place in the document it came from.
+            //
+            // `title` was stored but never indexed, so nothing could ask what
+            // came before a passage — a 471-part book was 471 unrelated pieces.
+            // Same background shape as the owner migration above, and for the
+            // same reason: it is a pass over millions of documents and has no
+            // business holding up a boot. Resumable, so a restart mid-pass costs
+            // nothing, and a finished pass finds nothing to do.
+            final var orderStore = luceneStore;
+            var chunkOrder = new Thread(() -> {
+                try {
+                    var n = orderStore.backfillChunkOrder(SearchCollections.STUDY, 500,
+                        done -> {
+                            if (done % 100_000 == 0) {
+                                log.info("[ChunkOrder] {} documents placed in reading order", done);
+                            }
+                        });
+                    if (n > 0) {
+                        log.info("[ChunkOrder] finished — {} documents can now be read in "
+                            + "sequence with their neighbours", n);
+                    }
+                } catch (WyrdLuceneStore.BackfillInterrupted stopped) {
+                    // Say STOPPED, not finished. The first version of this logged
+                    // "finished — 500 documents" for a pass that had died on its
+                    // second query, against a corpus of 15,585,914. A wrapper that
+                    // cannot tell completion from failure will always report the
+                    // flattering one.
+                    log.warn("[ChunkOrder] STOPPED after {} documents — NOT complete. "
+                        + "It resumes on the next start; if this repeats at the same count, "
+                        + "the pass is not making progress.", stopped.placed);
+                } catch (RuntimeException e) {
+                    log.warn("[ChunkOrder] stopped: {} — resumes on the next start", e.toString());
+                }
+            }, "chunk-order-backfill");
+            chunkOrder.setDaemon(true);          // never delay shutdown
+            chunkOrder.setPriority(Thread.MIN_PRIORITY);   // yield to the household
+            chunkOrder.start();
             // Seed starter knowledge content on first run (mythology, science, history, philosophy)
             KnowledgeSeeder.seedIfEmpty(luceneStore);
             // bundled Tier-0 shelf (Book of the World, reference core
@@ -1836,6 +1921,40 @@ public class Main {
                 () -> askInferenceBackendCount(router, system));
         }
 
+        // The household's library / model / web, for items a PERSON is holding.
+        // HomeOwnerItemProvider extends the FOREIGN-zone provider and only ever added
+        // the household ADMIN surfaces; every content surface stayed a
+        // "visiting foreign zone" stub, inside the person's own house. Only the
+        // companion's provider was ever built with the Lucene store and the router, so
+        // world.library.search and world.llm.* worked when SHE used an item and not when
+        // he did. Content only — identity, speech and memory come from the caller's own
+        // provider, and this one carries no callbacks for them. See HouseholdItemContent.
+        if (luceneStore != null || inferenceRouter != null) {
+            // Resources are shared; providers are not. A caller-aware surface
+            // reads its inputs from HouseholdResources and answers identity
+            // questions on the CALLER's own provider — see HouseholdResources.
+            HouseholdResources.register(luceneStore);
+            // PER CALLER, not one shared instance. The identity handed in here
+            // is the person actually holding the item, so every surface that
+            // reads it — study reach, note ownership, host audit, cost booking
+            // — answers for them. A null caller means nothing knows who is
+            // asking, and those surfaces must fail closed rather than borrow
+            // the placeholder identity this used to carry.
+            final var contentStore = luceneStore;
+            final var contentRouter = inferenceRouter;
+            HouseholdItemContent.registerFactory(callerDid -> {
+                var who = callerDid != null && !callerDid.isBlank() ? callerDid : "household";
+                return new ItemWorldApiProviderImpl(
+                    contentStore, contentRouter, system.scheduler(), system,
+                    who, who,
+                    /* speak */ null, /* remember */ null, /* tell */ null,
+                    EquipmentService.get(), null);
+            });
+        } else {
+            log.info("HouseholdItemContent: no library or router on this node — "
+                + "player-held items keep the visitor-safe content stubs");
+        }
+
         // ── W13 + W14 wiring block ──────────────────
         // W13: TheSafe as the production credential backend. Single-node
         // local mode — credential slots are K=N=1 Shamir shares persisted
@@ -1898,6 +2017,79 @@ public class Main {
                 + "triggers inert: {}", safetyErr.getMessage());
         }
         // ── end W13 + W14 wiring block ───────────────────────────────────
+
+        // ── hermod (task #178): capability gossip for the two-way mesh.
+        // Advertisement only at this stage — placement/execution arrive with
+        // seat-config. Guarded: no NATS, no gossip; hermod stays inert.
+        // The phone proxy exists either way (its WS route registers below);
+        // unattached it just tells phones the mesh is inert.
+        var hermodPhoneProxy = new PhoneDoorProxy(Clock.systemUTC());
+        if (earlyNatsBridge != null && earlyNatsBridge.rawConnection() != null) {
+            try {
+                var hermodGossip = new NatsGossip(
+                    earlyNatsBridge.rawConnection(), WyrdConfig.get().zoneId());
+                var hermodCapClass = NodeCapabilities.hostHasGpu()
+                    ? "llm.local-gpu" : "llm.local-cpu";
+                // The hands seat is hermod's local executor: explicit task
+                // dispatch is exactly the work the mesh places. Seat unset →
+                // hands runs on the default inference endpoint.
+                var handsUrl = WyrdConfig.get().seatUrl("hands");
+                var handsModel = WyrdConfig.get().seatModel("hands");
+                var hermodModels = handsModel.isBlank()
+                    ? List.<String>of()
+                    : List.of(handsModel);
+                var handsThinking = !"nothink".equals(WyrdConfig.get().seatMode("hands"));
+                var hermodExecutor = new HermodInferenceExecutor(
+                    new InferenceClient(
+                        handsUrl, "", Duration.ofSeconds(120)),
+                    120, handsThinking);
+                var hermodIdentity = NodeIdentity.loadOrGenerate(
+                    Path.of(System.getenv().getOrDefault(
+                        "WYRDSEKAI_DATA_DIR", System.getProperty("user.home") + "/.wyrdsekai"))
+                        .resolve("node-identity.json"));
+                var hermodService = new HermodService(
+                    hermodGossip, WyrdConfig.get().zoneId(),
+                    hermodIdentity.nodeId(),
+                    hermodCapClass, hermodModels,
+                    hermodExecutor, Clock.systemUTC(),
+                    hermodIdentity.publicKeyBytes());
+                hermodService.residentDomains(WyrdConfig.get().hermodDataDomains());
+                hermodService.start();
+                // P3: doors — answer our own, knock on others' (one RPC per offer).
+                var hermodDoors = new NatsDoors(
+                    earlyNatsBridge.rawConnection(), WyrdConfig.get().zoneId());
+                hermodDoors.serve(hermodService.deviceId(), hermodService.ownDoor());
+                hermodService.remoteDoors(hermodDoors);
+                // Phones have no NATS: this zone gossips for them and serves
+                // their door subjects, forwarding knocks over /ws/hermod.
+                hermodPhoneProxy.attach(
+                    hermodGossip, hermodDoors::serve, WyrdConfig.get().zoneId());
+                // Bunshin turns ride the mesh: install the core-side carrier.
+                // Tries GPU-class devices first, then CPU-class; null when
+                // nobody takes it, and the caller falls back to the local
+                // router. taskType inference.chat.full = tools intact.
+                final var meshForDispatch = hermodService;
+                MeshDispatch.install((chatJson, budget) -> {
+                    for (var cls : new String[]{"llm.local-gpu", "llm.local-cpu"}) {
+                        var envelope = new TaskEnvelope(
+                            UUID.randomUUID().toString(),
+                            WyrdConfig.get().zoneId(),
+                            meshForDispatch.deviceId(),
+                            HermodInferenceExecutor.TASK_TYPE_FULL,
+                            "none", cls,
+                            Map.of("chatRequestJson", chatJson),
+                            budget, Instant.now(),
+                            Instant.now().plusSeconds(180),
+                            Optional.empty(), new byte[]{1});
+                        var r = meshForDispatch.mesh().submit(envelope);
+                        if (r.ok()) return r.output();
+                    }
+                    return null;
+                });
+            } catch (Exception hermodErr) {
+                log.warn("hermod gossip failed to start (mesh inert): {}", hermodErr.getMessage());
+            }
+        }
 
         // Wire cross-node inference discovery: periodically sync ResourceRegistry → InferenceRouter.
         //
@@ -2524,13 +2716,13 @@ public class Main {
             boolean isSteward = Residency.ROLE_STEWARD.equals(r.role());
             guardianSystem.tell(new ZoneGuardian.ProvisionStudy(
                 r.did(), name, isSteward));
-            // Rita campaign 2026-07-11 (#26): the CodePlane Workshop (and its
+            // Rita campaign 2026-07-11 (#26): the CodeZaiku Workshop (and its
             // familiar perch) only came into being at first familiar summon —
             // which no production surface ever fires — so a fresh install had
             // no perch at all. Provision it alongside the Study: the seed is
             // deterministic and seedRoom() is journal-idempotent, so this is
             // safe to fire on every residency back-fill.
-            guardianSystem.tell(new ZoneGuardian.ProvisionCodePlaneWorkshop(
+            guardianSystem.tell(new ZoneGuardian.ProvisionCodeZaikuWorkshop(
                 r.did(), name));
             // Seed scripted furnishings. Idempotent —
             // InventoryService.addItem silently no-ops on duplicate itemId.
@@ -3357,6 +3549,18 @@ public class Main {
         if (notifService != null) {
             notifService.setDeliveryCallback((targetDid, notification) ->
                 wsHandler.deliverToPlayer(targetDid, notification));
+
+            // Steward-consent notifier (2026-08-16): a pending permission
+            // ask (ACP git-state write) pings the household so the steward
+            // hears about it in time to answer. Only the steward can ANSWER
+            // (ConsentRoutes is role-gated); the ping itself is household-
+            // visible on purpose — a coding task asking to commit is not a
+            // secret. Silence still resolves to refusal at the broker.
+            ConsentBroker.get().setNotifier(pending -> notifService.notifyAll(
+                "A coding task asks to run a git write: " + pending.summary()
+                    + " — steward: `wyrd consent list` then "
+                    + "`wyrd consent allow|deny <id>` (silence refuses).",
+                "urgent", pending.backend()));
         }
 
         // Spawn companion agents (deferred to here so wsHandler is available as CommandRouter)
@@ -3554,7 +3758,7 @@ public class Main {
                 });
         }
 
-        // Zone bridge endpoint — external services (e.g. CodePlane) register as zone handlers
+        // Zone bridge endpoint — external services (e.g. CodeZaiku) register as zone handlers
         var zoneSecret = WyrdConfig.get().zoneSecret(); // null = household trust (no auth)
         var zoneBridge = new ZoneBridgeEndpoint(wsHandler, zoneSecret);
 
@@ -3642,6 +3846,9 @@ public class Main {
             cfg.routes.ws("/ws", wsHandler);
             cfg.routes.ws("/ws/zone", zoneBridge);
             cfg.routes.ws("/voice", voiceWsHandler);
+            // Task plane, not presence: a paired phone's hermod listener
+            // channel. No session actor is created here by design.
+            cfg.routes.ws("/ws/hermod", new HermodPhoneWs(hermodPhoneProxy, pairingService));
 
             // Rate limiter
             if (limiter != null) {
@@ -3684,6 +3891,14 @@ public class Main {
             // check as ResidencyRoutes grant/revoke.
             cfg.routes.post("/api/recipes/run",
                 recipesRunHandler(authService, jdbcUrl));
+
+            // Steward-consent surface (2026-08-16) — live allow/deny for
+            // backend permission asks (ACP git-state writes). Same auth
+            // matrix as /api/recipes/run; backs `wyrd consent`.
+            OperatorToken.ensure(SystemPaths.dataDir());
+            ConsentRoutes.register(cfg, authService);
+            ForgeRoutes.register(cfg, authService);
+            RepairRoutes.register(cfg, authService, jdbcUrl);
 
             // Lifted out of the if-block so the MCP NATS handler (further down)
             // can reach it for wyrd.zone.{zone}.study.journal subjects.
@@ -4842,6 +5057,13 @@ public class Main {
         var seeds = new ArrayList<SoulSeed>();
         var mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
+        // Same guard as SqlSoulStore: a field this build doesn't know must not
+        // make a soul unreadable. Live on the household node 2026-08-08, still
+        // failing on dev14 because this is a SECOND mapper the earlier fix didn't
+        // reach — both companions' CfC substrate seeds have been silently
+        // skipped ("Unrecognized field \"w1\"") since the format gained a field,
+        // so their learned substrate weights were never restored on any boot.
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
         // Collect manifest files to load
         var manifestFiles = new ArrayList<Path>();
@@ -4880,8 +5102,19 @@ public class Main {
         // Load each manifest
         for (var path : manifestFiles) {
             try {
-                log.info("Loading soul seed: {}", path.toAbsolutePath());
                 var manifest = mapper.readValue(path.toFile(), SoulManifest.class);
+
+                // souls/ hosts more than manifests: CFC fast-weight cells save
+                // as <did>_cfc.json / base_cfc.json alongside them, and the
+                // lenient mapper parses those into an all-null manifest. Not a
+                // manifest → not an error; skip without ceremony.
+                if (manifest.did() == null || manifest.did().isBlank()
+                        || manifest.profile() == null) {
+                    log.debug("Skipping non-manifest JSON in souls dir: {}",
+                        path.getFileName());
+                    continue;
+                }
+                log.info("Loading soul seed: {}", path.toAbsolutePath());
 
                 // Store in SoulStore so CompanionActor.initializeSoul() finds it
                 if (!soulStore.exists(manifest.did())) {
@@ -4963,6 +5196,8 @@ public class Main {
                 try {
                     var mapper = new ObjectMapper();
                     mapper.registerModule(new JavaTimeModule());
+                    // See the soul-seed loader above — same reason, same guard.
+                    mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
                     var manifest = mapper.readValue(manifestPath.toFile(),
                         SoulManifest.class);
 

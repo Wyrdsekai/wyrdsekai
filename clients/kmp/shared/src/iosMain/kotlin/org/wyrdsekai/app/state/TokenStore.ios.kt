@@ -61,6 +61,8 @@ actual class TokenStore actual constructor() {
     actual fun loadApiBaseUrl(): String? = defaults.stringForKey(KEY_API_BASE_URL)
     actual fun saveDebugMode(enabled: Boolean) { defaults.setBool(enabled, forKey = KEY_DEBUG_MODE) }
     actual fun loadDebugMode(): Boolean = defaults.boolForKey(KEY_DEBUG_MODE)
+    actual fun saveHermodConsent(enabled: Boolean) { defaults.setBool(enabled, forKey = KEY_HERMOD_CONSENT) }
+    actual fun loadHermodConsent(): Boolean = defaults.boolForKey(KEY_HERMOD_CONSENT)
 
     actual fun saveMcpUsername(name: String) { defaults.setObject(name, forKey = KEY_MCP_USERNAME) }
     actual fun loadMcpUsername(): String? = defaults.stringForKey(KEY_MCP_USERNAME)
@@ -131,5 +133,6 @@ actual class TokenStore actual constructor() {
         const val KEY_ON_DEVICE_MODEL_OPT_IN = "wyrd_on_device_model_opt_in"
         const val KEY_API_BASE_URL = "wyrd_api_base_url"
         const val KEY_DEBUG_MODE = "wyrd_debug_mode"
+        const val KEY_HERMOD_CONSENT = "wyrd_hermod_consent"
     }
 }

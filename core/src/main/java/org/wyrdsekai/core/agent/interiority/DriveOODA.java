@@ -56,12 +56,33 @@ public final class DriveOODA {
         String act(Want chosen, AmbientObservation ambient);
     }
 
+    /**
+     * Callback: a want just closed. Lets the agent apply the homeostatic consequence —
+     * relieving the drive that pulled for it — without DriveOODA needing to know about
+     * vitality. Optional; a null callback closes wants without relief.
+     */
+    @FunctionalInterface
+    public interface ClosureStep {
+        /**
+         * @param closed   the want, already marked SATISFIED or ABANDONED.
+         * @param drive    the drive that pulled for it, if it declared one.
+         * @param fulfilled true when she completed it; false when it was let go stale.
+         */
+        void onClosed(Want closed, String drive, boolean fulfilled);
+    }
+
     /** Per-agent tick state — visited timestamps + last action verb. */
     private final Map<String, AgentTickState> tickState = new ConcurrentHashMap<>();
     private final WantStore wantStore;
+    private final ClosureStep closureStep;
 
     public DriveOODA(WantStore wantStore) {
+        this(wantStore, null);
+    }
+
+    public DriveOODA(WantStore wantStore, ClosureStep closureStep) {
         this.wantStore = wantStore;
+        this.closureStep = closureStep;
     }
 
     /**
@@ -160,7 +181,49 @@ public final class DriveOODA {
         rec.actionDetail = state.lastActionDetail;
         rec.gateOutcome = "acted";
 
+        // CONSEQUENCE. Without this the loop ran DRIVE → WANT → ACT and stopped: the want
+        // was never marked done however well the act went, so the next tick chose it again,
+        // and the drive it served was never discharged. Measured live 2026-08-19 — the same
+        // want chosen 22 of 40 ticks, enacted every time, its drive pinned at 1.00 in 40/40.
+        if (WantClosure.closes(result)) {
+            closeWant(want, WantClosure.closureNote(result), true);
+        }
+        // Let go of anything that has stopped pulling, keeping the one just acted on.
+        releaseStaleWants(liveWants, want, Instant.now());
+
         return finalize(rec, started, baseInterval, ambient, liveWants.size(), driveThreshold);
+    }
+
+    /** Mark a want done, persist it, and let the agent apply the consequence. */
+    private void closeWant(Want want, String note, boolean fulfilled) {
+        try {
+            var closed = fulfilled ? want.satisfied(note) : want.abandoned(note);
+            if (wantStore != null) wantStore.upsert(closed);
+            var drive = WantClosure.resonantDrive(want).orElse(null);
+            log.info("Want {} for {}: \"{}\" (drive={}, note={})",
+                fulfilled ? "SATISFIED" : "let go", agentLabel(want), want.text(),
+                drive, note);
+            if (closureStep != null) closureStep.onClosed(closed, drive, fulfilled);
+        } catch (Exception e) {
+            log.warn("Closing want \"{}\" failed: {}", want.text(), e.toString());
+        }
+    }
+
+    /**
+     * Let go of wants that have stopped pulling. A want kept forever is not persistence:
+     * it holds the stuck-want signal down and crowds out the ones she still feels.
+     */
+    private void releaseStaleWants(List<Want> liveWants, Want keep, Instant now) {
+        if (liveWants == null) return;
+        for (var w : liveWants) {
+            if (w == null || (keep != null && w.wantId().equals(keep.wantId()))) continue;
+            if (WantClosure.isStale(w, now)) closeWant(w, "no longer felt", false);
+        }
+    }
+
+    private static String agentLabel(Want w) {
+        var did = w.agentDid();
+        return did == null ? "?" : did.substring(Math.max(0, did.length() - 6));
     }
 
     /**

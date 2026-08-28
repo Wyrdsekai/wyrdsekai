@@ -16,7 +16,7 @@ import java.util.UUID;
  *                    handled the task.
  * @param status      outcome status; see {@link TaskStatus}.
  * @param summary     short human-readable description suitable for in-world
- *                    narration ("CodePlane built 3 files, all tests pass.").
+ *                    narration ("CodeZaiku built 3 files, all tests pass.").
  * @param artifactIds IDs of {@link CodingArtifact}s produced by the task.
  * @param cuConsumed  metered compute-unit cost; 0 for free-tier backends.
  * @param durationMs  wallclock duration the task occupied the backend.

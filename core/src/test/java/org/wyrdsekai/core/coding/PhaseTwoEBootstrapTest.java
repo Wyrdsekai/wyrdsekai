@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.nio.file.Files;
 
 /**
  * Phase 2e — verifies {@link CodingBackendBootstrap} wiring of Claude
@@ -71,6 +72,73 @@ class PhaseTwoEBootstrapTest {
         assertThat(BackendRegistry.get().backendFor(CodexCliBackend.NAME)).isEmpty();
         assertThat(BackendRegistry.get().backendFor(GeminiCliBackend.NAME)).isEmpty();
         assertThat(BackendRegistry.get().backendFor(DevinBackend.NAME)).isEmpty();
+    }
+
+    // ─── CodeZaiku (2026-08-15): available-not-default wiring ────
+
+    @Test void bootstrap_registers_codezaiku_when_binary_reachable() throws Exception {
+        // A real executable on disk stands in for the codezaiku binary —
+        // binaryReachable only checks presence+exec, not behavior.
+        var fake = Files.createTempFile("codezaiku-fake", "");
+        fake.toFile().setExecutable(true);
+        var cfg = ConfigFactory.parseString(""
+            + "wyrdsekai.coding.backends.codezaiku {\n"
+            + "  enabled = true\n"
+            + "  executable-path = \"" + fake + "\"\n"
+            + "  drive-url = \"http://127.0.0.1:9999\"\n"
+            + "}");
+        CodingBackendBootstrap.init(cfg);
+        assertThat(BackendRegistry.get().backendFor(CodeZaikuBackend.NAME))
+            .as("CodeZaiku registers as available-not-default when the binary exists")
+            .isPresent();
+        assertThat(BackendRegistry.get().adapterFor(CodeZaikuBackend.NAME)).isPresent();
+    }
+
+    @Test void bootstrap_skips_codezaiku_when_binary_absent() {
+        var cfg = ConfigFactory.parseString(""
+            + "wyrdsekai.coding.backends.codezaiku {\n"
+            + "  enabled = true\n"
+            + "  executable-path = \"/nonexistent/codezaiku-" + UUID.randomUUID() + "\"\n"
+            + "}");
+        CodingBackendBootstrap.init(cfg);
+        assertThat(BackendRegistry.get().backendFor(CodeZaikuBackend.NAME))
+            .as("no binary → unhealthy box simply never offers CodeZaiku")
+            .isEmpty();
+    }
+
+    // ─── ACP (2026-08-16): the permission-gated generic surface ──
+
+    @Test void bootstrap_registers_acp_when_agent_executable_reachable() throws Exception {
+        var fake = Files.createTempFile("acp-agent-fake", "");
+        fake.toFile().setExecutable(true);
+        var cfg = ConfigFactory.parseString(""
+            + "wyrdsekai.coding.backends.acp {\n"
+            + "  enabled = true\n"
+            + "  command = [\"" + fake + "\", \"acp\"]\n"
+            + "}");
+        CodingBackendBootstrap.init(cfg);
+        assertThat(BackendRegistry.get().backendFor(AcpBackend.NAME))
+            .as("ACP registers when the agent executable exists — the gated "
+                + "surface commit-sensitive workspaces route through")
+            .isPresent();
+        assertThat(BackendRegistry.get().adapterFor(AcpBackend.NAME)).isPresent();
+    }
+
+    @Test void bootstrap_skips_acp_when_agent_executable_absent() {
+        var cfg = ConfigFactory.parseString(""
+            + "wyrdsekai.coding.backends.acp {\n"
+            + "  enabled = true\n"
+            + "  command = [\"/nonexistent/acp-agent-" + UUID.randomUUID() + "\", \"acp\"]\n"
+            + "}");
+        CodingBackendBootstrap.init(cfg);
+        assertThat(BackendRegistry.get().backendFor(AcpBackend.NAME)).isEmpty();
+    }
+
+    @Test void bootstrap_skips_acp_when_disabled() {
+        CodingBackendBootstrap.init(ConfigFactory.parseString(
+            "wyrdsekai.coding.backends.acp { enabled = false }"));
+        assertThat(BackendRegistry.get().backendFor(AcpBackend.NAME)).isEmpty();
+        assertThat(BackendRegistry.get().adapterFor(AcpBackend.NAME)).isEmpty();
     }
 
     // ─── Binary-absent path: enabled but no binary → skip ────────

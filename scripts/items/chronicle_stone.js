@@ -1,4 +1,4 @@
-// CodePlane Workshop furnishing — chronicle stone ("workshop-chronicle-stone"
+// CodeZaiku Workshop furnishing — chronicle stone ("workshop-chronicle-stone"
 // RoomObject, display name "chronicle stone" → normalized linkage
 // "chronicle_stone").
 //

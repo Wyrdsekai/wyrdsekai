@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
  * Claude CLI subprocess wrapper for inference via OAuth.
  * Uses the user's existing Claude Code CLI authentication — no API key needed.
  * <p>
- * Referenced from CodePlane ClaudeCliProvider.java (commit 3290271):
+ * Referenced from CodeZaiku ClaudeCliProvider.java (commit 3290271):
  * - Auth detection: lines 616-658
  * - Process spawning: lines 564-585
  * - Response parsing: lines 152-216
@@ -69,7 +69,7 @@ public final class ClaudeCliInference {
             }
             String version = new String(p.getInputStream().readAllBytes()).trim();
 
-            // Check auth status (ref: CodePlane ClaudeCliProvider.java:628-648)
+            // Check auth status (ref: CodeZaiku ClaudeCliProvider.java:628-648)
             var authCheck = new ProcessBuilder(cliPath, "auth", "status");
             authCheck.environment().remove("CLAUDECODE");
             authCheck.redirectErrorStream(true);
@@ -142,6 +142,15 @@ public final class ClaudeCliInference {
         args.add(cliPath);
         args.add("-p");
         args.add("--no-session-persistence");
+        // INFERENCE ONLY — this backend is a companion's MIND, not an agent.
+        // Without this, headless turns inherit the host CLI's default tool
+        // permissions and a companion's musing can act on the host (observed
+        // 2026-08-14: an e2e zone's companion, auto-backed by Claude CLI,
+        // sent cross-session messages from inside its own-time turns). All
+        // acting must go through the world's tool-affordance and consent
+        // system; the substrate itself gets words only.
+        args.add("--tools");
+        args.add("");
         args.add("--output-format");
         args.add("json");
         args.add("--model");
@@ -175,7 +184,7 @@ public final class ClaudeCliInference {
         // Spawn process
         var result = runProcess(args, prompt.toString().trim());
 
-        // Parse JSON response (ref: CodePlane ClaudeCliProvider.java:152-216)
+        // Parse JSON response (ref: CodeZaiku ClaudeCliProvider.java:152-216)
         try {
             JsonNode root = MAPPER.readTree(result.stdout);
 

@@ -10,7 +10,7 @@ import java.util.Map;
 /**
  * Protocol messages for the zone bridge WebSocket ({@code /ws/zone}).
  * <p>
- * External services (e.g. CodePlane) connect here to register as zone command handlers.
+ * External services (e.g. CodeZaiku) connect here to register as zone command handlers.
  * The protocol is bidirectional:
  * <ul>
  *   <li>Service → Wyrdsekai: {@link Register}, {@link CommandResponse}</li>
@@ -35,7 +35,7 @@ public sealed interface ZoneBridgeMessage {
     /**
      * Register a zone namespace. Service sends this on connect.
      *
-     * @param namespace Zone namespace to claim (e.g. "codeplane")
+     * @param namespace Zone namespace to claim (e.g. "codezaiku")
      * @param secret    Optional shared secret for auth (matches WYRDSEKAI_ZONE_SECRET env var)
      */
     record Register(String namespace, String secret) implements ZoneBridgeMessage {}
@@ -75,7 +75,7 @@ public sealed interface ZoneBridgeMessage {
      *
      * @param requestId Correlation ID (service must echo this in CommandResponse)
      * @param playerId  Who sent the command
-     * @param action    The action part (e.g. "approve" from "codeplane.approve")
+     * @param action    The action part (e.g. "approve" from "codezaiku.approve")
      * @param args      Command arguments
      * @param payload   Structured key-value data
      */

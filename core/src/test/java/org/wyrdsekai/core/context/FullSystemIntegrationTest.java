@@ -678,7 +678,7 @@ class FullSystemIntegrationTest {
 
         // Recent zone broadcast
         var eventStream = AgentEventStream.get();
-        eventStream.publishZoneBroadcast("codeplane", "workshop",
+        eventStream.publishZoneBroadcast("codezaiku", "workshop",
             new S2CMessage.Prose(0, "system", "Training pipeline completed",
                 List.of(), null, "normal"));
 
@@ -726,7 +726,7 @@ class FullSystemIntegrationTest {
             .describedAs("Active schedule should appear");
 
         // 7. Zone broadcast
-        assertThat(allContent).contains("codeplane")
+        assertThat(allContent).contains("codezaiku")
             .describedAs("Zone broadcast should appear");
 
         // 8. System event

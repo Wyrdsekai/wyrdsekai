@@ -236,7 +236,7 @@ Used for system commands (`who`, `inventory`, `help`) and zone-type actions. Zon
 {
   "type": "command",
   "id": "req-10",
-  "command": "codeplane.approve",
+  "command": "codezaiku.approve",
   "args": [],
   "payload": {
     "eventId": "evt-42",
@@ -550,7 +550,7 @@ Zone-type-specific content for rich client rendering. Clients render blocks they
 
 | Field | Type | Nullable | Description |
 |-------|------|----------|-------------|
-| `format` | string | no | Namespaced type identifier (e.g., `"codeplane.diff"`, `"wyrdsekai.room"`) |
+| `format` | string | no | Namespaced type identifier (e.g., `"codezaiku.diff"`, `"wyrdsekai.room"`) |
 | `data` | object | no | Arbitrary JSON payload specific to the format |
 | `fallback` | string | no | Prose text for clients that don't understand this format |
 

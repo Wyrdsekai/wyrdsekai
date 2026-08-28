@@ -601,6 +601,19 @@ public final class ForgeRoomBridge {
     }
 
     /** Resolve a live agent entityId by name; blank target → sole agent if unambiguous. */
+    /**
+     * Resolve a companion name (or entity id) to its entity id, or null when no such
+     * agent is present in this zone. Blank target resolves to the sole agent when
+     * there is exactly one.
+     *
+     * <p>Public so the steward HTTP route shares this resolver rather than carrying a
+     * second copy: the in-world verb and the operator call must agree on what "mia"
+     * means, and two resolvers would eventually disagree.
+     */
+    public static String resolveCompanionEntity(String target) {
+        return resolveAgentEntity(target);
+    }
+
     private static String resolveAgentEntity(String target) {
         var registry = EntityRegistry.get();
         if (registry == null) return null;

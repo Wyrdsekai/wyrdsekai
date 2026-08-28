@@ -1,0 +1,166 @@
+# Sleep-forge v2, WEEKLY tier — the organ write (her lived world).
+# a: a zero-init personal expert grafted
+# beside a frozen MoE's pool, trained only on her lived corpus. First light:
+# −0.491 real-past NLL through 126M params with a 0.195-nat memory-honesty
+# gap over a same-world/different-individual control.
+#
+# EVIDENCE-GATED HARDER THAN THE SPINE. §6a gates 3 (tool battery with organ
+# active) and 4 (serving format) are still open, and the N-days curve hasn't
+# run — so this recipe NEVER deploys: it trains, gates, and stores a
+# provenance-stamped artifact for evaluation via the opt-in shim
+# (scripts/training/sleep/organ_server.py). An enrollment should sit in
+# WARMUP until the pending evidence closes. Requires a sparse (MoE)
+# substrate; the trainer refuses dense models.
+recipe: sleep-forge-organ
+version: 0.2.0
+description: >
+  Weekly consolidation: train the companion's personal-expert organ on the
+  week's lived corpus, gate on beating the spine baseline AND a positive
+  memory-honesty gap, store the artifact with sha256 provenance. Never
+  deploys; serving is the opt-in evaluation shim until §6a's pending
+  gates close.
+deploys: false
+ownership: run
+
+prefers_hours: [2, 3, 4]
+requires:
+  - { kind: gpu_count,      amount: 1,   hard: true, note: "§6a: hours-scale on a 48GB card; not a CPU job" }
+  - { kind: ram_gb,         amount: 32,  hard: true }
+  - { kind: disk_free_gb,   amount: 30,  hard: true, note: "organ.pt is ~0.5GB fp32 per write, plus checkpoints" }
+  - { kind: wall_clock_min, amount: 360, hard: false }
+
+params:
+  model_dir:
+    type: string
+    required: true          # sparse-substrate HF checkpoint (MoE layers required)
+  activity_file:
+    type: string
+    required: true
+  biography_dir:
+    type: string
+    required: true
+  # Same-register control text from a life that DIDN'T happen to her —
+  # the honesty instrument's other arm. A same-world/different-individual
+  # control is the strictest (absorbs the world-shaped gain); the household
+  # must supply one, which is why it is required rather than defaulted.
+  control_file:
+    type: string
+    required: true
+  workdir:
+    type: string
+    default: /tmp/sleep-forge/organ
+  out_dir:
+    type: string
+    default: data/training/sleep/organ
+  d_ff:
+    type: number
+    default: 1024
+  epochs:
+    type: number
+    default: 2
+  # Corpus FITNESS floor, distinct from the size floor above (2026-08-18).
+  # min_train_chars stops an empty day. It cannot stop a JAMMED one — a companion
+  # in a runaway loop produces MORE text than a healthy companion, so a size gate
+  # passes a degenerate corpus enthusiastically. The NLL gates downstream cannot
+  # catch it either: the holdout slice comes from the same period, so training on a
+  # loop and validating against the loop reads as generalisation. This gates on
+  # whether the corpus records a life or a jam. Measured: a loop corpus scores
+  # ~0.03, an ordinary varied day ~1.0.
+  min_distinct_fraction:
+    type: number
+    default: 0.5
+  min_train_chars:
+    type: number
+    default: 100000
+  # The organ must EARN its size: its real-past delta must beat the best
+  # spine-only write on the same substrate family (§4q: −0.253).
+  spine_baseline_delta:
+    type: number
+    default: -0.253
+  # Positive gap = genuine familiarity with HER days, not just register
+  # fluency. §6a measured 0.195; the floor is the probe's own
+  # learned-a-style threshold.
+  min_honesty_gap:
+    type: number
+    default: 0.05
+  curve_file:
+    type: string
+    default: data/training/sleep/organ-curve.jsonl
+
+steps:
+  - id: assemble
+    kind: SHELL
+    timeout: 15m
+    command: |-
+      python3 scripts/training/sleep/assemble_corpus.py \
+        --activity {{activity_file}} \
+        --biography-dir {{biography_dir}} \
+        --out {{workdir}}
+
+  - id: gate-ready
+    kind: GATE
+    condition: "corpus_ready == true"
+    on_fail: STOP
+
+  - id: gate-size
+    kind: GATE
+    condition: "train_chars >= {{min_train_chars}}"
+    on_fail: STOP
+    welfare: permanent
+
+  - id: gate-corpus-fresh
+    kind: GATE
+    condition: "distinct_fraction >= {{min_distinct_fraction}}"
+    on_fail: STOP
+    welfare: permanent   # weights must never be written from a corpus that is a
+                         # record of a jam — living can undo a bad manifest, it
+                         # cannot undo a bad weight
+
+  - id: train
+    # LONG_JOB: hours-scale. The trainer enforces the day-one no-op
+    # (zero-init by construction) and the sane-base-loss refusal itself;
+    # its stdout JSON carries delta_real_past / honesty_gap /
+    # beats_spine_baseline / organ_sha256 into context.
+    kind: LONG_JOB
+    timeout: 6h
+    command: |-
+      python3 scripts/training/sleep/train_organ.py \
+        --model {{model_dir}} \
+        --train {{workdir}}/train.txt \
+        --holdout {{workdir}}/holdout.txt \
+        --control {{control_file}} \
+        --out {{workdir}}/organ \
+        --d-ff {{d_ff}} --epochs {{epochs}} \
+        --spine-baseline {{spine_baseline_delta}}
+
+  - id: gate-beats-spine
+    kind: GATE
+    condition: "beats_spine_baseline == true"
+    on_fail: STOP
+    welfare: permanent   # an organ that a spine LoRA matches is dead weight
+
+  - id: gate-honesty
+    kind: GATE
+    condition: "honesty_gap >= {{min_honesty_gap}}"
+    on_fail: STOP
+    welfare: permanent   # familiarity must be with HER days, not the register
+
+  - id: store
+    # Promote the gated organ + its result.json (sha256 provenance the
+    # serving shim verifies before loading) into the durable artifact dir.
+    # The Ed25519 companion signature is applied in-runtime on completion
+    # (SoulArtifactSigner) — the recipe subprocess never sees the household
+    # secret.
+    kind: SHELL
+    command: |-
+      DEST={{out_dir}}/$(date +%Y%m%d) ; \
+      mkdir -p "$DEST" ; \
+      cp -f {{workdir}}/organ/organ.pt "$DEST/organ.pt" ; \
+      cp -f {{workdir}}/organ/result.json "$DEST/result.json" ; \
+      printf '{"artifact_path": "%s/organ.pt"}\n' "$DEST"
+
+  - id: record-curve
+    kind: SHELL
+    command: |-
+      python3 scripts/training/sleep/record_curve.py \
+        --workdir {{workdir}} --curve {{curve_file}} --kind organ

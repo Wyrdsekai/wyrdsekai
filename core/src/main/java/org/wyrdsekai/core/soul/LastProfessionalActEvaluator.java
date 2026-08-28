@@ -103,7 +103,7 @@ public final class LastProfessionalActEvaluator {
      * @param dutyPressure     duty-to-work (gimu) pressure [0, 1] — is there
      *                         outstanding work the familiar is bound to finish
      * @param incidentSignal   external trigger — emergency / professional-call /
-     *                         critical-need (CodePlane-side classifier surfaces this)
+     *                         critical-need (CodeZaiku-side classifier surfaces this)
      * @return verdict naming posture + reason + condition vector
      */
     public static Verdict evaluate(

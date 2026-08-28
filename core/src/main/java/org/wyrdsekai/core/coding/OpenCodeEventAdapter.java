@@ -23,7 +23,7 @@ import java.util.UUID;
  * can submit.</p>
  *
  * <p>OpenCode runs as an in-process subprocess (no zone bridge required —
- * unlike CodePlane). Events still flow through the same
+ * unlike CodeZaiku). Events still flow through the same
  * {@link AgentEvent.ZoneBroadcast} channel so the {@link CodingTaskItemBridge}
  * can place the resulting room objects without caring about the backend's
  * transport.</p>
@@ -44,7 +44,7 @@ public final class OpenCodeEventAdapter implements BackendAdapter {
         if (data == null) return null;
 
         // Phase 2b: the event payload mirrors the SourceArtifact's
-        // metadata block so the bridge can re-hydrate it. CodePlane uses
+        // metadata block so the bridge can re-hydrate it. CodeZaiku uses
         // a board_completed event sentinel; OpenCode uses task_completed.
         var eventName = data.path("event").asText("");
         if (!"task_completed".equals(eventName)) return null;
@@ -76,7 +76,7 @@ public final class OpenCodeEventAdapter implements BackendAdapter {
         // OpenCode emits a build summary as a sibling event (testsPassed
         // / testsFailed) when the agent ran a test step. Stash it under
         // __sibling_build so the bridge can place both items together,
-        // matching the CodePlane pattern.
+        // matching the CodeZaiku pattern.
         if (data.has("buildStatus") && !data.get("buildStatus").isNull()) {
             int testsPassed = data.path("testsPassed").asInt(0);
             int testsFailed = data.path("testsFailed").asInt(0);

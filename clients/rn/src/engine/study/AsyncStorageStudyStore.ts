@@ -11,6 +11,7 @@
  */
 import type { StudyItem, StudyItemType } from './StudyItem';
 import type { StudyStore } from './StudyStore';
+import { requireOwner } from './StudyOwner';
 
 const KEY_PREFIX = '@wyrd-study:';
 const INDEX_KEY = `${KEY_PREFIX}_index`;
@@ -36,6 +37,10 @@ export class AsyncStorageStudyStore implements StudyStore {
   constructor(private readonly storage: AsyncStorageLike) {}
 
   async writeJournal(userDid: string, content: string, isPrivate = false): Promise<StudyItem> {
+    // No placeholder identities. See StudyOwner.ts — this client writes
+    // journal entries, and an owner that refers to nobody makes them
+    // unrecoverable rather than merely misfiled.
+    userDid = requireOwner(userDid);
     const item: StudyItem = {
       id: generateId(),
       userDid,
@@ -92,6 +97,10 @@ export class AsyncStorageStudyStore implements StudyStore {
   }
 
   async addNote(userDid: string, content: string): Promise<StudyItem> {
+    // No placeholder identities. See StudyOwner.ts — this client writes
+    // journal entries, and an owner that refers to nobody makes them
+    // unrecoverable rather than merely misfiled.
+    userDid = requireOwner(userDid);
     const item: StudyItem = {
       id: generateId(),
       userDid,

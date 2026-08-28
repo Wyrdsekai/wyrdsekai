@@ -40,7 +40,7 @@ class DeepSleepTrainerTest {
     void corpus_builder_shapes_significance_into_chat_turns(@TempDir Path tmp) {
         var trainer = new DeepSleepTrainer(tmp, new DeepSleepTrainer.NoOpInferenceController());
         var buf = new SignificanceBuffer();
-        buf.remember("Masumi's cat is named Mochi", 0.9f);
+        buf.remember("Operator's cat is named Mochi", 0.9f);
         buf.note("The Nexus feels quieter in the evening");
         buf.forget("old value", "superseded");
 
@@ -52,7 +52,7 @@ class DeepSleepTrainerTest {
                 .containsEntry("system",
                         "You are Wyrd. Speak in your own voice, grounded in what you have chosen to remember.")
                 .containsKey("user")
-                .containsEntry("assistant", "Masumi's cat is named Mochi");
+                .containsEntry("assistant", "Operator's cat is named Mochi");
         assertThat(corpus.getLast().get("assistant"))
                 .isEqualTo("The Nexus feels quieter in the evening");
     }

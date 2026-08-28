@@ -279,7 +279,7 @@ public record AgentIdentity(
         return Arrays.copyOfRange(encoded, encoded.length - 32, encoded.length);
     }
 
-    private static PublicKey reconstructPublicKey(byte[] rawPubKey32) throws Exception {
+    static PublicKey reconstructPublicKey(byte[] rawPubKey32) throws Exception {
         // Reconstruct via DER/SPKI encoding
         // Fixed 12-byte header for Ed25519: 302a300506032b6570032100
         var spki = new byte[44];
@@ -293,7 +293,7 @@ public record AgentIdentity(
         return KeyFactory.getInstance("Ed25519").generatePublic(keySpec);
     }
 
-    private static PrivateKey reconstructPrivateKey(byte[] rawPrivKey32) throws Exception {
+    static PrivateKey reconstructPrivateKey(byte[] rawPrivKey32) throws Exception {
         // Reconstruct via PKCS#8 encoding
         // Fixed header for Ed25519 private key: 302e020100300506032b657004220420
         var pkcs8 = new byte[48];

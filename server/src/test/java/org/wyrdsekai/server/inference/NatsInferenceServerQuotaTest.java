@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.time.Duration;
 
 /**
  * Provider-side quota enforcement. Verifies that {@link NatsInferenceServer}
@@ -391,7 +392,7 @@ class NatsInferenceServerQuotaTest {
         server.setHouseholdGate(verifierFor("node-fam", kp.getPublic()), () -> true);
         server.start();
 
-        long staleTs = System.currentTimeMillis() - java.time.Duration.ofMinutes(30).toMillis();
+        long staleTs = System.currentTimeMillis() - Duration.ofMinutes(30).toMillis();
         var req = new NatsInferenceProtocol.Request(
             "s-h5", "beta", "agent-x", "m",
             List.of(new NatsInferenceProtocol.Message("user", "hi")),

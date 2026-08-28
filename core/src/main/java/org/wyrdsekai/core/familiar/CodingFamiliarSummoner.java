@@ -21,7 +21,7 @@ import java.util.Optional;
  *   <li>Create the {@link CodingFamiliarIdentity} (if absent) and persist
  *       it via {@link CodingFamiliarRegistry}. The soul-fragment file is
  *       the load-bearing piece — the familiar exists when its file exists.</li>
- *   <li>Fire {@link ZoneGuardian.ProvisionCodePlaneWorkshop} so the
+ *   <li>Fire {@link ZoneGuardian.ProvisionCodeZaikuWorkshop} so the
  *       bondholder's workshop room comes into being. {@code seedRoom()} is
  *       idempotent at the journal layer, so a second summon is a no-op
  *       there.</li>
@@ -48,8 +48,8 @@ import java.util.Optional;
  * an update.</p>
  *
  * <p>OPEN-3 note: the {@link CodingFamiliarIdentity#autonomyTier()} is
- * the substrate-side gate. The CodePlane PermissionRing remains a
- * separate, runtime-side gate on the CodePlane session. The bridge
+ * the substrate-side gate. The CodeZaiku PermissionRing remains a
+ * separate, runtime-side gate on the CodeZaiku session. The bridge
  * between the two is documented on the spec; nothing here couples them.</p>
  */
 public final class CodingFamiliarSummoner {
@@ -73,7 +73,7 @@ public final class CodingFamiliarSummoner {
      *                     surface, in which case the ceremony skips the
      *                     bond step and logs a warning
      * @param zoneGuardian zone-guardian ref to receive
-     *                     {@link ZoneGuardian.ProvisionCodePlaneWorkshop}.
+     *                     {@link ZoneGuardian.ProvisionCodeZaikuWorkshop}.
      *                     May be {@code null} in tests that don't need
      *                     room provisioning.
      */
@@ -150,11 +150,11 @@ public final class CodingFamiliarSummoner {
             try {
                 var displayName = (bondholderName == null || bondholderName.isBlank())
                     ? bondholderDid : bondholderName;
-                zoneGuardian.tell(new ZoneGuardian.ProvisionCodePlaneWorkshop(
+                zoneGuardian.tell(new ZoneGuardian.ProvisionCodeZaikuWorkshop(
                     bondholderDid, displayName));
                 workshopRequested = true;
             } catch (Exception e) {
-                log.warn("Failed to request CodePlane workshop provisioning for {}: {}",
+                log.warn("Failed to request CodeZaiku workshop provisioning for {}: {}",
                     bondholderDid, e.getMessage());
             }
         }

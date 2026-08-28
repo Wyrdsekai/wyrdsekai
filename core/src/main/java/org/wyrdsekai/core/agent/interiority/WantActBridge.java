@@ -52,8 +52,28 @@ public final class WantActBridge {
     /** A drive at/above this level is genuinely "pulling" — the bar to act at all (the welfare floor). */
     public static final double ACT_THRESHOLD = DriveWantMapper.DEFAULT_THRESHOLD;
 
-    /** Tanks that are NOT pulls — high here is calm/capacity, not an impetus. Excluded from the max. */
-    private static final Set<String> NON_PULL = Set.of("equanimity");
+    /**
+     * Tanks that are NOT pulls — high here is calm/capacity, not an impetus. Excluded
+     * from the max.
+     *
+     * <p>This listed {@code equanimity} alone, while {@link #dominantPull} takes the max
+     * over everything else {@code collectDriveLevels()} reports — which includes Energy,
+     * Focus, ContextBudget, Confidence, Momentum, Rapport, Alignment and Integrity. A
+     * rested companion carries those at ~1.0, so the act-gate documented as "fires ONLY
+     * when the dominant drive is genuinely pulling; at rest it DEFERS and the agent
+     * rests" was in fact permanently open, and {@link #dominantDriveKey} named a capacity
+     * rather than a need — missing {@code DRIVE_TOOL} every time and falling through to
+     * the keyword lottery.
+     *
+     * <p>The welfare floor read "she is well-rested" as "something is pulling at her".
+     * Found 2026-08-19, when keeping a want alive past the consent gate started producing
+     * own-time acts in a freshly-spawned companion with every tank at rest.
+     */
+    private static final Set<String> NON_PULL = Set.of(
+        "equanimity",
+        // Capacity, not need: full means she CAN, not that she must.
+        "Energy", "Confidence", "Focus", "ContextBudget", "Momentum", "Rapport",
+        "Alignment", "Integrity");
 
     private WantActBridge() {}
 
@@ -83,7 +103,16 @@ public final class WantActBridge {
         Map.entry("Vigilance",   "examine"),           // check the room / name a threat
         Map.entry("Disgust",     "examine"),           // name the thing concretely
         Map.entry("Creativity",  "save_artifact"),     // make something (degrades to free-form if absent)
-        Map.entry("Frustration", "seek_sanctuary"));   // overload → refuge
+        Map.entry("Frustration", "seek_sanctuary"),    // overload → refuge
+        // Three more that collectDriveLevels() has always produced and this map has never
+        // held (2026-08-19). Each falls through to the keyword lottery and then DEFER, so
+        // the drive can only ratchet: on the household node Restlessness ran at 0.92 for
+        // days with `go_to_room` — the literal act it wants — sitting unmapped one line
+        // away. Relational drives are handled separately by RelationalAffordance because
+        // their right verb depends on who is actually there.
+        Map.entry("Restlessness", "go_to_room"),       // the pull IS to move
+        Map.entry("Stagnation",   "library_search"),   // something that isn't the same
+        Map.entry("Harmony",      "make_amends"));     // mend the frayed thing
 
     // DIRECT: args derive from the want text (a query) — no inference, bypasses the surface.
     private static final Set<String> DIRECT_VERBS = Set.of("library_search", "web_search");
@@ -91,7 +120,8 @@ public final class WantActBridge {
     private static final Set<String> FORCE_VERBS = Set.of(
         "sending_stone", "emote", "examine", "bear_the_wound", "seek_sanctuary",
         "acknowledge_harm", "make_amends", "propose_peer_bond", "flag_protection",
-        "save_artifact", "note", "write_journal", "write_text", "tell_agent", "set_goal");
+        "save_artifact", "note", "write_journal", "write_text", "tell_agent", "set_goal",
+        "go_to_room", "recall");
 
     static Mode modeFor(String verb) {
         if (verb == null) return Mode.DEFER;
@@ -134,8 +164,35 @@ public final class WantActBridge {
      */
     public static Decision decide(String explicitVerb, String wantText,
                                   Map<String, Double> driveLevels, VerbResolver resolver) {
+        return decide(explicitVerb, wantText, driveLevels, resolver, null);
+    }
+
+    /**
+     * As above, but told who is actually available. A want toward a person resolves
+     * differently depending on whether anyone is here: reaching into an empty room is not
+     * an act, and offering the nearest action-shaped verb instead is how a want for
+     * company became a request to the coding backend (2026-08-19).
+     *
+     * @param presence who she could reach; null falls back to the presence-blind path
+     */
+    public static Decision decide(String explicitVerb, String wantText,
+                                  Map<String, Double> driveLevels, VerbResolver resolver,
+                                  RelationalAffordance.Presence presence) {
         // Welfare floor FIRST — nothing pulling → defer (and the agent rests).
         if (dominantPull(driveLevels) < ACT_THRESHOLD) return Decision.defer();
+
+        // A relational pull is answered by the relational map or by nothing at all. It
+        // must NOT fall through to the keyword rules, which would match "make something"
+        // in the phrasing of a want for company and hand her a workbench.
+        if (presence != null) {
+            var dom = dominantDriveKey(driveLevels);
+            if (RelationalAffordance.isRelational(dom)) {
+                var v = RelationalAffordance.verbFor(dom, presence);
+                if (v == RelationalAffordance.NONE) return Decision.defer();
+                var m = modeFor(v);
+                return m == Mode.DEFER ? Decision.defer() : new Decision(m, v);
+            }
+        }
 
         String verb = resolveVerb(wantText, driveLevels, resolver, explicitVerb);
         if (verb == null || verb.isBlank()) return Decision.defer();

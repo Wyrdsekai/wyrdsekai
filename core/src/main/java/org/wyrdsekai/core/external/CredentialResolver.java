@@ -102,6 +102,29 @@ public final class CredentialResolver {
         return Optional.empty();
     }
 
+    /**
+     * Is this slot populated? Asks WITHOUT notifying anyone.
+     *
+     * <p>{@link #resolve} tells the steward when something needed a credential that is
+     * not set, which is right when a tool actually wanted it. It is wrong when we are
+     * merely taking inventory — and on 2026-08-21 {@code ItemApiSurface} used
+     * {@code resolve} to decide which adapters to advertise, so authoring a single item
+     * asked for all seventeen credentials and sent the steward fourteen notifications in
+     * one second: redfin, wolfram, coinbase, todoist, matrix, discord, shopify, …
+     *
+     * <p>"Do we have this?" and "something needed this and it was missing" are different
+     * questions. Only the second is worth interrupting a person for.
+     */
+    public boolean has(String slot) {
+        if (slot == null || slot.isBlank()) return false;
+        try {
+            return safeReader.apply(slot).isPresent();
+        } catch (Exception e) {
+            log.debug("credential probe failed for {}: {}", slot, e.getMessage());
+            return false;
+        }
+    }
+
     private void notifyMissOnce(String slot, String stewardDid) {
         var now = System.currentTimeMillis();
         var key = (stewardDid == null ? "" : stewardDid) + ":" + slot;

@@ -76,7 +76,7 @@ class CompanionActorParentalQuotaTest {
     void setUp() {
         var jdbcUrl = TestDb.createInMemory();
         var auth = new AuthService(jdbcUrl);
-        stewardId = auth.register("operator", "password123", "Masumi").orElseThrow().userId();
+        stewardId = auth.register("operator", "password123", "Operator").orElseThrow().userId();
         service = ParentalControlService.init(jdbcUrl, new SqlDialect.SQLite(), auth);
 
         roomProbe = testKit.createTestProbe();

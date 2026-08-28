@@ -6,12 +6,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.common.protocol.S2CMessage;
 import org.wyrdsekai.core.agent.CommandRouter;
-import org.wyrdsekai.core.codeplane.CodeItemStore;
+import org.wyrdsekai.core.codezaiku.CodeItemStore;
 
 import java.lang.reflect.Modifier;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.io.IOException;
 
 /**
  * Phase 1c — interface-conformance + registry-roundtrip tests for the
@@ -29,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * verifies the basic contract: {@link CodingTaskBackend#name()} is
  * non-null, {@link CodingTaskBackend#tier()} returns a valid enum, and
  * {@link CodingTaskBackend#healthCheck()} works synchronously and via
- * the async future. Phase 1a only ships {@link CodePlaneBackend}; this
+ * the async future. Phase 1a only ships {@link CodeZaikuBackend}; this
  * test reflects the {@code permits} clause and grows automatically as
  * new backends are added.</p>
  */
@@ -40,7 +42,7 @@ class CodingTaskBackendTest {
     private CodeItemStore store;
 
     @BeforeEach void setUp() {
-        store = new CodeItemStore("jdbc:sqlite:" + tmp.resolve("codeplane.db").toAbsolutePath());
+        store = new CodeItemStore("jdbc:sqlite:" + tmp.resolve("codezaiku.db").toAbsolutePath());
     }
 
     @AfterEach void tearDown() {
@@ -51,11 +53,11 @@ class CodingTaskBackendTest {
 
     // ─── Sealed-family conformance ──────────────────────────────────
 
-    @Test void sealed_interface_permits_at_least_codeplane() {
+    @Test void sealed_interface_permits_at_least_codezaiku() {
         // permitted subclasses are exposed via reflection on a sealed type
         var permitted = CodingTaskBackend.class.getPermittedSubclasses();
         assertThat(permitted).isNotEmpty();
-        assertThat(permitted).contains(CodePlaneBackend.class);
+        assertThat(permitted).contains(CodeZaikuBackend.class);
     }
 
     @Test void all_permitted_backends_meet_contract() throws Exception {
@@ -90,12 +92,12 @@ class CodingTaskBackendTest {
 
     @Test void registry_register_then_lookup_returns_same_instance() {
         var registry = new BackendRegistry();
-        var router = stubRouter(Set.of("codeplane"));
-        var backend = new CodePlaneBackend(store, router, "did:zone:alpha");
+        var backend = new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, stubCliRunner());
 
         registry.register(backend);
 
-        var looked = registry.backendFor(CodePlaneBackend.NAME);
+        var looked = registry.backendFor(CodeZaikuBackend.NAME);
         assertThat(looked).isPresent();
         assertThat(looked.get()).isSameAs(backend);
     }
@@ -119,15 +121,15 @@ class CodingTaskBackendTest {
         // last-write-wins (replace). This test pins that behaviour so a
         // future change to "reject duplicates" doesn't slip in unnoticed.
         var registry = new BackendRegistry();
-        var router1 = stubRouter(Set.of("codeplane"));
-        var router2 = stubRouter(Set.of("codeplane"));
-        var first  = new CodePlaneBackend(store, router1, "first");
-        var second = new CodePlaneBackend(store, router2, "second");
+        var first  = new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, stubCliRunner());
+        var second = new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, stubCliRunner());
 
         registry.register(first);
         registry.register(second);
 
-        var looked = registry.backendFor(CodePlaneBackend.NAME);
+        var looked = registry.backendFor(CodeZaikuBackend.NAME);
         assertThat(looked).isPresent();
         assertThat(looked.get())
             .as("second register call should replace the first")
@@ -138,10 +140,10 @@ class CodingTaskBackendTest {
 
     @Test void registry_adapter_round_trip() {
         var registry = new BackendRegistry();
-        var adapter = new CodePlaneEventAdapter(null);
+        var adapter = new CodeZaikuEventAdapter(null);
         registry.register(adapter);
 
-        var looked = registry.adapterFor(CodePlaneBackend.NAME);
+        var looked = registry.adapterFor(CodeZaikuBackend.NAME);
         assertThat(looked).isPresent();
         assertThat(looked.get()).isSameAs(adapter);
         assertThat(registry.adapters()).hasSize(1);
@@ -149,8 +151,9 @@ class CodingTaskBackendTest {
 
     @Test void registry_clear_removes_all() {
         var registry = new BackendRegistry();
-        registry.register(new CodePlaneBackend(store, stubRouter(Set.of()), "x"));
-        registry.register(new CodePlaneEventAdapter(null));
+        registry.register(new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, stubCliRunner()));
+        registry.register(new CodeZaikuEventAdapter(null));
         assertThat(registry.backends()).hasSize(1);
         assertThat(registry.adapters()).hasSize(1);
 
@@ -159,22 +162,36 @@ class CodingTaskBackendTest {
         assertThat(registry.adapters()).isEmpty();
     }
 
-    // ─── CodePlane-specific health check signal ─────────────────────
+    // ─── CodeZaiku-specific health check signal (CLI edition) ───────
+    // 2026-08-15: health is `codezaiku --version`, same availability rule
+    // as every backend — the old router-namespace probe targeted the
+    // archived zone-bridge design.
 
-    @Test void codeplane_health_reports_false_when_no_router() {
-        var backend = new CodePlaneBackend(store, null, "x");
+    @Test void codezaiku_health_reports_false_when_binary_missing() {
+        GooseBackend.ProcessRunner throwing = (args, env, workdir, timeout) -> {
+            throw new IOException("Cannot run program \"codezaiku\"");
+        };
+        var backend = new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, throwing);
         var healthy = backend.healthCheck().toCompletableFuture().join();
         assertThat(healthy).isFalse();
     }
 
-    @Test void codeplane_health_reports_false_when_namespace_missing() {
-        var backend = new CodePlaneBackend(store, stubRouter(Set.of("iot")), "x");
+    @Test void codezaiku_health_reports_false_when_version_probe_fails() {
+        var backend = new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, stubCliRunner());
         var healthy = backend.healthCheck().toCompletableFuture().join();
         assertThat(healthy).isFalse();
     }
 
-    @Test void codeplane_health_reports_true_when_namespace_present() {
-        var backend = new CodePlaneBackend(store, stubRouter(Set.of("codeplane")), "x");
+    @Test void codezaiku_health_reports_true_when_version_probe_passes() {
+        GooseBackend.ProcessRunner ok = (args, env, workdir, timeout) -> {
+            assertThat(args).containsExactly(
+                CodeZaikuRuntimeConfig.defaults().executablePath(), "--version");
+            return new GooseBackend.ProcessResult(0, "codezaiku 0.3.0", "", false);
+        };
+        var backend = new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), store, ok);
         var healthy = backend.healthCheck().toCompletableFuture().join();
         assertThat(healthy).isTrue();
     }
@@ -182,11 +199,18 @@ class CodingTaskBackendTest {
     // ─── Helpers ────────────────────────────────────────────────────
 
     /** Build a default instance of any permitted concrete backend. */
+    /** CLI-shaped stub: exit 1, no output — health=false, nothing spawned. */
+    private static GooseBackend.ProcessRunner stubCliRunner() {
+        return (args, env, workdir, timeout) ->
+            new GooseBackend.ProcessResult(1, "", "", false);
+    }
+
     private CodingTaskBackend newBackendFor(Class<?> cls) throws Exception {
-        if (cls == CodePlaneBackend.class) {
-            return new CodePlaneBackend(store,
-                stubRouter(Set.of(CodePlaneBackend.NAME)),
-                "did:zone:test");
+        if (cls == CodeZaikuBackend.class) {
+            // Stub runner: exit 1 → healthCheck reports false promptly,
+            // which is all the contract test needs (non-null Boolean).
+            return new CodeZaikuBackend(
+                CodeZaikuRuntimeConfig.defaults(), store, stubCliRunner());
         }
         if (cls == OpenCodeBackend.class) {
             // Stub runner so the contract test's healthCheck() probe
@@ -303,26 +327,15 @@ class CodingTaskBackendTest {
                     "wyrd coding login pi", "test"),
                 stub);
         }
+        if (cls == AcpBackend.class) {
+            // Transport factory that fails loudly — the contract test never
+            // opens a session; an empty agentCommand keeps healthCheck() false.
+            return new AcpBackend("acp-test", List.of(),
+                Duration.ofSeconds(1),
+                () -> { throw new IllegalStateException("contract test must not connect"); });
+        }
         // Future backends slot in here as their permits clause arrives.
         throw new IllegalStateException("No factory for permitted backend " + cls
             + " — extend CodingTaskBackendTest.newBackendFor() when a new backend lands");
-    }
-
-    /** Minimal {@link CommandRouter} that reports a known namespace set. */
-    private static CommandRouter stubRouter(Set<String> namespaces) {
-        return new CommandRouter() {
-            @Override
-            public boolean execute(String entityId, String command,
-                                    List<String> args, Map<String, String> payload,
-                                    Consumer<S2CMessage> respond) {
-                if (command == null) return false;
-                int dot = command.indexOf('.');
-                var ns = dot > 0 ? command.substring(0, dot) : command;
-                return namespaces.contains(ns);
-            }
-            @Override public Set<String> availableNamespaces() {
-                return new HashSet<>(namespaces);
-            }
-        };
     }
 }

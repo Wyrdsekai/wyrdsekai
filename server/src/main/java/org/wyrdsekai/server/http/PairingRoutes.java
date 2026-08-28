@@ -53,6 +53,7 @@ public final class PairingRoutes {
     public void register(JavalinDefaultRoutingApi app) {
         app.post("/api/pair/request", this::handlePairRequest);
         app.post("/api/pair/verify", this::handlePairVerify);
+        app.post("/api/pair/device", this::handlePairDevice);
         app.post("/api/pair/key", this::handlePairWithKey);
         app.get("/api/pair/status", this::handlePairStatus);
         app.get("/api/pair/devices", this::handleListDevices);
@@ -155,6 +156,35 @@ public final class PairingRoutes {
 
         var r = result.get();
         ctx.json(new PairResultResponse(
+            r.token(), r.householdId(), r.householdName(),
+            r.serverDid(), r.natsUrl(), r.serverUrl(),
+            r.relayUrl(), r.relayToken()));
+    }
+
+    /**
+     * POST /api/pair/device — an AUTHENTICATED account mints a device
+     * identity for the device it is calling from (the hermod consent
+     * path: many doors, one identity — the session is the proof, the
+     * registry row is the identity). Bearer = session token, NOT a
+     * device token. Idempotent per (user, device name).
+     */
+    private void handlePairDevice(Context ctx) throws Exception {
+        var token = AuthRoutes.extractToken(ctx);
+        if (token == null || token.isBlank()) {
+            ctx.status(401).json(new ErrorResponse("Session token required (Bearer header)"));
+            return;
+        }
+        var user = authService.validateSession(token);
+        if (user.isEmpty()) {
+            ctx.status(401).json(new ErrorResponse("Invalid or expired session"));
+            return;
+        }
+        var req = Json.mapper().readValue(ctx.body(), PairRequest.class);
+        var r = pairingService.pairForUser(
+            user.get().id(), req.deviceName(), req.deviceType());
+        log.info("Device identity minted via session for {}: {}",
+            user.get().username(), req.deviceName());
+        ctx.status(201).json(new PairResultResponse(
             r.token(), r.householdId(), r.householdName(),
             r.serverDid(), r.natsUrl(), r.serverUrl(),
             r.relayUrl(), r.relayToken()));

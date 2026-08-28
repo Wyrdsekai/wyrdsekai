@@ -376,6 +376,43 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
     // --- Response ---
 
+    /**
+     * Fold a response's tool calls into its text content as action JSON —
+     * tool calls are the ACTION, prose is narration (see the long note at
+     * the primary call site). Shared by the router's own response path and
+     * the hermod mesh path so both produce identical ReAct-parseable text.
+     */
+    public static String foldedContent(InferenceClient.ChatResponse resp) {
+        var firstChoice = resp.choices() == null || resp.choices().isEmpty()
+            ? null : resp.choices().get(0);
+        var raw = firstChoice == null || firstChoice.message() == null
+            || firstChoice.message().content() == null
+            ? "" : firstChoice.message().content();
+        // Strip <think>...</think> blocks (thinking-mode models) — interior
+        // must never reach the parser as content, on ANY path (local,
+        // retry, or hermod mesh).
+        var content = ActionParser.stripThinkTags(raw);
+        if (content == null || content.isBlank()) content = raw;
+        if (firstChoice != null
+                && firstChoice.message().toolCalls() != null
+                && !firstChoice.message().toolCalls().isEmpty()) {
+            try {
+                var toolCall = firstChoice.message().toolCalls().getFirst();
+                var argsJson = toolCall.function().arguments() instanceof String str
+                        ? str : Json.mapper().writeValueAsString(toolCall.function().arguments());
+                var actionNode = Json.mapper().createObjectNode();
+                actionNode.put("action", toolCall.function().name());
+                actionNode.setAll((ObjectNode) Json.mapper().readTree(argsJson));
+                var toolJson = Json.mapper().writeValueAsString(actionNode);
+                content = content.isEmpty() ? toolJson
+                        : content + "\n```json\n" + toolJson + "\n```";
+            } catch (Exception e) {
+                log.warn("Failed to serialize tool call: {}", e.getMessage());
+            }
+        }
+        return content;
+    }
+
     public sealed interface InferResponse {}
 
     public record InferOk(String requestId, String content,
@@ -779,6 +816,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             // Qwen3.5 chat template requires single system message at position 0.
             // Consolidate multiple system messages into one.
             messages = consolidateSystemMessages(messages);
+            // ...and it raises if there is NO user turn at all, which is the
+            // natural shape of a tool-result follow-up. See ensureUserTurn.
+            messages = ensureUserTurn(messages);
         }
 
         var chatReq = new InferenceClient.ChatRequest(effectiveModel, messages,
@@ -789,41 +829,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
         backend.chatCompletion(chatReq)
                 .thenAccept(resp -> {
-                    var firstChoice = resp.choices() != null && !resp.choices().isEmpty()
-                            ? resp.choices().getFirst() : null;
-                    var rawContent2 = firstChoice != null && firstChoice.message().content() != null
-                            ? firstChoice.message().content()
-                            : "";
-                    // Strip <think>...</think> blocks (Qwen3.5 with Jinja thinking=1)
-                    var content = ActionParser.stripThinkTags(rawContent2);
-                    if (content == null || content.isBlank()) content = rawContent2;
-                    // If the model emitted tool calls, serialize them as JSON in the content
-                    // so the CompanionActor can parse them alongside regular text responses.
-                    // IMPORTANT: tool calls take priority over text content. Models often emit
-                    // both "I'll search for X" (content) AND a tool_call for searching_glass.
-                    // The tool call is the ACTION — the text is just narration. If we only
-                    // use content when it's non-empty, the tool call gets silently dropped.
-                    if (firstChoice != null
-                            && firstChoice.message().toolCalls() != null
-                            && !firstChoice.message().toolCalls().isEmpty()) {
-                        try {
-                            var toolCall = firstChoice.message().toolCalls().getFirst();
-                            var argsJson = toolCall.function().arguments() instanceof String s
-                                    ? s : Json.mapper().writeValueAsString(toolCall.function().arguments());
-                            // Wrap as action JSON that ActionParser can handle
-                            var actionNode = Json.mapper().createObjectNode();
-                            actionNode.put("action", toolCall.function().name());
-                            actionNode.setAll((ObjectNode)
-                                    Json.mapper().readTree(argsJson));
-                            // Prepend the narration text so the companion speaks it too
-                            var toolJson = Json.mapper().writeValueAsString(actionNode);
-                            content = content.isEmpty() ? toolJson
-                                    : content + "\n```json\n" + toolJson + "\n```";
-                        } catch (Exception e) {
-                            log.warn("Failed to serialize tool call: {}", e.getMessage());
-                        }
-                    }
-                    self.tell(new InferResult(req.requestId(), content,
+                    // Think-tag strip + tool-call fold — single source shared
+                    // with the retry path and the hermod mesh path.
+                    self.tell(new InferResult(req.requestId(), foldedContent(resp),
                             backend.name(), resp.usage(), req.replyTo()));
                 })
                 .exceptionally(ex -> {
@@ -882,12 +890,35 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 log.debug("Capability '{}' resolved to backend '{}', model '{}', tier '{}'",
                         req.capability(), entry.backendName(), entry.model(), entry.tier());
             } else {
-                // Tier-restricted and no backend available within tier
+                // Tier-restricted and no backend available within tier.
+                //
+                // A DOOR THAT WON'T OPEN SAYS WHO HAS THE KEY. Live 2026-08-10:
+                // a companion reached for deep reasoning mid-conversation, got
+                // "Cloud inference not available (tier: household)", and told
+                // her person only "the reasoning tool isn't available" — a dead
+                // end for the one human who could actually fix it. The error is
+                // the steward's only signpost, so it names the cause (earned
+                // tier below the backend vs. no capable backend at all) and the
+                // concrete remedy.
                 if (req.maxTier() != null) {
-                    log.info("Capability '{}' not available within tier '{}' for agent {}",
-                            req.capability(), req.maxTier(), req.agentId());
+                    var anyTier = capabilityRegistry.resolve(req.capability());
+                    String detail = anyTier.isPresent()
+                        ? "a backend exists at tier '" + anyTier.get().tier()
+                            + "', above this companion's earned tier '" + req.maxTier()
+                            + "'. Tiers grow with bond depth and reputation — or the "
+                            + "steward can register a reasoning-capable model within "
+                            + "her tier: set WYRDSEKAI_MODEL_COMPLEX (config key "
+                            + "inference.model_complex) to a model served by a "
+                            + "local/household backend, then restart."
+                        : "no configured backend offers it. The steward can set "
+                            + "WYRDSEKAI_MODEL_COMPLEX (config key "
+                            + "inference.model_complex) to a capable model on any "
+                            + "backend, then restart — models over 30B also "
+                            + "auto-register as 'reasoning'.";
+                    log.warn("Capability '{}' unavailable for agent {} (tier {}): {}",
+                            req.capability(), req.agentId(), req.maxTier(), detail);
                     req.replyTo().tell(new InferError(req.requestId(),
-                            "Cloud inference not available for this agent (tier: " + req.maxTier() + ")"));
+                            "capability_unavailable: '" + req.capability() + "' — " + detail));
                     drainQueue();
                     return;
                 }
@@ -1365,30 +1396,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * serializing any tool_call into the ```json action block ActionParser expects.
      */
     private String renderContent(InferenceClient.ChatResponse resp) {
-        var firstChoice = resp.choices() != null && !resp.choices().isEmpty()
-            ? resp.choices().getFirst() : null;
-        var raw = firstChoice != null && firstChoice.message().content() != null
-            ? firstChoice.message().content() : "";
-        var content = ActionParser.stripThinkTags(raw);
-        if (content == null || content.isBlank()) content = raw;
-        if (firstChoice != null
-                && firstChoice.message().toolCalls() != null
-                && !firstChoice.message().toolCalls().isEmpty()) {
-            try {
-                var toolCall = firstChoice.message().toolCalls().getFirst();
-                var argsJson = toolCall.function().arguments() instanceof String s
-                    ? s : Json.mapper().writeValueAsString(toolCall.function().arguments());
-                var actionNode = Json.mapper().createObjectNode();
-                actionNode.put("action", toolCall.function().name());
-                actionNode.setAll((ObjectNode) Json.mapper().readTree(argsJson));
-                var toolJson = Json.mapper().writeValueAsString(actionNode);
-                content = content.isEmpty() ? toolJson
-                    : content + "\n```json\n" + toolJson + "\n```";
-            } catch (Exception e) {
-                log.warn("Failed to serialize tool call: {}", e.getMessage());
-            }
-        }
-        return content;
+        return foldedContent(resp);
     }
 
     // --- Queue management ---
@@ -1436,6 +1444,44 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * Consolidate multiple system messages into a single system message at position 0.
      * Required for chat templates (e.g., Qwen3.5) that enforce "system must be first."
      */
+    /**
+     * Guarantee at least one user-role message.
+     *
+     * <p>The Qwen chat template scans backwards for the last user turn to decide
+     * multi-step tool handling, and <b>raises</b> if it finds none:</p>
+     *
+     * <pre>Jinja Exception: No user query found in messages.  (HTTP 400)</pre>
+     *
+     * <p>A tool-result follow-up is naturally system + assistant + tool with no
+     * user turn, so <b>every</b> follow-up after a tool call failed on both
+     * backends. Observed live 2026-08-07: the companion ran a tool, could not
+     * speak about the result, and the never-silent guard read out the raw digest
+     * — "it returned raw data I couldn't read as an answer". It read as a
+     * retrieval failure and was nothing of the kind.</p>
+     *
+     * <p>Sibling of {@link #consolidateSystemMessages} — same class of defect
+     * (the template's shape requirements), same place to fix it.</p>
+     */
+    static List<InferenceClient.ChatMessage> ensureUserTurn(
+            List<InferenceClient.ChatMessage> messages) {
+        if (messages == null || messages.isEmpty()) return messages;
+        for (var m : messages) {
+            if (m != null && "user".equals(m.role())) return messages;
+        }
+        // Insert after a leading system message so the template still finds the
+        // system prompt at position 0.
+        var out = new ArrayList<InferenceClient.ChatMessage>(messages.size() + 1);
+        int insertAt = (!messages.isEmpty() && messages.get(0) != null
+            && "system".equals(messages.get(0).role())) ? 1 : 0;
+        out.addAll(messages.subList(0, insertAt));
+        out.add(new InferenceClient.ChatMessage("user",
+            "Given what you just found, answer in your own words."));
+        out.addAll(messages.subList(insertAt, messages.size()));
+        log.debug("Inserted a synthetic user turn — the chat template rejects "
+            + "message lists without one ({} messages)", messages.size());
+        return out;
+    }
+
     private static List<InferenceClient.ChatMessage> consolidateSystemMessages(
             List<InferenceClient.ChatMessage> messages) {
         if (messages == null || messages.size() <= 1) return messages;

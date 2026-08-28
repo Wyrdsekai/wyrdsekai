@@ -1,5 +1,8 @@
 package org.wyrdsekai.core.coding;
 
+
+import com.typesafe.config.ConfigFactory;
+
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
@@ -82,6 +85,8 @@ public final class CodingCli {
                 case "update"            -> doUpdate(rest);
                 case "download-bundle"   -> doDownloadBundle(rest);
                 case "login"             -> doLogin(rest);
+                case "chain"             -> doChain(rest);
+                case "probe"             -> doProbe(rest);
                 case "help", "-h", "--help" -> printUsage();
                 default -> {
                     err.println("wyrd coding: unknown subcommand '" + sub + "'");
@@ -115,6 +120,38 @@ public final class CodingCli {
             String marker = markerFor(b, installed);
             String detail = formatLine(b);
             out.printf("  %s %-12s %s%n", marker, name, detail);
+        }
+        return 0;
+    }
+
+    /**
+     * Print the backend chain this node would actually use, in order.
+     *
+     * <p>Exists because "the documented way to choose a backend" silently did
+     * not work: {@code reference.conf} bound the env var to the HOCON key
+     * {@code default-backend} while {@link CodingBackendPreference} read only
+     * {@code default_backend}, so setting
+     * {@code WYRDSEKAI_CODING_DEFAULT_BACKEND} wrote a key nobody consulted and
+     * the chain stayed {@code [goose, pi]} (found 2026-08-23, wiring CodeZaiku
+     * onto staging). A setting whose effect you cannot see is a setting you
+     * cannot trust — so {@code wyrd coding use} writes the config and then
+     * reads the chain back through the SAME resolver the server uses.</p>
+     */
+    private int doChain(String[] args) {
+        // Load config the way a server boot does. CodingBackendPreference.chain()
+        // with no argument reads a static the SERVER installs at boot — in a CLI
+        // process it is null, so the no-arg call reports the built-in fallback
+        // [goose, pi] no matter what this node is configured to use. This command
+        // exists to make the setting observable; reporting a default as though it
+        // were the setting is the very failure it is meant to catch.
+        var chain = CodingBackendPreference.chain(ConfigFactory.load());
+        if (chain.isEmpty()) {
+            out.println("(no backends preferred — the built-in chain is empty)");
+            return 0;
+        }
+        out.println("Coding backend chain (first registered one wins):");
+        for (int i = 0; i < chain.size(); i++) {
+            out.printf("  %d. %s%n", i + 1, chain.get(i));
         }
         return 0;
     }
@@ -535,6 +572,9 @@ public final class CodingCli {
         out.println();
         out.println("Commands:");
         out.println("  list                       Show available + installed backends");
+        out.println("  use <backend>              Choose the default backend, then show");
+        out.println("                             the chain this node will actually use");
+        out.println("  chain                      Show that chain without changing it");
         out.println("  status                     Tabular status of every backend");
         out.println("  install <backend> [-f]     Download + verify + install a backend");
         out.println("  uninstall <backend>        Remove an installed backend");
@@ -573,6 +613,124 @@ public final class CodingCli {
     }
 
     // ── Helpers ──
+
+
+    /**
+     * {@code wyrd coding probe [backend] [--drive <url>] [--timeout-min <n>]}
+     *
+     * <p>Registers backends through {@link CodingBackendBootstrap} — the SAME
+     * wiring the server boots with — then submits one tiny real task through
+     * the selected backend and judges it by what lands on disk. Every cheaper
+     * signal has lied at least once: entries have listed, installed,
+     * sha-verified, extracted, and still been unable to produce a file.
+     * "Installed" is a claim about bytes; a probe is a claim about WORK.</p>
+     *
+     * <p>Exit 0: task succeeded and wrote a file. Exit 1: it did not.
+     * Exit 3: the backend did not REGISTER on this machine — the same reasons
+     * the server would skip it (disabled, binary unreachable, auth missing),
+     * printed by the bootstrap above the verdict.</p>
+     */
+    private int doProbe(String[] restArr) {
+        var rest = List.of(restArr);
+        String backend = "codezaiku";
+        String drive = null;
+        int timeoutMin = 15;
+        for (int i = 0; i < rest.size(); i++) {
+            switch (rest.get(i)) {
+                case "--drive" -> drive = rest.get(++i);
+                case "--timeout-min" -> timeoutMin = Integer.parseInt(rest.get(++i));
+                default -> backend = rest.get(i);
+            }
+        }
+        try {
+            // Overlay: force the chosen backend ENABLED (a probe is an explicit
+            // act), and point the url-bearing backends at --drive when given.
+            var sb = new StringBuilder();
+            sb.append("wyrdsekai.coding.backends.").append(backend).append(".enabled = true\n");
+            if (drive != null && !drive.isBlank()) {
+                sb.append("wyrdsekai.coding.backends.codezaiku.drive-url = \"").append(drive).append("\"\n");
+                sb.append("wyrdsekai.coding.backends.goose.base-url = \"").append(drive).append("\"\n");
+                sb.append("wyrdsekai.coding.backends.opencode.base-url = \"").append(drive).append("/v1\"\n");
+            }
+            var cfg = com.typesafe.config.ConfigFactory.parseString(sb.toString())
+                .withFallback(com.typesafe.config.ConfigFactory.load()).resolve();
+
+            CodingBackendBootstrap.init(cfg);
+            var chosen = BackendRegistry.get().backendFor(backend).orElse(null);
+            if (chosen == null) {
+                err.println("probe: '" + backend + "' DID NOT REGISTER on this machine — "
+                    + "the bootstrap log above says why (binary unreachable, auth missing, "
+                    + "or disabled). That is the same answer the server would give.");
+                err.println("probe: registered here: " + BackendRegistry.get().backends().stream()
+                    .map(CodingTaskBackend::name).toList());
+                return 3;
+            }
+            var workspace = java.nio.file.Files.createTempDirectory("wyrd-coding-probe");
+            out.println("probe: backend=" + backend + " class=" + chosen.getClass().getSimpleName()
+                + (drive == null ? "" : " drive=" + drive));
+            var spec = new TaskSpec(java.util.UUID.randomUUID(), "did:wyrd:probe",
+                "implement",
+                // Contract-neutral on purpose. The first wording demanded a
+                // specific Python file — and the items-as-tools preamble most
+                // backends wrap around every task FORBIDS Python and demands
+                // one GraalJS file. Small models fumbled the contradiction in
+                // assorted ways; Claude read both instructions, named the
+                // conflict precisely, and correctly REFUSED — a probe failure
+                // that was the probe's own fault. Ask for the OUTCOME and let
+                // each backend's contract choose the shape.
+                "Create one small tool file whose invocation returns exactly the "
+                    + "text wyrd-probe-ok. Use whatever single-file shape this "
+                    + "environment's instructions require.",
+                workspace.toString(), List.of(), 0L, null);
+            // The operator typed `probe` — they ARE the consent. In the server,
+            // permission asks land on a surface a person answers; in this CLI
+            // there is no such surface, so an ACP-style backend's asks sat
+            // unanswered until the 90s consent window denied them, the agent
+            // limped on without file access, and the probe read as a HANG.
+            // Auto-grant asks belonging to THIS task only, and say so.
+            var probeTask = spec.taskId().toString();
+            var granting = new java.util.concurrent.atomic.AtomicBoolean(true);
+            var granter = Thread.ofVirtual().name("probe-consent").start(() -> {
+                var broker = ConsentBroker.get();
+                while (granting.get()) {
+                    for (var pc : broker.pending()) {
+                        if (probeTask.equals(pc.taskId())) {
+                            out.println("probe: consent auto-granted (operator-initiated): "
+                                + pc.summary());
+                            broker.answer(pc.id(), true);
+                        }
+                    }
+                    try { Thread.sleep(500); } catch (InterruptedException e) { return; }
+                }
+            });
+            TaskResult result;
+            try {
+                result = chosen.submitTask(spec)
+                    .get(timeoutMin, java.util.concurrent.TimeUnit.MINUTES);
+            } catch (java.util.concurrent.TimeoutException te) {
+                err.println("probe error: TIMED OUT after " + timeoutMin + " min — the "
+                    + "backend accepted the task and never finished. That is a hang, "
+                    + "not an auth refusal; check its own logs.");
+                return 1;
+            } finally {
+                granting.set(false);
+                granter.interrupt();
+            }
+            long files;
+            try (var walk = java.nio.file.Files.walk(workspace)) {
+                files = walk.filter(java.nio.file.Files::isRegularFile).count();
+            }
+            out.println("probe: status=" + result.status()
+                + " files=" + files + " summary=" + result.summary());
+            boolean ok = result.status() == TaskStatus.SUCCEEDED && files > 0;
+            out.println(ok ? "probe: OK — the backend did real work on this machine"
+                           : "probe: FAILED — see above");
+            return ok ? 0 : 1;
+        } catch (Exception e) {
+            err.println("probe error: " + e.getMessage());
+            return 1;
+        }
+    }
 
     private BundleManifest loadManifest() throws IOException {
         // Test-friendly system-property override (env vars are tricky to

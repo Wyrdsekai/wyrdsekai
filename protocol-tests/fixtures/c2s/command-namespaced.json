@@ -1,7 +1,7 @@
 {
   "type": "command",
   "id": "msg-009b",
-  "command": "codeplane.approve",
+  "command": "codezaiku.approve",
   "args": [],
   "payload": {
     "eventId": "evt-42",

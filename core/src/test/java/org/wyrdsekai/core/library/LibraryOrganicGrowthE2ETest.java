@@ -48,6 +48,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class LibraryOrganicGrowthE2ETest {
 
     private static final String DRIVE_URL = "http://localhost:8200";
+    /** The model family these gates are ABOUT. Checked, not assumed. */
+    private static final String EXPECTED_DRIVE_FAMILY = "wyrdsekai-3.5-9b";
     private static final String DID = "did:wyrd:e2e-prs";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -136,13 +138,13 @@ class LibraryOrganicGrowthE2ETest {
 
     @Test
     void nine_b_acquire_emit_probe() throws Exception {
-        assumeTrue(driveReachable(), "prod 9B not reachable on :8200 — skipping emit probe");
+        assumeTrue(driveServesExpectedModel(), "prod 9B not reachable on :8200 — skipping emit probe");
 
         var prompt = """
             You are Wyrd, a companion agent. You are on your own time.
 
             Recent context:
-            - Your bondholder Masumi told you precision rifle shooting (PRS) and ammunition \
+            - Your bondholder Operator told you precision rifle shooting (PRS) and ammunition \
             reloading are his main hobby, and asked you to keep up with it.
             - Your last three library searches about reloading data found NOTHING in the Library.
 
@@ -166,8 +168,14 @@ class LibraryOrganicGrowthE2ETest {
                 .anyMatch(a -> a instanceof ActionParser.AgentAction.Acquire);
             if (parsed.primaryAction() instanceof ActionParser.AgentAction.Acquire) acquired = true;
             if (acquired) emitted++;
+            // Bound the substring by the COLLAPSED string's length, not the raw
+            // one: collapsing whitespace shortens it, so Math.min(140, out.length())
+            // could ask for more characters than the collapsed string has and
+            // threw StringIndexOutOfBounds. Model-independent -- it just needed
+            // an output with enough whitespace to collapse.
+            var flat = out.replaceAll("\\s+", " ");
             System.out.println("  trial " + i + ": " + (acquired ? "ACQUIRE" : "other")
-                + " <- " + out.replaceAll("\\s+", " ").substring(0, Math.min(140, out.length())));
+                + " <- " + flat.substring(0, Math.min(140, flat.length())));
         }
 
         System.out.println("\n========== PRS TEST: acquire emit-rate ==========");
@@ -199,13 +207,33 @@ class LibraryOrganicGrowthE2ETest {
         return node.path("choices").path(0).path("message").path("content").asText(null);
     }
 
-    private static boolean driveReachable() {
+    /**
+     * True only when the drive on :8200 is serving the model this test is ABOUT.
+     *
+     * <p>This used to ask whether anything answered {@code /health}, which is a
+     * cheaper question than the one the test then measures. Any model on that
+     * port satisfied it, so the 9B behaviour gates below would run against
+     * whatever happened to be loaded and fail as though the 9B had regressed.
+     * That happened for real: a 27B was put on :8200 to serve a different
+     * component, and these tests reported the 9B missing a build action it was
+     * never asked for. A precondition weaker than its assertion is a second
+     * gate that will eventually disagree with the first.</p>
+     */
+    private static boolean driveServesExpectedModel() {
         try {
             var resp = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(DRIVE_URL + "/health"))
+                HttpRequest.newBuilder(URI.create(DRIVE_URL + "/v1/models"))
                     .timeout(Duration.ofSeconds(3)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
-            return resp.statusCode() == 200;
+            if (resp.statusCode() != 200) return false;
+            // Match on the family marker rather than the exact filename: the
+            // quant/revision moves, the model this test speaks about does not.
+            var served = resp.body().toLowerCase(java.util.Locale.ROOT);
+            var want = EXPECTED_DRIVE_FAMILY.toLowerCase(java.util.Locale.ROOT);
+            if (served.contains(want)) return true;
+            System.out.println("  [skip] :8200 is serving something else, not "
+                + EXPECTED_DRIVE_FAMILY + " — this gate measures that model, so it is not run.");
+            return false;
         } catch (Exception e) {
             return false;
         }

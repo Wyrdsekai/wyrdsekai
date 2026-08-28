@@ -3,11 +3,13 @@
   "comment": "Coding-backend bundle manifest. See docs/EXTENDING.md for how backends are selected. v2 (2026-05-04 reconciliation) adds 'distribution' (npm | github_release) + 'npm_package' for npm-distributed CLIs (Cline, Continue, Claude SDK, Gemini CLI). Versions and sha256 placeholders are filled in by scripts/build-coding-cli-manifest.sh at release-build time. Do NOT hand-edit shipped manifests; edit the build helper instead.",
   "backends": {
     "opencode": {
-      "bundled": true,
+      "bundled": false,
       "version": "1.14.33",
-      "path": "data/coding-cli-bundle/opencode/",
       "config_template": "scripts/policy/opencode-config.json",
-      "size_mb": 50
+      "size_mb": 50,
+      "distribution": "npm",
+      "npm_package": "opencode-ai",
+      "comment": "Was marked bundled:true pointing at a directory NO build ever staged — the entry listed as '(bundled)' while a clean install had nothing, and an unguarded registration meant it registered anyway and failed at task time (found live on the household node 2026-08-27). Real distribution is npm; the adapter itself is unchanged. "
     },
     "goose": {
       "bundled": false,
@@ -27,6 +29,42 @@
         "oauth": null,
         "api_key": {
           "note": "Per-provider: ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY / (none for local). Adapter sets the right env var based on coding.backends.goose.provider; no GOOSE_PROVIDER_KEY indirection."
+        }
+      }
+    },
+    "codezaiku": {
+      "bundled": true,
+      "path": "data/coding-cli-bundle/codezaiku/",
+      "version": "0.1.1",
+      "comment": "BUNDLED DEFAULT as of 0.2.0. CodeZaiku (was CodePlane) - Apache-2.0, Wyrdsekai/codezaiku. ONE platform-independent tarball because it is a JVM app, so there is no per-platform asset and every platform key carries the SAME sha - the one artifact named five times, because the installer keys on <platform>-<arch> and has no platform-independent key. It ships bin/codezaiku and bin/codezaiku.bat, so all five are genuinely supported. Needs a JRE 21+; the .deb declares that dependency and the tarball does not, which is why the upstream installer points apt users at the .deb. Its own installer defaults to a PER-USER prefix (~/.local), so the binary often sits outside a service PATH - BackendExecutableResolver searches the data-dir owner's home for exactly this reason. Model routing travels only via CODEZAIKU_DRIVE / CODEZAIKU_MODEL, which the adapter sets from the node's own inference endpoint like every other backend. The download_url/sha are not dead weight on a bundled entry: packaging/build-dist.sh fetches and verifies against THEM to stage the bundle, so a release cannot ship a codezaiku that differs from what this manifest attests.",
+      "distribution": "github_release",
+      "download_url_template": "https://github.com/Wyrdsekai/codezaiku/releases/download/v0.1.1/codezaiku-0.1.1.tar.gz",
+      "sha256_per_platform": {
+        "linux-x64": "127e39041de7f22cb2399274fc9b28c345a42746c476691ea22e8e9789e2aa40",
+        "linux-arm64": "127e39041de7f22cb2399274fc9b28c345a42746c476691ea22e8e9789e2aa40",
+        "darwin-arm64": "127e39041de7f22cb2399274fc9b28c345a42746c476691ea22e8e9789e2aa40",
+        "darwin-x64": "127e39041de7f22cb2399274fc9b28c345a42746c476691ea22e8e9789e2aa40",
+        "windows-x64": "127e39041de7f22cb2399274fc9b28c345a42746c476691ea22e8e9789e2aa40"
+      },
+      "size_mb": 23,
+      "auth": {
+        "oauth": null,
+        "api_key": {
+          "note": "Only for a HOSTED drive. Against the household's own inference endpoint CodeZaiku needs no key; CODEZAIKU_AUTH_TOKEN is the Key Chest slot when it does."
+        }
+      }
+    },
+    "pi": {
+      "bundled": false,
+      "version": "0.73.1",
+      "comment": "pi.dev's pi-coding-agent (MIT). In the fallback chain and fully wired (PiCodingRuntimeConfig/PiCodingBackend) since Phase 2, but NEVER in this manifest — so auth resolution answered 'Backend pi not found in manifest' and every dispatch died as LOGIN_REQUIRED even against the local drive, which needs no login at all. A backend the chain can select must have a manifest row; the chain and the manifest were two lists nobody compared.",
+      "distribution": "npm",
+      "npm_package": "@mariozechner/pi-coding-agent",
+      "size_mb": 12,
+      "auth": {
+        "oauth": null,
+        "api_key": {
+          "note": "None against the household's local drive. Cloud providers read their own env keys (ANTHROPIC_API_KEY / OPENAI_API_KEY) per provider."
         }
       }
     },
@@ -67,9 +105,9 @@
       "auth": {
         "oauth": {
           "command": "claude login --no-browser",
-          "credential_path": "~/.config/claude/",
+          "credential_path": "~/.claude/.credentials.json",
           "headless_supported": true,
-          "note": "claude login --no-browser is the headless paste-this-URL OAuth flow (code.claude.com/docs/en/headless). Pre-2026-05 the manifest mistakenly marked this false. Existing pattern in core/src/main/java/org/wyrdsekai/core/inference/ClaudeCliInference.java."
+          "note": "Points at the FILE, not a directory: the liveness check counts any non-empty directory as a session, and ~/.claude holds backups/projects on a box that has never logged in — a directory path here reports a session that does not exist, and the child then fails interactively. The old value ~/.config/claude/ was a location no Claude Code version ever wrote. claude login --no-browser is the headless paste-this-URL OAuth flow (code.claude.com/docs/en/headless). Pre-2026-05 the manifest mistakenly marked this false. Existing pattern in core/src/main/java/org/wyrdsekai/core/inference/ClaudeCliInference.java."
         },
         "api_key": {
           "env_var": "ANTHROPIC_API_KEY",
@@ -88,10 +126,10 @@
       "tos_warning": "Subject to Google API Terms",
       "auth": {
         "oauth": {
-          "command": "gemini",
+          "command": "NO_BROWSER=true gemini",
           "credential_path": "~/.gemini/oauth_creds.json",
-          "headless_supported": false,
-          "note": "OAuth is browser-only (issue google-gemini/gemini-cli#1696 unresolved as of May 2026). Headless hosts must use API key via GEMINI_API_KEY (or GOOGLE_API_KEY / GOOGLE_APPLICATION_CREDENTIALS)."
+          "headless_supported": true,
+          "note": "Headless paste-this-URL OAuth EXISTS: NO_BROWSER=true triggers getOauthConsentNonInteractive (verified in the shipped 0.57.0 bundle). An earlier note claimed no headless flow; it described an older release."
         },
         "api_key": {
           "env_var": "GEMINI_API_KEY",
@@ -140,8 +178,8 @@
     "openhands": {
       "bundled": false,
       "version": "1.20.0",
-      "comment": "Targets V1 Agent Server (OpenHands/software-agent-sdk v1.20.0 May 4 2026). Adapter speaks REST + WebSocket to `openhands-agent-server --port 8000`, NOT JSON-RPC MCP (the MCP shape used pre-2026-05-04 was fabricated). Docker-image tag is the legacy OpenHands/OpenHands runtime image (v1.7.0); V1 SDK Agent Server is typically run via pip install openhands-agent-server, but the docker_image is retained for `wyrd setup openhands` users who want the legacy runtime sandbox.",
-      "docker_image": "ghcr.io/all-hands-ai/openhands:v1.7.0",
+      "comment": "The pinned runtime tag v1.7.0 no longer exists on ghcr - upstream PRUNES version tags (GitHub releases at v1.15.0, registry holds only 0.x relics plus latest), so any hard image pin here rots. `latest` is the only stable name for the legacy sandbox image. The ADAPTER's real dependency is the V1 agent-server (pip install openhands-agent-server, REST+WS on :8000); the docker image is a legacy convenience only. Targets V1 Agent Server (OpenHands/software-agent-sdk v1.20.0 May 4 2026). Adapter speaks REST + WebSocket to `openhands-agent-server --port 8000`, NOT JSON-RPC MCP (the MCP shape used pre-2026-05-04 was fabricated). Docker-image tag is the legacy OpenHands/OpenHands runtime image (v1.7.0); V1 SDK Agent Server is typically run via pip install openhands-agent-server, but the docker_image is retained for `wyrd setup openhands` users who want the legacy runtime sandbox.",
+      "docker_image": "ghcr.io/all-hands-ai/openhands:latest",
       "agent_server_port": 8000,
       "setup_command": "wyrd setup openhands",
       "tos_warning": "Pulls multi-GB Docker images",

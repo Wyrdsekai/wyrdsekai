@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
+import java.util.TreeSet;
 
 /**
  * {@code wyrd cred set|get|list|unset} — the CLI over the credential Safe.
@@ -92,7 +93,7 @@ class CredAdminMainTest {
         try {
             var perms = Files.getPosixFilePermissions(safeFile);
             assertEquals("[OWNER_READ, OWNER_WRITE]",
-                new java.util.TreeSet<>(perms).toString());
+                new TreeSet<>(perms).toString());
         } catch (UnsupportedOperationException nonPosix) {
             // Windows: TheSafe falls back to owner-only File flags; nothing to assert.
         }

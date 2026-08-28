@@ -6,6 +6,8 @@ import org.wyrdsekai.core.external.AdapterResponse;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -22,6 +24,15 @@ public final class GoogleMapsAdapter extends AbstractPhaseUAdapter {
     @Override public Set<String> capabilities() {
         return caps("geocode", "reverse_geocode", "directions", "places");
     }
+    @Override public Map<String, List<String>> resultKeys() {
+        return Map.of("geocode", GEOCODE_KEYS);
+    }
+
+    static final List<String> GEOCODE_KEYS =
+        List.of("lat", "lon", "display_name", "coords", "formatted_address");
+
+    /** Only geocode reaches Google; the rest are declared scaffolding. */
+    @Override public Set<String> wiredCapabilities() { return caps("geocode"); }
 
     @Override public AdapterResponse invoke(AdapterRequest req) {
         var key = requireCredential();
@@ -38,8 +49,12 @@ public final class GoogleMapsAdapter extends AbstractPhaseUAdapter {
             + "&key=" + URLEncoder.encode(key.get(), StandardCharsets.UTF_8);
         var raw = httpGet(url, null);
         if (!raw.success()) return raw;
+        return digestGeocode(String.valueOf(((Map<?, ?>) raw.data()).get("body")), address);
+    }
+
+    /** Package-visible so the shape contract can be tested against a canned upstream body. */
+    static AdapterResponse digestGeocode(String body, String address) {
         try {
-            var body = String.valueOf(((Map<?, ?>) raw.data()).get("body"));
             var root = JSON.readTree(body);
             var status = root.path("status").asText("");
             if (!"OK".equals(status)) {
@@ -50,10 +65,17 @@ public final class GoogleMapsAdapter extends AbstractPhaseUAdapter {
             }
             var first = root.path("results").path(0);
             var loc = first.path("geometry").path("location");
-            return AdapterResponse.ok(Map.of(
-                "coords", Map.of("lat", loc.path("lat").asDouble(),
-                                 "lon", loc.path("lng").asDouble()),
-                "formatted_address", first.path("formatted_address").asText(address)));
+            var out = new LinkedHashMap<String, Object>();
+            // Flat lat/lon/display_name FIRST: every geocoder we advertise answers in the
+            // same shape, because the contract shows one example and an author writes to
+            // it. Nested coords/formatted_address stay for callers that already read them.
+            out.put("lat", loc.path("lat").asDouble());
+            out.put("lon", loc.path("lng").asDouble());
+            out.put("display_name", first.path("formatted_address").asText(address));
+            out.put("coords", Map.of("lat", loc.path("lat").asDouble(),
+                                     "lon", loc.path("lng").asDouble()));
+            out.put("formatted_address", first.path("formatted_address").asText(address));
+            return AdapterResponse.ok(out);
         } catch (Exception e) {
             return AdapterResponse.fail("parse_error",
                 "geocode response unreadable: " + e.getMessage(), false);

@@ -10,7 +10,7 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * installing a LOCAL markdown pack directory (the codeplane
+ * installing a LOCAL markdown pack directory (the codezaiku
  * pattern/ml-* packs, or any steward-curated folder) via the existing
  * {@code installFromUrl(name, "file:///dir", ...)} path: PackDownloader copies the directory,
  * no chunks exist, and the plain-text-tree fallback converts every .md/.txt into indexed chunks.
@@ -19,7 +19,7 @@ class LocalDirPackInstallTest {
 
     @Test
     void file_url_directory_of_markdown_installs_as_a_pack(@TempDir Path tmp) throws Exception {
-        // A codeplane-shaped pattern pack: markdown files in a directory.
+        // A codezaiku-shaped pattern pack: markdown files in a directory.
         var packSrc = tmp.resolve("ml-fundamentals");
         Files.createDirectories(packSrc);
         Files.writeString(packSrc.resolve("gradient-descent.md"),

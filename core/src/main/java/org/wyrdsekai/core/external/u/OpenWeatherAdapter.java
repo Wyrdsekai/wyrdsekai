@@ -28,6 +28,31 @@ public final class OpenWeatherAdapter extends AbstractPhaseUAdapter {
     @Override public Set<String> capabilities() {
         return caps("current", "forecast", "alerts");
     }
+    @Override public Map<String, List<String>> resultKeys() {
+        return Map.of(
+            "current", CURRENT_KEYS,
+            "forecast", FORECAST_KEYS);
+    }
+
+    /** Fahrenheit only — there is no temp_c, and a contract that stays silent gets guessed at. */
+    static final List<String> CURRENT_KEYS =
+        List.of("conditions", "temp_f", "feels_like_f", "humidity_pct", "wind_mph", "place", "text");
+    /**
+     * {@code daily} is a list; naming only the list taught nothing about its rows. On
+     * 2026-08-23 a CodeZaiku-built barometer printed "Forecast: undefined: undefined°F"
+     * six times — it guessed the row keys, exactly as the 08-22 tool guessed temp_c.
+     */
+    static final List<String> FORECAST_KEYS = List.of("place", "daily", "text");
+    /** What each row of {@code daily} carries — rendered after the keys. */
+    static final Map<String, List<String>> FORECAST_ROW_KEYS =
+        Map.of("daily", List.of("date", "low_f", "high_f", "conditions"));
+
+    @Override public Map<String, Map<String, List<String>>> nestedResultKeys() {
+        return Map.of("forecast", FORECAST_ROW_KEYS);
+    }
+
+    /** alerts is still scaffolding — declared, not wired. */
+    @Override public Set<String> wiredCapabilities() { return caps("current", "forecast"); }
 
     @Override public AdapterResponse invoke(AdapterRequest req) {
         var key = requireCredential();
@@ -49,6 +74,11 @@ public final class OpenWeatherAdapter extends AbstractPhaseUAdapter {
         var raw = httpGet("https://api.openweathermap.org/data/2.5/weather?lat=" + lat
             + "&lon=" + lon + "&units=imperial&appid=" + key, null);
         if (!raw.success()) return raw;
+        return digestCurrent(raw);
+    }
+
+    /** Package-visible so a test can hold {@link #CURRENT_KEYS} to what this really returns. */
+    static AdapterResponse digestCurrent(AdapterResponse raw) {
         try {
             var root = parse(raw);
             var out = new LinkedHashMap<String, Object>();
@@ -72,6 +102,11 @@ public final class OpenWeatherAdapter extends AbstractPhaseUAdapter {
         var raw = httpGet("https://api.openweathermap.org/data/2.5/forecast?lat=" + lat
             + "&lon=" + lon + "&units=imperial&appid=" + key, null);
         if (!raw.success()) return raw;
+        return digestForecast(raw);
+    }
+
+    /** Package-visible so a test can hold {@link #FORECAST_KEYS} to what this really returns. */
+    static AdapterResponse digestForecast(AdapterResponse raw) {
         try {
             var root = parse(raw);
             // Digest the 3-hourly list into per-day hi/lo + dominant conditions.
@@ -142,7 +177,7 @@ public final class OpenWeatherAdapter extends AbstractPhaseUAdapter {
         return head + joined;
     }
 
-    private JsonNode parse(AdapterResponse raw) throws Exception {
+    private static JsonNode parse(AdapterResponse raw) throws Exception {
         return JSON.readTree(String.valueOf(((Map<?, ?>) raw.data()).get("body")));
     }
 

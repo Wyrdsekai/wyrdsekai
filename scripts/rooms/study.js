@@ -597,7 +597,7 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_CODING_GOOSE_PROVIDER", "Goose provider (openai = local llama-server)", "openai"],
     ["WYRDSEKAI_CODING_GOOSE_MODEL", "Goose model", "(local 9B)"],
     ["WYRDSEKAI_CODING_PI_ENABLED", "Pi backend", "true"],
-    ["WYRDSEKAI_CODING_CODEPLANE_ENABLED", "CodePlane in-world workflow", "true"],
+    ["WYRDSEKAI_CODING_CODEZAIKU_ENABLED", "CodeZaiku in-world workflow", "true"],
     ["WYRDSEKAI_CODING_OPENCODE_ENABLED", "OpenCode backend", "true"],
     ["WYRDSEKAI_CODING_AIDER_ENABLED", "Aider backend", "false"],
     ["WYRDSEKAI_CODING_OPENHANDS_ENABLED", "OpenHands backend (Docker, heavy)", "false"],

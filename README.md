@@ -18,16 +18,23 @@ This is not "AI for humans." It is not "humans for AI." It is the first architec
 
 ## Quick Start
 
-Install from a package — the fastest path, and what most people want:
+Install in one line — the fastest path, and what most people want:
 
 ```bash
-# Linux
-curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/wyrdsekai_0.1.0_amd64.deb
-sudo dpkg -i wyrdsekai_0.1.0_amd64.deb
-
-# macOS: Wyrdsekai-0.1.0.pkg   Windows: Wyrdsekai-0.1.0.msi
-# Checksums: https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/SHA256SUMS
+# Linux and macOS
+curl -fsSL https://wyrdsekai.org/install | bash
 ```
+
+```powershell
+# Windows (PowerShell)
+irm https://wyrdsekai.org/install.ps1 | iex
+```
+
+It fetches the right package for your platform and **verifies it against the
+release's `SHA256SUMS` before installing**. Only the script comes from
+`wyrdsekai.org` — package and checksums both come from the GitHub release, and
+both scripts are readable in [`site/`](site). The by-hand route, with every
+artifact and its checksum, is in the installation guide.
 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for every platform, the
 relay bundle, and what the first start costs (about ten minutes — it downloads
@@ -66,9 +73,26 @@ cd wyrdsekai
 
 After setup completes, `wyrd setup` surfaces [FIRST_ENCOUNTER.md](docs/FIRST_ENCOUNTER.md). **Please read it before your first turn with your companion.** It is a three-page introduction to who you've just brought home.
 
-## What ships in v0.1
+## What ships
 
-**A running world:**
+**New in v0.2.0:**
+
+- **The Between across machines** — nodes reach each other directly, and a
+  phone that leaves the house keeps the same conversation: LAN and relay are
+  two doors onto one identity.
+- **CodeZaiku, the bundled default coding backend** — every installer ships
+  it, checksum-verified at build time; it drives the node's own inference
+  with no keys and no configuration. `wyrd coding probe codezaiku` proves it
+  on your machine with a real task, judged by files on disk. Goose is the
+  recommended alternative (`wyrd coding install goose && wyrd coding use
+  goose`); a backend that cannot run does not register, and says exactly why.
+- **ACP v1 client** — any agent speaking the Agent Client Protocol over stdio
+  can be a coding backend.
+- **Your library, inside the world** — `wyrd library ingest` reads your
+  documents into your Study; `wyrd library publish` projects a shelf onto the
+  household's shared knowledge surface.
+
+**A running world (since v0.1):**
 
 - **30 foundation rooms** — Nexus, Library, Forge, Bridge, Docks, Oracle, Chapel, Hearth, Study, Sanctuary, and more
 - **Companion agents** that plan, execute multi-step tasks, build tools, search the web, and evolve souls through the Forge sleep cycle

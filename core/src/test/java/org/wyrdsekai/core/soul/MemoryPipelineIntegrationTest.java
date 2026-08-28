@@ -157,10 +157,10 @@ class MemoryPipelineIntegrationTest {
         @Test
         void bufferEntriesBecomeMemoryNodes() {
             // Simulate agent remembering things
-            buffer.remember("User's name is Masumi", 0.9f);
-            buffer.remember("Masumi prefers Earl Grey over coffee", 0.8f);
-            buffer.note("Masumi asks about gardening on weekends");
-            buffer.remember("Masumi works on Wyrdsekai", 0.85f);
+            buffer.remember("User's name is Operator", 0.9f);
+            buffer.remember("Operator prefers Earl Grey over coffee", 0.8f);
+            buffer.note("Operator asks about gardening on weekends");
+            buffer.remember("Operator works on Wyrdsekai", 0.85f);
 
             // Simulate Forge: convert buffer entries to MemoryNodes
             var nodes = new ArrayList<MemoryNode>();
@@ -200,9 +200,9 @@ class MemoryPipelineIntegrationTest {
 
         private CompactedMemory buildTestMemory() {
             var nodes = List.of(
-                new MemoryNode("identity", "User's name is Masumi, from Tokyo",
+                new MemoryNode("identity", "User's name is Operator, from Tokyo",
                     List.of("operator", "tokyo"), 1.0f, 1.0f, true, null, Instant.now(), 5, null),
-                new MemoryNode("project", "Masumi is building Wyrdsekai — a distributed text-native OS",
+                new MemoryNode("project", "Operator is building Wyrdsekai — a distributed text-native OS",
                     List.of("wyrdsekai", "distributed"), 0.9f, 0.9f, true, null, Instant.now(), 10, null),
                 new MemoryNode("preference", "Prefers Earl Grey tea",
                     List.of("tea", "earl grey"), 0.6f, 0.5f, false, null, Instant.now(), 2, null),
@@ -316,7 +316,7 @@ class MemoryPipelineIntegrationTest {
         void admitRememberBuildGraphTraverse() {
             // Step 1: Admit events through AdmissionController
             var events = List.of(
-                Map.entry("Masumi's favorite language is Java", AdmissionController.ContentType.USER_PREFERENCE),
+                Map.entry("Operator's favorite language is Java", AdmissionController.ContentType.USER_PREFERENCE),
                 Map.entry("Working on soul substrate today", AdmissionController.ContentType.USER_STATEMENT),
                 Map.entry("anonymous enters from the east", AdmissionController.ContentType.NARRATOR_MESSAGE)
             );
@@ -368,10 +368,10 @@ class MemoryPipelineIntegrationTest {
         @Test
         void contradictionDetectedInPipeline() {
             // Admit an initial fact
-            buffer.remember("Masumi works at Mercari", 0.8f);
+            buffer.remember("Operator works at Mercari", 0.8f);
 
             // Later, admit a contradicting fact
-            buffer.remember("Masumi left Mercari last year", 0.85f);
+            buffer.remember("Operator left Mercari last year", 0.85f);
 
             // The ContradictionDetector would catch this during Forge
             var detector = new ContradictionDetector();

@@ -97,7 +97,7 @@ class NavigationVerbsParseTest {
     @Test
     void looksLikeBondholderTarget_requesterNameMatch() {
         assertThat(CompanionActor.looksLikeBondholderTarget("operator", "operator")).isTrue();
-        assertThat(CompanionActor.looksLikeBondholderTarget("Masumi", "operator")).isTrue();
+        assertThat(CompanionActor.looksLikeBondholderTarget("Operator", "operator")).isTrue();
         assertThat(CompanionActor.looksLikeBondholderTarget("operator's study", "operator")).isTrue();
         assertThat(CompanionActor.looksLikeBondholderTarget("operator's home", "operator")).isTrue();
         assertThat(CompanionActor.looksLikeBondholderTarget("operator room", "operator")).isTrue();

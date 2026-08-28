@@ -40,22 +40,37 @@ public final class StubItemWorldApiProvider implements ItemWorldApiProvider {
 
     @Override
     public List<Map<String, Object>> searchKnowledge(String query, int limit) {
-        return List.of();
+        // A PLAUSIBLE answer, not an empty one. An empty result sends most items down
+        // their "nothing found" early return, so the smoke never reached the code that
+        // actually does the work — which is the code that breaks in a person's hands.
+        // Still side-effect free: this invents a reply, it does not touch the library.
+        return List.of(Map.of(
+            "id", "smoke-1",
+            "title", "A Smoke Fixture",
+            "text", "A short passage the smoke harness supplies so an item's real path runs.",
+            "pack", "smoke",
+            "score", 0.9));
     }
 
     @Override
     public Map<String, Object> readKnowledgeChunk(String chunkId) {
-        return Map.of();
+        return Map.of("id", chunkId == null ? "smoke-1" : chunkId,
+            "title", "A Smoke Fixture",
+            "text", "A short passage the smoke harness supplies.",
+            "pack", "smoke");
     }
 
     @Override
     public List<Map<String, Object>> webSearch(String query, String type, int limit) {
-        return List.of();
+        return List.of(Map.of(
+            "title", "A Smoke Fixture",
+            "url", "https://example.invalid/smoke",
+            "snippet", "A snippet the smoke harness supplies so an item's real path runs."));
     }
 
     @Override
     public String webFetch(String url, int maxChars) {
-        return "";
+        return "Page text the smoke harness supplies.";
     }
 
     @Override
@@ -65,12 +80,20 @@ public final class StubItemWorldApiProvider implements ItemWorldApiProvider {
 
     @Override
     public String llmSummarize(String text, String instruction) {
-        return "";
+        return "A summary the smoke harness supplies.";
     }
 
     @Override
+    public Map<String, Object> llmComplete(String prompt, Map<String, Object> opts) {
+        // Shaped like the real thing — {text: ...} — so an item that reads `.text` runs
+        // its real path instead of falling into a "nothing came back" branch.
+        return Map.of("text",
+            "Once upon a time the smoke harness supplied two short paragraphs.\n\n"
+                + "And the item's real path ran all the way to the end.");
+    }
+
     public String llmAnalyze(String text, String prompt) {
-        return "";
+        return "An analysis the smoke harness supplies.";
     }
 
     @Override

@@ -1,7 +1,7 @@
 # Wyrdsekai E2E Test Infrastructure
 #
 # Provides inference backends (sglang, vllm, llama-server) and messaging (nats)
-# for E2E testing. Matches the proven CodePlane Docker pattern.
+# for E2E testing. Matches the proven CodeZaiku Docker pattern.
 #
 # Usage:
 #   docker compose -f docker/docker-compose.e2e.yml up -d nats

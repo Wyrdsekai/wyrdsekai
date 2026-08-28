@@ -356,7 +356,7 @@ class FullContextIntegrationTest {
         assertThat(meetingThreshold).isEqualTo(0.7);
 
         // A routine zone broadcast (score 0.3) should be below meeting threshold
-        var routine = new AgentEvent.ZoneBroadcast("codeplane", "room-1",
+        var routine = new AgentEvent.ZoneBroadcast("codezaiku", "room-1",
             new S2CMessage.Prose(1L, "zone", "Heartbeat: all nominal",
                 List.of(), null, null, null, false, List.of()),
             now);
@@ -530,7 +530,7 @@ class FullContextIntegrationTest {
 
         // Publish zone broadcast
         var eventStream = AgentEventStream.get();
-        eventStream.publishZoneBroadcast("codeplane", "workshop",
+        eventStream.publishZoneBroadcast("codezaiku", "workshop",
             new S2CMessage.Prose(0, "system", "Training pipeline started",
                 List.of(), null, "normal"));
 
@@ -588,7 +588,7 @@ class FullContextIntegrationTest {
         var responseWithZoneCmd = """
             Committing the changes now.
             ```json
-            {"action":"zone_command","command":"codeplane.codex","payload":{"operation":"commit","message":"Fix bug"}}
+            {"action":"zone_command","command":"codezaiku.codex","payload":{"operation":"commit","message":"Fix bug"}}
             ```""";
 
         chatReq.replyTo().tell(new InferenceRouter.InferOk(

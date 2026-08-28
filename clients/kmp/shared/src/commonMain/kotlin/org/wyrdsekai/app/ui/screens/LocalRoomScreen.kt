@@ -20,6 +20,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import org.wyrdsekai.app.engine.PhoneNode
+import org.wyrdsekai.app.hermod.ConsentMint
+import org.wyrdsekai.app.network.PairingClient
+import org.wyrdsekai.app.state.TokenStore
 import org.wyrdsekai.app.engine.PhoneNodeEvent
 import org.wyrdsekai.app.engine.transit.LocalServerConnection
 import org.wyrdsekai.app.engine.transit.MappedInput
@@ -772,6 +775,116 @@ private fun NodeSettingsDialog(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                }
+
+                HorizontalDivider()
+
+                // ── Household compute (hermod) ──────────────────────────
+                // Lending compute is a choice, never a side effect. Saying
+                // yes MINTS this device's household identity through the
+                // quietest door available: an authenticated session (HTTP
+                // or relay) silently; otherwise the steward's 6-digit
+                // ceremony, inline here. All doors end in the same
+                // registry row; the doorman arms itself once both consent
+                // and identity exist.
+                val hermodStore = remember { TokenStore() }
+                var hermodConsent by remember { mutableStateOf(hermodStore.loadHermodConsent()) }
+                var hermodIdentified by remember {
+                    mutableStateOf(!hermodStore.loadPairingToken().isNullOrBlank())
+                }
+                var hermodChallengeId by remember { mutableStateOf<String?>(null) }
+                var hermodCode by remember { mutableStateOf("") }
+                var hermodError by remember { mutableStateOf("") }
+                Text("Household compute", style = MaterialTheme.typography.labelSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Lend compute while charging",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Switch(
+                        checked = hermodConsent,
+                        onCheckedChange = { enabled ->
+                            hermodConsent = enabled
+                            hermodStore.saveHermodConsent(enabled)
+                            hermodError = ""
+                            if (enabled && !hermodIdentified) {
+                                scope.launch {
+                                    if (ConsentMint.mintWithSession(hermodStore)) {
+                                        hermodIdentified = true
+                                    } else {
+                                        val server = hermodStore.loadServerUrl()
+                                        if (server.isNullOrBlank()) {
+                                            hermodError =
+                                                "No zone configured — connect to a server first."
+                                        } else {
+                                            val ch = PairingClient.requestPairing(
+                                                server, ConsentMint.freshLabel(), "phone")
+                                            if (ch != null) {
+                                                hermodChallengeId = ch.challengeId
+                                            } else {
+                                                hermodError = "Could not reach the zone to pair."
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("hermod-consent-toggle"),
+                    )
+                }
+                if (hermodConsent && hermodIdentified) {
+                    Text(
+                        "This phone can carry household errands while charging.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (hermodConsent && !hermodIdentified && hermodChallengeId != null) {
+                    Text(
+                        "Ask your steward for the pairing code shown in the world.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = hermodCode,
+                        onValueChange = { hermodCode = it.take(6); hermodError = "" },
+                        label = { Text("6-digit code") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("hermod-code-input"),
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                val server = hermodStore.loadServerUrl()
+                                val creds = server?.let {
+                                    PairingClient.verifyCode(
+                                        it, hermodChallengeId!!, hermodCode)
+                                }
+                                if (creds != null) {
+                                    ConsentMint.save(hermodStore, creds)
+                                    hermodIdentified = true
+                                    hermodChallengeId = null
+                                } else {
+                                    hermodError = "Invalid code. Check with your steward and try again."
+                                }
+                            }
+                        },
+                        enabled = hermodCode.length == 6,
+                        modifier = Modifier.testTag("hermod-verify-button"),
+                    ) {
+                        Text("Pair this phone")
+                    }
+                }
+                if (hermodError.isNotEmpty()) {
+                    Text(
+                        hermodError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
 
                 HorizontalDivider()

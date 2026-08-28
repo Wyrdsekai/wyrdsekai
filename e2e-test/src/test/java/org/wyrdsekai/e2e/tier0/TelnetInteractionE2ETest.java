@@ -17,7 +17,10 @@ import static org.junit.jupiter.api.Assertions.*;
 @Tag("integration")
 class TelnetInteractionE2ETest {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(10);
+    // 30s to match the tier0 sibling classes — at 10s this class's say-echo
+    // was the suite's last flake under full-parallel load (passes in
+    // isolation every time; 2026-08-16 gate).
+    private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static TestServerBootstrap server;
     private static WireMockInferenceServer wireMock;
 

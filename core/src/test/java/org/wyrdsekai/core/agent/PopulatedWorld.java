@@ -12,6 +12,25 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.wyrdsekai.core.familiar.Imprint;
+import org.wyrdsekai.core.familiar.ImprintManager;
+import org.wyrdsekai.core.familiar.ThoughtForm;
+import org.wyrdsekai.core.skill.SkillContext;
+import org.wyrdsekai.core.skill.SkillDefinition;
+import org.wyrdsekai.core.skill.SkillExecutor;
+import org.wyrdsekai.core.skill.SkillPermission;
+import org.wyrdsekai.core.skill.SkillResult;
+import org.wyrdsekai.core.skill.SkillTier;
+import org.wyrdsekai.core.soul.SoulBud;
+import org.wyrdsekai.core.soul.SoulItem;
+import org.wyrdsekai.core.soul.SoulManifest;
+import org.wyrdsekai.core.soul.SoulStore;
 
 /**
  * A world where the preconditions actually hold.
@@ -54,8 +73,8 @@ final class PopulatedWorld {
      * Each test is conceptually a different companion, so each gets its own
      * identity.</p>
      */
-    private static final java.util.concurrent.atomic.AtomicInteger SEQ =
-        new java.util.concurrent.atomic.AtomicInteger();
+    private static final AtomicInteger SEQ =
+        new AtomicInteger();
     static final String PEER_DID  = "did:wyrd:test:peer";
     final String agentDid;
     static final String PLAYER    = "player-steward";
@@ -110,7 +129,7 @@ final class PopulatedWorld {
         // summon_familiar both "DID … not found". One root cause, three symptoms —
         // FamilyLocker.requireAuthorized throws SecurityException for an unknown
         // DID, and constructing the locker does not enrol anyone in it.
-        locker.authorize(org.wyrdsekai.core.soul.SoulBud.original(
+        locker.authorize(SoulBud.original(
             agentDid, "z6MkTestPublicKeyMultibaseValue", "test-family",
             lockerAddr, "test-node", "test-model"));
         // code_mode: run_script's own gate. CodeModeFeatureFlag.resolveBool reads
@@ -128,16 +147,16 @@ final class PopulatedWorld {
         // by default, which surfaced as "Permission denied for skill: battery"
         // once the skill existed. Grant it, or skill_execute can only ever refuse.
         skills.setPermissions(agentDid,
-            org.wyrdsekai.core.skill.SkillPermission.allowAll());
+            SkillPermission.allowAll());
 
         // consume/equip look for SoulItems of category "reagent"/"aspect" in the
         // LOCKER — the seeded inventory row is a different store entirely, which is
         // why they said "I don't have a reagent called 'test-lantern'". Categories
         // come from StarterKitProvisioner.
-        locker.store(org.wyrdsekai.core.soul.SoulItem.create(
+        locker.store(SoulItem.create(
             "reagent", "test-draught", "A restoring draught for the verb battery.",
             agentDid, 0.5, "seeded"), agentDid);
-        locker.store(org.wyrdsekai.core.soul.SoulItem.create(
+        locker.store(SoulItem.create(
             "aspect", "test-aspect", "A wearable aspect for the verb battery.",
             agentDid, 0.5, "seeded"), agentDid);
 
@@ -145,9 +164,9 @@ final class PopulatedWorld {
         // give_copy, summon_familiar, revise_form. An honest refusal proves the
         // handler ran and then stops being informative; the point of a populated
         // world is to hand it the thing so the verb actually executes.
-        var form = org.wyrdsekai.core.familiar.ThoughtForm.author(
+        var form = ThoughtForm.author(
             agentDid, "battery", "You are a test form for the verb battery.",
-            java.util.Set.of("recall", "examine"), "did it answer the question");
+            Set.of("recall", "examine"), "did it answer the question");
         locker.shapeThoughtForm(form, agentDid);
 
         var scripts = tmp.resolve("scripts");
@@ -161,16 +180,16 @@ final class PopulatedWorld {
 
         // A forged manifest, so the imprint verbs have a soul to work from.
         var soulStore = new TestSoulStore();
-        soulStore.store(org.wyrdsekai.core.soul.SoulManifest.birth(
-            agentDid, "z6MkTestPublicKeyMultibaseValue", java.util.List.of(),
+        soulStore.store(SoulManifest.birth(
+            agentDid, "z6MkTestPublicKeyMultibaseValue", List.of(),
             profile, null));
 
         // An EXISTING imprint, so restore_imprint has something to restore to.
         // Each test method gets a fresh companion, so the imprint create_imprint
         // makes in its own test is not visible here — the fixture must supply one.
         try {
-            new org.wyrdsekai.core.familiar.ImprintManager(agentDid).imprint(
-                org.wyrdsekai.core.familiar.Imprint.CreatedBy.SELF,
+            new ImprintManager(agentDid).imprint(
+                Imprint.CreatedBy.SELF,
                 "battery", soulStore.latest(agentDid).orElseThrow());
         } catch (RuntimeException e) {
             // Non-fatal: restore_imprint then reports honestly instead.
@@ -191,19 +210,19 @@ final class PopulatedWorld {
      * fixture was seven one-line methods. "Bigger than it's worth" was a guess,
      * not a measurement.</p>
      */
-    static final class TestSoulStore implements org.wyrdsekai.core.soul.SoulStore {
-        private final java.util.Map<String, org.wyrdsekai.core.soul.SoulManifest> byDid =
-            new java.util.concurrent.ConcurrentHashMap<>();
-        @Override public void store(org.wyrdsekai.core.soul.SoulManifest m) {
+    static final class TestSoulStore implements SoulStore {
+        private final Map<String, SoulManifest> byDid =
+            new ConcurrentHashMap<>();
+        @Override public void store(SoulManifest m) {
             byDid.put(m.did(), m);
         }
-        @Override public java.util.Optional<org.wyrdsekai.core.soul.SoulManifest>
+        @Override public Optional<SoulManifest>
                 load(String did, int version) { return latest(did); }
-        @Override public java.util.Optional<org.wyrdsekai.core.soul.SoulManifest>
-                latest(String did) { return java.util.Optional.ofNullable(byDid.get(did)); }
-        @Override public java.util.List<org.wyrdsekai.core.soul.SoulManifest>
+        @Override public Optional<SoulManifest>
+                latest(String did) { return Optional.ofNullable(byDid.get(did)); }
+        @Override public List<SoulManifest>
                 history(String did) {
-            return latest(did).map(java.util.List::of).orElseGet(java.util.List::of);
+            return latest(did).map(List::of).orElseGet(List::of);
         }
         @Override public void archive(String did, String reason) { byDid.remove(did); }
         @Override public boolean exists(String did) { return byDid.containsKey(did); }
@@ -211,30 +230,30 @@ final class PopulatedWorld {
     }
 
     /** The minimum real executor: one skill that exists and returns a result. */
-    static final class TestSkill implements org.wyrdsekai.core.skill.SkillExecutor {
+    static final class TestSkill implements SkillExecutor {
         static final String ID = "battery";
         /** Set when the registry actually invoked us — the difference between
          *  "Done — battery skill ran" being a sentence and being a fact. */
-        static final java.util.concurrent.atomic.AtomicInteger INVOCATIONS =
-            new java.util.concurrent.atomic.AtomicInteger();
-        @Override public org.wyrdsekai.core.skill.SkillResult execute(
-                String skillId, java.util.Map<String, Object> params,
-                org.wyrdsekai.core.skill.SkillContext context) {
+        static final AtomicInteger INVOCATIONS =
+            new AtomicInteger();
+        @Override public SkillResult execute(
+                String skillId, Map<String, Object> params,
+                SkillContext context) {
             INVOCATIONS.incrementAndGet();
-            return org.wyrdsekai.core.skill.SkillResult.ok(
-                "battery skill ran", java.util.Map.of("ran", true), 1L,
-                org.wyrdsekai.core.skill.SkillTier.NATIVE, ID);
+            return SkillResult.ok(
+                "battery skill ran", Map.of("ran", true), 1L,
+                SkillTier.NATIVE, ID);
         }
-        @Override public java.util.List<org.wyrdsekai.core.skill.SkillDefinition>
+        @Override public List<SkillDefinition>
                 availableSkills() {
-            return java.util.List.of(new org.wyrdsekai.core.skill.SkillDefinition(
+            return List.of(new SkillDefinition(
                 ID, ID, "A skill that exists, for the verb battery", null,
-                org.wyrdsekai.core.skill.SkillTier.NATIVE, "test", "Apache-2.0",
-                java.util.List.of(), null, null, true));
+                SkillTier.NATIVE, "test", "Apache-2.0",
+                List.of(), null, null, true));
         }
         @Override public boolean supports(String skillId) { return ID.equals(skillId); }
-        @Override public org.wyrdsekai.core.skill.SkillTier tier() {
-            return org.wyrdsekai.core.skill.SkillTier.NATIVE;
+        @Override public SkillTier tier() {
+            return SkillTier.NATIVE;
         }
     }
 

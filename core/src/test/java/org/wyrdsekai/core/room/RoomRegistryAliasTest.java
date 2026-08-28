@@ -95,13 +95,13 @@ class RoomRegistryAliasTest {
         // (exact match only), so the way INTO a freshly built room was never
         // made and the honest-failure line had to apologise for it.
         RoomRegistry.get().register("study-abc", testKit.createTestProbe(RoomCommand.class).ref());
-        RoomRegistry.get().registerAliases("study-abc", java.util.List.of("steward's Study"));
+        RoomRegistry.get().registerAliases("study-abc", List.of("steward's Study"));
         org.junit.jupiter.api.Assertions.assertEquals("study-abc",
             RoomRegistry.get().resolveRoomId("Study"),
             "a partial name that names exactly one room must resolve");
         // Controls — the fallback must not guess:
         RoomRegistry.get().register("study-def", testKit.createTestProbe(RoomCommand.class).ref());
-        RoomRegistry.get().registerAliases("study-def", java.util.List.of("night study"));
+        RoomRegistry.get().registerAliases("study-def", List.of("night study"));
         org.junit.jupiter.api.Assertions.assertNull(
             RoomRegistry.get().resolveRoomId("Study"),
             "two candidate studies: ambiguous partials must return null, not pick one");

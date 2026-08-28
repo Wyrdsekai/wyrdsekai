@@ -1,4 +1,4 @@
-// CodePlane Workshop furnishing — project portal rack
+// CodeZaiku Workshop furnishing — project portal rack
 // ("workshop-portal-rack" RoomObject, display name "project portal rack"
 // → normalized linkage "project_portal_rack").
 //

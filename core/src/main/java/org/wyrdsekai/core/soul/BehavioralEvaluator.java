@@ -9,7 +9,7 @@ import java.util.stream.Collectors;
  *
  * Fitness = coherence + capability − regression
  *
- * This implements the "SolutionEvaluator" concept from CodePlane Q11
+ * This implements the "SolutionEvaluator" concept from CodeZaiku Q11
  * with soul manifest diff as the fitness metric. The evaluator takes
  * the current soul and a proposed variant, runs behavioral scenarios,
  * and produces a fitness score.
@@ -123,7 +123,7 @@ public class BehavioralEvaluator {
     /**
      * Evaluate a variant against the current soul.
      * This is a structural evaluation — actual LLM inference happens
-     * via the CrucibleMcpBridge calling CodePlane's eval harness.
+     * via the CrucibleMcpBridge calling CodeZaiku's eval harness.
      *
      * @param current     Current soul manifest
      * @param variant     Proposed variant

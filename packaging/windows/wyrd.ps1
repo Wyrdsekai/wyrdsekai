@@ -108,6 +108,12 @@ $V8Default = @(
 # first-class Windows node bootstraps it exactly like .deb/.pkg do at setup.
 $GooseRepo    = "aaif-goose/goose"   # repo moved block/goose -> aaif-goose/goose
 $GooseTag     = "v1.34.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuRepo = "Wyrdsekai/codezaiku"
+$CodeZaikuTag  = "v0.1.0"             # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuDir  = Join-Path $DataDir "coding-cli-bundle\codezaiku"
+# The tarball carries its own top-level codezaiku/ dir, so the launcher lands
+# nested — same shape BackendExecutableResolver searches on the Java side.
+$CodeZaikuBat  = Join-Path $CodeZaikuDir "codezaiku\bin\codezaiku.bat"
 $GooseDir     = Join-Path $DataDir "coding-cli-bundle\goose"
 $GooseExe     = Join-Path $GooseDir "goose.exe"
 
@@ -912,6 +918,69 @@ function Invoke-InferenceInstall {
 # .deb/.pkg `wyrd setup` auto-install: fetch the upstream release, drop the binary
 # in coding-cli-bundle/goose, and point it (provider=openai) at the local
 # llama-server so it's local-free out of the box.
+function Install-CodeZaiku {
+    param([switch]$Force)
+    # The MSI ships codezaiku pre-staged (bundled default as of 0.2.0); this
+    # function exists for a data dir that predates that, or a --force refresh.
+    if ((Test-Path $CodeZaikuBat) -and -not $Force) {
+        Write-Ok "codezaiku already installed -> $CodeZaikuDir (use --force to re-fetch)"
+        return $true
+    }
+    $headers = @{ 'User-Agent' = 'wyrd-cli'; 'Accept' = 'application/vnd.github+json' }
+    $rel = $null
+    foreach ($uri in @("https://api.github.com/repos/$CodeZaikuRepo/releases/tags/$CodeZaikuTag",
+                       "https://api.github.com/repos/$CodeZaikuRepo/releases/latest")) {
+        try { $rel = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 30; break }
+        catch { continue }
+    }
+    if (-not $rel) { Write-Err2 "Could not query $CodeZaikuRepo releases (network?)."; return $false }
+    Write-Info "codezaiku release: $($rel.tag_name)"
+    # One platform-independent tarball (JVM app; ships bin\codezaiku.bat).
+    $asset = $rel.assets | Where-Object { $_.name -match '^codezaiku-.*\.tar\.gz$' } | Select-Object -First 1
+    if (-not $asset) { Write-Err2 "No codezaiku tarball in release $($rel.tag_name)."; return $false }
+    $sums  = $rel.assets | Where-Object { $_.name -eq 'SHA256SUMS' } | Select-Object -First 1
+
+    New-Item -ItemType Directory -Force -Path $CodeZaikuDir | Out-Null
+    $tmp = Join-Path $env:TEMP "wyrd-codezaiku"
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $oldPP = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try {
+        $dl = Join-Path $tmp $asset.name
+        $mb = [math]::Round($asset.size / 1MB, 0)
+        Write-Info "Downloading $($asset.name) ($mb MB)..."
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dl -TimeoutSec 1800
+        # Verify against the release's OWN SHA256SUMS — same file the upstream
+        # installer checks, so wyrd and codezaiku.org cannot disagree about
+        # what a good artifact is. No SHA256SUMS in the release = no install.
+        if (-not $sums) { Write-Err2 "Release has no SHA256SUMS - refusing to install unverified."; return $false }
+        $sumsFile = Join-Path $tmp "SHA256SUMS"
+        Invoke-WebRequest -Uri $sums.browser_download_url -OutFile $sumsFile -TimeoutSec 120
+        $expected = (Get-Content $sumsFile | Where-Object { $_ -match [regex]::Escape($asset.name) } |
+                     ForEach-Object { ($_ -split '\s+')[0] } | Select-Object -First 1)
+        $actual = (Get-FileHash -Algorithm SHA256 $dl).Hash.ToLower()
+        if (-not $expected -or $actual -ne $expected.ToLower()) {
+            Write-Err2 "checksum mismatch for $($asset.name) - refusing to install."
+            Write-Err2 "  expected $expected"
+            Write-Err2 "  got      $actual"
+            return $false
+        }
+        Write-Info "checksum verified"
+        # Windows 10+ ships bsdtar as tar.exe.
+        & tar -xzf $dl -C $CodeZaikuDir
+        if ($LASTEXITCODE -ne 0) { Write-Err2 "tar extraction failed."; return $false }
+    } finally {
+        $ProgressPreference = $oldPP
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path $CodeZaikuBat)) {
+        Write-Err2 "extracted, but $CodeZaikuBat is missing - upstream layout changed?"
+        return $false
+    }
+    Set-Content -Path (Join-Path $CodeZaikuDir ".version") -Value ($rel.tag_name -replace '^v','') -Encoding ASCII
+    Write-Ok "codezaiku installed  $CodeZaikuDir"
+    return $true
+}
+
 function Install-Goose {
     param([switch]$Force)
 
@@ -1000,20 +1069,48 @@ function Invoke-Coding {
         "status" {
             Write-Host "Coding backend:"
             $conf = Get-Conf
-            $def = if ($conf.Contains('WYRDSEKAI_CODING_DEFAULT_BACKEND')) { $conf['WYRDSEKAI_CODING_DEFAULT_BACKEND'] } else { "goose (default)" }
+            $def = if ($conf.Contains('WYRDSEKAI_CODING_DEFAULT_BACKEND')) { $conf['WYRDSEKAI_CODING_DEFAULT_BACKEND'] } else { "codezaiku (default)" }
             Write-Host "  default backend = $def"
+            Write-Host ("  codezaiku       = {0}" -f $(if (Test-Path $CodeZaikuBat) { "installed ($CodeZaikuDir)" } else { "not installed - run 'wyrd coding install codezaiku'" }))
             Write-Host ("  goose           = {0}" -f $(if (Test-Path $GooseExe) { "installed ($GooseDir)" } else { "not installed - run 'wyrd coding install goose'" }))
             if ($conf.Contains('WYRDSEKAI_CODING_GOOSE_MODEL')) { Write-Host "  goose model     = $($conf['WYRDSEKAI_CODING_GOOSE_MODEL'])" }
         }
         "install" {
-            $what = if ($Rest.Count -ge 2) { $Rest[1] } else { "goose" }
+            $what = if ($Rest.Count -ge 2) { $Rest[1] } else { "codezaiku" }
             $force = $Rest -contains '--force'
             New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-            if (-not (Test-Path $ConfFile)) { Invoke-Setup }
-            if ($what -eq 'goose') { Install-Goose -Force:$force | Out-Null }
-            else { Write-Err2 "Only 'goose' is bootstrappable on Windows so far (it's the default). Other backends: install via npm / point at a Linux node." ; exit 2 }
+            # NOTE deliberately NOT running Invoke-Setup here: installing one
+            # coding backend used to trigger the ENTIRE first-run setup
+            # (118MB embedding model, inference bootstrap). Asking for a
+            # backend gets you a backend; `wyrd setup` remains its own step.
+            switch ($what) {
+                'codezaiku' { if (-not (Install-CodeZaiku -Force:$force)) { exit 1 } }
+                'goose'     { if (-not (Install-Goose -Force:$force)) { exit 1 } }
+                { $_ -in 'claude-sdk','gemini-cli','cline','continue','opencode' } {
+                    $pkg = @{ 'claude-sdk'='@anthropic-ai/claude-code'; 'gemini-cli'='@google/gemini-cli';
+                              'cline'='cline'; 'continue'='@continuedev/cli'; 'opencode'='opencode-ai' }[$what]
+                    if (Get-Command npm -ErrorAction SilentlyContinue) {
+                        Write-Info "npm install -g $pkg ..."
+                        & npm install -g $pkg
+                        if ($LASTEXITCODE -ne 0) { Write-Err2 "npm install failed."; exit 1 }
+                        Write-Ok "$what installed via npm"
+                    } else {
+                        Write-Err2 "$what is npm-distributed and npm is not on PATH. Install Node.js first (winget install OpenJS.NodeJS.LTS)."
+                        exit 2
+                    }
+                }
+                default { Write-Err2 "Installable on Windows: codezaiku (default), goose, claude-sdk, gemini-cli, cline, continue, opencode. openhands needs Docker; devin is config-only."; exit 2 }
+            }
         }
-        default { Write-Err2 "usage: wyrd coding [status|install goose [--force]]"; exit 2 }
+        "use" {
+            if ($Rest.Count -lt 2) { Write-Err2 "usage: wyrd coding use <backend>"; exit 2 }
+            $b = $Rest[1] -replace '[^A-Za-z0-9_-]',''
+            New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+            Set-ConfKey 'WYRDSEKAI_CODING_DEFAULT_BACKEND' $b
+            Write-Ok "coding backend -> $b  ($ConfFile)"
+            Write-Info "Restart to apply:  wyrd restart"
+        }
+        default { Write-Err2 "usage: wyrd coding [status|install <backend> [--force]|use <backend>]"; exit 2 }
     }
 }
 

@@ -132,16 +132,29 @@ public final class VitalitySpikeRules {
             add[DriveConfig.FRUSTRATION] += 0.1;
         }
 
-        // Apply additive sums on top of current drive state, post-sum clamping handled by
-        // DriveState.fromArray which clamps via spike(...) but we sum-then-set so we avoid
-        // intermediate-clamp loss-of-information.
+        // Apply the summed contribution as a FLOOR the drive is held at, not as an
+        // addition — "this deprivation keeps that drive at least this live".
+        //
+        // These rules are LEVEL-triggered and run on every vitality tick (1s), but the
+        // contributions are absolute sizes ("SEEKING+0.3"), not per-second rates. Adding
+        // them each tick meant any tank sitting above its threshold walked its drives to
+        // 1.0 within seconds and re-pinned them there for as long as the tank stayed up,
+        // so no relief could hold: a companion relieved to SEEKING 0.05 was back at 1.0
+        // three ticks later. Live-measured 2026-08-17 on a household node with
+        // restlessness parked at 0.701 — one thousandth over §3.1's threshold — which
+        // pinned SEEKING (>0.9 in 94.8% of consolidation traces) and PLAY (100%), and
+        // that permanent ceiling drove the runaway proactive-speech loop.
+        //
+        // As a floor the rules keep their intent (sustained deprivation keeps the drive
+        // above rest, and the thresholds/sizes below are unchanged) while being
+        // idempotent under repetition: relief can bring a drive DOWN to the floor, the
+        // drive's own accumulation still carries it up from there, and nothing ratchets.
         double[] cur = d.toArray();
         double[] out = new double[cur.length];
         for (int i = 0; i < cur.length; i++) {
-            double v2 = cur[i] + add[i];
-            if (v2 < 0.0) v2 = 0.0;
-            if (v2 > 1.0) v2 = 1.0;
-            out[i] = v2;
+            double floor = add[i];
+            if (floor > 1.0) floor = 1.0;
+            out[i] = Math.max(cur[i], Math.max(0.0, floor));
         }
         return DriveState.fromArray(out);
     }

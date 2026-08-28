@@ -390,6 +390,21 @@ public interface ItemWorldApiProvider {
     }
 
     /**
+     * hermod data-domain grants held by this household (the flat files a
+     * device carries). Each entry: {@code grantId, dataDomain,
+     * deviceClass, issuedAt, expiresAt, status, file}.
+     */
+    default List<Map<String, Object>> hermodGrantsList() { return List.of(); }
+
+    /**
+     * Tombstone a hermod grant by id or {@code domain-class} stem
+     * (steward only — the gate lives in the provider, never the script).
+     */
+    default Map<String, Object> hermodGrantRevoke(String grantIdOrStem) {
+        return Map.of("ok", false, "error", "hermod grants not available here");
+    }
+
+    /**
      * Parental controls per member (parental-controls scroll). Each entry:
      * {@code username, displayName, dailyMinutes, dailyInference,
      * contentFilter, blockedRooms, minutesUsedToday, inferencesUsedToday}.
@@ -2015,6 +2030,19 @@ public interface ItemWorldApiProvider {
      * substring). Returns {@code {ok, matches: [paths], truncated}} or
      * {@code {ok:false, error}}. Tier 5.
      */
+    /** Directories the steward granted. Empty when the host surface is not wired. */
+    default List<String> hostRoots() { return List.of(); }
+
+    /** Move a file inside the granted roots. Refused when the host surface is not wired. */
+    default Map<String, Object> hostMove(String from, String to) {
+        return Map.of("ok", false, "error", "host_not_wired");
+    }
+
+    /** Create a directory inside the granted roots. */
+    default Map<String, Object> hostMkdir(String path) {
+        return Map.of("ok", false, "error", "host_not_wired");
+    }
+
     default Map<String, Object> hostFind(String pattern, int maxResults) {
         return Map.of("ok", false, "error", "host.find not wired");
     }

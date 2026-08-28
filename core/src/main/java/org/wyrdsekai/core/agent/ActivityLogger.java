@@ -84,9 +84,25 @@ public final class ActivityLogger {
     }
 
     public void speak(String agentName, String agentId, String room, String text) {
-        write(event("speak", agentName, agentId)
+        speak(agentName, agentId, room, text, null);
+    }
+
+    /**
+     * Speak, stamped with the felt state that produced it (2026-08-05).
+     *
+     * <p>See {@link #enacted(String, String, String, String, boolean, Map)} for why
+     * experience events carry drives: without it, nothing in the record says what
+     * an utterance cost or meant to the one who made it.
+     *
+     * @param felt  live drive/tank levels, or null to omit
+     */
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt) {
+        var node = event("speak", agentName, agentId)
             .put("room", room)
-            .put("text", truncate(text, 200)));
+            .put("text", truncate(text, 200));
+        attachFelt(node, felt);
+        write(node);
     }
 
     public void action(String agentName, String agentId, String room,
@@ -178,11 +194,48 @@ public final class ActivityLogger {
      */
     public void enacted(String agentName, String agentId, String verb,
                         String target, boolean autonomous) {
+        enacted(agentName, agentId, verb, target, autonomous, null);
+    }
+
+    /**
+     * Enacted action, stamped with the felt state that produced it (2026-08-05).
+     *
+     * <p>Why: {@code tick} lines already carry a {@code driveSnapshot}, but ticks
+     * fire on the slow consolidation cadence (~40/day) while experiences —
+     * enacted actions and utterances — happen two orders of magnitude more often.
+     * The result was a record of everything an agent DID and nothing about what
+     * she FELT while doing it: drive state existed only in RAM and was gone the
+     * moment the tick passed (the {@code vitality_snapshots} table holds current
+     * state only, and was empty on the household node). Stamping the experience
+     * events makes (experience, felt-state) pairs available directly, with no
+     * join and no new table — which is the prerequisite for asking whether an
+     * agent's own valuation predicts what is worth keeping.
+     *
+     * @param felt  live drive/tank levels, or null to omit
+     */
+    public void enacted(String agentName, String agentId, String verb,
+                        String target, boolean autonomous, Map<String, Double> felt) {
         if (verb == null || verb.isBlank()) return;
-        write(event("enacted", agentName, agentId)
+        var node = event("enacted", agentName, agentId)
             .put("verb", verb)
             .put("target", target == null ? "" : truncate(target, 120))
-            .put("autonomous", autonomous));
+            .put("autonomous", autonomous);
+        attachFelt(node, felt);
+        write(node);
+    }
+
+    /**
+     * Attach a rounded drive/tank vector under {@code felt}. No-op when null or
+     * empty, so callers without vitality in scope stay on the old shape and
+     * existing readers (TickLogReader, DoomLoopDetector, the oracle extractor)
+     * are unaffected.
+     */
+    private static void attachFelt(ObjectNode node, Map<String, Double> felt) {
+        if (felt == null || felt.isEmpty()) return;
+        var f = node.putObject("felt");
+        for (var e : felt.entrySet()) {
+            if (e.getValue() != null) f.put(e.getKey(), round2(e.getValue()));
+        }
     }
 
     /**

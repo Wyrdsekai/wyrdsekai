@@ -10,6 +10,7 @@ import org.apache.pekko.actor.typed.Props;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.item.CarriedItemUse;
 import org.wyrdsekai.between.NatsBridge;
 import org.wyrdsekai.between.RelaySessionTransport;
 import org.wyrdsekai.between.federation.FederationService;
@@ -465,9 +466,14 @@ public final class VirtualSessionHandler {
                     localZoneId, session.sourceZoneId);
             }
 
-            var params = new HashMap<String, Object>();
-            params.put("target", target != null ? target : "");
-            params.put("entityId", session.playerId);
+            // FIFTH path that runs an item script, and the fifth to build its own
+            // params. This one set target/entityId/entityName and no `args` — the
+            // spelling the items-as-tools contract actually promises — so a visitor on
+            // the relay or a phone got an item that believed it had been called with
+            // nothing. One builder, so the answer to "what does a script receive" is the
+            // same wherever it is asked.
+            var params = new HashMap<String, Object>(
+                CarriedItemUse.params(session.playerId, target));
             params.put("entityName", session.playerName);
 
             // #1 (2026-07-19 OSS hardening) — a VISITOR's carried item arrived from
@@ -739,6 +745,9 @@ public final class VirtualSessionHandler {
             case ParsedCommand.Look l    -> { newType = "look"; }
             case ParsedCommand.Take t    -> { newType = "take";  p.put("objectName", t.objectName()); }
             case ParsedCommand.Drop d    -> { newType = "drop";  p.put("objectName", d.objectName()); }
+            // Relay and phone sessions carry the same verbs the local shells do. Adding a
+            // command to one surface and not the others is how a client-parity gap starts.
+            case ParsedCommand.Retire r  -> { newType = "retire"; p.put("objectName", r.objectName()); }
             case ParsedCommand.Use u     -> {
                 newType = "use"; p.put("objectName", u.objectName());
                 if (u.target() != null) p.put("target", u.target());

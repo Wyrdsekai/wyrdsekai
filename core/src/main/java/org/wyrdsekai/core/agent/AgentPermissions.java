@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Zone-level permission set for an agent. Controls what zone services
- * an agent can access (codeplane.create, iot.lights, etc.).
+ * an agent can access (codezaiku.create, iot.lights, etc.).
  *
  * <p>Evaluation order:
  * <ol>
@@ -77,8 +77,8 @@ public final class AgentPermissions {
             new ZonePermission("*", "info", ZonePermission.PermissionLevel.ALLOW),
             new ZonePermission("engine", "*", ZonePermission.PermissionLevel.ALLOW),
             new ZonePermission("monitoring", "*", ZonePermission.PermissionLevel.ALLOW),
-            new ZonePermission("codeplane", "status", ZonePermission.PermissionLevel.ALLOW),
-            new ZonePermission("codeplane", "list", ZonePermission.PermissionLevel.ALLOW)
+            new ZonePermission("codezaiku", "status", ZonePermission.PermissionLevel.ALLOW),
+            new ZonePermission("codezaiku", "list", ZonePermission.PermissionLevel.ALLOW)
         ));
     }
 

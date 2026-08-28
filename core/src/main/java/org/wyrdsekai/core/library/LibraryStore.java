@@ -12,7 +12,7 @@ import java.util.Optional;
 
 /**
  * SQLite persistence for the capability library.
- * Adapted from CodePlane's LibraryStore with Wyrdsekai-specific schema.
+ * Adapted from CodeZaiku's LibraryStore with Wyrdsekai-specific schema.
  * Features: FTS5 search, audit trail, usage tracking, blocklist, security patterns.
  * WAL mode, busy_timeout, synchronized access.
  */

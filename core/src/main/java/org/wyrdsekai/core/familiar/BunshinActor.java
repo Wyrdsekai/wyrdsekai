@@ -11,7 +11,12 @@ import org.apache.pekko.actor.typed.javadsl.TimerScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.common.util.Json;
+import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.MeshDispatch;
+
+import java.util.concurrent.CompletableFuture;
 import org.wyrdsekai.scripting.codemode.CodeModeExecutor;
 
 import java.time.Duration;
@@ -24,6 +29,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.function.Consumer;
+import org.wyrdsekai.core.agent.ActionParser;
+import org.wyrdsekai.core.agent.ActionPolicy;
 
 /**
  * Parallel self of a primary CompanionActor.
@@ -183,7 +191,7 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
         // §114/§293/§302: the bunshin's world access. Null tools ⇒ prose-only,
         // which is now the exception rather than the only option.
         List<InferenceClient.ToolDefinition> tools,
-        java.util.function.Consumer<String> toolExecutor
+        Consumer<String> toolExecutor
     ) implements Command {
 
         /** Compact constructor — defaults {@code harnessKind} to {@code "react"}. */
@@ -293,7 +301,7 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
     /** §114/§302 — world access and what this bunshin authored. */
     private List<InferenceClient.ToolDefinition> tools;
     /** Forwards raw action content to the primary for execution. */
-    private java.util.function.Consumer<String> toolExecutor;
+    private Consumer<String> toolExecutor;
     private final List<String> authoredItemIds = new ArrayList<>();
     private int toolCallCount = 0;
     /** True once any tool call SUCCEEDED — the completion-claim gate's evidence. */
@@ -443,6 +451,53 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
         // Tools ride the request when the primary gave us any (§114). The
         // 6-arg convenience ctor used to leave `tools` null, which is what made
         // the react harness prose-only in the first place.
+        // hermod: a bunshin turn is exactly the work the mesh places — the
+        // LLM call may run on any admitted device; TOOLS still execute here
+        // through the primary's channel. Mesh unavailable or declining →
+        // the local router path, unchanged.
+        var mesh = MeshDispatch.installed();
+        if (mesh != null) {
+            var clientRequest = new InferenceClient.ChatRequest(
+                "default", List.copyOf(conversation),
+                Math.min(tanks.tokens(), 2048), 0.5, null, null, null, null,
+                tools, tools == null || tools.isEmpty() ? null : "auto",
+                null, null);
+            final var reqId = requestId;
+            final var budget = Math.min(tanks.tokens(), 2048);
+            CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        return mesh.carryChat(
+                            Json.mapper().writeValueAsString(clientRequest), budget);
+                    } catch (Exception e) {
+                        return null;
+                    }
+                })
+                .thenAccept(respJson -> {
+                    if (respJson == null) {
+                        // no device took it — the local router carries on
+                        router.tell(new InferenceRouter.ChatRequest(
+                            reqId, null, List.copyOf(conversation),
+                            budget, 0.5, inferenceAdapter, null, null, null,
+                            tools, tools == null || tools.isEmpty() ? null : "auto",
+                            null, null, null));
+                        return;
+                    }
+                    try {
+                        var resp = Json.mapper().readValue(
+                            respJson, InferenceClient.ChatResponse.class);
+                        var usage = resp.usage();
+                        inferenceAdapter.tell(new InferenceRouter.InferOk(reqId,
+                            InferenceRouter.foldedContent(resp),
+                            usage == null ? 0 : usage.promptTokens(),
+                            usage == null ? 0 : usage.completionTokens()));
+                    } catch (Exception e) {
+                        inferenceAdapter.tell(new InferenceRouter.InferError(
+                            reqId, "mesh response unreadable: " + e.getMessage()));
+                    }
+                });
+            return;
+        }
         router.tell(new InferenceRouter.ChatRequest(
             requestId, null, List.copyOf(conversation),
             Math.min(tanks.tokens(), 2048),
@@ -788,15 +843,15 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
      */
     private boolean tryExecuteAction(String content) {
         if (toolExecutor == null) return false;
-        org.wyrdsekai.core.agent.ActionParser.AgentAction action;
+        ActionParser.AgentAction action;
         try {
-            action = org.wyrdsekai.core.agent.ActionParser.parse(content);
+            action = ActionParser.parse(content);
         } catch (RuntimeException e) {
             log.debug("Bunshin {} action parse failed (treating as prose): {}", id, e.toString());
             return false;
         }
         if (action == null) return false;
-        var name = org.wyrdsekai.core.agent.ActionPolicy.actionTypeOf(action);
+        var name = ActionPolicy.actionTypeOf(action);
         if (name == null || name.isBlank()) return false;
 
         toolCallCount++;

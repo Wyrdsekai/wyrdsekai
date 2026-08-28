@@ -307,7 +307,7 @@ class EnvironmentalMoodTest {
 
     private AgentEvent.ZoneBroadcast zoneBroadcast(String text) {
         return new AgentEvent.ZoneBroadcast(
-            "codeplane", "workshop",
+            "codezaiku", "workshop",
             new S2CMessage.Prose(0, "system", text, List.of(), null, "normal"),
             Instant.now());
     }

@@ -38,7 +38,7 @@ public class ErReferral {
     public record ErServiceZone(
         String zoneId,
         String displayName,
-        boolean codeplaneBacked,
+        boolean codezaikuBacked,
         List<String> capabilities,
         double reputationScore,
         Map<String, Double> pricing

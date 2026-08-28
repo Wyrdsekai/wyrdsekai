@@ -52,7 +52,7 @@ class DreamWeaverTest {
 
     @Test
     void weave_with_relationships_produces_dream() {
-        var rel = new Relationship("did:key:operator", "Masumi", 0.8f, 0.7f, 3, 10,
+        var rel = new Relationship("did:key:operator", "Operator", 0.8f, 0.7f, 3, 10,
             Instant.now(), "The steward");
         var fingerprint = new BehavioralFingerprint(
             Map.of(), Map.of(), Map.of(), Map.of(),
@@ -61,7 +61,7 @@ class DreamWeaverTest {
 
         var dream = DreamWeaver.weave(manifest, null, null);
         assertTrue(dream.isPresent());
-        assertTrue(dream.get().contains("Masumi"), "Dream should mention relationship");
+        assertTrue(dream.get().contains("Operator"), "Dream should mention relationship");
     }
 
     @Test

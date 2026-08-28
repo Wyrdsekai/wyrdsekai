@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.1.5}"
+VERSION="${WYRDSEKAI_VERSION:-0.2.0}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
@@ -251,9 +251,37 @@ mkdir -p "$DEB_ROOT/opt/wyrdsekai/data"
 
 # Coding-CLI bundle manifest (optional backends; binaries fetched on demand).
 # bin/wyrd resolves it from /opt/wyrdsekai/data/coding-cli-bundle/manifest.json.
-if [[ -f "$DIST_DIR/data/coding-cli-bundle/manifest.json" ]]; then
+if [[ -d "$DIST_DIR/data/coding-cli-bundle" ]]; then
+    # The WHOLE bundle dir, not just the manifest. This line used to copy
+    # manifest.json alone — so when build-dist started STAGING bundled
+    # backends (0.2.0: codezaiku is the bundled default), the dist gate
+    # verified a tree the deb then silently dropped: the shipped package
+    # carried default-backend=codezaiku and no codezaiku. A gate is only as
+    # good as its distance from the artifact that ships.
     mkdir -p "$DEB_ROOT/opt/wyrdsekai/data/coding-cli-bundle"
-    cp "$DIST_DIR/data/coding-cli-bundle/manifest.json" "$DEB_ROOT/opt/wyrdsekai/data/coding-cli-bundle/manifest.json"
+    cp -r "$DIST_DIR/data/coding-cli-bundle/." "$DEB_ROOT/opt/wyrdsekai/data/coding-cli-bundle/"
+    # Re-run the bundled-backend check against DEB_ROOT — the tree that will
+    # actually be installed — so the two stages cannot drift apart again.
+    python3 - "$DEB_ROOT/opt/wyrdsekai/data/coding-cli-bundle" <<'DEB_BUNDLE_GATE'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "manifest.json").read_text())
+bad = []
+for name, e in manifest["backends"].items():
+    if not e.get("bundled"):
+        continue
+    slot = root / name
+    ok = any(c.is_file() for base in (slot / name, slot / "bin" / name,
+                                      slot / name / "bin" / name)
+             for c in (base, base.with_suffix(".bat"), base.with_suffix(".exe")))
+    if not ok:
+        bad.append(name)
+if bad:
+    print("DEB bundled-backend gate FAILED: " + ", ".join(bad)
+          + " claimed bundled but absent from the package tree", file=sys.stderr)
+    sys.exit(1)
+print("[deb] bundled-backend gate: package tree carries every bundled backend")
+DEB_BUNDLE_GATE
 fi
 
 # Track-B B1 — release-evidence dir (recipe-run logs + soul-fragment

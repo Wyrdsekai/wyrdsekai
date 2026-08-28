@@ -9,6 +9,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -20,7 +21,7 @@ import java.util.function.Function;
  * typesafe-config flags under {@code wyrdsekai.coding.backends.*}.
  *
  * <p>Phase 2b registers {@link OpenCodeBackend} (the new default-on backend
- * ). CodePlane registration stays a
+ * ). CodeZaiku registration stays a
  * Main-side concern for now because it requires both the legacy item
  * store and a wired {@code CommandRouter}; this bootstrap focuses on the
  * config-driven backends that have no inter-component dependencies.</p>
@@ -81,6 +82,11 @@ public final class CodingBackendBootstrap {
         var registry = BackendRegistry.get();
         var router = LocalCommandRouter.get();
 
+        // Which backend gets the work is a SETTING, read from the same file the
+        // registrations below are read from. Before this, the default was a class
+        // reference compiled into five call sites — see CodingBackendPreference.
+        CodingBackendPreference.useConfig(config);
+
         // -- AuthResolver wiring (built first so paid-backend registration
         //    in Phase 2e can consult it eagerly. The resolver is a thin
         //    reader over the manifest; building it here costs nothing
@@ -95,12 +101,23 @@ public final class CodingBackendBootstrap {
         if (registry.backendFor(OpenCodeBackend.NAME).isEmpty()) {
             var openCodeConfig = OpenCodeRuntimeConfig.fromConfig(config);
             if (openCodeConfig.enabled()) {
-                registry.register(new OpenCodeBackend(openCodeConfig));
-                registry.register(new OpenCodeEventAdapter());
-                log.info("OpenCode backend wired (executable={}, base_url={}, model={})",
-                    openCodeConfig.executablePath(),
-                    openCodeConfig.baseUrl(),
-                    openCodeConfig.model());
+                // Same gate as every other subprocess backend. This one was
+                // registered UNGUARDED for months while its manifest entry
+                // claimed `bundled: true` for a directory no build ever staged
+                // -- so it registered, was selectable, and failed only when a
+                // task actually ran. Found on second-node 2026-08-27: `Registered
+                // coding backend: opencode` with no binary anywhere on the box.
+                if (!binaryReachable(OpenCodeBackend.NAME, openCodeConfig.executablePath())) {
+                    log.info("OpenCode backend enabled in config but binary '{}' not reachable; "
+                        + "skipping registration", openCodeConfig.executablePath());
+                } else {
+                    registry.register(new OpenCodeBackend(openCodeConfig));
+                    registry.register(new OpenCodeEventAdapter());
+                    log.info("OpenCode backend wired (executable={}, base_url={}, model={})",
+                        openCodeConfig.executablePath(),
+                        openCodeConfig.effectiveBaseUrl(),
+                        openCodeConfig.effectiveModel());
+                }
             } else {
                 log.info("OpenCode backend disabled in config; skipping registration");
             }
@@ -110,7 +127,7 @@ public final class CodingBackendBootstrap {
         // Lightweight MIT subprocess (~12MB npm, sub-second startup). Routes
         // through ~/.pi/agent/models.json to the household's local 9B by
         // default; cloud providers are explicit opt-in. The de facto stand-in
-        // for §85.17 CodePlane while CodePlane isn't household-ready.
+        // for §85.17 CodeZaiku while CodeZaiku isn't household-ready.
         if (registry.backendFor(PiCodingBackend.NAME).isEmpty()) {
             var piConfig = PiCodingRuntimeConfig.fromConfig(config);
             if (piConfig.enabled()) {
@@ -176,14 +193,71 @@ public final class CodingBackendBootstrap {
                 if (binaryReachable(GooseBackend.NAME, gooseConfig.executablePath())) {
                     registry.register(new GooseBackend(gooseConfig, authForBackends));
                     registry.register(new GooseEventAdapter());
-                    log.info("Goose backend wired (executable={}, provider={})",
-                        gooseConfig.executablePath(), gooseConfig.provider());
+                    // Log the EFFECTIVE endpoint, not the configured one. Staged
+                    // 2026-08-21 this line said only "provider=openai" while goose was
+                    // being sent to a dead port — the one fact that would have shown it
+                    // was the one fact the line omitted.
+                    log.info("Goose backend wired (executable={}, provider={}, "
+                        + "endpoint={}, model={})",
+                        gooseConfig.executablePath(), gooseConfig.provider(),
+                        gooseConfig.effectiveBaseUrl(), gooseConfig.effectiveModel());
                 } else {
                     log.info("Goose backend enabled in config but binary '{}' not reachable; "
                         + "skipping registration", gooseConfig.executablePath());
                 }
             } else {
                 log.debug("Goose backend disabled in config; skipping registration");
+            }
+        }
+
+        // -- CodeZaiku (2026-08-15): available-not-default. Promotion
+        // battery passed (14 cases, task #183 tracks the default flip after
+        // the forge spot-check); until then it registers like any other
+        // CLI backend — enabled by default in config, health-gated on the
+        // binary, and never selected unless present and healthy. The
+        // steward's drive-url config is authoritative over CodeZaiku's own
+        // files (env-first precedence on their side).
+        if (registry.backendFor(CodeZaikuBackend.NAME).isEmpty()) {
+            var codeZaikuConfig = CodeZaikuRuntimeConfig.fromConfig(config);
+            if (codeZaikuConfig.enabled()) {
+                if (binaryReachable(CodeZaikuBackend.NAME, codeZaikuConfig.executablePath())) {
+                    registry.register(new CodeZaikuBackend(codeZaikuConfig, null));
+                    registry.register(new CodeZaikuEventAdapter(null));
+                    log.info("CodeZaiku backend wired (executable={}, drive={})",
+                        codeZaikuConfig.executablePath(), codeZaikuConfig.effectiveDriveUrl());
+                } else {
+                    log.info("CodeZaiku backend enabled in config but binary '{}' not "
+                        + "reachable; skipping registration",
+                        codeZaikuConfig.executablePath());
+                }
+            } else {
+                log.debug("CodeZaiku backend disabled in config; skipping registration");
+            }
+        }
+
+        // -- ACP (2026-08-16, operator-mandated for 0.2.0): the generic
+        // permission-GATED coding surface. Unlike the CLI backends (ungated
+        // — a backend that decides to commit simply does), every ACP
+        // session/request_permission passes through our policy (HOUSE_POLICY;
+        // steward-consent routing lands on this same path). Default agent is
+        // `codezaiku acp` (live-proven 2026-08-15); any ACP v1 agent works
+        // via the command config. Health-gated on the command's executable.
+        if (registry.backendFor(AcpBackend.NAME).isEmpty()) {
+            var acpConfig = AcpRuntimeConfig.fromConfig(config);
+            if (acpConfig.enabled()) {
+                if (binaryReachable(AcpBackend.NAME, acpConfig.executable())) {
+                    registry.register(new AcpBackend(AcpBackend.NAME,
+                        acpConfig.command(), Map.of(), acpConfig.turnTimeout())
+                        .withConsentWait(acpConfig.consentWait()));
+                    registry.register(new AcpEventAdapter());
+                    log.info("ACP backend wired (command={}, turnTimeout={})",
+                        acpConfig.command(), acpConfig.turnTimeout());
+                } else {
+                    log.info("ACP backend enabled in config but agent executable '{}' not "
+                        + "reachable; skipping registration", acpConfig.executable());
+                }
+            } else {
+                log.debug("ACP backend disabled in config; skipping registration");
             }
         }
 
@@ -292,7 +366,10 @@ public final class CodingBackendBootstrap {
                         + "skipping registration", geminiConfig.executablePath());
                 } else if (paidBackendAuthMissing(GeminiCliBackend.NAME)) {
                     log.debug("Gemini CLI backend enabled but auth missing; skipping registration "
-                        + "(set GEMINI_API_KEY in your Key Chest — no headless OAuth flow as of May 2026)");
+                        + "(set GEMINI_API_KEY in your Key Chest, or run `NO_BROWSER=true gemini` once for "
+                        + "the paste-this-URL OAuth flow — verified present in gemini-cli 0.57.0; "
+                        + "the old 'no headless OAuth' note here was written in May 2026 and had "
+                        + "gone stale)");
                 } else {
                     registry.register(new GeminiCliBackend(geminiConfig, authForBackends));
                     registry.register(new GeminiCliEventAdapter());

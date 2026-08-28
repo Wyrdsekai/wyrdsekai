@@ -5,7 +5,7 @@
   "structured": null,
   "blocks": [
     {
-      "format": "codeplane.board_card",
+      "format": "codezaiku.board_card",
       "data": { "boardId": "board-7", "name": "Auth refactor", "status": "done" },
       "fallback": "Card 'Auth refactor' moved to Done"
     }

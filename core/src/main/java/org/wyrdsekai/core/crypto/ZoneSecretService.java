@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Per-zone shared secret with envelope encryption ( foundation — generalized at
- * Masumi's direction: "we should be doing this for ALL secrets within a zone that is shared").
+ * Operator's direction: "we should be doing this for ALL secrets within a zone that is shared").
  *
  * <p>One 32-byte master secret per zone is the root of every zone-shared secret. It is generated
  * once at zone creation and lives in the clear only in memory; at rest and in transit it is

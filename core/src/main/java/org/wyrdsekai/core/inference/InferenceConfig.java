@@ -97,19 +97,38 @@ public record InferenceConfig(
             autoDetectOllama().ifPresent(backends::add);
         }
 
-        // Auto-detect Claude CLI — configurable via WYRDSEKAI_CLAUDE_CLI_ENABLED
-        // Registers alongside other backends (not just as fallback).
-        // Higher priority number = lower preference (used for deep/cloud capability).
-        boolean claudeCliEnabled = config.hasPath("wyrdsekai.inference.claude-cli.enabled")
-            ? config.getBoolean("wyrdsekai.inference.claude-cli.enabled")
-            : backends.isEmpty(); // default: only if no other backends
+        // Claude CLI backend — STRICTLY OPT-IN, never a silent fallback
+        // (2026-08-14: an e2e zone with no local backend silently ran its
+        // companion on the operator's paid subscription for a day; a
+        // companion's SUBSTRATE must never swap without a human deciding).
+        // The household's own compute — local llama-server, zone, mesh — is
+        // the way; a zone with nothing serving gets a mute companion, which
+        // is an honest absence, not a different mind.
+        boolean claudeCliEnabled =
+            "true".equalsIgnoreCase(System.getenv("WYRDSEKAI_CLAUDE_CLI_ENABLED"))
+            || (config.hasPath("wyrdsekai.inference.claude-cli.enabled")
+                && config.getBoolean("wyrdsekai.inference.claude-cli.enabled"));
         if (claudeCliEnabled) {
             ClaudeCliInference.autoDetect().ifPresent(cli -> {
                 backends.add(new InferenceBackend.ClaudeCli(
                     "claude-auto", cli, 50, cli.availableModels()));
-                log.info("Auto-detected Claude CLI (OAuth) — subscription: {}",
+                log.warn("Claude CLI backend ENABLED by explicit opt-in — "
+                    + "companion turns on this backend run on a PAID subscription "
+                    + "({}), tools disabled. Local/mesh inference is preferred.",
                     cli.getSubscriptionType());
             });
+        } else if (backends.isEmpty()) {
+            if (ClaudeCliInference.autoDetect().isPresent()) {
+                log.info("No inference backend is serving and a Claude CLI exists "
+                    + "on this host — NOT using it (opt-in only: set "
+                    + "WYRDSEKAI_CLAUDE_CLI_ENABLED=true or "
+                    + "wyrdsekai.inference.claude-cli.enabled). Stand up local "
+                    + "inference (wyrd inference / llama-server) — until then "
+                    + "companions on this zone are mute.");
+            } else {
+                log.warn("No inference backend detected — companions on this "
+                    + "zone are mute until local inference is stood up.");
+            }
         }
 
         // Sort by priority (lower = preferred)
@@ -460,7 +479,7 @@ public record InferenceConfig(
      * <p>Any failure returns empty, which reads as "not served" and lets the
      * caller start its own server.</p>
      */
-    private static List<String> modelsServedNow(String url) {
+    static List<String> modelsServedNow(String url) {
         try {
             var conn = (HttpURLConnection)
                 URI.create(url + "/v1/models").toURL().openConnection();

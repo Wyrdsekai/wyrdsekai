@@ -8,6 +8,7 @@ import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.coding.CodingBackendPreference;
 import org.wyrdsekai.common.home.Grant;
 import org.wyrdsekai.common.i18n.I18n;
 import org.wyrdsekai.common.model.InnerImprint;
@@ -28,6 +29,8 @@ import org.wyrdsekai.core.familiar.ImprintManager;
 import org.wyrdsekai.core.governance.CouncilService;
 import org.wyrdsekai.common.home.RelayAdminOp;
 import org.wyrdsekai.core.home.HomeClient;
+import org.wyrdsekai.core.home.ActionGrants;
+import org.wyrdsekai.core.home.HomeClients;
 import org.wyrdsekai.core.home.HomeRegistryActor;
 import org.wyrdsekai.core.home.RelayGovernance;
 import org.wyrdsekai.core.home.RelayGovernor;
@@ -56,6 +59,8 @@ import org.wyrdsekai.core.room.TheSafe;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.core.search.EmbeddingService;
 import org.wyrdsekai.core.search.SearchCollections;
+import org.wyrdsekai.core.identity.PersonIdentityProvisioner;
+import org.wyrdsekai.core.search.RelevanceFloor;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 import org.wyrdsekai.core.skill.SkillDraft;
 import org.wyrdsekai.core.skill.SkillDraftStore;
@@ -87,9 +92,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Supplier;
 import java.util.Map;
 import java.util.Optional;
@@ -168,7 +176,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
                     // Absent (neither registered) → BACKEND steps stay NEEDS_BACKEND, which is
                     // the honest state pre-bootstrap rather than a fabricated gate verdict.
                     var dispatcher = CodingBackendDispatcher
-                            .usingPreferred(List.of("goose", "pi"), agentId,
+                            .usingPreferred(CodingBackendPreference.chain(), agentId,
                                     Duration.ofMinutes(10))
                             .orElse(null);
                     var runner = dispatcher == null
@@ -361,38 +369,190 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
 
     @Override
     public List<Map<String, Object>> searchKnowledge(String query, int limit) {
-        if (luceneStore == null || query == null || query.isBlank()) {
-            log.warn("searchKnowledge skipped: luceneStore={}, query='{}'",
-                luceneStore != null ? "present" : "NULL", query);
+        // The merge, dedup, rerank and floor are caller-agnostic and live in
+        // KnowledgeSearch so the person path and the companion path cannot
+        // drift. What THIS provider contributes is the one identity-dependent
+        // step: how far its own caller may read into private shelves.
+        return KnowledgeSearch.search(luceneStore, query, limit, studyReach(), callerDid());
+    }
+
+    /**
+     * This provider's private reach — a companion's, via its bondholder's
+     * consent, or a person's own shelves when the caller resolves to one.
+     *
+     * <p>A shared instance built with a placeholder identity (Main registers
+     * one as {@code "household"}) resolves to neither and therefore reaches
+     * nothing, which is the honest answer: it does not know who is asking.
+     * It used to answer that question anyway, and the steward's own books went
+     * missing from his own hands because of it.</p>
+     */
+    StudyReach studyReach() {
+        // ONE decision about who the caller is, made in PersonStudyReach. A
+        // person reads their own shelves; anything else falls to the companion's
+        // consent-gated path; a placeholder identity resolves to neither and
+        // honestly reaches nothing.
+        if (PersonStudyReach.resolvePerson(agentId) != null) {
+            return PersonStudyReach.forPerson(agentId);
+        }
+        return this::searchGrantedStudy;
+    }
+
+    /**
+     * Read one Study chunk, but only one the caller may actually see.
+     *
+     * <p><b>A chunk id is not authorisation.</b> The id came from a search this
+     * caller was permitted to run, which is suggestive and not sufficient — ids
+     * are guessable, they get logged, and they outlive the grant that produced
+     * them. So this re-derives access rather than trusting the identifier:
+     * resolve the bondholder, run the same consent-gated search path, and return
+     * the chunk only if it is present among the results the caller is allowed.</p>
+     *
+     * <p>Slower than a direct {@code getById}, and correct. A read that skips the
+     * grant because "search already checked" is how consent decays into a
+     * formality.</p>
+     */
+    private WyrdLuceneStore.SearchResult readGrantedStudyChunk(String chunkId) {
+        if (luceneStore == null || chunkId == null || chunkId.isBlank()) return null;
+        var direct = luceneStore.getById(SearchCollections.STUDY, chunkId);
+        if (direct == null) return null;
+
+        // A PERSON READING THEIR OWN SHELF. The read half was taught the
+        // bondholder question and nothing else, so with no bondholder it
+        // returned null for EVERY Study id — search would hand a person ten of
+        // their own passages and every read of them came back empty, which is
+        // the same broken pair this file has already been bitten by once.
+        // Authorisation is still re-derived, not assumed: the chunk must be
+        // present in what this person's own reach returns.
+        var selfDid = PersonStudyReach.resolvePerson(agentId);
+        if (selfDid != null) {
+            for (var r : PersonStudyReach.forPerson(agentId).search(chunkId, 5)) {
+                if (chunkId.equals(r.id())) return r;
+            }
+            var meta = direct.metadata();
+            var owner = meta != null ? String.valueOf(meta.getOrDefault("user_did", "")) : "";
+            return selfDid.equals(owner) ? direct : null;
+        }
+
+        var ownerDid = primaryBondholderDid();
+        if (ownerDid == null || agentId == null) return null;
+        var consent = homeClient != null ? homeClient : HomeClients.get();
+        if (consent == null) {
+            log.warn("Study chunk '{}' not read — no HomeClient, so the grant cannot "
+                + "be checked. This is a wiring gap, not a refusal.", chunkId);
+            return null;
+        }
+        try {
+            // Ask the consented path for this exact document. Matching on id keeps
+            // the answer to "may this caller see THIS chunk", not "does something
+            // like it exist".
+            var permitted = new StudyService(luceneStore, consent)
+                .searchAsCompanion(ownerDid, agentId, chunkId, 5);
+            for (var r : permitted) {
+                if (chunkId.equals(r.id())) return r;
+            }
+            // Not surfaced by an id-query: fall back to confirming the collection
+            // is granted, so a chunk whose text does not contain its own id is
+            // still readable.
+            var collection = direct.metadata() == null ? null
+                : (String) direct.metadata().get("collection");
+            var svc = new StudyService(luceneStore, consent);
+            if (collection != null && svc.hasAccess(ownerDid, agentId, collection)) {
+                return direct;
+            }
+            log.info("Study chunk '{}' withheld — not covered by a grant to {}",
+                chunkId, agentId);
+            return null;
+        } catch (RuntimeException e) {
+            log.warn("Study chunk read failed for '{}': {}", chunkId, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * The caller's bondholder — whose Study a granted search may read.
+     *
+     * <p>"Who is the person here" is exactly the question the person-identity
+     * work exists to answer, so ask it rather than pattern-matching the DID
+     * string. {@link PersonIdentityResolver} returns empty for anything that is
+     * not a person on this node, which is the only test that stays correct after
+     * a rebind. Before provisioning is enabled there is nobody to resolve
+     * against, so fall back to the structural test — a bond partner that is not
+     * another agent.</p>
+     *
+     * @return the bondholder's person DID, or null when there is no bondholder
+     */
+    private String primaryBondholderDid() {
+        if (bondStore == null || agentId == null) return null;
+        var resolver = PersonIdentityProvisioner.resolver().orElse(null);
+        Bond best = null;
+        String bestParty = null;
+        for (var b : bondStore.bondsForAgent(agentId)) {
+            if (!b.active()) continue;
+            var party = b.otherParty(agentId);
+            if (party == null) continue;
+            String personDid;
+            if (resolver != null) {
+                personDid = resolver.resolve(party).orElse(null);
+                if (personDid == null) continue;          // not a person — skip
+            } else {
+                if (party.startsWith("agent-") || party.startsWith("companion-")) continue;
+                personDid = party;
+            }
+            if (best == null || b.depth().level() > best.depth().level()) {
+                best = b;
+                bestParty = personDid;
+            }
+        }
+        return bestParty;
+    }
+
+    /**
+     * Consent-gated read of the bondholder's Study.
+     *
+     * <p>Every gate that guards the {@code library_search} action guards this
+     * one too — same {@link StudyService#searchAsCompanion} call, same
+     * private-journal exclusion, same per-collection grant check. A shelf the
+     * bondholder has not granted returns nothing; it does not fail loudly and it
+     * does not fall back to an ungated read.</p>
+     */
+    private List<WyrdLuceneStore.SearchResult> searchGrantedStudy(String query, int limit) {
+        if (luceneStore == null || query == null || query.isBlank()) return List.of();
+        if (agentId == null) return List.of();
+        // The person case is NOT decided here any more. It used to be, and the
+        // same decision also lived in PersonStudyReach — two copies that could
+        // and did disagree (one had a fallback for un-provisioned nodes, the
+        // other did not). PersonStudyReach owns it; studyReach() routes to it.
+        // What remains here is the companion's own path: consent-gated, per
+        // collection, through its bondholder.
+        var ownerDid = primaryBondholderDid();
+        if (ownerDid == null) {
+            log.info("Study leg skipped for '{}': caller is not a person and no "
+                + "bondholder resolves to one", query);
+            return List.of();
+        }
+        // The consent ORACLE, not the field. StudyService.hasAccess fails closed on a
+        // null HomeClient — correct, and it silently denied every collection here,
+        // because CompanionActor constructs this provider with `null /* homeClient */`
+        // (2026-08-07 live: 10 Glass Tide passages found, all 10 filtered out, "0 study").
+        // A grant check with no way to check grants must not read as "no grant".
+        var consent = homeClient != null ? homeClient : HomeClients.get();
+        if (consent == null) {
+            log.warn("Study leg unavailable for '{}': no HomeClient — grants cannot be "
+                + "checked, so nothing is read. This is a wiring gap, not a refusal.", query);
             return List.of();
         }
         try {
-            var results = luceneStore.searchKnowledge(query, null, Math.min(limit, 20));
-            log.info("searchKnowledge('{}', limit={}) → {} results", query, limit, results.size());
-            // gap-detection substrate.
-            var rl = LibraryServices.readingLog();
-            if (rl != null) {
-                if (results.isEmpty()) {
-                    rl.recordMiss(query, callerDid());
-                } else {
-                    var top = results.getFirst();
-                    rl.recordLocal(query, callerDid(), results.size(),
-                        top.score(), top.source());
-                }
+            var hits = new StudyService(luceneStore, consent)
+                .searchAsCompanion(ownerDid, agentId, query, limit);
+            if (hits.isEmpty()) {
+                log.debug("Study leg: 0 granted hits for '{}' (owner={})", query, ownerDid);
             }
-            var mapped = new ArrayList<Map<String, Object>>(results.size());
-            for (var r : results) {
-                var m = new HashMap<String, Object>();
-                m.put("id", r.id());
-                m.put("title", r.metadata() != null ? r.metadata().getOrDefault("title", r.id()) : r.id());
-                m.put("text", truncate(r.content(), 500));
-                m.put("pack", r.source());
-                m.put("score", r.score());
-                mapped.add(m);
-            }
-            return mapped;
-        } catch (Exception e) {
-            log.error("Knowledge search failed for '{}': {}", query, e.getMessage());
+            return hits;
+        } catch (RuntimeException e) {
+            // A Study failure must never sink the knowledge-pack leg — but it must not
+            // be invisible either. An empty result and a broken result look identical
+            // to the caller, which is how this took a live round-trip to find.
+            log.warn("Granted study search failed for '{}': {}", query, e.toString());
             return List.of();
         }
     }
@@ -409,12 +569,64 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             var rich = luceneStore.readKnowledgeChunk(chunkId);
             if (rich != null) return rich;
             var result = luceneStore.getById("knowledge", chunkId);
+            if (result == null) {
+                // SEARCH AND READ MUST SPAN THE SAME SHELVES.
+                //
+                // searchKnowledge was taught to merge consent-granted Study hits;
+                // this was not, so it kept resolving ids against KNOWLEDGE alone.
+                // Study ids (doc:<owner>:<collection>:<hash>) are not in that
+                // collection, so every book passage the search had just found came
+                // back null here.
+                //
+                // Live 2026-08-08, the whole point of the chain: library_card
+                // searched, got "20 results (10 pack, 10 study)", then read each id,
+                // dropped all ten Study passages on `if (!chunk || !chunk.text)
+                // continue`, and handed the summarizer a 142-character prompt with
+                // nothing in it. She said the books held no answer. They held ten.
+                //
+                // A search that returns ids its paired read cannot resolve is a
+                // broken pair — extending one without the other is what broke it.
+                result = readGrantedStudyChunk(chunkId);
+            }
             if (result == null) return null;
             var m = new HashMap<String, Object>();
             m.put("id", result.id());
             m.put("title", result.metadata() != null ? result.metadata().getOrDefault("title", result.id()) : result.id());
             m.put("text", result.content());
             m.put("pack", result.source());
+
+            // THE PASSAGE EITHER SIDE, when the chunk is part of something longer.
+            //
+            // Search finds the chunk whose words match the question; prose pays
+            // no attention to that boundary. Coleridge's poem is part 78 of The
+            // Diamond Age and the letter naming Finkle-McGraw and Hackworth is
+            // part 79, so a question about the poem matches the letter and never
+            // the verse — the poem has none of the question's words in it. The
+            // text was in the library the whole time and no query could reach it.
+            //
+            // Carried as an extra key rather than a new API method: every
+            // existing caller reads `text` and is unaffected, and a provider
+            // that cannot supply neighbours simply omits it.
+            var run = luceneStore.chunkWithNeighbours(SearchCollections.STUDY, result.id(), 1);
+            if (run.size() > 1) {
+                var joined = new StringBuilder();
+                for (var c : run) {
+                    if (c.content() == null) continue;
+                    if (joined.length() > 0) joined.append("\n");
+                    joined.append(c.content());
+                }
+                m.put("context", joined.toString());
+                log.info("Chunk {} read with {} neighbours ({} chars of context)",
+                    result.id(), run.size() - 1, joined.length());
+            } else {
+                // Log the miss too. The first live run of this feature returned
+                // the right verbatim text with NO context and NOTHING said why —
+                // the store worked, the script worked, and the seam between them
+                // was silent. An adjacency read that finds no neighbours on a
+                // 471-part book is a finding, not a non-event.
+                log.info("Chunk {} read with no neighbours (run size {})",
+                    result.id(), run.size());
+            }
             return m;
         } catch (Exception e) {
             log.error("Knowledge chunk read failed for '{}': {}", chunkId, e.getMessage());
@@ -426,14 +638,30 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
 
     @Override
     public List<Map<String, Object>> webSearch(String query, String type, int limit) {
-        if (query == null || query.isBlank()) return List.of();
+        // Say what happened. Three different facts used to look identical from the
+        // outside — no service, a bad response, and an honest zero all returned an empty
+        // list in silence. Live 2026-08-21: a weather item answered "none returned
+        // readable content", searxng was demonstrably healthy, and NOTHING in the log
+        // said which of the three it was. searchKnowledge logs its counts, which is why
+        // the library side was diagnosable in one grep and this was not.
+        if (query == null || query.isBlank()) {
+            log.info("webSearch(blank query) → 0 results — nothing was asked");
+            return List.of();
+        }
         try {
             var ws = WebSearchService.get();
-            if (ws == null) return List.of();
+            if (ws == null) {
+                log.warn("webSearch('{}') → 0 results: NO WEB SEARCH SERVICE is wired on "
+                    + "this node — an item asking for the web will always get nothing",
+                    query);
+                return List.of();
+            }
 
             var results = "news".equals(type)
                 ? ws.searchNews(query, Math.min(limit, 10))
                 : ws.search(query, Math.min(limit, 10));
+            log.info("webSearch('{}', type={}, limit={}) → {} result(s)",
+                query, type, limit, results == null ? 0 : results.size());
 
             recordCost("web_search");
 
@@ -465,10 +693,15 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         if (url == null || url.isBlank()) return "[error] No URL provided";
         try {
             var ws = WebSearchService.get();
-            if (ws == null) return "[error] Web search service unavailable";
+            if (ws == null) {
+                log.warn("webFetch('{}') — no web search service wired on this node", url);
+                return "[error] Web search service unavailable";
+            }
 
             recordCost("web_search");
-            return ws.fetchContent(url, Math.min(maxChars, 16000));
+            var body = ws.fetchContent(url, Math.min(maxChars, 16000));
+            log.info("webFetch('{}') → {} chars", url, body == null ? 0 : body.length());
+            return body;
         } catch (Exception e) {
             log.error("Web fetch failed for '{}': {}", url, e.getMessage());
             return "[error] " + e.getMessage();
@@ -537,8 +770,26 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             return "[error] Inference not available";
         }
 
-        // Truncate input to avoid overwhelming the model
-        var truncatedText = truncate(userText, 3000);
+        // THE SUMMARISER WAS READING ONE PASSAGE.
+        //
+        // This was a hard 3,000-character cap, applied to every source block
+        // concatenated together. Study chunks run 1,200–2,900 characters, so the
+        // FIRST chunk consumed the whole budget and everything after it was
+        // silently cut. library_card selects its top 3 with a scoring gate;
+        // effectively the model saw one, and only if the answer happened to rank
+        // first. The tell was in every log line for days: promptLen=3003, the
+        // same number for a two-word question and a 69-word one — a constant
+        // where a measurement should have been.
+        //
+        // Measured cost of the bug: on six live runs of a question whose answer
+        // was demonstrably in the library, three reached the search, retrieved
+        // the right book, and all three reported finding nothing — the answering
+        // chunk was in the retrieved set but never in the prompt.
+        //
+        // 3,000 characters is ~750 tokens against a 32,768-token context: under
+        // 3% of what the model can hold, for the one input that decides whether
+        // the answer is present at all.
+        var truncatedText = truncate(userText, LLM_INPUT_CHARS);
         var requestId = "item-" + UUID.randomUUID().toString().substring(0, 8);
 
         var messages = List.of(
@@ -577,9 +828,16 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
 
             return switch (response) {
                 case InferenceRouter.InferOk ok -> {
-                    log.debug("Item LLM call completed in {}ms, {} tokens",
-                        latencyMs, ok.completionTokens());
-                    yield ok.content();
+                    // INFO, not debug, and it names the length. "waiting on response"
+                    // logged at info with no counterpart at info meant that on 2026-08-22
+                    // three item LLM calls looked, in the log, exactly like a hang — the
+                    // thread dump was what finally showed they had returned. A wait must
+                    // always log how it ended, and an empty answer is a fact worth having.
+                    var content = ok.content();
+                    log.info("Item LLM call completed in {}ms, {} tokens, {} chars",
+                        latencyMs, ok.completionTokens(),
+                        content == null ? 0 : content.length());
+                    yield content;
                 }
                 case InferenceRouter.InferError err -> {
                     log.warn("Item LLM call failed: {}", err.error());
@@ -826,6 +1084,19 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         }
     }
 
+    /**
+     * How much source text an item may put in front of the model.
+     *
+     * <p>~6k tokens of a 32,768-token context. Deliberately generous rather than
+     * tight: the failure this replaces was invisible (a silent cut mid-corpus
+     * that reads exactly like "the library doesn't have it"), while the failure
+     * from being too generous is visible and bounded (a slower call).</p>
+     */
+    static final int LLM_INPUT_CHARS = 24_000;
+
+    /** Per-source-block ceiling, so one long chunk cannot crowd out the rest. */
+    static final int PER_BLOCK_CHARS = 4_000;
+
     private static String truncate(String text, int maxChars) {
         if (text == null) return "";
         return text.length() <= maxChars ? text : text.substring(0, maxChars) + "...";
@@ -865,6 +1136,21 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     @Override
     public Map<String, Object> hostFind(String pattern, int maxResults) {
         return HostActionService.findFiles(pattern, maxResults, agentId);
+    }
+
+    @Override
+    public List<String> hostRoots() {
+        return HostActionService.openRoots();
+    }
+
+    @Override
+    public Map<String, Object> hostMove(String from, String to) {
+        return HostActionService.moveFile(from, to, agentId);
+    }
+
+    @Override
+    public Map<String, Object> hostMkdir(String path) {
+        return HostActionService.makeDirectory(path, agentId);
     }
 
     @Override
@@ -1427,9 +1713,72 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         }
     }
 
+    /**
+     * Who authored a chunk, from the id {@link #libraryAdd} minted for it.
+     *
+     * <p>{@code library.add} stamps {@code lib:<author>:<uuid>} — the author
+     * segment is set server-side from the acting identity and the uuid is
+     * server-generated, so the id names its author truthfully. Note this is NOT
+     * the "a chunk id is authorisation" mistake: the caller does not get to
+     * assert who they are by choosing an id, because the id must match the
+     * identity they are already acting under.</p>
+     *
+     * <p>Parsed from the LAST colon so an author segment that itself contains
+     * colons — every {@code did:key:...} does — is not truncated, and so caller
+     * {@code a} cannot prefix-match a chunk authored by {@code a:b}.</p>
+     *
+     * @return the author, or {@code null} for anything not written through
+     *     {@code library.add} (a bundled pack, a published shelf)
+     */
+    private static String chunkAuthor(String chunkId) {
+        if (chunkId == null || !chunkId.startsWith("lib:")) return null;
+        int lastColon = chunkId.lastIndexOf(':');
+        if (lastColon <= 3) return null;
+        var author = chunkId.substring(4, lastColon);
+        return author.isBlank() ? null : author;
+    }
+
+    /**
+     * May this caller rewrite or remove {@code chunkId}?
+     *
+     * <p>Neither {@code library.tag} nor {@code library.delete} used to ask.
+     * They took any id and acted, so any crafted item holding
+     * {@code library.delete} — which is in {@code CRAFTED_ALLOW} — could erase
+     * any chunk in the household's knowledge base, including passages from the
+     * steward's 13.6M-chunk published shelf. {@code library.delete} is tier 5,
+     * the most dangerous rung the manifest validator has, and it was unguarded.</p>
+     *
+     * <p>The rule follows the same principle as the rest of this surface: an
+     * item carries exactly the authority of whoever is using it. You may edit
+     * what you wrote. The household's steward may curate anything — they can
+     * already do so with {@code wyrd library}, so this is their own authority,
+     * not an escalation — and it is logged when they do. Everyone else is
+     * refused.</p>
+     */
+    private boolean mayRewriteChunk(String chunkId) {
+        var author = chunkAuthor(chunkId);
+        if (author != null && author.equals(agentId)) return true;
+
+        var grants = ActionGrants.get();
+        var zoneOwner = grants != null ? grants.fallbackOwnerDid() : null;
+        if (zoneOwner == null) return false;
+        var callerDid = PersonStudyReach.resolvePerson(agentId);
+        if (zoneOwner.equals(callerDid)) {
+            log.info("library write on '{}' allowed as the household's steward ({})",
+                chunkId, callerDid);
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public Map<String, Object> libraryTag(String chunkId, List<String> tags) {
         if (luceneStore == null) return Map.of("error", "library not available", "ok", false);
+        if (!mayRewriteChunk(chunkId)) {
+            log.warn("library.tag REFUSED for '{}': {} did not write it", chunkId, agentId);
+            return Map.of("ok", false, "error", "not_yours",
+                "reason", "not_yours", "chunkId", String.valueOf(chunkId));
+        }
         return luceneStore.updateKnowledgeTags(
             SearchCollections.KNOWLEDGE, chunkId, tags);
     }
@@ -1439,6 +1788,12 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         if (luceneStore == null) return Map.of("error", "library not available", "ok", false);
         if (chunkId == null || chunkId.isBlank()) {
             return Map.of("ok", false, "reason", "blank_id");
+        }
+        // Asked BEFORE existence, so a refusal does not double as a probe for
+        // which chunk ids are real.
+        if (!mayRewriteChunk(chunkId)) {
+            log.warn("library.delete REFUSED for '{}': {} did not write it", chunkId, agentId);
+            return Map.of("ok", false, "reason", "not_yours", "chunkId", chunkId);
         }
         try {
             var existing = luceneStore.getById(
@@ -2987,6 +3342,19 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     @Override public Map<String, Object> inviteRevoke(String codeOrId) {
         var d = adminDelegate(); return d != null ? d.inviteRevoke(codeOrId) : NOT_STEWARD_HELD;
     }
+
+    // hermod grants: a companion may READ the household's grants through its
+    // steward bondholder, and revocation routes to the steward's own provider
+    // (which re-checks the role) — a companion has no authority of its own.
+    @Override
+    public List<Map<String, Object>> hermodGrantsList() {
+        var d = adminDelegate(); return d != null ? d.hermodGrantsList() : List.of();
+    }
+
+    @Override
+    public Map<String, Object> hermodGrantRevoke(String grantIdOrStem) {
+        var d = adminDelegate(); return d != null ? d.hermodGrantRevoke(grantIdOrStem) : NOT_STEWARD_HELD;
+    }
     @Override public List<Map<String, Object>> wardList(String roomId) {
         var d = adminDelegate(); return d != null ? d.wardList(roomId) : List.of();
     }
@@ -3454,7 +3822,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         // Heuristic placeholder — true selection is in CodingBackendRegistry.
         if (taskType == null) return null;
         return switch (taskType.toLowerCase()) {
-            case "code", "refactor", "test" -> "codeplane";
+            case "code", "refactor", "test" -> "codezaiku";
             case "doc", "summary" -> "local";
             default -> null;
         };

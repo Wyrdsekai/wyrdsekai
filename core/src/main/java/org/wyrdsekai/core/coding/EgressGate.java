@@ -57,7 +57,13 @@ public final class EgressGate {
      */
     public static final Set<String> DEFAULT_ENV_ALLOWLIST = Set.of(
         "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM",
-        "OPENAI_HOST", "OPENAI_API_KEY", "GOOSE_PROVIDER", "GOOSE_MODEL");
+        "OPENAI_HOST", "OPENAI_API_KEY", "GOOSE_PROVIDER", "GOOSE_MODEL",
+        // CodeZaiku's equivalents. goose has had OPENAI_API_KEY here since the gate was
+        // written; CodeZaiku never got the same courtesy, so a hosted endpoint could not
+        // be reached at all — the scrub removed the key and nothing put it back. Same
+        // shape, same reasoning: a backend's OWN routing credential is not the ambient
+        // household secret this gate exists to strip.
+        "CODEZAIKU_AUTH_TOKEN", "CODEZAIKU_API_KEY");
 
     private final boolean enabled;
     private final Set<String> envAllowlist;

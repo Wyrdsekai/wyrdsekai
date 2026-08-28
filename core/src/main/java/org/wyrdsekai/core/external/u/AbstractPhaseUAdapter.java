@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -52,6 +53,15 @@ abstract class AbstractPhaseUAdapter implements ExternalAdapter {
      * real work. Returns the resolved value or fires the fail-shaped envelope
      * with {@code credential_missing} for the script to handle.
      */
+    /**
+     * Phase-U adapters are scaffolding until they say otherwise: none of what they
+     * declare is presumed to reach a live service. An adapter that wires a method
+     * overrides this and names it, and only named methods are ever advertised to an
+     * item author. Forgetting to name one hides real work — visible and harmless.
+     * The other direction shipped vapor into someone's hands twice.
+     */
+    @Override public Set<String> wiredCapabilities() { return Set.of(); }
+
     protected Optional<String> requireCredential() {
         var slot = credentialSlot();
         if (slot == null || slot.isBlank()) return Optional.empty();
@@ -95,7 +105,14 @@ abstract class AbstractPhaseUAdapter implements ExternalAdapter {
                 return AdapterResponse.fail("response_too_large",
                     "upstream returned more than 10MB", false);
             }
-            return AdapterResponse.ok(Map.of("status", resp.statusCode(), "body", body));
+            // Map.of REJECTS a null value with an NPE, and an upstream that answers
+            // with no body is not an error worth crashing on. Live 2026-08-21 this threw
+            // out of ~100 adapters' shared code path and surfaced to a person as
+            // "Script error: null" — no adapter named, no cause, nothing to act on.
+            var out = new LinkedHashMap<String, Object>();
+            out.put("status", resp.statusCode());
+            out.put("body", body == null ? "" : body);
+            return AdapterResponse.ok(out);
         } catch (HttpTimeoutException e) {
             return AdapterResponse.fail("timeout", "upstream timed out after 30s", true);
         } catch (Exception e) {

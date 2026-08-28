@@ -44,9 +44,9 @@ final class SkillMdBundleImportTest {
     @Test
     void emergency_contacts_parse_from_the_flat_key() {
         var contacts = SkillBootstrap.parseEmergencyContacts(
-            "Masumi:+15550199:steward, Neighbor:+15550188");
+            "Operator:+15550199:steward, Neighbor:+15550188");
         assertEquals(2, contacts.size());
-        assertEquals("Masumi", contacts.get(0).name());
+        assertEquals("Operator", contacts.get(0).name());
         assertEquals("+15550199", contacts.get(0).phone());
         assertEquals("steward", contacts.get(0).relationship());
         assertEquals("", contacts.get(1).relationship());

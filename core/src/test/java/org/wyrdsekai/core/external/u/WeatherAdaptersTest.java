@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import java.util.LinkedHashMap;
+import java.util.List;
 
 /** §4.41 weather adapter contract tests. */
 class WeatherAdaptersTest {
@@ -108,7 +110,7 @@ class WeatherAdaptersTest {
 
     @Test
     void openweather_current_text_digest_format() {
-        var digest = new java.util.LinkedHashMap<String, Object>();
+        var digest = new LinkedHashMap<String, Object>();
         digest.put("conditions", "clear sky");
         digest.put("temp_f", 70.7);
         digest.put("feels_like_f", 68.9);
@@ -121,7 +123,7 @@ class WeatherAdaptersTest {
 
     @Test
     void openweather_current_text_omits_blank_place() {
-        var digest = new java.util.LinkedHashMap<String, Object>();
+        var digest = new LinkedHashMap<String, Object>();
         digest.put("conditions", "light rain");
         digest.put("temp_f", 58.0);
         digest.put("feels_like_f", 55.0);
@@ -134,7 +136,7 @@ class WeatherAdaptersTest {
 
     @Test
     void openweather_forecast_text_digest_format() {
-        var daily = java.util.List.<Map<String, Object>>of(
+        var daily = List.<Map<String, Object>>of(
             Map.of("date", "2026-07-13", "low_f", 58L, "high_f", 71L, "conditions", "clear sky"),
             Map.of("date", "2026-07-14", "low_f", 60L, "high_f", 75L, "conditions", "few clouds"));
         assertEquals("San Jose — Mon 7/13: low 58F high 71F, clear sky; "
@@ -144,7 +146,7 @@ class WeatherAdaptersTest {
 
     @Test
     void openweather_forecast_text_keeps_unparseable_date_verbatim() {
-        var daily = java.util.List.<Map<String, Object>>of(
+        var daily = List.<Map<String, Object>>of(
             Map.of("date", "someday", "low_f", 50L, "high_f", 60L, "conditions", "?"));
         assertEquals("someday: low 50F high 60F, ?",
             OpenWeatherAdapter.forecastText("", daily));

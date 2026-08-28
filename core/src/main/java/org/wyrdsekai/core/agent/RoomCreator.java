@@ -5,6 +5,7 @@ import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.Scheduler;
 import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import org.wyrdsekai.common.model.Exit;
+import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.common.model.RoomObject;
 import org.wyrdsekai.common.model.RoomSnapshot;
 import org.wyrdsekai.core.room.RoomCommand;
@@ -70,7 +71,15 @@ public final class RoomCreator {
         }
         return AskPattern.<RoomCommand, RoomResponse>ask(roomRef,
             ref -> new RoomCommand.CreateRoom(name, description, zone, exits, objects, ref),
-            ASK_TIMEOUT, scheduler);
+            ASK_TIMEOUT, scheduler)
+            // The shared topology is built once at boot from the foundation seeds, so a
+            // room made afterwards was invisible to `map` — it rendered as `->[?]`, an
+            // unnamed destination on a one-way arrow, however walkable it actually was.
+            .whenComplete((res, err) -> {
+                if (err == null && res instanceof RoomResponse.Ok) {
+                    ZoneTopology.learnRoom(roomId, name, zone, exits, null, null);
+                }
+            });
     }
 
     public CompletionStage<RoomResponse> addExit(
@@ -93,9 +102,15 @@ public final class RoomCreator {
             return CompletableFuture.completedFuture(
                 new RoomResponse.Rejected("error","No scheduler available for ask"));
         }
+        final var sourceId = resolved != null ? resolved : roomId;
         return AskPattern.<RoomCommand, RoomResponse>ask(roomRef,
             ref -> new RoomCommand.AddExit(direction, targetRoom, label, ref),
-            ASK_TIMEOUT, scheduler);
+            ASK_TIMEOUT, scheduler)
+            .whenComplete((res, err) -> {
+                if (err == null && res instanceof RoomResponse.Ok) {
+                    ZoneTopology.learnExit(sourceId, direction, targetRoom, label);
+                }
+            });
     }
 
     public static String generateRoomId(String name) {

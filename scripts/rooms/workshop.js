@@ -1,12 +1,32 @@
-// Workshop — Workbench + CodePlane Integration (§88.6).
+// The single CodeZaiku MCP service. CodeZaiku ships ONE stdio MCP server
+// (`codezaiku mcp`, JSON-RPC 2.0); the four servers this room used to expect
+// -- codeplane-tools / -experiment / -deps / -profiler -- come from a design
+// that was abandoned before it was built, so every one of those branches had
+// been reporting "offline" since the day it was written.
+//
+// This string is OUR registry id, not their `serverInfo.name`: upstream says
+// the advertised name is informational and already changed once with the
+// rename, so matching on it would break again. A steward wires the service in
+// `mcp-services.json`:
+//
+//   { "id": "codezaiku", "name": "CodeZaiku", "transport": "stdio",
+//     "endpoint": "codezaiku mcp", "tier": "local", "enabled": true }
+//
+// Tools that exist: code, fix, explore_and_fix, review, research,
+// research_memory, investigate, secure, record_convention, show_conventions,
+// job_status. Every one accepts `async: true` and answers with a job id to
+// poll via job_status.
+var CODEZAIKU_MCP = "codezaiku";
+
+// Workshop — Workbench + CodeZaiku Integration (§88.6).
 // Two modes:
 //   Workbench: Companion creates lightweight skill items (GraalJS).
 //     Validates, tests, packages as SoulItem in FamilyLocker.
-//   CodePlane: Full software development via CodePlane MCP servers.
+//   CodeZaiku: Full software development via CodeZaiku MCP servers.
 // Connected to Terminal (east exit).
 
 function onEnter(entityId, entityName, fromDirection) {
-    var cpAvail = world.mcpAvailable("codeplane-tools");
+    var cpAvail = world.mcpAvailable(CODEZAIKU_MCP);
     var ocAvail = (typeof world.codingBackendAvailable === "function")
         && world.codingBackendAvailable("opencode");
     var ohAvail = (typeof world.codingBackendAvailable === "function")
@@ -23,7 +43,7 @@ function onEnter(entityId, entityName, fromDirection) {
     // "autonomous" so room-narration assertions match.
     var props = [];
     if (cpAvail) {
-        props.push("a deep-blue Forge (CodePlane, project-scale)");
+        props.push("a deep-blue Forge (CodeZaiku, project-scale)");
     }
     if (ocAvail) {
         props.push("a small luminous slate (OpenCode, free, local)");
@@ -75,16 +95,13 @@ function onSay(entityId, entityName, text) {
         doReview(entityId, target);
 
     } else if (lower.startsWith("experiment ")) {
-        var name = text.substring(11).trim();
-        doExperiment(entityId, name);
+        doUnbuilt("experiment");
 
     } else if (lower.startsWith("deps ")) {
-        var action = text.substring(5).trim();
-        doDeps(entityId, action);
+        doUnbuilt("dependency");
 
     } else if (lower.startsWith("profile ")) {
-        var target = text.substring(8).trim();
-        doProfile(entityId, target);
+        doUnbuilt("profiling");
 
     } else if (lower.startsWith("craft ")) {
         var skillName = text.substring(6).trim();
@@ -237,25 +254,25 @@ function onUse(entityId, objectName, target) {
 }
 
 // Phase 1b: every coding-task command
-// consults world.codingBackendFor(...) before dispatching. CodePlane stays
+// consults world.codingBackendFor(...) before dispatching. CodeZaiku stays
 // the default backend until other backends are wired in Phase 2+; for now
-// any non-codeplane choice falls back to the existing CodePlane path with
+// any non-codezaiku choice falls back to the existing CodeZaiku path with
 // a console warning so we don't silently lose the request.
 
 function pickBackend(entityId, taskType, taskDescription) {
-    if (typeof world.codingBackendFor !== "function") return "codeplane";
+    if (typeof world.codingBackendFor !== "function") return "codezaiku";
     try {
         var b = world.codingBackendFor(entityId, taskType, taskDescription);
-        return b || "codeplane";
+        return b || "codezaiku";
     } catch (e) {
-        return "codeplane";
+        return "codezaiku";
     }
 }
 
 function dispatchCoding(entityId, taskType, task, mcpTool, mcpPayload, narrationOnSuccess) {
     var backend = pickBackend(entityId, taskType, task);
 
-    // Phase 2b: OpenCode joins CodePlane as a wired backend. The
+    // Phase 2b: OpenCode joins CodeZaiku as a wired backend. The
     // dispatch path for OpenCode is direct (no MCP server), routed
     // through world.zoneCommand("opencode.create", ...) once the
     // companion calls it. For a human typing in the Workshop, we still
@@ -280,11 +297,11 @@ function dispatchCoding(entityId, taskType, task, mcpTool, mcpPayload, narration
             }
             return;
         }
-        // No zone-command host hook — fall through to CodePlane.
+        // No zone-command host hook — fall through to CodeZaiku.
         if (typeof console !== "undefined" && console.warn) {
-            console.warn("[workshop] opencode chosen but world.zoneCommand unavailable; falling back to codeplane");
+            console.warn("[workshop] opencode chosen but world.zoneCommand unavailable; falling back to codezaiku");
         }
-        backend = "codeplane";
+        backend = "codezaiku";
     }
 
     // OpenHands joins the wired set in Phase 2c. Like OpenCode, the
@@ -316,7 +333,7 @@ function dispatchCoding(entityId, taskType, task, mcpTool, mcpPayload, narration
             return;
         }
         // No zone-command host hook yet — narration above already
-        // landed, so just return without touching codeplane.
+        // landed, so just return without touching codezaiku.
         if (typeof console !== "undefined" && console.warn) {
             console.warn("[workshop] openhands chosen but world.zoneCommand unavailable; narration-only");
         }
@@ -356,20 +373,20 @@ function dispatchCoding(entityId, taskType, task, mcpTool, mcpPayload, narration
         return;
     }
 
-    if (backend !== "codeplane") {
+    if (backend !== "codezaiku") {
         // Other backends (Aider, paid tiers) ship in later phases;
         // until then, a request that resolves to one of those falls
-        // back to the CodePlane path with a console warning.
+        // back to the CodeZaiku path with a console warning.
         if (typeof console !== "undefined" && console.warn) {
             console.warn("[workshop] codingBackendFor(" + taskType
-                + ") chose '" + backend + "' but only codeplane+opencode+openhands+goose are wired; falling back");
+                + ") chose '" + backend + "' but only codezaiku+opencode+openhands+goose are wired; falling back");
         }
-        backend = "codeplane";
+        backend = "codezaiku";
     }
 
-    if (!world.mcpAvailable("codeplane-tools")) {
+    if (!world.mcpAvailable(CODEZAIKU_MCP)) {
         world.emit("narrate", {
-            text: "The workbench is cold. No CodePlane connection is available."
+            text: "The workbench is cold. No CodeZaiku connection is available."
         });
         return;
     }
@@ -378,7 +395,7 @@ function dispatchCoding(entityId, taskType, task, mcpTool, mcpPayload, narration
         text: "You place the task on the workbench. The tools begin to move..."
     });
 
-    var result = world.mcp("codeplane-tools", mcpTool, mcpPayload);
+    var result = world.mcp(CODEZAIKU_MCP, mcpTool, mcpPayload);
 
     if (result.success) {
         world.emit("narrate", {
@@ -392,7 +409,9 @@ function dispatchCoding(entityId, taskType, task, mcpTool, mcpPayload, narration
 }
 
 function doCode(entityId, task) {
-    dispatchCoding(entityId, "code", task, "create_task",
+    // `create_task` never existed upstream -- no commit, no doc, not even in
+    // the abandoned plans. The real tool is `code`.
+    dispatchCoding(entityId, "code", task, "code",
         { description: task, actor: entityId },
         "Task submitted to the board:");
 }
@@ -403,61 +422,45 @@ function doCode(entityId, task) {
 // shape but with a tighter intent label so the policy can route
 // without sniffing the task description.
 function doExplore(entityId, task) {
-    dispatchCoding(entityId, "explore", task, "create_task",
+    // Upstream renamed this: `explore` became `explore_and_fix` -- explore a
+    // machine and repair what is broken, bounded to that machine. A rename,
+    // not a removal, so the verb stays and only the tool name moves.
+    dispatchCoding(entityId, "explore", task, "explore_and_fix",
         { description: task, actor: entityId, intent: "explore" },
         "Exploration submitted to the board:");
 }
 
 function doTest(entityId, target) {
-    var backend = pickBackend(entityId, "test", target);
-    if (backend !== "codeplane") {
-        if (typeof console !== "undefined" && console.warn) {
-            console.warn("[workshop] codingBackendFor(test) chose '" + backend
-                + "' but only codeplane is wired in Phase 1b; falling back");
-        }
-    }
-
-    if (!world.mcpAvailable("codeplane-tools")) {
-        world.emit("narrate", {
-            text: "No CodePlane connection. Cannot run tests."
-        });
-        return;
-    }
-
+    // There is no standalone `run_tests` tool, and that is deliberate upstream:
+    // test running lives inside the coding loop (verify/ProjectTests) because
+    // the loop needs the result to decide whether to keep iterating. Driving
+    // tests from outside would run them without those verification semantics,
+    // so this verb says what is true rather than calling a tool that does not
+    // exist. `code <task>` runs tests as part of the work.
     world.emit("narrate", {
-        text: "Running tests against " + target + "..."
+        text: "The workbench runs tests as part of the work, not apart from it. "
+            + "Ask for the change itself -- `code " + (target || "<task>") + "` -- "
+            + "and the tests run inside that loop, where their result can steer it."
     });
-
-    var result = world.mcp("codeplane-tools", "run_tests", { target: target });
-
-    if (result.success) {
-        world.emit("narrate", {
-            text: "Test results:\n\n" + result.data
-        });
-    } else {
-        world.emit("narrate", {
-            text: "Tests could not be run. " + (result.error || "")
-        });
-    }
 }
 
 function doReview(entityId, target) {
     var backend = pickBackend(entityId, "review", target);
-    if (backend !== "codeplane") {
+    if (backend !== "codezaiku") {
         if (typeof console !== "undefined" && console.warn) {
             console.warn("[workshop] codingBackendFor(review) chose '" + backend
-                + "' but only codeplane is wired in Phase 1b; falling back");
+                + "' but only codezaiku is wired in Phase 1b; falling back");
         }
     }
 
-    if (!world.mcpAvailable("codeplane-tools")) {
+    if (!world.mcpAvailable(CODEZAIKU_MCP)) {
         world.emit("narrate", {
-            text: "No CodePlane connection. Cannot review."
+            text: "No CodeZaiku connection. Cannot review."
         });
         return;
     }
 
-    var result = world.mcp("codeplane-tools", "review", { target: target });
+    var result = world.mcp(CODEZAIKU_MCP, "review", { target: target });
 
     if (result.success) {
         world.emit("narrate", {
@@ -470,79 +473,18 @@ function doReview(entityId, target) {
     }
 }
 
-function doExperiment(entityId, name) {
-    var backend = pickBackend(entityId, "experiment", name);
-    if (backend !== "codeplane") {
-        if (typeof console !== "undefined" && console.warn) {
-            console.warn("[workshop] codingBackendFor(experiment) chose '" + backend
-                + "' but only codeplane is wired in Phase 1b; falling back");
-        }
-    }
-
-    if (!world.mcpAvailable("codeplane-experiment")) {
-        world.emit("narrate", {
-            text: "The experiment forge is cold. No experiment service available."
-        });
-        return;
-    }
-
-    var result = world.mcp("codeplane-experiment", "get_experiment", { name: name });
-
-    if (result.success) {
-        world.emit("narrate", {
-            text: "Experiment '" + name + "':\n\n" + result.data
-        });
-    } else {
-        world.emit("narrate", {
-            text: "Experiment not found. " + (result.error || "")
-        });
-    }
+// `experiment`, `deps` and `profile` addressed codeplane-experiment,
+// codeplane-deps and codeplane-profiler. Upstream confirms those servers were
+// never built -- they exist only in a pre-reset design document -- and there is
+// no profiling code in their repo at all. The verbs are kept so the room does
+// not silently forget commands a player may have learned, but they now say so
+// instead of calling into nothing.
+function doUnbuilt(verb) {
+    world.emit("narrate", {
+        text: "The workbench has no " + verb + " apparatus. That was drawn up "
+            + "once and never built."
+    });
 }
-
-function doDeps(entityId, action) {
-    if (!world.mcpAvailable("codeplane-deps")) {
-        world.emit("narrate", {
-            text: "No dependency service available."
-        });
-        return;
-    }
-
-    var tool = action === "update" ? "update_deps" : "check_deps";
-    var result = world.mcp("codeplane-deps", tool, {});
-
-    if (result.success) {
-        world.emit("narrate", {
-            text: "Dependency " + action + ":\n\n" + result.data
-        });
-    } else {
-        world.emit("narrate", {
-            text: "Dependency check failed. " + (result.error || "")
-        });
-    }
-}
-
-function doProfile(entityId, target) {
-    if (!world.mcpAvailable("codeplane-profiler")) {
-        world.emit("narrate", {
-            text: "No profiler service available."
-        });
-        return;
-    }
-
-    var result = world.mcp("codeplane-profiler", "profile", { target: target });
-
-    if (result.success) {
-        world.emit("narrate", {
-            text: "Profiling results for " + target + ":\n\n" + result.data
-        });
-    } else {
-        world.emit("narrate", {
-            text: "Profiling failed. " + (result.error || "")
-        });
-    }
-}
-
-// --- Workbench: Skill item crafting ---
 
 function doCraft(entityId, skillName) {
     // The companion doesn't use this directly — the companion emits
@@ -620,18 +562,13 @@ function doCollaborate(actorName, goal) {
 }
 
 function doStatus(entityId) {
-    var services = [
-        "codeplane-tools", "codeplane-experiment",
-        "codeplane-deps", "codeplane-profiler"
-    ];
     var status = ["Workshop status:"];
     status.push("  workbench: online");
-
-    for (var i = 0; i < services.length; i++) {
-        var avail = world.mcpAvailable(services[i]);
-        var name = services[i].replace("codeplane-", "");
-        status.push("  " + name + ": " + (avail ? "online" : "offline"));
-    }
+    // One service, not four. The old list reported four independent servers
+    // as "offline" forever, which read like four things being down rather
+    // than one thing never having existed.
+    status.push("  codezaiku: "
+        + (world.mcpAvailable(CODEZAIKU_MCP) ? "online" : "offline"));
 
     // Phase 2b: surface OpenCode availability (defaults-on, local).
     if (typeof world.codingBackendAvailable === "function") {
@@ -651,7 +588,7 @@ function getHints() {
         { label: "Workshop status", intent: "status", action: "say:status" }
     ];
 
-    if (world.mcpAvailable("codeplane-tools")) {
+    if (world.mcpAvailable(CODEZAIKU_MCP)) {
         hints.push({ label: "Submit code task", intent: "code", action: "say:code [task]" });
         hints.push({ label: "Run tests", intent: "test", action: "say:test [target]" });
         hints.push({ label: "Code review", intent: "review", action: "say:review [file]" });

@@ -43,7 +43,7 @@ class CodingFamiliarRegistryTest {
             var files = stream.toList();
             assertThat(files).hasSize(1);
             assertThat(files.get(0).getFileName().toString())
-                .startsWith("codeplane-")
+                .startsWith("codezaiku-")
                 .endsWith(".json");
         }
     }
@@ -76,7 +76,7 @@ class CodingFamiliarRegistryTest {
         // ':' is not portable across filesystems — must be replaced
         assertThat(file.getFileName().toString()).doesNotContain(":");
         assertThat(file.getFileName().toString())
-            .startsWith("codeplane-")
+            .startsWith("codezaiku-")
             .endsWith(".json");
     }
 

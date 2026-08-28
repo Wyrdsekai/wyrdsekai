@@ -1072,6 +1072,26 @@ start_inference() {
         drive_model="${model_path:-$(resolve_drive_model)}"
         voice_model="$(resolve_voice_model)"
 
+        # MoE residency + template knobs for the drive server. Mirrors the
+        # docker-compose schema (LLAMA_CPU_MOE / LLAMA_CHAT_TEMPLATE_KWARGS /
+        # LLAMA_SKILLS_EXTRA_ARGS) under the WYRDSEKAI_ env-file prefix.
+        # Sparse-active models keep attention/KV on the accelerator while
+        # expert tensors sit in system RAM — no-op for dense models.
+        local drive_extra=()
+        case "${WYRDSEKAI_LLAMA_CPU_MOE:-}" in
+            ""|0) : ;;
+            all|on) drive_extra+=(--cpu-moe) ;;
+            *) drive_extra+=(--n-cpu-moe "${WYRDSEKAI_LLAMA_CPU_MOE}") ;;
+        esac
+        if [[ -n "${WYRDSEKAI_LLAMA_CHAT_TEMPLATE_KWARGS:-}" ]]; then
+            drive_extra+=(--chat-template-kwargs "${WYRDSEKAI_LLAMA_CHAT_TEMPLATE_KWARGS}")
+        fi
+        if [[ -n "${WYRDSEKAI_LLAMA_EXTRA_ARGS:-}" ]]; then
+            local _extra_words
+            read -ra _extra_words <<< "${WYRDSEKAI_LLAMA_EXTRA_ARGS}"
+            drive_extra+=("${_extra_words[@]}")
+        fi
+
         if is_inference_running; then
             log "$(_t start_inference.already_running)"
         elif start_mlx_drive; then
@@ -1080,6 +1100,7 @@ start_inference() {
             log "$(_t start_inference.starting_metal) (drive=$(basename "$drive_model") :8200)"
             nohup "$llama" -m "$drive_model" --port 8200 -c 8192 -np 1 \
                 -ngl "$gpu_layers" --host 0.0.0.0 \
+                ${drive_extra[@]+"${drive_extra[@]}"} \
                 > "$DATA_DIR/.llama-server.log" 2>&1 &
             echo "$!" > "$DATA_DIR/.llama-server.pid"
         else
@@ -1482,12 +1503,21 @@ _prompt_countdown() {
     local _text="$1" _left="${2:-30}"
     _PROMPT_REPLY=""
     [[ -t 0 ]] || return 0
+    # Draw on the terminal itself, not stdout. Setup output is routinely piped
+    # (installer wrapper, sudo, curl|bash), and a \r redraw through a
+    # line-buffered pipe never renders — the line freezes at "auto in 30s"
+    # while the timer ticks invisibly and then auto-defaults, which reads as
+    # a broken prompt (observed live, dev40 wipe install 2026-08-09). stdin
+    # is a tty here (checked above), so /dev/tty exists; fall back to stdout
+    # only if it somehow is not writable.
+    local _out=/dev/tty
+    [[ -w /dev/tty ]] || _out=/dev/stdout
     while (( _left > 0 )); do
-        printf "\r%s (auto in %2ds) " "$_text" "$_left"
+        printf "\r%s (auto in %2ds) " "$_text" "$_left" > "$_out"
         if read -t 1 -r _PROMPT_REPLY; then break; fi
         _left=$((_left - 1))
     done
-    echo ""
+    echo "" > "$_out"
 }
 
 # Ensure Docker can pass the NVIDIA GPU into containers (SPEC: fresh GPU install).
@@ -1802,21 +1832,45 @@ if cands:
             ;;
     esac
 
-    # CodePlane integration check.
-    # CodePlane is not released yet, and the Lite → Full gattai migration
-    # (§0.9.3) is not implemented runtime-side — so detecting a local
-    # CodePlane dir must NOT promise a merge that won't happen. Stay silent
-    # on lite-detected until CodePlane ships with a real migration path;
-    # only a full.marker (written by CodePlane itself on a gattai'd install)
-    # gets acknowledged.
-    local _codeplane
-    _codeplane=$(detect_codeplane_mode)
-    case "$_codeplane" in
+    # Sparse-active (MoE) residency — a box whose GPU is too small for a
+    # big dense model may still host a 32B-A9B-class sparse model with
+    # attention on the GPU and experts in system RAM. Reference numbers:
+    # ~19 GB total / ~6 GB active at Q4. Only surfaced when viable; a box
+    # that can't do it hears nothing.
+    if [[ "$_vram_gb" -gt 0 ]]; then
+        local _ram_gb_moe _moe_plan
+        _ram_gb_moe=$(detect_ram_gb)
+        _moe_plan=$(plan_moe_residency 19 6 "$_vram_gb" "$_ram_gb_moe")
+        case "$_moe_plan" in
+            gpu-full)
+                log "Sparse-model capable: a 32B-A9B-class MoE drive model fits fully on GPU" ;;
+            cpu-moe)
+                log "Sparse-model capable: a 32B-A9B-class MoE drive model runs with experts in system RAM (LLAMA_CPU_MOE=all — see CONFIGURATION.md)" ;;
+            not-viable)
+                : ;;
+        esac
+    fi
+
+    # CodeZaiku integration check.
+    #
+    # CodeZaiku 0.1.0 SHIPPED on 2026-08-26, so the old reason for silence
+    # here ("not released yet") no longer holds. The silence does: the
+    # Lite → Full gattai migration is a RATIFIED DESIGN (§0.9.3 / §25.6,
+    # Decision-D4) but it is still not implemented runtime-side — there is
+    # no gattai or full.marker code in CodeZaiku's tree or in the released
+    # artifact, only in the spec. Announcing "Lite detected, will migrate"
+    # would promise a merge nothing performs.
+    #
+    # Re-check when CodeZaiku implements it; the trigger is a full.marker
+    # appearing, which the branch below already handles.
+    local _codezaiku
+    _codezaiku=$(detect_codezaiku_mode)
+    case "$_codezaiku" in
         full-installed)
-            log "CodePlane Full already installed — gattai active"
+            log "CodeZaiku Full already installed — gattai active"
             ;;
         lite-detected|none)
-            : # silent — Lite stays untouched until CodePlane is released
+            : # silent — Lite stays untouched until CodeZaiku is released
             ;;
     esac
 
@@ -2690,8 +2744,27 @@ except Exception:
         echo ""
         info "Pulling OpenHands image (this may take several minutes)…"
         if ! "$container_cmd" pull "$image"; then
-            err "Image pull failed. Check network access + container daemon health."
-            return 1
+            # Upstream PRUNES version tags from ghcr (found live: the pinned
+            # v1.7.0 answered "manifest unknown" while GitHub releases stood at
+            # v1.15.0 and the registry held only 0.x relics). A pinned tag that
+            # has rotted must not end the setup when :latest still exists --
+            # fall back LOUDLY, and record which digest actually arrived so the
+            # install is auditable even though the name is unstable.
+            local fallback="${image%%:*}:latest"
+            if [[ "$image" != "$fallback" ]]; then
+                warn "Image '$image' not found upstream (tag pruned?). Falling back to '$fallback'."
+                if ! "$container_cmd" pull "$fallback"; then
+                    err "Fallback pull failed too. Check network access + container daemon health."
+                    return 1
+                fi
+                image="$fallback"
+                local digest
+                digest=$("$container_cmd" image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
+                [[ -n "$digest" ]] && log "Pulled by fallback: $digest"
+            else
+                err "Image pull failed. Check network access + container daemon health."
+                return 1
+            fi
         fi
         log "Pull complete."
     else
@@ -3230,6 +3303,18 @@ do_start() {
         return 1
     fi
 
+    # NEVER kill a systemd-owned stack from the source path. Reaching here with
+    # the unit ACTIVE means the detection above misfired (transient systemctl
+    # failure, exit-code quirk) — and "kill orphans" would then tear down the
+    # live household: NATS gets the SIGTERM, the server follows it down, and a
+    # person mid-conversation sees "Connection closed by remote host". The
+    # belt to the detection's braces: ask systemd directly, at the kill site.
+    if systemctl is-active wyrdsekai.service >/dev/null 2>&1; then
+        echo "$(_t start.systemd.already_running "$(systemctl show wyrdsekai.service -p MainPID --value)")"
+        ensure_inference
+        return 0
+    fi
+
     # Kill orphans (by process name AND by port)
     local orphans
     orphans=$(find_server_pids)
@@ -3503,6 +3588,15 @@ PLIST
 is_systemd_managed() {
     [[ "$(uname -s)" == "Linux" ]] || return 1
     command -v systemctl >/dev/null 2>&1 || return 1
+    # The unit FILE on disk is the ground truth. This check used to rest
+    # entirely on systemctl calls, and their failure modes are not "unknown" —
+    # they are "return 1": list-unit-files exit codes differ across systemd
+    # versions, and any transient dbus hiccup flipped a packaged install into
+    # SOURCE mode, whose start path kills the service's own processes as
+    # "orphans". A filesystem stat cannot have a bad day.
+    [[ -f /usr/lib/systemd/system/wyrdsekai.service \
+        || -f /lib/systemd/system/wyrdsekai.service \
+        || -f /etc/systemd/system/wyrdsekai.service ]] && return 0
     systemctl list-unit-files wyrdsekai.service >/dev/null 2>&1 || return 1
     # Loaded? (status is enough — active, failed, or inactive)
     systemctl status wyrdsekai.service >/dev/null 2>&1
@@ -4842,8 +4936,30 @@ do_backup() {
     # Credential safe (2026-07-11): API-key slots, encrypted with a key derived
     # from node-identity — only restorable together with it, which this backup
     # now guarantees. Without this line a restore lost every credential.
-    [ -f "$DATA_DIR/credentials.safe" ] && sudo cp "$DATA_DIR/credentials.safe" "$backup_path/" 2>/dev/null \
-        || [ -f "$DATA_DIR/credentials.safe" ] && cp "$DATA_DIR/credentials.safe" "$backup_path/" || true
+    # 2026-08-07: this used to suppress sudo's stderr (hiding the password
+    # prompt), fall through to a non-root cp that cannot read a root-owned file,
+    # and swallow the failure with `|| true` — producing a backup MISSING the
+    # zone master while reporting success. That is now the worst possible silent
+    # failure: person identity private keys are encrypted under the zone master,
+    # so a backup without it cannot restore who you are. FAIL LOUDLY instead.
+    if [ -f "$DATA_DIR/credentials.safe" ]; then
+        if cp "$DATA_DIR/credentials.safe" "$backup_path/" 2>/dev/null \
+           || sudo -n cp "$DATA_DIR/credentials.safe" "$backup_path/" 2>/dev/null; then
+            echo "  credentials.safe"
+        else
+            echo ""
+            echo "  ERROR: could not copy credentials.safe (permission denied)."
+            echo "  This file holds the zone master. Person identity keys are"
+            echo "  encrypted under it — a backup without it CANNOT restore your"
+            echo "  identity or decrypt anything sealed to it."
+            echo ""
+            echo "  Re-run as:  wyrd stop && sudo wyrd backup"
+            echo ""
+            echo "  Refusing to report success on an incomplete backup."
+            rm -rf "$backup_path"
+            return 1
+        fi
+    fi
 
     # NATS config
     [ -f "$DATA_DIR/nats.conf" ] && cp "$DATA_DIR/nats.conf" "$backup_path/"
@@ -8498,6 +8614,179 @@ else:
 }
 
 
+# Steward-consent surface (2026-08-16): live allow/deny for backend
+# permission asks (ACP git-state writes). list is read-only; allow/deny
+# need the steward session token (same gate as `wyrd recipes run`).
+# Silence always refuses — answering is optional, the refusal is not.
+do_forge() {
+    # Run a companion's consolidation cycle now — the same sleep -> consolidate ->
+    # forge-manifest path her own sleep takes, not a shortcut around it.
+    #
+    # Needed because the forge only runs at sleep, and sleep fires on exhaustion or
+    # event backlog. A companion whose behaviour has just been FIXED accrues neither
+    # quickly, so her derived self-description — which is re-derived only by the forge
+    # — updates more slowly precisely when it most needs to (2026-08-18). The verb has
+    # always existed in-world (`forge <name>` in the Forge room); this is the operator
+    # door to it, so recovering a companion does not require logging in and walking to
+    # a room.
+    local target="${1:-}"
+    if [[ -z "$target" || "$target" == "help" ]]; then
+        echo "Usage: wyrd forge <companion>"
+        echo "  Runs one consolidation cycle (sleep -> consolidate -> forge manifest)."
+        echo "  Space repeated runs out so each cycle has new material to consolidate:"
+        echo "  the behavioural fingerprint merges 30% new / 70% historical per cycle,"
+        echo "  so back-to-back runs discount history fast but merge thin, noisy data."
+        return 0
+    fi
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token)
+    [[ -z "$token" ]] && { err "wyrd forge requires steward auth. Log in with \`wyrd login\`."; return 1; }
+    local resp
+    resp=$(curl -sf -X POST -H "Authorization: Bearer $token" "$api/api/forge/$target" 2>&1) \
+        || { err "Forge request failed — is wyrdsekai running at $api, and is '$target' present?"; return 1; }
+    python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+print("Consolidation cycle started for %s (%s), tier %s."
+      % (d.get("companion"), d.get("entityId"), d.get("tier")))
+print("  " + str(d.get("note", "")))
+' <<< "$resp"
+}
+
+do_repair() {
+    # See and end a companion's repair mode.
+    #
+    # Repair modes are entered by her substrate when distress sustains, and left when
+    # the mode's bound expires. Both halves are hers. What the steward had was no way
+    # to LOOK: on 2026-08-18 a companion sat in ATTENDANT — surfaced as "Substrate:
+    # CRITICAL" — for six hours after her attendant session had already closed, and the
+    # only way to discover it was reading a JSON file on the node by hand.
+    local subcmd="${1:-status}"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token
+
+    case "$subcmd" in
+        status|list|"")
+            token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "wyrd repair requires steward auth. Log in with \`wyrd login\`, or run this on the node itself."; return 1; }
+            local resp
+            resp=$(curl -sf -H "Authorization: Bearer $token" "$api/api/repair" 2>&1) \
+                || { err "Could not reach wyrdsekai at $api"; return 1; }
+            python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+rows = d.get("inRepair", [])
+if not rows:
+    print("No companion is in a repair mode.")
+else:
+    for r in rows:
+        who = r.get("name") or r.get("agentDid")
+        line = "%s — %s for %s" % (who, r.get("mode"), r.get("heldFor", "?"))
+        if r.get("overdue"):
+            line += "  ** PAST ITS %s BOUND **" % r.get("bound", "")
+        print(line)
+        if r.get("reason"):
+            print("    entered: " + str(r.get("reason")))
+        if r.get("releaseDue"):
+            print("    release due: " + str(r.get("releaseDue")))
+    print("")
+    print("End one with: wyrd repair release <companion> [reason]")
+' <<< "$resp"
+            ;;
+        release)
+            local target="${2:-}"
+            if [[ -z "$target" ]]; then
+                echo "Usage: wyrd repair release <companion> [reason]"
+                return 1
+            fi
+            token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "wyrd repair requires steward auth. Log in with \`wyrd login\`, or run this on the node itself."; return 1; }
+            shift 2
+            local note="$*"
+            local url="$api/api/repair/$target/release"
+            if [[ -n "$note" ]]; then
+                url="$url?reason=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$note")"
+            fi
+            local resp
+            resp=$(curl -sf -X POST -H "Authorization: Bearer $token" "$url" 2>&1) \
+                || { err "Release failed — is '$target' present, and is she actually in a repair mode? (\`wyrd repair status\`)"; return 1; }
+            python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+print("%s: %s -> %s" % (d.get("companion"), d.get("was"), d.get("now")))
+print("  reason: " + str(d.get("reason")))
+print("  " + str(d.get("note", "")))
+' <<< "$resp"
+            ;;
+        help|*)
+            echo "Usage: wyrd repair [status|release <companion> [reason]]"
+            echo "  status                       who is being held, since when, and whether"
+            echo "                               they are past their bound"
+            echo "  release <companion> [reason] end the episode; recorded in her history"
+            echo ""
+            echo "  There is no command to PUT a companion into a repair mode."
+            echo "  Asking for one is hers."
+            ;;
+    esac
+}
+
+do_consent() {
+    local subcmd="${1:-list}"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token)
+
+    case "$subcmd" in
+        list)
+            [[ -z "$token" ]] && { err "Consent list requires steward auth. Log in with \`wyrd login\` or export WYRDSEKAI_TOKEN=<your-session-token>"; return 1; }
+            local resp
+            resp=$(curl -sf -H "Authorization: Bearer $token" "$api/api/consents" 2>&1) \
+                || { err "Consent request failed — is wyrdsekai running at $api?"; return 1; }
+            python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+rows = d.get("rows", [])
+if not rows:
+    print("No pending consents.")
+else:
+    print(f"{len(rows)} pending consent(s) — silence refuses each after its window:")
+    for r in rows:
+        print("  " + str(r.get("id")))
+        print("    %s task %s at %s" % (r.get("backend","?"), r.get("taskId","?"), r.get("createdAt","?")))
+        print("    " + str(r.get("summary","")))
+' <<<"$resp" 2>/dev/null || echo "$resp"
+            ;;
+        allow|deny)
+            local id="${2:-}"
+            [[ -z "$id" ]] && { err "Usage: wyrd consent $subcmd <id>"; return 1; }
+            [[ -z "$token" ]] && { err "Consent answers require steward auth. Log in with \`wyrd login\` or export WYRDSEKAI_TOKEN=<your-session-token>"; return 1; }
+            local allow_val="false"
+            [[ "$subcmd" == "allow" ]] && allow_val="true"
+            local resp http_code
+            resp=$(curl -sS -X POST -H 'Content-Type: application/json' \
+                -H "Authorization: Bearer $token" \
+                -d "{\"allow\": $allow_val}" -w '\n%{http_code}' \
+                "$api/api/consents/$id" 2>&1) \
+                || { err "Consent request failed — is wyrdsekai running at $api?"; return 1; }
+            http_code="${resp##*$'\n'}"
+            resp="${resp%$'\n'*}"
+            if [[ "$http_code" == 2* ]]; then
+                log "Consent $id: ${subcmd}ed."
+            elif [[ "$http_code" == "410" ]]; then
+                err "Consent $id already resolved — the ask timed out (silence refused it) or was answered."
+            else
+                err "Consent answer failed: HTTP $http_code"
+                [[ -n "$resp" ]] && err "$resp"
+                return 1
+            fi
+            ;;
+        help|*)
+            echo "Usage: wyrd consent [list | allow <id> | deny <id>]"
+            echo "  Pending permission asks from coding backends (git writes)."
+            echo "  Unanswered asks refuse themselves — silence is not consent."
+            ;;
+    esac
+}
+
 do_recipes() {
     local subcmd="${1:-help}"
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
@@ -8864,12 +9153,165 @@ print(os.environ["T_TO"].replace("{0}", str(d.get("total", 0)))
 #   prune    --collection <name>          (v0.1 no-op)
 #   reembed  --collection <name>          (v0.1 no-op — use `wyrd embed-migrate`)
 #   probe    --collection <name> --probes <jsonl-path>
+
+# Resolve identities via the SERVER, not by reading its database. second-node has no
+# sqlite3 binary, and the server is the source of truth anyway — an earlier
+# version of these helpers shelled out to sqlite3 and would have failed on the
+# very machine they exist for.
+_library_sharing_ctx() {
+    curl -sf "$1/api/study/sharing-context" 2>/dev/null
+}
+
+_json_str() {   # _json_str <json> <key>  — first string value for key
+    echo "$1" | grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//'
+}
+
+# Companion NAME -> DID. A name can map to several DIDs (a re-birth leaves both
+# rows); the server returns them newest-first, so the first match is the live one.
+_library_companion_did() {
+    local name="$1" ctx="$2"
+    case "$name" in did:*) echo "$name"; return 0 ;; esac
+    local n
+    n=$(echo "$ctx" | grep -oE '\{"name":"[^"]*","did":"[^"]*"\}|\{"did":"[^"]*","name":"[^"]*"\}' \
+        | grep -iE "\"name\":\"$name\"" | wc -l)
+    if [[ "${n:-0}" -gt 1 ]]; then
+        echo "  note: $n companions are called '$name'; using the most recently active." >&2
+        echo "        Pass the DID directly to choose a different one." >&2
+    fi
+    echo "$ctx" | grep -oE '\{"name":"[^"]*","did":"[^"]*"\}|\{"did":"[^"]*","name":"[^"]*"\}' \
+        | grep -iE "\"name\":\"$name\"" | head -1 \
+        | grep -oE '"did":"[^"]*"' | sed 's/"did":"//; s/"$//'
+}
+
+_library_consent() {
+    local action="$1" who="$2" shelf="$3" api="$4"
+
+    local ctx; ctx="$(_library_sharing_ctx "$api")"
+    if [[ -z "$ctx" ]]; then
+        err "Could not reach the server at $api — is it running?"
+        return 1
+    fi
+
+    local person; person="$(_json_str "$ctx" person)"
+    if [[ -z "$person" ]]; then
+        err "No person identity on this node yet."
+        echo "  A shelf is shared BY someone. Start the server once so your" >&2
+        echo "  identity is created, then try again." >&2
+        return 1
+    fi
+
+    local companion; companion="$(_library_companion_did "$who" "$ctx")"
+    if [[ -z "$companion" ]]; then
+        err "Don't know a companion called '$who'."
+        echo "  Known companions:" >&2
+        echo "$ctx" | grep -oE '"name":"[^"]*"' | sed 's/"name":"//; s/"$//' \
+            | sort -u | sed 's/^/    /' >&2
+        return 1
+    fi
+
+    local resp
+    resp=$(curl -sf -X POST "$api/api/study/consent/$action" \
+        -H 'Content-Type: application/json' \
+        -d "{\"user\":\"$person\",\"companion\":\"$companion\",\"collection\":\"$shelf\"}" 2>/dev/null)
+
+    if [[ -z "$resp" ]]; then
+        err "The server refused that — check the shelf name with: wyrd library status"
+        return 1
+    fi
+
+    if [[ "$action" == "grant" ]]; then
+        echo "$who can now read your '$shelf' shelf."
+        echo "  Revoke any time with:  wyrd library revoke $who $shelf"
+    else
+        echo "$who can no longer read your '$shelf' shelf."
+    fi
+}
+
 do_library() {
     local subcmd="${1:-help}"
     shift || true
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
 
     case "$subcmd" in
+        # ── Sharing a shelf with a companion ────────────────────────────────
+        # 2026-08-07: the consent model was complete and correct and had NO
+        # usable interface — enabling it meant reading two DIDs out of sqlite
+        # and hand-writing curl. A permission nobody can grant may as well not
+        # exist. These resolve the identities for you.
+        grant|share)
+            local who="${1:-}" shelf="${2:-}"
+            if [[ -z "$who" || -z "$shelf" ]]; then
+                echo "Usage: wyrd library grant <companion> <shelf>"
+                echo "   eg: wyrd library grant mia books"
+                echo ""
+                echo "Shelves you could share:"
+                curl -sf "$api/api/library/status" 2>/dev/null \
+                    | grep -oE '"[a-z0-9-]+":[0-9]+' | cut -d'"' -f2 | sed 's/^/  /' || true
+                return 1
+            fi
+            _library_consent "grant" "$who" "$shelf" "$api"
+            ;;
+        # ── Publishing a shelf to the whole zone ───────────────────────────
+        # grant = one companion, consent-gated, revocable. publish = the whole
+        # zone: the collection is projected into a local knowledge pack that
+        # every companion, item, and visitor can search — license-stamped
+        # private, so it can never leave the household even if the zone later
+        # federates. Re-run after adding books; the projection is replaced.
+        publish)
+            local shelf="${1:-}"
+            if [[ -z "$shelf" ]]; then
+                echo "Usage: wyrd library publish <collection>"
+                echo "   eg: wyrd library publish books"
+                echo ""
+                echo "Publishes the collection zone-wide (private to this household)."
+                return 1
+            fi
+            curl -sf -X POST "$api/api/library/share-collection" \
+                -H 'Content-Type: application/json' \
+                -d "{\"collection\":\"$shelf\"}" || {
+                echo "Publish failed — is the server running?"; return 1; }
+            echo ""
+            ;;
+        prune-sidecars)
+            # Drop metadata.opf / cover.jpg &c that an older ingest swept into
+            # a shelf. Cleans the Study collection AND the published pack in
+            # one pass — no republish needed.
+            local shelf="${1:-}"
+            if [[ -z "$shelf" ]]; then
+                echo "Usage: wyrd library prune-sidecars <collection>"
+                echo "   eg: wyrd library prune-sidecars books"
+                echo ""
+                echo "Removes metadata sidecars (.opf, .ncx, covers, .db) that an"
+                echo "older full-text ingest indexed alongside the real documents."
+                echo "They out-rank the books they describe on title/author searches."
+                return 1
+            fi
+            echo "Scanning '$shelf' — this walks every document, so it takes a while..."
+            curl -sf -m 7200 -X POST "$api/api/library/prune-sidecars" \
+                -H 'Content-Type: application/json' \
+                -d "{\"collection\":\"$shelf\"}" || {
+                echo "Prune failed — is the server running?"; return 1; }
+            echo ""
+            ;;
+        revoke|unshare)
+            local who="${1:-}" shelf="${2:-}"
+            if [[ -z "$who" || -z "$shelf" ]]; then
+                echo "Usage: wyrd library revoke <companion> <shelf>"
+                return 1
+            fi
+            _library_consent "revoke" "$who" "$shelf" "$api"
+            ;;
+        grants|shared)
+            local ctx; ctx="$(_library_sharing_ctx "$api")"
+            local person; person="$(_json_str "$ctx" person)"
+            if [[ -z "$person" ]]; then
+                err "No person identity on this node yet — nothing can be shared."
+                return 1
+            fi
+            echo "Shelves shared with companions:"
+            curl -sf "$api/api/study/consent?user=$person" 2>/dev/null \
+                || echo "  (none, or the server is not running)"
+            ;;
         compact)
             local action="${1:-help}"
             shift || true
@@ -8972,7 +9414,7 @@ do_library() {
             ;;
         install)
             # install a registry pack by name, or any URL /
-            # local directory (--from-dir: codeplane packs, steward-curated folders).
+            # local directory (--from-dir: codezaiku packs, steward-curated folders).
             local pack="${1:-}"; shift || true
             local url=""
             while [ $# -gt 0 ]; do
@@ -9431,7 +9873,19 @@ wyrd_session_token() {
         return
     fi
     local f; f=$(wyrd_session_token_file)
-    [[ -r "$f" ]] && cat "$f" || true
+    if [[ -r "$f" ]]; then
+        cat "$f"
+        return
+    fi
+    # Node-local operator token. Steward CLI verbs used to require `wyrd login`,
+    # which nobody runs on a household node — the steward is already on the box over
+    # SSH. That made every steward-gated command unreachable in practice: the consent
+    # route had zero calls in the four days after it shipped (2026-08-18). The server
+    # writes this file at startup, 0600, owned by the service user, and only honours
+    # it from loopback. Reading it already implies the ability to read world.db and
+    # stop the service, so it grants nothing new.
+    local op="${WYRDSEKAI_DATA_DIR:-/var/lib/wyrdsekai}/operator.token"
+    [[ -r "$op" ]] && cat "$op" || true
 }
 
 do_login() {
@@ -10307,24 +10761,70 @@ tier_drive_model() {
     esac
 }
 
-# detect CodePlane installation
+# MoE residency planner. Sparse-active models (e.g. a 32B-total/9B-active
+# MoE) don't need the whole quantized file on the GPU: attention + KV +
+# the active expert path fit in modest VRAM while the full expert set sits
+# in system RAM (llama-server --cpu-moe). This helper decides which split
+# a host can run for a given model.
+#
+#   plan_moe_residency <total_gb> <active_gb> [vram_gb] [ram_gb]
+#
+#   total_gb   quantized file size of the whole model (GB)
+#   active_gb  quantized size of the per-token active path (GB)
+#   vram_gb    override for tests; defaults to detect_total_vram_gb
+#   ram_gb     override for tests; defaults to detect_ram_gb
+#
+# Output: one of
+#   gpu-full   whole model fits on the accelerator — no residency flag
+#   cpu-moe    active path on GPU, experts in RAM — set LLAMA_CPU_MOE=all
+#   not-viable neither placement fits this host
+#
+# Headroom constants: +3 GB on VRAM for KV cache/compute buffers at 16K
+# ctx, +8 GB on RAM for the OS and the JVM so expert offload can't starve
+# the rest of the node.
+plan_moe_residency() {
+    local total_gb="$1" active_gb="$2"
+    local vram_gb="${3:-$(detect_total_vram_gb)}"
+    local ram_gb="${4:-$(detect_ram_gb)}"
+    local vram_headroom=3 ram_floor=8
+
+    if [[ "$vram_gb" -ge $(( total_gb + vram_headroom )) ]]; then
+        echo "gpu-full"; return
+    fi
+    if [[ "$vram_gb" -ge $(( active_gb + vram_headroom )) ]] \
+        && [[ "$ram_gb" -ge $(( total_gb - active_gb + ram_floor )) ]]; then
+        echo "cpu-moe"; return
+    fi
+    echo "not-viable"
+}
+
+# detect CodeZaiku installation
 # alongside Wyrdsekai. Outputs one of:
 #
-#   none            → no CodePlane install detected
-#   lite-detected   → CodePlane Lite found (standalone coding harness) —
+#   none            → no CodeZaiku install detected
+#   lite-detected   → CodeZaiku Lite found (standalone coding harness) —
 #                     this Wyrdsekai install will trigger Lite → Full
 #                     migration per §0.9.3 on its first sleep-pass
-#   full-installed  → already running gattai'd (Wyrdsekai + CodePlane Full)
+#   full-installed  → already running gattai'd (Wyrdsekai + CodeZaiku Full)
 #
-# Detection: looks for codeplane CLI on PATH + the canonical config-dir
-# marker file. The actual migration is CodePlane-side code; this is just
+# Detection: looks for codezaiku CLI on PATH + the canonical config-dir
+# marker file. The actual migration is CodeZaiku-side code; this is just
 # the wyrdsekai-side detector + report.
-detect_codeplane_mode() {
+detect_codezaiku_mode() {
     local has_cli=0 has_config_dir=0 full_marker=0
-    command -v codeplane &>/dev/null && has_cli=1
-    [[ -d "$HOME/.codeplane" ]] && has_config_dir=1
-    # Full mode marker is written by CodePlane on gattai'd install.
-    [[ -f "$HOME/.codeplane/full.marker" ]] && full_marker=1
+    # CodePlane became CodeZaiku. Check the current names first and the old
+    # ones after, so a machine that has not migrated is still DETECTED rather
+    # than silently reported as "none" -- this function has no other signal,
+    # so a miss here is invisible.
+    local dir bin
+    for bin in codezaiku codeplane; do
+        command -v "$bin" &>/dev/null && { has_cli=1; break; }
+    done
+    for dir in "$HOME/.codezaiku" "$HOME/.codeplane"; do
+        [[ -d "$dir" ]] && has_config_dir=1
+        # Full mode marker is written by CodeZaiku on gattai'd install.
+        [[ -f "$dir/full.marker" ]] && full_marker=1
+    done
 
     if [[ "$full_marker" -eq 1 ]]; then
         echo "full-installed"
@@ -11189,7 +11689,87 @@ for h in hs:
 # (list/status/install/uninstall/update) route through there so the
 # trust + retry + sha256 logic lives in one place. This shell wrapper
 # is just classpath assembly + arg passthrough.
+# Which file the RUNNING node reads. Under systemd the unit's EnvironmentFile
+# is /etc/wyrdsekai/wyrdsekai.conf and nothing else; writing $ENV_FILE there is
+# silently ignored (second-node 2026-07-02, the companion born "wyrd" regardless).
+_coding_conf_target() {
+    if is_systemd_managed && [[ -f /etc/wyrdsekai/wyrdsekai.conf ]]; then
+        echo /etc/wyrdsekai/wyrdsekai.conf
+    else
+        echo "$ENV_FILE"
+    fi
+}
+
+# wyrd coding use <backend> — choose the default coding backend, then SHOW the
+# chain the node will actually use.
+#
+# The showing is the point. Until 2026-08-23 reference.conf bound the env var to
+# the HOCON key `default-backend` while the resolver read `default_backend`: two
+# different keys, so the documented setting wrote something nobody consulted and
+# the chain silently stayed [goose, pi]. A setting you cannot observe taking
+# effect is a setting you cannot trust.
+do_coding_use() {
+    local backend="${1:-}"
+    if [[ -z "$backend" ]]; then
+        echo "Usage: wyrd coding use <backend>"
+        echo "   eg: wyrd coding use codezaiku"
+        echo ""
+        echo "Sets the default coding backend and prints the resulting chain."
+        echo "Run 'wyrd coding list' to see which backends this node has."
+        return 1
+    fi
+    backend=$(printf '%s' "$backend" | tr -cd 'A-Za-z0-9_-')
+    [[ -n "$backend" ]] || { err "wyrd coding use: invalid backend name"; return 1; }
+
+    local conf; conf=$(_coding_conf_target)
+    if [[ ! -f "$conf" ]]; then
+        err "wyrd coding use: no config file at $conf"
+        return 1
+    fi
+    if [[ ! -w "$conf" ]]; then
+        err "wyrd coding use: $conf is not writable — run with sudo, or edit it by hand:"
+        err "  WYRDSEKAI_CODING_DEFAULT_BACKEND=$backend"
+        return 1
+    fi
+
+    # Replace an existing line in place; otherwise append. Never leave two.
+    if grep -q '^WYRDSEKAI_CODING_DEFAULT_BACKEND=' "$conf" 2>/dev/null; then
+        local previous
+        previous=$(grep '^WYRDSEKAI_CODING_DEFAULT_BACKEND=' "$conf" | tail -1 | cut -d= -f2-)
+        sed -i "s|^WYRDSEKAI_CODING_DEFAULT_BACKEND=.*|WYRDSEKAI_CODING_DEFAULT_BACKEND=$backend|" "$conf" \
+            || { err "wyrd coding use: could not write $conf"; return 1; }
+        log "coding backend: $previous -> $backend  ($conf)"
+    else
+        printf '\n# Default coding backend (wyrd coding use)\nWYRDSEKAI_CODING_DEFAULT_BACKEND=%s\n' \
+            "$backend" >> "$conf" \
+            || { err "wyrd coding use: could not write $conf"; return 1; }
+        log "coding backend: $backend  ($conf)"
+    fi
+
+    # Read it back through the SAME resolver the server uses, with the value in
+    # the environment, so what prints is what the node will do — not what we
+    # hoped writing the line would mean.
+    echo ""
+    WYRDSEKAI_CODING_DEFAULT_BACKEND="$backend" do_coding chain || true
+    echo ""
+    # `wyrd restart` already routes through systemctl when the unit is installed
+    # and falls back to the plain process path when it is not, so it is the one
+    # instruction that is correct on every node. Naming `systemctl` here was
+    # wrong twice over: it is the wrong command on a non-systemd node, and on a
+    # systemd node it tells the operator to step around their own tooling.
+    #
+    # Backends are resolved and registered once, at boot -- so this restart is
+    # also what makes a backend INSTALLED AFTER the node started visible at all.
+    log "Restart to apply:  wyrd restart"
+}
+
 do_coding() {
+    # `use` is a config-file operation: the conf path, systemd detection and
+    # writability all live here, not in the Java CLI.
+    if [[ "${1:-}" == "use" || "${1:-}" == "default" ]]; then
+        do_coding_use "${@:2}"
+        return $?
+    fi
     # Reuse the same lib-dir-resolution pattern as `wyrd verify-release`: the
     # cli installDist already pulls core + all transitive deps (jackson,
     # slf4j, …), so a single lib/ dir is enough for the classpath.
@@ -11402,6 +11982,9 @@ case "${1:-help}" in
     bond)       do_bond "${@:2}" ;;
     journal)    do_journal "${2:-help}" "${@:3}" ;;
     recipes)    do_recipes "${2:-help}" "${@:3}" ;;
+    consent)    do_consent "${2:-list}" "${@:3}" ;;
+    forge)      do_forge "${2:-help}" "${@:3}" ;;
+    repair)     do_repair "${2:-status}" "${@:3}" ;;
     issue)      do_issue "${2:-list}" "${@:3}" ;;
     library)    do_library "${2:-help}" "${@:3}" ;;
     oracle)     do_oracle "${2:-status}" ;;

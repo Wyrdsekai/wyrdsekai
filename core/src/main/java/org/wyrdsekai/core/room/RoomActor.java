@@ -28,7 +28,9 @@ import org.wyrdsekai.core.governance.SanctionEnforcer;
 import org.wyrdsekai.core.household.ParentalControlService;
 import org.wyrdsekai.core.item.EquipmentService;
 import org.wyrdsekai.core.item.EquipmentState;
+import org.wyrdsekai.core.item.CarriedItemUse;
 import org.wyrdsekai.core.item.ItemProviderRegistry;
+import org.wyrdsekai.core.item.ItemScriptResponse;
 import org.wyrdsekai.core.item.ScriptedItemDef;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.oracle.OracleBridge;
@@ -217,6 +219,16 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                 if (!state.name().isEmpty()) {
                     log.info("Room {} recovered: \"{}\" — {} exits, {} objects",
                         roomId, state.name(), state.exits().size(), state.objects().size());
+                    // Every room teaches the map about itself as it comes up. The shared
+                    // topology is built once at boot from the FOUNDATION seeds only, so a
+                    // room made afterwards was invisible to `map` — and after a restart
+                    // that was true of every companion-made room, however walkable it
+                    // still was. Live 2026-08-22: `├── to-venture-briefing-room-1931->[?]`
+                    // for a room with furnishings and a way back. Foundation, created and
+                    // restored rooms all arrive through this signal, so one call here is
+                    // the whole answer rather than a hook per creation path.
+                    ZoneTopology.learnRoom(roomId, state.name(), state.zone(),
+                        List.copyOf(state.exits().values()), null, null);
                     // Call onActivate lifecycle hook (§31)
                     if (scriptEngine != null) {
                         var emissions = scriptEngine.invokeActivate(state);
@@ -257,11 +269,35 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
     // --- Command handlers ---
 
     private Effect<RoomEvent, RoomState> onCreateRoom(RoomState state, RoomCommand.CreateRoom cmd) {
-        // Skip if room already exists (recovered from journal)
+        // Room already exists (recovered from journal). Seeds evolve between
+        // releases, and an existing world must CONVERGE on new foundation
+        // furnishings without a fresh install (the grant stone shipped into
+        // ward rooms that predated it — 2026-08-14). Backfill is deliberately
+        // narrow: only objects this room has never held, and only
+        // NON-TAKEABLE fixtures — a takeable seed object may legitimately be
+        // in someone's inventory by now, and re-adding it would mint a
+        // duplicate. Nothing is ever overwritten or removed here.
         if (!state.name().isEmpty()) {
-            log.debug("Room {} already initialized, skipping CreateRoom", roomId);
-            cmd.replyTo().tell(new RoomResponse.Ok(state.toSnapshot()));
-            return Effect().none();
+            var backfillNow = Instant.now();
+            var missing = new ArrayList<RoomEvent>();
+            for (var obj : cmd.objects()) {
+                if (obj.takeable()) continue;
+                if (state.objects().containsKey(obj.id())) continue;
+                missing.add(new RoomEvent(new WorldEvent.ObjectAdded(
+                    roomId, backfillNow, obj.id(), obj.name(), obj.description(),
+                    obj.takeable(), obj.state(),
+                    obj.aliases() == null ? List.of() : obj.aliases())));
+            }
+            if (missing.isEmpty()) {
+                log.debug("Room {} already initialized, skipping CreateRoom", roomId);
+                cmd.replyTo().tell(new RoomResponse.Ok(state.toSnapshot()));
+                return Effect().none();
+            }
+            log.info("Room {}: backfilled {} seed object(s) new since this world was built",
+                roomId, missing.size());
+            return Effect().persist(missing)
+                .thenRun(newState -> cmd.replyTo().tell(
+                    new RoomResponse.Ok(newState.toSnapshot())));
         }
 
         var now = Instant.now();
@@ -327,6 +363,13 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                 log.info("Room created: {} ({}) — {} exits, {} objects, {} hints",
                     cmd.name(), roomId, cmd.exits().size(),
                     cmd.objects().size(), hints.size());
+                // THE ONE PLACE EVERY NEW ROOM PASSES. The map was taught about new rooms
+                // from RoomCreator — but the companion's create_room_from_template goes
+                // through ZoneGuardian.CreateNewRoom, which never touches RoomCreator, so
+                // on the home node 2026-08-23 07:19 story_fable was made, walkable, and
+                // still `->[?]` on the map. Callers come and go; creation itself does not.
+                ZoneTopology.learnRoom(roomId, cmd.name(), cmd.zone(),
+                    List.copyOf(newState.exits().values()), null, null);
             });
     }
 
@@ -979,20 +1022,13 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
      * the return value as {@code Said(narrator, ...)} so the player
      * sees the item's output in the room transcript.
      *
-     * <p>Provider-handling: this hot path runs in the room actor, which
-     * doesn't carry a player-scoped {@link
-     * org.wyrdsekai.scripting.api.ItemWorldApiProvider}. We pass
-     * {@link org.wyrdsekai.core.coding.StubItemWorldApiProvider#INSTANCE},
-     * an empty-result stub that keeps every {@code world.*} surface
-     * crash-free at the cost of no real-world side effects (e.g.
-     * {@code world.web.search} returns {@code []}, {@code world.oracle}
-     * returns {@code []}, etc.). Tier 1 surfaces (math/json/regex) work
-     * normally because they live in {@code ItemWorldApi} not the
-     * provider. A properly-scoped {@code RoomScopedItemProvider} that
-     * actually backs narration / room-hook subscriptions / per-player
-     * inventory is the follow-up; until then the stub stops the
-     * bleeding for any items-as-tools artifact the coding backend
-     * generates.</p>
+     * <p>Provider-handling: resolves the acting player's own provider via
+     * {@link #providerFor}, which carries the household's library, model and keys and —
+     * since 2026-08-21 — a room voice, so {@code world.agent.speak} lands here too.
+     *
+     * <p>This javadoc described an empty-result stub long after the code had stopped
+     * using one, and on 2026-08-21 that stale paragraph sent a reader (me) chasing the
+     * wrong cause for a real bug. The real bug was one line below: the params.</p>
      */
     private void invokeScriptedCodingItem(RoomCommand.UseObject cmd, RoomObject obj,
                                            CodingItemMetadata meta) {
@@ -1012,17 +1048,25 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                 response -> narrateCodingResponse(cmd.locale(), response));
             return;
         }
-        // Build params — pass the player's free-form target as a "query"
-        // string field, mirroring ScriptedItemDef.inferParams.
-        var params = new LinkedHashMap<String, Object>();
-        if (cmd.target() != null && !cmd.target().isBlank()) {
-            params.put("query", cmd.target().trim());
-        }
+        // Every spelling, from the ONE shared builder — and the acting entity, and the
+        // room. This path set `query` alone, so `params.args` was undefined for any
+        // backend-authored item used from the FLOOR rather than out of someone's hands.
+        // The contract promises args, so goose writes against args, and the item
+        // answered "no arguments supplied" for a command that plainly had some
+        // (live 2026-08-21: `use weather_lookup cambridge ma`).
+        //
+        // Third invocation path for the same feature. CarriedItemUse.params exists so
+        // there is one answer to "what does a script receive" — it just was not called
+        // here.
+        var params = new LinkedHashMap<String, Object>(
+            CarriedItemUse.params(cmd.entityId(),
+                cmd.target() == null ? "" : cmd.target().trim(), cmd.locale()));
+        params.put("roomId", roomId);
         log.debug("RoomActor: invoking scripted item '{}' for use of {}",
             scriptedId, obj.id());
         try (var executor = new ItemScriptExecutor()) {
             var result = executor.execute(scriptedId, def.scriptSource(), params,
-                providerFor(cmd.entityId()));
+                providerFor(cmd.entityId(), cmd.locale()));
             narrateScriptResult(cmd.locale(), scriptedId, result);
         } catch (Exception e) {
             log.warn("RoomActor: scripted item '{}' threw: {}", scriptedId, e.toString());
@@ -1065,9 +1109,16 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
      * matching this path's pre-registry behavior so tests and bare boots
      * keep working.
      */
-    private static ItemWorldApiProvider providerFor(String entityId) {
+    private ItemWorldApiProvider providerFor(String entityId, String locale) {
         var provider = ItemProviderRegistry.forEntity(entityId);
-        return provider != null ? provider : StubItemWorldApiProvider.INSTANCE;
+        if (provider == null) return StubItemWorldApiProvider.INSTANCE;
+        // An item that speaks has somewhere to speak. The carried-item paths were given
+        // this and the ROOM-PLACED path was not — so the same item, used off the floor
+        // instead of out of your hands, went silent again. Same feature, fifth surface,
+        // for the second time in one day.
+        CarriedItemUse.attachRoomVoice(provider, roomId, entityId);
+        CarriedItemUse.attachLocale(provider, locale);
+        return provider;
     }
 
     /**
@@ -1080,18 +1131,20 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
      */
     private void invokeScriptedFurnishing(RoomCommand.UseObject cmd, RoomObject obj,
                                           ScriptedItemDef def) {
-        var params = new LinkedHashMap<String, Object>();
         var target = cmd.target() == null ? "" : cmd.target().trim();
-        params.put("args", target);
+        // The shared builder for the spellings every item may read, plus the two this
+        // path alone adds. It hand-rolled all of them until 2026-08-21 — it happened to
+        // be CORRECT, which is worse than being wrong, because a second definition that
+        // agrees today is a second definition that can stop agreeing tomorrow.
+        var params = new LinkedHashMap<String, Object>(
+            CarriedItemUse.params(cmd.entityId(), target, cmd.locale()));
+        // recipes_console-style furnishings read `text`; only this path serves them.
         params.put("text", target);
-        params.put("target", target);
-        if (!target.isBlank()) params.put("query", target);
-        params.put("entityId", cmd.entityId());
         // Room context: the per-player provider has no room binding, so
         // world.room.id() is empty on this path — but the ROOM is invoking.
         // Room-scoped items (sigil, warden post) read params.roomId first.
         params.put("roomId", roomId);
-        var provider = providerFor(cmd.entityId());
+        var provider = providerFor(cmd.entityId(), cmd.locale());
         // INFO not debug (2026-07-18): when a furnishing answers empty, WHICH
         // provider class served it is the whole diagnosis — the stub and the
         // visitor provider both produce polite empties that look like data.
@@ -1121,19 +1174,24 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
      */
     private void narrateScriptResult(String locale, String scriptedId,
                                       Map<String, Object> result) {
-        if (result == null) return;
-        String text = null;
-        // The item corpus is not uniform about its narration key: workshop
-        // skills return `summary`, recipes_console-style consoles return
-        // `narrative`, carried items return `response`/`text`, failures
-        // return `error`. Accept them all so a furnishing's output renders
-        // regardless of which convention its author followed.
-        for (var key : List.of("summary", "narrative", "response", "text", "error")) {
-            if (result.get(key) instanceof String s && !s.isBlank()) {
-                text = s;
-                break;
-            }
+        // A person typed a command. Silence is the one answer they cannot act on: it is
+        // indistinguishable from a command that did not register. Live on staging
+        // 2026-08-22, `use information_broker octopus` ran — the log shows the search, the
+        // fetch and the model call — and the steward saw nothing at all, three times, and
+        // there was no way to tell from the room whether the tool was broken, slow, or
+        // imaginary. Whatever happened, say that it happened.
+        if (result == null) {
+            notifySubscribers(new WorldEvent.Said(roomId, Instant.now(),
+                "narrator", "narrator",
+                "[" + scriptedId + "] ran but returned nothing.", locale, List.of()));
+            return;
         }
+        // The item corpus is not uniform about its narration key: workshop skills return
+        // `summary`, recipes_console-style consoles return `narrative`, carried items
+        // return `response`/`text`, failures return `error`. ONE list, shared with
+        // ItemScriptResponse — this path kept its own and so `narrative` rendered when an
+        // item sat in the room and vanished when the same item was picked up.
+        String text = ItemScriptResponse.firstTextField(result);
         if (text == null) {
             var pretty = new StringBuilder("[").append(scriptedId).append("]");
             for (var e : result.entrySet()) {
@@ -1142,7 +1200,19 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
             }
             text = pretty.toString();
         }
-        if (text == null || text.isBlank()) return;
+        if (text == null || text.isBlank()) {
+            text = "[" + scriptedId + "] ran but had nothing to say.";
+        }
+        // An item that wrote BOTH a summary and details meant the person to have both.
+        // Live 2026-08-22: venture_scout put "scanned for unconventional patterns in X and
+        // generated three radical business ideas with TAM estimates" in `summary` and the
+        // three ideas themselves in `details`. The room read `summary` and the steward got
+        // a description of the work instead of the work. Showing the payload costs a line;
+        // withholding it costs the whole point of the tool.
+        // Asked of the shared reader, not re-implemented here: this class exists because
+        // the room once kept its own copy of the response contract and the two disagreed.
+        var extra = ItemScriptResponse.detailText(result, text);
+        if (extra != null) text = text + "\n" + extra;
         var event = new WorldEvent.Said(roomId, Instant.now(),
             "narrator", "narrator", text, locale, List.of());
         notifySubscribers(event);
@@ -1164,7 +1234,12 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
         } else if (msg instanceof S2CMessage.Error e) {
             text = "[" + e.code() + "] " + e.message();
         } else {
-            return; // Unknown envelope shape — drop silently.
+            // Not silently. A drop nobody can see is a drop nobody can debug.
+            log.warn("RoomActor: coding response envelope {} has no narration — "
+                + "the person who ran this sees nothing",
+                msg.getClass().getSimpleName());
+            text = "[coding] the backend answered in a shape this room cannot read ("
+                + msg.getClass().getSimpleName() + ").";
         }
         if (text == null || text.isBlank()) return;
         var event = new WorldEvent.Said(roomId, Instant.now(),
@@ -2320,8 +2395,27 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
             return Effect().none();
         }
         if (sub instanceof RoomCommand.ItemBridgeSubAction.AddObject add) {
+            // A room is addressed by NAME, so two objects sharing one make both
+            // unaddressable. Live 2026-08-20: two backend artifacts were both placed as
+            // "codex"; `get codex` took one, a second `get codex` left two in hand, and
+            // `use codex` then answered "No such object". Enforced here rather than at
+            // each caller, because the room is the only thing that knows what is already
+            // in it — and every source of objects gets the guarantee for free.
+            // Exclude the object's OWN entry: re-adding an id is an UPDATE, and treating
+            // its existing name as taken renamed it on every update — which broke
+            // `use <furnishing> <args>` by shifting where the name ended and the args
+            // began (caught by RoomActorFurnishingItemTest before this shipped).
+            var taken = state.objects() == null ? List.<String>of()
+                : state.objects().values().stream()
+                    .filter(o -> o.id() == null || !o.id().equals(add.id()))
+                    .map(RoomObject::name).toList();
+            var name = ObjectNaming.unique(add.name(), taken, add.id());
+            if (!name.equals(add.name())) {
+                log.info("Room {}: '{}' is taken — placing as '{}'",
+                    roomId, add.name(), name);
+            }
             var event = new WorldEvent.ObjectAdded(
-                roomId, now, add.id(), add.name(), add.description(), add.takeable());
+                roomId, now, add.id(), name, add.description(), add.takeable());
             return Effect().persist(new RoomEvent(event))
                 .thenRun(newState -> notifySubscribers(event));
         }

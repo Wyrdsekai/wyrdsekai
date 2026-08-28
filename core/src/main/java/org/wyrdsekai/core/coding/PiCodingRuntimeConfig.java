@@ -62,8 +62,14 @@ public record PiCodingRuntimeConfig(
     public static final Duration DEFAULT_MAX_WALLCLOCK = Duration.ofMinutes(30);
 
     public PiCodingRuntimeConfig {
-        if (executablePath == null || executablePath.isBlank())
-            executablePath = DEFAULT_EXECUTABLE;
+        // The bare default is RE-RESOLVED, exactly like goose and codezaiku:
+        // reference.conf ships `executable-path = "pi"`, which is not an
+        // operator's chosen path — and on Windows the npm shim is pi.cmd,
+        // which CreateProcess will not exec by bare name. Only an explicit
+        // non-default value is respected as written.
+        if (executablePath == null || executablePath.isBlank()
+                || DEFAULT_EXECUTABLE.equals(executablePath))
+            executablePath = BackendExecutableResolver.resolve(DEFAULT_EXECUTABLE);
         if (model == null || model.isBlank()) model = DEFAULT_MODEL;
         // provider may be null/blank — pi infers from model
         if (maxWallclock == null || maxWallclock.isZero() || maxWallclock.isNegative())

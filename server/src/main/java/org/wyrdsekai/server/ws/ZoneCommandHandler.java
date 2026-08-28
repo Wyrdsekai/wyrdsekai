@@ -9,9 +9,9 @@ import java.util.function.Consumer;
 /**
  * Handler for namespaced zone commands (§83.7).
  *
- * Zone-type adapters (CodePlane, HomeKit, etc.) implement this interface
+ * Zone-type adapters (CodeZaiku, HomeKit, etc.) implement this interface
  * to receive commands routed by namespace prefix. A command like
- * "codeplane.approve" is split into namespace="codeplane", action="approve".
+ * "codezaiku.approve" is split into namespace="codezaiku", action="approve".
  *
  * Implementations are registered in WyrdWebSocket via
  * {@link WyrdWebSocket#registerZoneHandler(String, ZoneCommandHandler)}.
@@ -23,7 +23,7 @@ public interface ZoneCommandHandler {
      * Handle a namespaced command from a client session.
      *
      * @param playerId  The player/agent ID that sent the command
-     * @param action    The action part after the namespace dot (e.g. "approve" from "codeplane.approve")
+     * @param action    The action part after the namespace dot (e.g. "approve" from "codezaiku.approve")
      * @param args      Command arguments
      * @param payload   Structured key-value payload for zone actions
      * @param respond   Callback to send S2CMessage responses back to the client session

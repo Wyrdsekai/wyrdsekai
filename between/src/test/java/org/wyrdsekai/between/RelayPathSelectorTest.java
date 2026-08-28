@@ -104,9 +104,13 @@ class RelayPathSelectorTest {
     @Test
     void isLanAddress_classifies() {
         assertTrue(RelayPathSelector.isLanAddress("nats://relay-node.lan:4222"));
-        assertTrue(RelayPathSelector.isLanAddress("nats://198.51.100.5:4222"));
-        assertTrue(RelayPathSelector.isLanAddress("nats://192.0.2.9:4222"));
+        assertTrue(RelayPathSelector.isLanAddress("nats://10.0.7.5:4222"));
+        assertTrue(RelayPathSelector.isLanAddress("nats://192.168.2.9:4222"));
         assertTrue(RelayPathSelector.isLanAddress("nats://172.16.0.1:4222"));
+        // RFC 5737 documentation ranges are PUBLIC-shaped, not RFC 1918 —
+        // the original assertions here mistook doc-example IPs for LAN.
+        assertFalse(RelayPathSelector.isLanAddress("nats://198.51.100.5:4222"));
+        assertFalse(RelayPathSelector.isLanAddress("nats://192.0.2.9:4222"));
         assertTrue(RelayPathSelector.isLanAddress("127.0.0.1:4222"));
         assertFalse(RelayPathSelector.isLanAddress("wss://wyrdsekai.org:4443"));
         assertFalse(RelayPathSelector.isLanAddress("nats://172.50.0.1:4222")); // outside RFC1918

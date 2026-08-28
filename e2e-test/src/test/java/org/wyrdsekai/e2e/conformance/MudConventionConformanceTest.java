@@ -599,6 +599,30 @@ class MudConventionConformanceTest {
     }
 
     /**
+     * §9 — typing an exit's name bare IS movement (MUD convention). Live
+     * 2026-08-15: the exits list advertised `to-greenhouse-2063`, and typing
+     * that exact token bounced with "didn't catch that" — the room's own
+     * signage was a lie. Bare single tokens now get one resolution attempt
+     * against the current room's exits (direction, destination id, name)
+     * before the unknown-command hint.
+     */
+    @Test @Order(795)
+    void bare_exit_name_moves_player() throws Exception {
+        try (var ssh = login()) {
+            ssh.sendLine("go nexus");
+            Thread.sleep(1500);
+            int mark = ssh.mark();
+            ssh.sendLine("terminal");
+            Thread.sleep(2000);
+            var output = String.join("\n", ssh.linesSince(mark)).toLowerCase();
+            assertFalse(output.contains("didn't catch that"),
+                "§9: a bare token naming a visible exit must not bounce as unknown. Got:\n" + output);
+            assertTrue(output.contains("terminal"),
+                "§9: bare destination name must move the player there. Got:\n" + output);
+        }
+    }
+
+    /**
      * §9 — `take <unknown>` must produce a not-found error, never
      * silently add an imaginary item to inventory.
      */

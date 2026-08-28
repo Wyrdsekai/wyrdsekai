@@ -147,6 +147,25 @@ public final class KnowledgePackRegistry {
             .toList();
     }
 
+    /**
+     * Packs that are LOOKUP surfaces, not browsing corpora — anything whose
+     * subjects include "Dictionaries". Found live 2026-08-24: the bundled
+     * FreeDict (68k rows) and JMdict (217k rows) sat in the same index the
+     * companion's library search reads, and under BM25 a three-word headword
+     * gloss beats a book passage for every short query — so "glass tide"
+     * answered with Spanish crash-glossary rows and the fairy tales were
+     * about vocabulary. Default knowledge search excludes these; the
+     * pack-scoped search door stays open for the translation tooling that
+     * will one day actually want them.
+     */
+    public static List<String> lookupPackNames() {
+        return listAvailable().stream()
+            .filter(p -> p.subjects() != null && p.subjects().stream()
+                .anyMatch("dictionaries"::equalsIgnoreCase))
+            .map(PackInfo::name)
+            .toList();
+    }
+
     /** List tier-2 packs on a shelf ("qa" | "reference" | "coding"). */
     public static List<PackInfo> listShelf(String shelf) {
         return getCatalog().stream()

@@ -18,7 +18,7 @@ import java.util.function.Consumer;
 /**
  * The single namespace handler that owns every verb for one coding
  * backend (e.g. {@code openhands.*}, {@code opencode.*},
- * {@code codeplane.*}). One instance is registered per backend in
+ * {@code codezaiku.*}). One instance is registered per backend in
  * {@link CodingBackendBootstrap}; the {@link
  * org.wyrdsekai.core.agent.LocalCommandRouter} keys them by backend
  * name.
@@ -284,69 +284,15 @@ public final class CodingNamespaceHandler implements NamespaceHandler {
      * OpenHands V1). Adapters that aren't OpenHands ignore the V1
      * fields cleanly.</p>
      */
+    /**
+     * Delegates to {@link CodingTaskBroadcast}, which the companion's dispatch_task path
+     * now uses as well. One implementation on purpose: two copies would drift, and a
+     * broadcast published under the wrong namespace is dropped in silence.
+     */
     private void publishTerminal(String roomId, TaskSpec spec,
                                  TaskResult result, CodingTaskBackend backend) {
-        if (roomId == null || roomId.isBlank()) {
-            log.debug("[CodingNamespaceHandler] no roomId for {} task {}; "
-                + "skipping ZoneBroadcast (caller didn't pass roomId in payload)",
-                backendName, result.taskId());
-            return;
-        }
-        var stream = AgentEventStream.get();
-        if (stream == null) {
-            log.debug("[CodingNamespaceHandler] AgentEventStream not initialised; "
-                + "skipping ZoneBroadcast for {} task {}",
-                backendName, result.taskId());
-            return;
-        }
-
-        var data = MAPPER.createObjectNode();
-        data.put("event", result.status() == TaskStatus.SUCCEEDED
-            ? "task_completed" : "task_failed");
-        data.put("taskId", spec.taskId().toString());
-        data.put("status", result.status().name().toLowerCase());
-
-        // Pull file list + workspace from the cached SourceArtifact.
-        var artifacts = backend.artifactsFor(spec.taskId().toString()).toList();
-        var src = artifacts.stream()
-            .filter(a -> a instanceof SourceArtifact)
-            .map(a -> (SourceArtifact) a)
-            .findFirst().orElse(null);
-        if (src != null) {
-            data.put("workspace", safe(src.workspacePath()));
-            var files = data.putArray("files");
-            if (src.files() != null) src.files().forEach(files::add);
-            if (src.backendMetadata() != null) {
-                var av = src.backendMetadata().get("agent_version");
-                if (av != null) data.put("agentVersion", String.valueOf(av));
-            }
-        } else {
-            // No SourceArtifact captured — synthesise minimal fields so
-            // the adapter can still parse and produce a stub codex.
-            data.put("workspace", "");
-            data.putArray("files");
-        }
-
-        // Sibling build payload, if a BuildArtifact was emitted.
-        var build = artifacts.stream()
-            .filter(a -> a instanceof BuildArtifact)
-            .map(a -> (BuildArtifact) a)
-            .findFirst().orElse(null);
-        if (build != null) {
-            ObjectNode b = data.putObject("build");
-            b.put("status", safe(build.status()));
-            b.put("testsPassed", build.testsPassed());
-            b.put("testsFailed", build.testsFailed());
-        }
-
-        var msg = new S2CMessage.ZoneResponse(0, spec.taskId().toString(),
-            backendName, "task " + result.status().name().toLowerCase(),
-            (JsonNode) data, List.of());
-        stream.publishZoneBroadcast(backendName, roomId, msg);
-        log.debug("[CodingNamespaceHandler] published terminal ZoneBroadcast "
-            + "(ns={}, room={}, taskId={}, files={})",
-            backendName, roomId, result.taskId(),
-            src == null || src.files() == null ? 0 : src.files().size());
+        CodingTaskBroadcast.publishTerminal(
+            backendName, roomId, spec.taskId().toString(), result, backend);
     }
 
     private static S2CMessage.Prose prose(String text) {

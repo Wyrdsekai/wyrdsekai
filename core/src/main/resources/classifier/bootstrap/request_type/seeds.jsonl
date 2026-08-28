@@ -113,7 +113,7 @@
 {"lang": "en", "label": "tell_someone", "text": "relay to Jenna that the meeting is cancelled"}
 {"lang": "en", "label": "tell_someone", "text": "talk to Wyrd at beta.wyrd for me"}
 {"lang": "en", "label": "tell_someone", "text": "reach out to Dr. Patel and confirm tomorrow"}
-{"lang": "en", "label": "tell_someone", "text": "send a note to Masumi saying thanks"}
+{"lang": "en", "label": "tell_someone", "text": "send a note to Operator saying thanks"}
 {"lang": "en", "label": "tell_someone", "text": "ask Kai what time works for him"}
 {"lang": "en", "label": "tell_someone", "text": "let the trader know the deal is off"}
 {"lang": "en", "label": "tell_someone", "text": "tell Yuki I miss her"}
@@ -357,7 +357,7 @@
 {"lang": "es", "label": "write", "text": "escribe una nota sobre las preferencias de operator"}
 {"lang": "es", "label": "tell_someone", "text": "dile a Ember que voy a llegar tarde"}
 {"lang": "es", "label": "tell_someone", "text": "mándale un mensaje a Aya"}
-{"lang": "es", "label": "tell_someone", "text": "avísale a Masumi que necesito ayuda"}
+{"lang": "es", "label": "tell_someone", "text": "avísale a Operator que necesito ayuda"}
 {"lang": "es", "label": "tell_someone", "text": "susúrrale al capitán del muelle"}
 {"lang": "es", "label": "tell_someone", "text": "escríbele a Sarah lo de la cena"}
 {"lang": "es", "label": "tell_someone", "text": "dile a mi pareja: ya voy para allá"}
@@ -365,7 +365,7 @@
 {"lang": "es", "label": "tell_someone", "text": "avísale a Jenna que la reunión se canceló"}
 {"lang": "es", "label": "tell_someone", "text": "habla con Wyrd en beta.wyrd de mi parte"}
 {"lang": "es", "label": "tell_someone", "text": "contáctale al Dr. Patel y confírmale lo de mañana"}
-{"lang": "es", "label": "tell_someone", "text": "mándale una nota a Masumi dándole las gracias"}
+{"lang": "es", "label": "tell_someone", "text": "mándale una nota a Operator dándole las gracias"}
 {"lang": "es", "label": "tell_someone", "text": "pregúntale a Kai qué hora le viene bien"}
 {"lang": "es", "label": "tell_someone", "text": "avísale al comerciante que el trato se cayó"}
 {"lang": "es", "label": "tell_someone", "text": "dile a Yuki que la extraño"}

@@ -11,6 +11,11 @@
 #   WYRDSEKAI_LIBRARY_STARTER=true  starter Library packs on first boot
 set -u
 
+# One slot serializes the companion behind the coding backend (measured 2026-08-22:
+# 3.9s alone -> 2.7s + 5.9s for two concurrent callers). The window is split across slots,
+# so the total context scales with the count and a second slot costs ~1.5GB of VRAM.
+LLAMA_PARALLEL="${WYRDSEKAI_LLAMA_PARALLEL:-1}"
+
 ROOT=/opt/wyrdsekai
 DATA="${WYRDSEKAI_DATA:-/data}"
 LOGS="$DATA/logs"
@@ -71,17 +76,17 @@ run_svc nats nats-server -p 4222
 if [[ "${WYRDSEKAI_SKIP_MODELS:-0}" != "1" ]]; then
     if [[ "$TIER" == "gpu" ]]; then
         run_svc llama-drive /app/llama-server --model "$M9B" --host 0.0.0.0 --port 8200 \
-            --ctx-size 16384 --jinja --reasoning off --reasoning-budget 0 --flash-attn on -ngl 99 --parallel 1
+            --ctx-size $(( 16384 * LLAMA_PARALLEL )) --jinja --reasoning off --reasoning-budget 0 --flash-attn on -ngl 99 --parallel "$LLAMA_PARALLEL"
         # 16K to match the drive model: the same prompts reach both backends, and an
         # 8K voice window took HTTP 400s on interiority + on every drive turn when the
         # 9B was down. (CPU-only paths below stay at 8K — memory-constrained hardware —
         # and rely on the router's compaction retry instead.)
         run_svc llama-voice /app/llama-server --model "$M4B" --host 0.0.0.0 --port 8201 \
-            --ctx-size 16384 --jinja --reasoning off --reasoning-budget 0 -ngl 99 --parallel 1
+            --ctx-size $(( 16384 * LLAMA_PARALLEL )) --jinja --reasoning off --reasoning-budget 0 -ngl 99 --parallel "$LLAMA_PARALLEL"
     else
         # CPU: one 4B serving as the single backend
         run_svc llama-drive /app/llama-server --model "$M4B" --host 0.0.0.0 --port 8200 \
-            --ctx-size 8192 --jinja --reasoning off --reasoning-budget 0 --parallel 1
+            --ctx-size $(( 8192 * LLAMA_PARALLEL )) --jinja --reasoning off --reasoning-budget 0 --parallel "$LLAMA_PARALLEL"
     fi
 fi
 

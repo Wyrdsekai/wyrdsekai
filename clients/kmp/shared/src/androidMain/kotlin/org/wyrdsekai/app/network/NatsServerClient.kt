@@ -139,6 +139,35 @@ class NatsServerClient(
         }
     }
 
+    // ── pair.device ──
+
+    /**
+     * Mint this device's identity through an authenticated session, over
+     * NATS — the hermod consent mint for relay-resident phones (mirrors
+     * POST /api/pair/device; same registry row, same wyrd_dev_ token).
+     */
+    suspend fun pairDevice(
+        sessionToken: String,
+        deviceName: String,
+        deviceType: String = "phone",
+    ): PairingClient.PairingCredentials? {
+        val reply = request(subject("pair.device"), buildJsonObject {
+            put("token", JsonPrimitive(sessionToken))
+            put("deviceName", JsonPrimitive(deviceName))
+            put("deviceType", JsonPrimitive(deviceType))
+        })
+        if (!replyOk(reply)) return null
+        val deviceToken = reply["deviceToken"]?.jsonPrimitive?.contentOrNull ?: return null
+        return PairingClient.PairingCredentials(
+            token = deviceToken,
+            householdId = reply["householdId"]?.jsonPrimitive?.contentOrNull ?: "",
+            householdName = reply["householdName"]?.jsonPrimitive?.contentOrNull ?: "",
+            serverDid = reply["serverDid"]?.jsonPrimitive?.contentOrNull ?: "",
+            natsUrl = reply["natsUrl"]?.jsonPrimitive?.contentOrNull ?: "",
+            serverUrl = reply["serverUrl"]?.jsonPrimitive?.contentOrNull ?: "",
+        )
+    }
+
     // ── wyrd.discover.zone ──
 
     /**

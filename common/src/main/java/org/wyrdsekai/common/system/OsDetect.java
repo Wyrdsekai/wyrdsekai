@@ -4,7 +4,7 @@ import java.util.Locale;
 
 /**
  * OS detection utility. Cached from {@code os.name} system property.
- * Mirrors CodePlane's OsDetect pattern for cross-platform support.
+ * Mirrors CodeZaiku's OsDetect pattern for cross-platform support.
  */
 public final class OsDetect {
 

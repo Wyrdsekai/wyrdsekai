@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
  * Run an artifact's entrypoint as a host subprocess, capturing
  * stdout / stderr / exit code into an {@link ExecResult}. Used by
  * backends whose workspaces materialise on disk (OpenHands,
- * OpenCode, CodePlane) —.
+ * OpenCode, CodeZaiku) —.
  *
  * <h2>Sandboxing</h2>
  *

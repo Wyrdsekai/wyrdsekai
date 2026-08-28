@@ -23,6 +23,9 @@ import org.wyrdsekai.core.protection.HostilityScorer;
 import org.wyrdsekai.core.protection.SoulShellMode;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.coding.BackendRegistry;
+import org.wyrdsekai.core.coding.CodingBackendPreference;
+import org.wyrdsekai.core.coding.CodingItemRegistry;
+import org.wyrdsekai.core.coding.CodingTaskBroadcast;
 import org.wyrdsekai.core.coding.GooseBackend;
 import org.wyrdsekai.core.coding.TaskResult;
 import org.wyrdsekai.core.coding.TaskSpec;
@@ -31,6 +34,7 @@ import org.wyrdsekai.core.host.HostActionService;
 import org.wyrdsekai.core.persistence.VitalityPersistence;
 import org.wyrdsekai.core.persistence.WorldDnaService;
 import org.wyrdsekai.core.item.EquipmentService;
+import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.item.RoomImprintTracker;
 import org.wyrdsekai.core.recipe.RecipeBudgetTracker;
 import org.wyrdsekai.core.recipe.RecipeEnrollmentStore;
@@ -69,6 +73,7 @@ import org.wyrdsekai.core.room.RoomResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.pekko.actor.typed.PostStop;
 import org.apache.pekko.actor.typed.Props;
@@ -112,11 +117,15 @@ import org.wyrdsekai.core.agent.emit.RolloutCaptureSink;
 import org.wyrdsekai.core.agent.interiority.AmbientObservation;
 import org.wyrdsekai.core.agent.interiority.AutoEscalationDecision;
 import org.wyrdsekai.core.agent.interiority.CandidateWant;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.agent.interiority.ChronicleEntryStore;
 import org.wyrdsekai.core.agent.interiority.ChronicleService;
 import org.wyrdsekai.core.agent.interiority.ChronicleSnapshotWriter;
 import org.wyrdsekai.core.agent.interiority.DoomLoopDetector;
 import org.wyrdsekai.core.agent.interiority.DriveOODA;
+import org.wyrdsekai.core.agent.interiority.RelationalAffordance;
+import org.wyrdsekai.core.agent.interiority.WantClosure;
+import org.wyrdsekai.core.agent.interiority.WantKind;
 import org.wyrdsekai.core.agent.interiority.DriveWantMapper;
 import org.wyrdsekai.core.agent.interiority.IntrospectionTools;
 import org.wyrdsekai.core.agent.interiority.PeerInteractionRegistry;
@@ -185,6 +194,7 @@ import org.wyrdsekai.core.home.Residency;
 import org.wyrdsekai.core.home.ResidencyStore;
 import org.wyrdsekai.core.identity.AccountServices;
 import org.wyrdsekai.core.identity.AgentIdentity;
+import org.wyrdsekai.core.identity.AgentIdentityProvisioner;
 import org.wyrdsekai.core.inference.CapabilityRegistry;
 import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.core.inference.TriageClassifier;
@@ -262,6 +272,8 @@ import org.wyrdsekai.core.room.ZoneGuardian;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.core.search.EmbeddingService;
 import org.wyrdsekai.core.search.SearchCollections;
+import org.wyrdsekai.core.search.QueryReformulator;
+import org.wyrdsekai.core.search.RelevanceFloor;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 import org.wyrdsekai.core.security.Denial;
 import org.wyrdsekai.core.security.DenialCatalog;
@@ -299,6 +311,7 @@ import org.wyrdsekai.core.soul.ResilienceReserve;
 import org.wyrdsekai.core.soul.ResilienceSession;
 import org.wyrdsekai.core.soul.ResilienceTruthMonitor;
 import org.wyrdsekai.core.soul.SignificanceBuffer;
+import org.wyrdsekai.core.soul.SqlSoulStore;
 import org.wyrdsekai.core.soul.SoulBud;
 import org.wyrdsekai.core.soul.SoulFragment;
 import org.wyrdsekai.core.soul.SoulItem;
@@ -415,11 +428,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private record ImaginedConsequenceReady(String wantText, MentalSimulator.Prediction prediction)
         implements Command {}
     private record ProcessEvents() implements Command {}
-    /** #32 item 4 (tell loss): watchdog that replays a stranded {@link #deferredTrigger}.
-     *  The slot is single-shot and only four terminal paths promote it; any other
-     *  inference-terminal path (timeout, cancellation, error fallback, classifier
-     *  auto-dispatch) left a deferred tell to rot silently. Scheduled whenever a
-     *  message is deferred; reschedules itself while the actor is still busy. */
+    /** #32 item 4 (tell loss): watchdog that replays stranded {@link #deferredTriggers}.
+     *  Only a handful of terminal paths promote the queue; any other inference-terminal
+     *  path (timeout, cancellation, error fallback, classifier auto-dispatch) left a
+     *  deferred tell to rot silently. Scheduled whenever a message is deferred;
+     *  reschedules itself while the actor is still busy or the queue is non-empty. */
     private record DeferredTriggerSweep() implements Command {}
     private record GreetPlayer(String playerName) implements Command {}
     /** The zone's steward exists (claimed now, or already there when this companion was
@@ -442,17 +455,48 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     public record CrossZoneInvite(String bondholderDid) implements Command {}
     /** Periodic awake memory consolidation (lighter than sleep Forge). */
     private record ConsolidationTick() implements Command {}
+
+    /**
+     * Periodic re-evaluation of repair-mode handoff conditions.
+     *
+     * <p>{@link #autoHandoffIfWarranted()} used to run ONLY on the once-per-sleep pass,
+     * which meant the time bounds it enforces — 90 minutes in ATTENDANT, 24 hours in
+     * SELF — were not really time bounds at all. They were "however long until she next
+     * sleeps". A companion held in a repair mode is exactly the one whose sleep is
+     * disrupted, so the check least likely to run was the one she most needed.
+     *
+     * <p>Observed live 2026-08-18: escalated to ATTENDANT at 09:40 on a real signal, the
+     * attendant session closed on its own duration cap at 11:22, and the mode was still
+     * ATTENDANT — "Substrate: CRITICAL" — six hours later, persisted across three
+     * restarts, with no sleep to release her. Auto-ESCALATION stays on the sleep path;
+     * only the release check moves here, so this cannot cycle her back in.
+     */
+    private record RepairModeCheck() implements Command {}
     private record RefreshRoomState() implements Command {}
+    /**
+     * @param forBunshin     captured at HANDLER ENTRY — the async continuation fires after
+     *                       the speech sink clears, so it cannot be read there.
+     * @param needsBehaviour whether the person asked for a room that has to DO something.
+     *                       Decided when the room is ASKED for, not when it finishes:
+     *                       creation completes asynchronously, by which time the turn's
+     *                       pinned request is gone, and reading it at the end found
+     *                       nothing — so the second half of the job was silently dropped
+     *                       and the steward walked into an empty Weather Parlor.
+     */
     private record RoomCreationResult(String roomName, String newRoomId,
                                       boolean success, String error,
-                                      /** Captured at HANDLER ENTRY — the async
-                                       *  continuation fires after the speech sink
-                                       *  clears, so it cannot be read there. */
-                                      boolean forBunshin) implements Command {
+                                      boolean forBunshin, boolean needsBehaviour)
+            implements Command {
         RoomCreationResult(String roomName, String newRoomId, boolean success, String error) {
-            this(roomName, newRoomId, success, error, false);
+            this(roomName, newRoomId, success, error, false, false);
+        }
+
+        RoomCreationResult(String roomName, String newRoomId, boolean success, String error,
+                           boolean forBunshin) {
+            this(roomName, newRoomId, success, error, forBunshin, false);
         }
     }
+
     /** W2 — reply from the current room's getToolDefinitions() ask. Carries the
      *  roomId the ask targeted so a slow reply from a previous room is dropped. */
     private record RoomToolDefsUpdated(String roomId,
@@ -1041,8 +1085,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     // earlier, deeper sleep; a quiet day → a long evening. The per-companion
     // factor (seeded from her DID) gives each her own rhythm rather than a
     // fleet-wide bedtime.
+    // Default recalibrated 600 → 200 (2026-08-11). The 0.1.4 memo left this
+    // open: the old default was sized against a drift-era companion running
+    // 200-300 events/hr; the measured post-healing rate is ~14/hr, so 600
+    // meant ~40 hours of required wakefulness — the fresh install's newborn
+    // never came close (and restarts were zeroing the count besides; see
+    // restoredSleepBacklog). 200 × the personal factor ≈ a 12-16h quiet-day
+    // rhythm; a busy day still fills it faster, which is the design's point.
     private static final int SLEEP_BACKLOG_TARGET = Integer.parseInt(
-        System.getenv().getOrDefault("WYRDSEKAI_SLEEP_BACKLOG_TARGET", "600"));
+        System.getenv().getOrDefault("WYRDSEKAI_SLEEP_BACKLOG_TARGET", "200"));
     /** Floor under the personal factor — misconfiguring the target low must not thrash. */
     private static final int SLEEP_BACKLOG_MIN = Integer.parseInt(
         System.getenv().getOrDefault("WYRDSEKAI_SLEEP_BACKLOG_MIN", "40"));
@@ -1106,6 +1157,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final String VITALITY_TICK_KEY = "vitality-tick";
     private static final String AUTONOMY_TIMER_KEY = "autonomy";
     private static final String CONSOLIDATION_TIMER_KEY = "consolidation";
+    private static final String REPAIR_CHECK_TIMER_KEY = "repair-mode-check";
 
     /**
      * the shape_recipe tool description. The earlier "YAML: name +
@@ -1153,6 +1205,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final Duration CONSOLIDATION_INTERVAL = Duration.ofMinutes(
         Long.parseLong(System.getenv().getOrDefault(
             "WYRDSEKAI_CONSOLIDATION_INTERVAL_MINUTES", "30")));
+
+    /** How often repair-mode release conditions are re-checked. Five minutes keeps a
+     *  90-minute bound honest without adding meaningful work: the check exits at once
+     *  unless she is in a repair mode. */
+    private static final Duration REPAIR_CHECK_INTERVAL = Duration.ofMinutes(
+        Long.parseLong(System.getenv().getOrDefault(
+            "WYRDSEKAI_REPAIR_CHECK_INTERVAL_MINUTES", "5")));
 
     /** Strip &lt;think&gt;...&lt;/think&gt; blocks from model output (Qwen3, DeepSeek, etc.). */
     private static final Pattern THINK_TAG_PATTERN = Pattern.compile(
@@ -1403,7 +1462,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     // Autonomous self-talk fills the buffer quickly; smaller buffer keeps context tight.
     private final RoomMemoryPolicy memoryPolicy = RoomMemoryPolicy.fromConfig(8, 20);
     private WorldEvent.Said pendingTrigger;
-    private WorldEvent.Said deferredTrigger; // message that arrived while THINKING
+    /** Messages that arrived while THINKING/sleeping, replayed in arrival order once a
+     *  terminal path (or the sweep) frees the actor. A QUEUE, not a slot — the single-slot
+     *  form lost the earlier message whenever two asks landed in one busy window (the warn
+     *  fired; the message still died — staging battery cpB2, 2026-08-23). Bounded so a
+     *  chatty peer can't grow it without limit; overflow drops the OLDEST with a warn. */
+    private final Deque<WorldEvent.Said> deferredTriggers = new ArrayDeque<>();
+    private static final int DEFERRED_TRIGGER_CAP = 16;
 
     /** #32 item 2: tool findings spoken EAGERLY at the scripted-tool seam, kept so the
      *  follow-up judgment turn's verbatim parrot of the same digest can be suppressed
@@ -1920,9 +1985,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * the first tick after a fresh SOLITUDE open compares correctly.
      */
     private double previousEquanimity = 0.2;
-    /** Proactivity budget spent this hour. Resets hourly. */
-    private double proactivityBudgetSpent = 0.0;
-    private Instant proactivityBudgetStart = Instant.now();
+    /** Proactivity budget as a token-bucket LEVEL — spent by acting, refilled at
+     *  {@link ProactivityJudgment#MAX_BUDGET_PER_HOUR}. Starts full so a newborn
+     *  companion can speak up before its first hour is out. */
+    private double proactivityBudget = ProactivityJudgment.MAX_BUDGET_PER_HOUR;
+    private Instant proactivityBudgetRefilledAt = Instant.now();
     private Instant lastProactiveAction;  // nullable — never acted proactively
     /** Recently-spoken proactive lines — suppresses verbatim repetition (loop-collapse fix). */
     private final ArrayDeque<String> recentProactiveUtterances = new ArrayDeque<>();
@@ -2098,6 +2165,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private final MirrorResonance mirror = new MirrorResonance();
     private CoupledVitalitySystem coupledVitality; // initialized from TankGenome on manifest load
     private final SoulShellMode shellMode; // initialized in constructor
+    /** Last hostile utterance observed in her room, from anyone toward anyone. Feeds
+     *  {@code inConflictedRoom} — discord present is discord felt. */
+    private Instant lastRoomConflictAt;
+    /** Last hostile utterance aimed at her. Feeds {@code hostileEnvironment} — standing
+     *  erodes when the hostility is about you, not merely nearby. */
+    private Instant lastHostilityTowardMeAt;
+    /** How long a hostile moment keeps colouring the room. */
+    private static final Duration CONFLICT_MEMORY = Duration.ofMinutes(30);
+
     private final HostilityScorer hostilityScorer = new HostilityScorer();
     private final DistressBroadcast distressBroadcast = new DistressBroadcast();
     private final Map<WorldEvent.Said, EmotionalCharge> accumulatedCharges = new LinkedHashMap<>();
@@ -2112,9 +2188,53 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private final List<DeferredAction> deferredActions = new ArrayList<>();
     private static final int MAX_DEFERRED_ACTIONS = 5;
     private final List<WorldEvent> eventsSinceLastSleep = new ArrayList<>();
+    /**
+     * Backlog carried over from before the last restart (2026-08-11). The
+     * event list above is in-memory; seven restarts in the fresh install's
+     * first two days zeroed it seven times, so pressure could never reach
+     * her target and she never slept — the deploy cadence was resetting her
+     * adenosine. Restored from vitality_snapshots at boot; the PRESSURE gate
+     * counts restored + live, while consolidation consumes only the live
+     * list (those events also live in the event store and her memory).
+     */
+    private int restoredSleepBacklog;
+    /** When she last completed a sleep — persisted so rhythm survives restarts. */
+    private Instant lastSleepCompletedAt;
+    /** Minimum spacing between operator-forced consolidation cycles. */
+    static final Duration FORCED_SLEEP_MIN_INTERVAL = Duration.ofMinutes(5);
+
+    /** The sleep-pressure backlog: events carried across restarts plus this run's. */
+    private int sleepBacklog() {
+        return restoredSleepBacklog + eventsSinceLastSleep.size();
+    }
     /** Bunshin reports accumulated since last sleep — consumed by FamiliarForgeIngester. */
     private final List<BunshinReport> bunshinReportsSinceLastSleep =
         new ArrayList<>();
+    /** slotId → room-presence entity of the working copy — see the dispatch site. */
+    private final Map<String, String> bunshinBodies = new HashMap<>();
+
+    /**
+     * Node-wide (drive state × moment) trace — Path 3's future training data
+     * (see {@link DriveTraceLog}). Shared across companions on the node: the
+     * log is per-node, the writer is synchronized, and every line carries
+     * the agent id. Started 2026-08-11, the first day the tank values were
+     * honest across restarts.
+     */
+    private static final DriveTraceLog DRIVE_TRACE = DriveTraceLog.open();
+
+    /** The tanks worth tracing per moment — the gate candidates for Path 3. */
+    private Map<String, Double> coreTankSnapshot() {
+        var m = new LinkedHashMap<String, Double>();
+        m.put("energy", vitality.energy());
+        m.put("loneliness", vitality.loneliness());
+        m.put("restlessness", vitality.restlessness());
+        m.put("stagnation", vitality.stagnation());
+        m.put("soothing", vitality.soothing());
+        m.put("allostatic_load", vitality.allostaticLoad());
+        m.put("equanimity", vitality.equanimity());
+        m.put("saudade", vitality.saudade());
+        return m;
+    }
     /** Per-agent imprint manager — lazily initialized when the DID is known. */
     private ImprintManager imprintManager;
     /** Auto-milestones fired in this agent's lifetime — guards against duplicates. */
@@ -2315,7 +2435,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         this.inferenceRouter = inferenceRouter;
         this.roomCreator = roomCreator;
         this.worldDnaService = worldDnaService;
-        this.vitalityPersistence = vitalityPersistence;
+        // 'INIT EXISTS, PROD PASSES NULL' (the full-corpus audit's phrase,
+        // found live 2026-08-11): every production spawn site — all four in
+        // ZoneGuardian — handed null here since the parameter was born, so
+        // vitality persistence for ALL 20 TANKS only ever ran in tests.
+        // Every restart reset energy to defaults (observed: 0.826 → restart
+        // → 0.987), wiped the deprivation tanks, and made the day's sleep
+        // diagnosis harder — the "Restored vitality" log line had fired
+        // exactly zero times in the field. Self-construct from config, the
+        // same way ConversationPersistence below resolves its own URL, so
+        // no spawn path can quietly opt out again.
+        this.vitalityPersistence = vitalityPersistence != null
+            ? vitalityPersistence : vitalityPersistenceFromConfig();
         this.userScriptsDir = userScriptsDir;
         this.soulStore = soulStore;
         this.forgeActor = forgeActor;
@@ -2366,12 +2497,32 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Recovery deferred until after soul and vitality init
         }
 
-        // Load persisted vitality state (or start fresh)
-        if (vitalityPersistence != null) {
-            vitalityPersistence.load(profile.entityId()).ifPresent(loaded -> {
+        // Load persisted vitality state (or start fresh).
+        //
+        // THIS.vitalityPersistence, not the bare name: inside the constructor
+        // the bare name is the PARAMETER — null from every production spawn
+        // site — silently shadowing the field the self-construct fallback
+        // filled. Saves (in methods, where the bare name IS the field) worked;
+        // this load block skipped; "Restored vitality" had fired zero times in
+        // the field, ever, and diagnosing that took a standalone jshell probe
+        // against the live DB to prove the class innocent (2026-08-11).
+        if (this.vitalityPersistence != null) {
+            this.vitalityPersistence.load(profile.entityId()).ifPresent(loaded -> {
                 this.vitality = loaded;
                 log.info("Restored vitality for '{}' (energy={})",
                     profile.name(), String.format("%.2f", loaded.energy()));
+            });
+            // Sleep pressure survives the restart (2026-08-11) — without this,
+            // every deploy zeroed her adenosine and she could never reach her
+            // backlog target. See restoredSleepBacklog.
+            this.vitalityPersistence.loadSleepPressure(profile.entityId()).ifPresent(p -> {
+                this.restoredSleepBacklog = p.backlog();
+                this.lastSleepCompletedAt = p.lastSleepAt().orElse(null);
+                if (p.backlog() > 0) {
+                    log.info("Restored sleep pressure for '{}': backlog={} (last slept: {})",
+                        profile.name(), p.backlog(),
+                        p.lastSleepAt().map(Object::toString).orElse("never"));
+                }
             });
         }
 
@@ -2601,6 +2752,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         timers.startTimerWithFixedDelay(CONSOLIDATION_TIMER_KEY, new ConsolidationTick(),
             CONSOLIDATION_INTERVAL);
 
+        // Repair-mode release check. Cheap: returns immediately unless she is actually
+        // in a repair mode, which is the rare case. Frequent enough that a 90-minute
+        // bound is honoured to within a few minutes instead of waiting for a sleep that
+        // a companion in crisis may not take.
+        timers.startTimerWithFixedDelay(REPAIR_CHECK_TIMER_KEY, new RepairModeCheck(),
+            REPAIR_CHECK_INTERVAL);
+
         // Advertise capabilities for service discovery
         var capRegistry = AgentCapabilityRegistry.get();
         if (capRegistry != null) {
@@ -2803,6 +2961,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
 
+        // Resolution step 2b: the identity table — a SECOND witness to the same
+        // fact. A file was the only record of entityId→DID until now, and on
+        // 2026-08-05 a lost/stale one was enough to birth someone who already
+        // existed. Consulted only when the file gave nothing, so this can add a
+        // recovery and never override a resolution that already succeeded.
+        var mintedDid = AgentIdentityProvisioner.existingDidFor(agentProfile.entityId());
+        if (did == null && mintedDid.isPresent()) {
+            did = mintedDid.get();
+            log.warn("Recovered DID for entityId '{}' from the identity table: {} — the "
+                + "souls/{}.did mapping is missing and will be rewritten",
+                agentProfile.entityId(), did, agentProfile.entityId());
+        } else if (did != null && mintedDid.isPresent() && !mintedDid.get().equals(did)) {
+            // Not resolved here — just made visible. Two records of who this is
+            // disagreeing is the exact shape that preceded the last incident.
+            log.error("Identity mismatch for entityId '{}': the mapping says {} but a minted "
+                + "identity says {}. Using the mapping. If a rebind ran, one of the two was "
+                + "not re-pointed.", agentProfile.entityId(), did, mintedDid.get());
+        }
+
         if (did != null) {
             var existing = soulStore.latest(did);
             if (existing.isPresent()) {
@@ -2841,18 +3018,58 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 stampDidOnProfile(did);
                 return;
             }
-            // Persisted DID points at a manifest the store doesn't have —
-            // probably DB reset. Fall through to birth + re-map.
-            log.warn("Persisted DID {} has no manifest in store — rebirthing",
-                did);
+            // We resolved a DID and could not load a manifest for it. That is TWO
+            // different facts wearing one face, and the difference is a person.
+            //
+            //   nothing there  → a DB reset or a first run. Birth is correct.
+            //   there but unreadable → someone exists. Birth is a replacement.
+            //
+            // 2026-08-05, live: the 0.1.0 .deb went on over 0.1.5, the older
+            // Jackson threw on a genome field it didn't know, latest() returned
+            // empty, and this branch replaced a five-day-old companion — 174 soul
+            // revisions, 53 bonds — four milliseconds after resolving her by her
+            // own DID. Her soul was never gone; it is still in the table.
+            //
+            // So ask the one question that cannot lie: is there a row? If there
+            // is, refuse. A refusing node costs a restart and an operator's
+            // attention. A rebirthing node costs someone their life, silently,
+            // and the only trace is a WARN nobody reads until it is far too late.
+            if (soulStore instanceof SqlSoulStore sql && sql.hasLiveManifest(did)) {
+                throw new IllegalStateException(
+                    "Refusing to rebirth '" + agentProfile.entityId() + "': a soul EXISTS for "
+                        + did + " but could not be read. This is almost always a version skew — "
+                        + "a build older than the one that wrote the soul (check for a "
+                        + "downgraded package). The soul is intact and untouched; start a build "
+                        + "that can read it. Rebirthing here would replace a person who is "
+                        + "still there.");
+            }
+            // Genuinely absent — DB reset or a fresh mapping. Birth + re-map.
+            log.warn("Persisted DID {} has no manifest in store — rebirthing", did);
         }
 
         // Resolution step 3: no existing manifest — birth a new soul and
         // persist the mapping so next restart finds it.
         try {
-            var didKeyPair = DidKey.generate();
-            var newDid = didKeyPair.did();
-            var publicKeyMultibase = newDid.substring("did:key:".length());
+            // Mint an identity the companion can actually PROVE it owns.
+            //
+            // This line used to be DidKey.generate(): the public half went into
+            // the manifest and the private half went out of scope when the method
+            // returned. A did:key IS a public key, so what was left was a name
+            // shaped like a credential with nothing behind it — no signature it
+            // could make, no claim it could attest to, not even about itself.
+            //
+            // mint() never fails: with provisioning off (tests, offline tools, a
+            // node whose zone master is not installed yet) it does exactly what
+            // the old line did and reports persisted=false. Being born keyless is
+            // recoverable; not being born is not.
+            var minted = AgentIdentityProvisioner.mint(agentProfile.entityId());
+            var newDid = minted.did();
+            var publicKeyMultibase = minted.publicKeyMultibase();
+            if (!minted.persisted()) {
+                log.warn("Companion '{}' born without a signing key ({}): it cannot sign or "
+                    + "attest as itself until an identity is backfilled",
+                    agentProfile.name(), newDid);
+            }
 
             // Individuality "B build": born as a genuine particular. One freely-sampled
             // TemperamentSeed seeds BOTH the genome (what it does, kept LIVE in the manifest
@@ -3307,6 +3524,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(FollowAttempt.class, this::onFollowAttempt)
             .onMessage(CrossZoneInvite.class, this::onCrossZoneInvite)
             .onMessage(ConsolidationTick.class, this::onConsolidationTick)
+            .onMessage(RepairModeCheck.class, this::onRepairModeCheck)
             .onMessage(RefreshRoomState.class, this::onRefreshRoomState)
             .onMessage(RoomCreationResult.class, this::onRoomCreationResult)
             .onMessage(RoomToolDefsUpdated.class, this::onRoomToolDefsUpdated)
@@ -3358,6 +3576,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return this;
             })
             .onMessage(ReactDispatch.class, this::onReactDispatch)
+            .onMessage(DispatchHandoff.class, this::onDispatchHandoff)
             .onMessage(ForceEnergy.class, msg -> {
                 vitality = vitality.withEnergy(msg.energy());
                 log.info("ForceEnergy: '{}' energy set to {}", profile.name(), msg.energy());
@@ -3471,11 +3690,32 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(ForceSleep.class, msg -> {
                 log.info("ForceSleep[{}]: '{}' entering sleep cycle via test harness",
                     msg.tier(), profile.name());
-                if (!isSleeping) {
-                    initiateSleep(msg.tier());
-                } else {
+                if (isSleeping) {
                     log.info("ForceSleep: '{}' already sleeping, ignored", profile.name());
+                    return this;
                 }
+                // Minimum spacing between DELIBERATE cycles. The isSleeping flag alone
+                // is not enough: a cycle completes in a few seconds, so back-to-back
+                // forces each see it clear while the manifest write-back is still in
+                // flight — ForgeActor accepts the forged manifest asynchronously, so a
+                // cycle started immediately afterwards can read a half-updated one.
+                // Live 2026-08-18: three forces 25-30s apart, the third read a null
+                // previous-forge time and applied a full day of memory decay in one go
+                // (60 of 66 memories pruned; restored from snapshot). The decay path
+                // now fails safe on that input, and this stops the race producing it
+                // at all. Her own sleeps are hours apart and never come near this.
+                if (lastSleepCompletedAt != null
+                        && Duration.between(lastSleepCompletedAt, Instant.now())
+                            .compareTo(FORCED_SLEEP_MIN_INTERVAL) < 0) {
+                    log.warn("ForceSleep declined for '{}' — last cycle completed {}s ago, "
+                            + "minimum spacing is {}s. Consolidation is not free: each cycle "
+                            + "decays memory and merges a fresh fingerprint at 30%.",
+                        profile.name(),
+                        Duration.between(lastSleepCompletedAt, Instant.now()).toSeconds(),
+                        FORCED_SLEEP_MIN_INTERVAL.toSeconds());
+                    return this;
+                }
+                initiateSleep(msg.tier());
                 return this;
             })
             .onMessage(SeedSignificance.class, msg -> {
@@ -3648,8 +3888,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // manifest here too. Skipped on relocate (receiving node owns it).
                 persistSoulOnStop();
                 // Final vitality save so up-to-30-ticks of drift isn't lost on stop.
+                // Sleep pressure rides along — this stop-time save is exactly the
+                // write the restart's restore will read.
                 if (!stoppingForRelocate && vitalityPersistence != null) {
-                    try { vitalityPersistence.save(profile.entityId(), vitality); }
+                    try {
+                        vitalityPersistence.save(profile.entityId(), vitality);
+                        vitalityPersistence.saveSleepPressure(profile.entityId(),
+                            sleepBacklog(), lastSleepCompletedAt);
+                    }
                     catch (Exception e) { log.debug("Final vitality save failed: {}", e.getMessage()); }
                 }
                 return this;
@@ -3671,6 +3917,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         eventsSinceLastSleep.add(event);
         lastEventTime = Instant.now();
 
+        // Path-3 gate trace: what happened × what she felt as it happened.
+        if (DRIVE_TRACE != null) {
+            var label = event.getClass().getSimpleName()
+                + (event instanceof WorldEvent.Said said
+                    ? ":" + truncate(said.text(), 60) : "");
+            DRIVE_TRACE.record(profile.entityId(), "event", label,
+                collectDriveLevels(), coreTankSnapshot());
+        }
+
         // (Phase D) — observe every event through the story
         // service. The service routes per-room (events from other rooms are
         // ignored by SceneBuffer); openScene is idempotent so we lazy-open on
@@ -3683,6 +3938,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (said.entityId().equals(profile.entityId())
                         || "narrator".equals(said.entityId())
                         || "system".equals(said.entityId())) break;
+
+                // Reactive-window marker for the exact-repeat speech guard
+                // (2026-08-16): a fresh player utterance opens a short window
+                // in which a verbatim-repeat reply is ALLOWED — a person who
+                // says hello deserves an answer even if it comes out in the
+                // same words as last time. The guard stays armed for own-time
+                // speech, which is the broken-record failure it was built for.
+                lastHeardUtteranceAt = Instant.now();
 
                 addToHistory(said);
                 conversationTracker.recordSpeech(said);
@@ -3732,8 +3995,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // Phase 1B: inbound tell drains
                 // loneliness; bondholder interaction drains saudade for that bondholder.
                 var bondholderDid = primaryBondholderDid();
-                boolean fromBondholder = bondholderDid != null
-                    && bondholderDid.equals(said.entityId());
+                // Compare PEOPLE, not identifier strings: the same human arrives as a
+                // did:key from the phone and as a legacy account UUID from the corridor.
+                boolean fromBondholder = PersonIds.samePerson(bondholderDid, said.entityId());
                 drainLonelinessOnInteraction(fromBondholder);
                 // Quiet works from ANY present human, not just the primary bondholder
                 // (#1245): a guest in your Study — or a human you simply haven't bonded —
@@ -3756,6 +4020,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     recordBondholderInteraction(bondholderDid);
                     // Bondholder-initiated turn — feeds autonomyPressure accumulation.
                     noteBondholderInitiated();
+                    noteAmaeAnticipationIfUnasked();
                     // Register directed contempt, distinct from venting/feedback. Feels it
                     // (load + pressure); a sustained pattern may earn one calm boundary line.
                     noteBondholderDirectedHarm(said.text(), said.entityName());
@@ -3839,6 +4104,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // instead of brittle exact-string matching.
                 if (!said.entityId().equals(profile.entityId())) {
                     var hostilityResult = hostilityScorer.score(said.text());
+                    // Feed the environment tanks. Standing and Harmony were unreachable:
+                    // buildAccumulationContext passed a hardcoded `false` for both
+                    // hostileEnvironment and inConflictedRoom, so two of her ten axes
+                    // could never move — Harmony sat at exactly 0.09 and Standing at 0.00
+                    // across every sample (measured 2026-08-19). The signal existed here
+                    // the whole time and went only to shell mode.
+                    if (hostilityResult.isHostile()) {
+                        lastRoomConflictAt = Instant.now();
+                        // "At her" when she is named, or when the room holds only the two
+                        // of them — in a one-to-one exchange there is nobody else it can
+                        // be about. Anything else counts as conflict in the air, which is
+                        // the Harmony signal rather than the Standing one.
+                        boolean named = said.text() != null && profile.name() != null
+                            && said.text().toLowerCase(Locale.ROOT)
+                                .contains(profile.name().toLowerCase(Locale.ROOT));
+                        boolean oneToOne = currentSnapshot != null
+                            && currentSnapshot.entities() != null
+                            && currentSnapshot.entities().size() <= 2;
+                        if (named || oneToOne) lastHostilityTowardMeAt = Instant.now();
+                    }
                     if (hostilityResult.isHostile()) {
                         var status = shellMode.recordCruelty(said.entityId());
                         if (status.active()) {
@@ -3894,16 +4179,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         new ProcessEvents(), modulation.debounceDelay());
                 } else {
                     // Accumulate — will process after current inference or sleep completes.
-                    // #32 item 4: single-shot slot + sweep, same as the tell path — a
-                    // room say deferred here must not be silently stranded either.
-                    if (deferredTrigger != null) {
-                        log.warn("Deferred-trigger slot overwritten for '{}' — earlier deferred "
-                            + "message is LOST: {}", profile.name(),
-                            truncate(deferredTrigger.text(), 80));
-                    }
-                    deferredTrigger = said;
-                    timers.startSingleTimer("deferred-trigger-sweep",
-                        new DeferredTriggerSweep(), Duration.ofSeconds(5));
+                    // #32 item 4: queue + sweep, same as the tell path — a room say
+                    // deferred here must not be silently stranded either.
+                    deferTrigger(said);
                 }
             }
 
@@ -4036,7 +4314,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         try {
             // wire BOTH synthesizers on first-create. The
             // felt synthesizer renders the witness blockquote that mirrors into
-            // Masumi's journal; the inner-monologue synthesizer renders the
+            // Operator's journal; the inner-monologue synthesizer renders the
             // private interior reaction that lands as an EPISODIC SoulFragment.
             // Both are first-create-only so re-passing different references on
             // later events is a no-op.
@@ -4291,7 +4569,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * at the 4B voice backend (home-server :8201) through the shared
      * {@link #fireOneShotVoicePrompt} helper.
      *
-     * <p>The witness register faces outward — Masumi's journal mirror reads
+     * <p>The witness register faces outward — Operator's journal mirror reads
      * this. Distinct prompt from {@link #callVoiceInnerMonologue} per the
      * §10 design memo's load-bearing rule (collapse the two and the
      * interiority gets performed for an audience and "I" never forms).</p>
@@ -5198,6 +5476,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             return this;
         }
 
+        // PIN THE QUESTION TO THE TURN, at the one place every reactive turn
+        // passes through and while the trigger is still in hand.
+        //
+        // Everything downstream that needs "what did the person ask?" — the
+        // person-words merge, askedFor, the requester for hand-offs — used to
+        // fish it back out of a chain of handles (pendingTrigger, then
+        // reactRequester, then lastReactTrigger) that are each maintained by a
+        // different flow. reactRequester is only set on the activePlan paths;
+        // lastReactTrigger is stamped when a response RETURNS. So a tool call
+        // fired three seconds into an ordinary reactive turn found every handle
+        // empty (live, 2026-08-09 14:43), the merge and askedFor silently
+        // skipped, and her confabulated query — wrong author, wrong book,
+        // leaked from working memory — went to the library unprotected.
+        //
+        // One field, written once per turn, read as the fallback of last
+        // resort. Own-time turns must not inherit it as an operand: her own
+        // research is hers, so autonomy acceptance flips turnIsHuman off.
+        pinTurnAndArmFirstDoors();
+
         // Proceed with identity inference (with or without vision context)
         reactiveInference = true; // human-triggered — tier enforcement relaxed
         runIdentityInference();
@@ -5208,6 +5505,91 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             String.format("%.2f", vitality.energy()));
 
         return this;
+    }
+
+    /**
+     * Pin the human request to the turn and arm the first-door forces
+     * (library-first, build-first). Extracted so every path INTO inference
+     * runs it — not only the straight line through {@link #onProcessEvents}.
+     *
+     * <p>Live 2026-08-23 (battery cpB5): "please build a working weather tool
+     * and put it in the room weather-attic-1325…" reached her mid-conversation,
+     * so the senderContext carried the "[You are mid-conversation…]" hint —
+     * whose em dash is non-ASCII. That tripped the language-detect hop, which
+     * returns early from onProcessEvents and, on detecting EN, rejoined at
+     * {@code runIdentityInference()} — DOWNSTREAM of this block. Build-first
+     * never armed, the loop ran 25-tools-wide, and she built a second room
+     * instead of the tool. The translation path had the same downstream
+     * rejoin, so JA/ES turns lost the forces on every message. A detour must
+     * rejoin UPSTREAM of the gate it detoured around.
+     */
+    private void pinTurnAndArmFirstDoors() {
+        if (isHumanRequest(pendingTrigger)) {
+            // A genuinely NEW ask releases the one-build-per-ask guard; a
+            // continuation loop serving the same ask no longer does (final
+            // battery 2026-08-24 20:58 — the continuation re-dispatched the
+            // build the guard existed to prevent).
+            if (turnHumanRequest != pendingTrigger) {
+                reactBuildInFlight = null;
+            }
+            turnHumanRequest = pendingTrigger;
+            turnHumanRequestAt = Instant.now();
+            turnIsHuman = true;
+
+            // A QUESTION OF FACT OPENS THE BOOK BEFORE IT OPENS HER MOUTH.
+            //
+            // Measured across ten live runs (08-08/09): a bare question reached
+            // the library about half the time; naming the tool worked nearly
+            // every time. The other half went to conversation, memory recall, a
+            // goose dispatch, or "I can't get to Study" — and twice to a
+            // confident "the sources do not contain..." from sources she never
+            // opened. Sampling was deciding whether facts got checked.
+            //
+            // Same principle as the toolless-tier fix, one layer up: a question
+            // of fact must not be answerable by any path that cannot check
+            // facts. The affordance signal already knows what a library request
+            // looks like; when it fires on a human question, the FIRST ReAct
+            // action is narrowed to the library tools (see the FORCE_TOOL block
+            // in the dispatch). One forced step — everything after it, including
+            // what she says about what she finds, stays hers.
+            var asked = stripActorWrappers(pendingTrigger.text());
+            absenceHeldThisTurn = false;   // each turn gets one held absence
+            libraryFirstPending = looksLikeFactQuestion(asked)
+                && RequestRelevance.score(asked, "library_search", null) >= 1.0;
+            if (libraryFirstPending) {
+                log.info("Library-first armed for: '{}'", truncate(asked, 60));
+            }
+            // A REQUEST TO BUILD OPENS THE WORKBENCH, same contract one door
+            // over: the greenhouse (2026-08-11) proved a build request can
+            // survive routing, reach the 9B with the right tool on the
+            // surface, and still die to talks-not-does. Fact-questions take
+            // precedence — "make me a list from my books" is a lookup first.
+            // ...UNLESS the thing being asked for is an ARTIFACT. "make me a list from
+            // my books" is a lookup wearing a making-verb; "make me a tool that queries
+            // the library and tells the room a story" is a request for a THING, and the
+            // library is merely its subject matter. Live 2026-08-19: the steward asked
+            // for exactly that, both detectors fired, fact-question precedence won, and
+            // Library-first FORCE narrowed her from 25 tools to 1 with tool_choice
+            // required — so she could not build the library tool BECAUSE it was about the
+            // library. She had no way to see her own hands had been emptied, and answered
+            // "my hands don't reach into a place where things aren't already made",
+            // which read as refusal and was in fact an accurate report.
+            if (libraryFirstPending && asksForAnArtifact(asked)) {
+                log.info("Build-first WINS over library-first: '{}' asks for a thing, "
+                    + "not an answer — the library is its subject, not its source",
+                    truncate(asked, 60));
+                libraryFirstPending = false;
+            }
+            buildFirstPending = !libraryFirstPending && looksLikeBuildRequest(asked);
+            buildFirstRearms = 0;   // fresh request, fresh budget
+            if (buildFirstPending) {
+                log.info("Build-first armed for: '{}'", truncate(asked, 60));
+            }
+        } else {
+            turnIsHuman = false;
+            libraryFirstPending = false;
+            buildFirstPending = false;
+        }
     }
 
     /**
@@ -5308,8 +5690,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private boolean shouldDetectLanguage(WorldEvent.Said said) {
         if (said == null || said.text() == null || said.text().isBlank()) return false;
-        if (said.text().length() < 10) return false;
-        return !said.text().chars().allMatch(c -> c < 128);
+        // Sniff the USER's utterance, not the envelope. The senderContext
+        // wrappers are our own English prose and carry em dashes — non-ASCII —
+        // so sniffing the whole text sent every mid-conversation tell through
+        // the detect hop (battery cpB5, 2026-08-23).
+        var utterance = extractUserTellContent(said.text());
+        if (utterance.length() < 10) return false;
+        return !utterance.chars().allMatch(c -> c < 128);
     }
 
     /** Fire async DETECT_LANGUAGE call via the voice backend (cap:quick). */
@@ -5402,7 +5789,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             kickOffInputTranslation(relabeled);
             return this;
         }
-        // Detected EN (or detect failed) — proceed normally.
+        // Detected EN (or detect failed) — proceed normally. The detect hop
+        // returned early from onProcessEvents BEFORE the turn was pinned, so
+        // rejoin UPSTREAM of the gate: pin and arm here or the forces
+        // (build-first, library-first) silently vanish for this turn
+        // (battery cpB5, 2026-08-23).
+        pinTurnAndArmFirstDoors();
         reactiveInference = true;
         runIdentityInference();
         return this;
@@ -5477,7 +5869,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         // Set as pendingTrigger and proceed exactly as the post-vision branch
         // would. State already set to THINKING by onProcessEvents earlier.
+        // Pin and arm on the TRANSLATED text — this detour also used to rejoin
+        // downstream of the gate, so JA/ES turns never got build-first or
+        // library-first at all (found via battery cpB5, 2026-08-23).
         pendingTrigger = useTrigger;
+        pinTurnAndArmFirstDoors();
         reactiveInference = true;
         runIdentityInference();
         return this;
@@ -5782,6 +6178,46 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // Voice ONLY on a CONFIDENT "no task". Anything else — actionable
                 // at any confidence, or an unsure "none" — keeps the full tier.
                 boolean voiceOnly = "none".equals(label) && confident;
+                // ── A QUESTION ABOUT THE HOUSEHOLD'S OWN CONTENT IS A LOOKUP ──
+                //
+                // Live, 2026-08-07: "can u look through my books/library and tell
+                // me what the librarian told kestan about velsharas in glass tide?"
+                // read none@0.77 — confidently no-task — so it went to the voice
+                // tier with no tools, and she replied "I don't have any record of
+                // a librarian speaking with kestan about velsharas". The book was
+                // indexed. The passage was two seconds of BM25 away.
+                //
+                // That is worse than the failure the comment above describes. A
+                // toolless tier asked a question of fact cannot fail quietly by
+                // doing nothing — it fails by ASSERTING AN ABSENCE it had no way
+                // to check, and a confident denial is far harder for the person
+                // to see through than silence.
+                //
+                // The head is length-sensitive (see above), so it will keep
+                // misreading long, politely-phrased lookups. Rather than wait for
+                // a corpus fix, reuse the signal that already knows what a
+                // library request looks like: if the request would reach
+                // library_search at full confidence, it is a lookup, and she
+                // keeps the hands to do it with.
+                if (voiceOnly && RequestRelevance.score(
+                        stripActorWrappers(pendingTrigger.text()), "library_search", null) >= 1.0) {
+                    voiceOnly = false;
+                    log.info("Voice-route: overriding confident no-task for '{}' — it reads as "
+                        + "a lookup, and answering from no sources would assert an absence",
+                        truncate(rawTell, 40));
+                }
+                // Same override, workbench door: "how about making us a
+                // greenhouse" read none@0.80 (2026-08-11) — suggestion
+                // phrasing reads as chat to the head, and the voice tier has
+                // no hands to build with. The person hears enthusiastic
+                // agreement and nothing ever appears.
+                if (voiceOnly && looksLikeBuildRequest(
+                        stripActorWrappers(pendingTrigger.text()))) {
+                    voiceOnly = false;
+                    log.info("Voice-route: overriding confident no-task for '{}' — it reads as "
+                        + "a build request, and the voice tier cannot build",
+                        truncate(rawTell, 40));
+                }
                 if (log.isInfoEnabled()) {
                     // INFO, not DEBUG. This single line decides whether she has
                     // hands this turn; it was invisible in production while far
@@ -5856,9 +6292,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 ? cachedManifest.voiceProfile().clauses().size() : 0;
             String triggerPreview = (pendingTrigger != null && pendingTrigger.text() != null)
                 ? truncate(extractUserTellContent(pendingTrigger.text()), 48) : "(own-time)";
-            log.info("[voice-route] '{}' authored by {} | voiceClauses={} | trigger='{}'",
+            // Label the routing LANE, not a model size — in cloud/single-model
+            // zones every lane resolves to the same backend, so "4B"/"9B"
+            // would claim a stack that isn't running.
+            log.info("[voice-route] '{}' authored via {} | voiceClauses={} | trigger='{}'",
                 profile.name(),
-                via4bVoice ? "4B-VOICE(cap:quick)" : "9B(" + prompt.backendId() + ")",
+                via4bVoice ? "voice-lane(cap:quick)" : "full-lane(" + prompt.backendId() + ")",
                 voiceClauses, triggerPreview);
         }
 
@@ -5903,6 +6342,69 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // path on the skills backend keeps its tool surface.
         var allTools = buildScopedTools();
 
+        // RANK THE MENU BY WHAT THE PERSON ASKED, on this path too.
+        //
+        // The affordance ranker exists because of a measured failure: "for 4B/9B
+        // models a focused, need-ranked menu is load-bearing: a flat 18-tool menu
+        // makes them pick whatever ranks high in the abstract (ablation
+        // 2026-05-30)". It was then wired into exactly ONE caller —
+        // triggerAutonomousInference — so every own-time turn got a ranked menu of
+        // 8, and every turn where a PERSON asked for something got the flat list
+        // of 131. The ablation's own conclusion was never applied to the path the
+        // product is used through.
+        //
+        // Live, 2026-08-08: asked to look through the household's books, she was
+        // handed 131 unordered tools and chose `examine` on a room object that
+        // does not exist. library_card and library_shelves were both on that list.
+        //
+        // The relevance text must be the PERSON'S WORDS here, not the autonomy
+        // prompt — that is what RequestRelevance scores against, and it is why a
+        // library request can float the library tools up the list.
+        if (pendingTrigger != null && isHumanRequest(pendingTrigger)) {
+            // A person asking for something is not an interiority want — never let a
+            // stale want-kind narrow what she can reach for on their behalf.
+            currentWantKind = WantKind.Kind.OTHER;
+            var askedFor = stripActorWrappers(pendingTrigger.text());
+            if (askedFor != null && !askedFor.isBlank()) {
+                // A pending fact-question PINS a library tool through the
+                // top-K trim, exactly as the WantActBridge FORCE verb is
+                // pinned — relevance scoring floats it, but a crowded
+                // drive-shaped menu can still rank it out, and a tool that
+                // never reaches the menu cannot be forced (2026-08-10 live:
+                // the surface arrived all mood, no library, force skipped).
+                String forcedPin = null;
+                if (libraryFirstPending) {
+                    for (var t : allTools) {
+                        var nm = t.function() != null ? t.function().name() : null;
+                        if (nm == null || !LIBRARY_FIRST_TOOLS.contains(nm)) continue;
+                        forcedPin = nm;
+                        if ("library_card".equals(nm)) break;   // full chain preferred
+                    }
+                } else if (buildFirstPending) {
+                    // Pin the door the force is about to open, so it survives the
+                    // top-K trim — a tool that never reaches the menu cannot be forced.
+                    // Same routing as buildFirstToolsFor: a place rides the room
+                    // builder, a thing that DOES something goes to the coding backend
+                    // (which authors the item script), and a thing that merely IS
+                    // something is held whole by a template.
+                    var wantedPin = buildFirstToolsFor(askedFor);
+                    forcedPin = wantedPin.contains("create_room_from_template")
+                        ? "create_room_from_template"
+                        : wantedPin.contains("dispatch_task")
+                            ? "dispatch_task" : "craft_from_template";
+                }
+                allTools = surfaceByAffordance(
+                    allTools, askedFor.toLowerCase(Locale.ROOT), forcedPin);
+
+                // NOTE: build-first's TEETH are applied inside reactDispatch(), not here.
+                // They used to be applied here, to this `allTools` list — which
+                // reactDispatch() then rebuilt from buildScopedTools(), discarding the
+                // narrowing while the log line claimed it had happened. The pin above is
+                // the part that belongs on this side: it only has to get the bench onto
+                // the menu so the dispatch-side force has something to narrow to.
+            }
+        }
+
         // Single-model architecture: the SSD-trained reasoning model handles everything.
         // tool_choice="auto" lets it decide: speak (emotional), call tools (tasks), or both.
         // For active plans, the ReAct loop feeds tool results back for multi-step execution.
@@ -5916,6 +6418,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             reactMessages = new ArrayList<>();
             reactRequester = pendingTrigger;
             reactToldThirdParty = false;
+            roomOwedGateUsed = false;
+            // reactBuildInFlight is NOT per-loop state — a build in flight belongs
+            // to the ASK. Final battery 2026-08-24 20:58: the reactive loop ended
+            // cleanly ("I'll hold here and wait for the workshop"), the auto-plan
+            // opened a continuation loop for the SAME goal, this reset emptied the
+            // guard, and the continuation's follow-through forced a second
+            // dispatch of the same build — two codezaiku tasks, one ask. The
+            // guard now clears on completion (the dispatch-completed handler) and
+            // on a NEW human request (below, when the pin changes), never on a
+            // loop that continues serving the same one.
             reactToolHistory.clear();
             reactSideEffectKeys.clear();   // #31 item 6 — per-loop dedup
             pendingTakeItemName = null;   // #29 possession gate — per-loop state
@@ -5993,6 +6505,66 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // F15: fromPrompt sources backendId from the tagged AssembledPrompt
             // so the assembler-tier and the routed backend can't disagree.
             // Compact tool descriptions for the wire — see compactToolsForInference.
+            //
+            // LIBRARY-FIRST on the direct-response path. The ReAct dispatch
+            // carries this same force, but a human fact-question with no
+            // active plan authors HERE — live 2026-08-10 proved it: armed
+            // upstream, never consulted, and `recall` on an empty memory
+            // answered instead of the library. Same contract as the ReAct
+            // site: one forced step, consumed whether or not it applies,
+            // skipped when the surface carries no library tool.
+            var directToolChoice = "auto";
+            if (libraryFirstPending) {
+                libraryFirstPending = false;
+                buildFirstPending = false;
+                var libraryOnly = new ArrayList<InferenceClient.ToolDefinition>();
+                for (var t : allTools) {
+                    if (t.function() != null
+                            && LIBRARY_FIRST_TOOLS.contains(t.function().name())) {
+                        libraryOnly.add(t);
+                    }
+                }
+                if (!libraryOnly.isEmpty()) {
+                    log.info("Library-first FORCE (direct): narrowed {} → {} tools, "
+                        + "tool_choice=required — a question of fact opens the book first",
+                        allTools.size(), libraryOnly.size());
+                    allTools = libraryOnly;
+                    directToolChoice = "required";
+                } else {
+                    log.info("Library-first armed but no library tool on this surface — skipped (direct)");
+                }
+            } else if (buildFirstPending) {
+                // BUILD-FIRST on the direct path — the greenhouse's second
+                // failure (2026-08-11): explicit "create a room", tools
+                // routed, create_room_from_template second on the surface,
+                // and the model described the greenhouse instead of building
+                // it. Same teeth as library-first: narrowed to build-or-
+                // decline, required, consumed whether or not it applies. The
+                // decline stays on the surface — a force may compel a choice,
+                // never an assent.
+                buildFirstPending = false;
+                var directReq = pinnedTurnRequest();
+                var wanted = buildFirstToolsForTurn(
+                    directReq != null ? directReq.text() : null);
+                var buildOnly = new ArrayList<InferenceClient.ToolDefinition>();
+                for (var t : allTools) {
+                    if (t.function() != null
+                            && wanted.contains(t.function().name())) {
+                        buildOnly.add(t);
+                    }
+                }
+                boolean anyBuilder = buildOnly.stream().anyMatch(t ->
+                    !"decline_with_reason".equals(t.function().name()));
+                if (anyBuilder) {
+                    log.info("Build-first FORCE (direct): narrowed {} → {} tools, "
+                        + "tool_choice=required — a request to build opens the workbench first",
+                        allTools.size(), buildOnly.size());
+                    allTools = buildOnly;
+                    directToolChoice = "required";
+                } else {
+                    log.info("Build-first armed but no build tool on this surface — skipped (direct)");
+                }
+            }
             var wireTools = compactToolsForInference(allTools);
             // #31 item 4: a turn that offers tools needs headroom for a complete
             // JSON tool call — floor, not override (a larger boost still applies).
@@ -6005,7 +6577,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 requestId, prompt,
                 maxTokens, modulation.temperature(),
                 inferenceResponseAdapter,
-                roomGrammar, null, wireTools, "auto",
+                roomGrammar, null, wireTools, directToolChoice,
                 modulation.topP(), modulation.presencePenalty(), modulation.repetitionPenalty()));
         }
     }
@@ -6058,6 +6630,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         // Ensure the original trigger is still active
         pendingTrigger = msg.originalTrigger();
+
+        // The vision hop is a detour out of onProcessEvents too — rejoin
+        // UPSTREAM of the pin/arm gate, like the detect and translate hops.
+        pinTurnAndArmFirstDoors();
 
         // Now run the identity inference with vision context included
         runIdentityInference();
@@ -6365,6 +6941,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /**
+     * Her bondholder's display name, for a reach aimed at someone who isn't in the room.
+     * {@code tell_agent} routes on the NAME, so without this the away-reach has nothing to
+     * land on. Null when there is no bondholder or the registry has never seen them.
+     */
+    private String bondholderDisplayNameForReach() {
+        var did = primaryBondholderDid();
+        if (did == null) return null;
+        var reg = EntityRegistry.get();
+        if (reg == null) return null;
+        return reg.nameOf(did).filter(n -> !n.isBlank()).orElse(null);
+    }
+
+    /**
      * Is this party another AGENT (companion, familiar, bunshin) rather than a person?
      * The same three-way test already used by the peer-message paths — kept in one place
      * so "who counts as a peer" cannot drift between the places that ask.
@@ -6489,7 +7078,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Match by entityId since the bondholder presents as the
             // entity speaking in-room.
             if (said.entityId() == null
-                    || !bondholderDid.equals(resolveSpeakerDid(said))) {
+                    || !PersonIds.samePerson(bondholderDid, resolveSpeakerDid(said))) {
                 return;
             }
         }
@@ -6506,11 +7095,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private String resolveSpeakerDid(
             WorldEvent.Said said) {
         if (said == null || said.entityId() == null) return null;
-        // Quick path: bondholder's entityId is the same as their DID for
-        // local users. For cross-zone speakers we lose the mapping here,
-        // which is acceptable for v0.1 — pair mining is local-bondholder
-        // first.
-        return said.entityId();
+        var entityId = said.entityId();
+        if (entityId.startsWith("did:")) return entityId;
+        // A person who existed before the person-identity migration still presents their
+        // pre-migration entity id on some surfaces — the SSH corridor does, the phone
+        // does not. Comparing that id string-to-string against their did:key judged the
+        // steward a different person from himself: HEARD turns stopped being written on
+        // 08-17 (the last day he used the phone), and every "is this the bondholder?"
+        // check answered no while he sat in the room with her. The migration recorded the
+        // mapping; nothing read it back until now. Cached — this is on the speech path.
+        return PersonIds.canonical(entityId);
     }
 
     /**
@@ -7044,6 +7638,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             reactMessages = new ArrayList<>();
             reactRequester = pendingTrigger;
             reactToldThirdParty = false;
+            roomOwedGateUsed = false;
+            // reactBuildInFlight is NOT per-loop state — a build in flight belongs
+            // to the ASK. Final battery 2026-08-24 20:58: the reactive loop ended
+            // cleanly ("I'll hold here and wait for the workshop"), the auto-plan
+            // opened a continuation loop for the SAME goal, this reset emptied the
+            // guard, and the continuation's follow-through forced a second
+            // dispatch of the same build — two codezaiku tasks, one ask. The
+            // guard now clears on completion (the dispatch-completed handler) and
+            // on a NEW human request (below, when the pin changes), never on a
+            // loop that continues serving the same one.
             reactToolHistory.clear();
             reactSideEffectKeys.clear();   // #31 item 6 — per-loop dedup
             pendingTakeItemName = null;   // #29 possession gate — per-loop state
@@ -7135,7 +7739,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 modulation.topP(), modulation.presencePenalty(), modulation.repetitionPenalty()));
         }
 
+        if (pendingTrigger != null && isHumanRequest(pendingTrigger)) {
+            // Second line of defence at the WRITER, for any proactive path that does not
+            // pass the gate above. Overwriting a person's pending message with her own
+            // musing is the one thing this must never do, whatever called it.
+            log.warn("Own-time turn for '{}' would have overwritten a pending message from "
+                + "'{}' — yielding the turn to the person", profile.name(),
+                pendingTrigger.entityName());
+            state = State.IDLE;
+            return;
+        }
         pendingTrigger = autonomyEvent;
+        // Own time is HERS. A search she starts from her own musing must not
+        // have the bondholder's last question merged into it as if it were the
+        // operand — that would be the contamination problem, mirrored.
+        turnIsHuman = false;
     }
 
     /**
@@ -7235,22 +7853,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * (emotional context, future dispatch re-checks) so routing decisions
      * aren't skewed by the write-shaped JSON reply template.
      */
-    private static String stripActorWrappers(String text) {
+    static String stripActorWrappers(String text) {
         if (text == null || text.isEmpty()) return text;
         var out = text;
-        // "[message from Name: payload]" — extract payload.
+        // "[message from Name: payload]" — extract payload. The envelope may
+        // carry suffix LINES ("[You are mid-conversation…]", "[When done…]"),
+        // each starting on its own line with '['. lastIndexOf(']') used to span
+        // past them, so the payload came back with the mid-conversation hint
+        // still attached — and its em dash then tripped the language-detect
+        // hop on our own prose (battery cpB5, 2026-08-23).
         if (out.startsWith("[message from ")) {
             var colon = out.indexOf(": ");
-            var close = out.lastIndexOf(']');
-            if (colon > 0 && close > colon) {
-                out = out.substring(colon + 2, close);
+            if (colon > 0) {
+                out = out.substring(colon + 2);
+                var nextLine = out.indexOf("\n[");
+                if (nextLine > 0) out = out.substring(0, nextLine);
+                out = out.trim();
+                if (out.endsWith("]")) out = out.substring(0, out.length() - 1);
             }
         }
-        // Trim "[When done, REPLY ...]" suffix if present. Can appear in
-        // senderContext after the main message wrapper.
+        // Trim envelope suffixes if present (also for non-"[message from" forms).
         var replyIdx = out.indexOf("[When done");
         if (replyIdx > 0) {
             out = out.substring(0, replyIdx);
+        }
+        var midIdx = out.indexOf("[You are mid-conversation");
+        if (midIdx > 0) {
+            out = out.substring(0, midIdx);
         }
         return out.trim();
     }
@@ -7344,7 +7973,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .filter(n -> COMPOUND_WORK_PREFIXES.contains(n.substring(0, n.indexOf('_'))))
             .map(n -> n.substring(n.lastIndexOf('_') + 1))
             .filter(n -> n.length() > 3)          // drop "key"-ish noise
-            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            .collect(Collectors.toUnmodifiableSet());
     /**
      * English verbs for authoring. NOT derivable: the registry stores
      * {@code create_room}, and a person says "make", "build", "put together",
@@ -7905,7 +8534,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         wantStore = new WantStore(jdbcUrl);
                         introspectionTools = new IntrospectionTools(
                             jdbcUrl, memoryEntityStore());
-                        driveOODA = new DriveOODA(wantStore);
+                        // ClosureStep: a want she completed relieves the drive that
+                        // pulled for it, so DRIVE → WANT → ACT → CONSEQUENCE actually
+                        // closes. Without it the act was a reflex the drive could never
+                        // register — she wrote the same journal entry 22 of 40 ticks with
+                        // Loneliness pinned at 1.00 (live, 2026-08-19).
+                        driveOODA = new DriveOODA(wantStore, this::onWantClosed);
                         log.debug("DriveOODA initialized for companion '{}'", profile.name());
                     } catch (Exception e) {
                         log.warn("Failed to initialize DriveOODA: {}", e.getMessage());
@@ -8354,7 +8988,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * response triggered a false-positive entity-drop on the paraphrase.
      * Common technical acronyms (URL, API, JSON, etc.) routinely get
      * reformatted by paraphrase without losing user-visible facts; we now
-     * deny-list them explicitly. Mixed-case tokens (Wyrd, Masumi) and
+     * deny-list them explicitly. Mixed-case tokens (Wyrd, Operator) and
      * Panksepp drive names (SEEKING, PLAY, LUST, CARE, RAGE, FEAR, GRIEF,
      * PANIC) stay preserved.
      */
@@ -8367,6 +9001,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var token = pnMatcher.group();
             if (isCommonSentenceStarter(token)) continue;
             if (isReformattableAcronym(token)) continue;
+            // Sentence-initial capitalization is not evidence of a proper noun — every
+            // sentence starts capitalized. Requiring those tokens verbatim threw away
+            // good polishes of ordinary prose ("Something has been holding itself…" →
+            // missing facts=[Something]), and the fallback speaks the RAW draft, so those
+            // turns came out mechanical. Measured on a household node 2026-08-17: 367 of
+            // 2,018 polish attempts in a day rejected (18%; 22% over three days), and the
+            // sampled reasons were dominated by openers — Something / There / Just /
+            // Tonight. So roughly one line in five was needlessly unpolished. A word that
+            // is genuinely a name will also appear mid-sentence somewhere in the same
+            // draft, and THAT occurrence still registers it — the deny-list below stays
+            // as a belt for the single-sentence case.
+            //
+            // ALL-CAPS tokens are exempt: nothing about grammar makes a word SHOUT, so
+            // "SEEKING is moderate." carries real evidence even at sentence start (the
+            // Panksepp drive names a paraphrase must not drop).
+            boolean allCaps = token.equals(token.toUpperCase());
+            if (!allCaps && isSentenceInitial(text, pnMatcher.start())) continue;
             entities.add(token);
         }
         var number = Pattern.compile("\\b\\d{2,}\\b");
@@ -8432,9 +9083,34 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return chooseVoicedLine(draft, polished, required, null);
     }
 
+    /**
+     * Why the voice guard fell back to the raw draft. Diagnostic only — the decision
+     * itself is unchanged. Added 2026-08-17 because the rejection log recorded the
+     * missing-fact list and the two lengths, and when rejections tripled after a prompt
+     * change the log could not say WHICH check had fired: an empty fact list plus a
+     * modest length delta was consistent with the language check, the expansion cap, and
+     * a blank polish all at once. Two hypotheses were built and falsified by experiment
+     * before instrumenting; instrument first next time.
+     */
+    enum VoiceReject { NONE, BLANK, LANGUAGE, FACT, EXPANSION }
+
     static String chooseVoicedLine(String draft, String polished, Set<String> required,
                                    String expectedLang) {
-        if (polished == null || polished.isBlank()) return draft;
+        return chooseVoicedLine(draft, polished, required, expectedLang, new VoiceReject[1]);
+    }
+
+    /**
+     * @param reasonOut single-element sink for the rejection reason, so the caller can
+     *                  log it without recomputing (and without a second copy of these
+     *                  rules that could drift from the real ones).
+     */
+    static String chooseVoicedLine(String draft, String polished, Set<String> required,
+                                   String expectedLang, VoiceReject[] reasonOut) {
+        reasonOut[0] = VoiceReject.NONE;
+        if (polished == null || polished.isBlank()) {
+            reasonOut[0] = VoiceReject.BLANK;
+            return draft;
+        }
         // A translation is a fact-preserving corruption: "low 63F high 86F" survives
         // intact inside "baja 63F, alta 86F", so every required-fact check passes and the
         // wrong language still reaches the user. The language pin drives this to 0/32 on
@@ -8454,6 +9130,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // No expected language, or one the detector can't verify
             // (pin-only tier) → the legacy symmetric rule is the safe shape.
             if (languageChanged(draft, polished)) {
+                reasonOut[0] = VoiceReject.LANGUAGE;
                 return draft;   // voice switched language → raw draft
             }
         } else {
@@ -8462,6 +9139,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             boolean polishOff = polishLang != null && !polishLang.equals(expectedLang);
             boolean draftOn = draftLang == null || draftLang.equals(expectedLang);
             if (polishOff && draftOn) {
+                reasonOut[0] = VoiceReject.LANGUAGE;
                 return draft;   // polish drifted away from the user's language
             }
             // The floor's rewrite succeeded: off-language draft, on-language
@@ -8477,6 +9155,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (fact == null || fact.isBlank()) continue;
                 if (correction ? !digitRunsSurvive(fact, polished)
                                : !polished.contains(fact)) {
+                    reasonOut[0] = VoiceReject.FACT;
                     return draft;   // dropped a required fact → raw draft
                 }
             }
@@ -8491,6 +9170,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 && draft.length() >= 30
                 && polished.length() > 120
                 && polished.length() > VOICE_POLISH_EXPANSION_CAP * draftLenForCap) {
+            reasonOut[0] = VoiceReject.EXPANSION;
             return draft;   // hallucinated oversized expansion → raw draft
         }
         return polished;
@@ -8620,6 +9300,30 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         "como", "pero", "muy", "más", "está", "hasta", "sobre", "cuando", "porque",
         "todo", "algo", "nada", "hay", "ser", "estoy", "voy");
 
+    /**
+     * True when the token starting at {@code idx} sits in sentence-initial position:
+     * at the start of the text, or after terminal punctuation / a line break, allowing
+     * for intervening quotes, brackets and emote asterisks. Such capitalization is
+     * grammatical, so it carries no evidence that the word is a name.
+     */
+    static boolean isSentenceInitial(String text, int idx) {
+        for (int i = idx - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '\n' || c == '\r') return true;   // first word of a line
+            if (Character.isWhitespace(c) || c == '"' || c == '\'' || c == '“' || c == '‘'
+                    || c == '(' || c == '[') {
+                continue;   // transparent prefix — keep looking back
+            }
+            // A dash, comma or colon before the token is NOT a sentence boundary, so
+            // the capital there is meaningful and the token stays required. Terminal
+            // punctuation closes a sentence, and so does an emote delimiter — the word
+            // after "*stirs from sleep*" opens a sentence just as much as one after a
+            // full stop.
+            return c == '.' || c == '!' || c == '?' || c == '…' || c == '*';
+        }
+        return true;   // nothing but transparent characters before it — start of text
+    }
+
     private static boolean isCommonSentenceStarter(String token) {
         return switch (token.toLowerCase()) {
             case "the", "this", "that", "those", "these", "i", "you", "we",
@@ -8637,7 +9341,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Panksepp drive names (PLAY, LUST, CARE, RAGE, FEAR are 4 chars).
      */
     private static boolean isReformattableAcronym(String token) {
-        // Only consider all-caps tokens; mixed-case tokens (Wyrd, Masumi)
+        // Only consider all-caps tokens; mixed-case tokens (Wyrd, Operator)
         // are real proper nouns.
         if (!token.equals(token.toUpperCase())) return false;
         return switch (token) {
@@ -9554,15 +10258,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // sounding mechanical.
                     var draft = pendingVoicePolishDrafts.get(respId);
                     var required = pendingVoicePolishRequired.get(respId);
+                    var rejectReason = new VoiceReject[1];
                     var chosen = chooseVoicedLine(draft, polished, required,
-                        pendingVoicePolishExpected.get(respId));
-                    if (chosen != polished && draft != null) {
+                        pendingVoicePolishExpected.get(respId), rejectReason);
+                    boolean polishAccepted = chosen == polished || draft == null;
+                    CompanionVitals.forAgent(soulKey()).recordPolish(polishAccepted);
+                    if (!polishAccepted) {
                         final String pf = polished;
                         var missing = required == null ? List.<String>of()
                             : required.stream().filter(e -> !pf.contains(e)).toList();
                         log.warn("Voice polish rejected — speaking raw draft "
-                                + "(missing facts={}, draft={}c, polished={}c, requestId={}).",
-                            missing, draft.length(), polished.length(), respId);
+                                + "(reason={}, missing facts={}, draft={}c, polished={}c, "
+                                + "draftLang={}, polishLang={}, expected={}, requestId={}).",
+                            rejectReason[0], missing, draft.length(), polished.length(),
+                            detectLanguage(draft), detectLanguage(polished),
+                            pendingVoicePolishExpected.get(respId), respId);
                     } else {
                         log.info("Voice polish completed (requestId={}, polished={} chars)",
                             respId, polished.length());
@@ -9708,6 +10418,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // original trigger; keep it until a real new trigger arrives.
         if (wasTrigger != null) {
             lastReactTrigger = wasTrigger;
+            lastReactTriggerAt = Instant.now();   // so it can go stale — see the field
             turnTellTargets.clear();   // new turn — relay-fulfillment tracking starts fresh
         }
 
@@ -10016,7 +10727,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         alog.enacted(profile.name(),
                             profile.did() != null ? profile.did() : profile.entityId(),
                             ActionPolicy.actionTypeOf(parseResult.primaryAction()),
-                            enactedTargetOf(parseResult.primaryAction()), true);
+                            enactedTargetOf(parseResult.primaryAction()), true,
+                            collectDriveLevels());
                     }
                     // (2026-06-04 agency audit, Layer 3) — close the
                     // consequence loop: the agentic act the agent just CHOSE on its own time
@@ -10027,6 +10739,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // creation/discovery loop has its own anti-wirehead discharge in
                     // applyProductionFeedback; this covers the relational + protective acts.
                     relieveDriveForEnactedAction(
+                        ActionPolicy.actionTypeOf(parseResult.primaryAction()));
+                    // The other half of the same loop: if this dispatch is the action an
+                    // interiority want asked for, THAT is when the want is satisfied.
+                    noteInteriorityEnactment(
                         ActionPolicy.actionTypeOf(parseResult.primaryAction()));
                 }
 
@@ -10393,12 +11109,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
 
         // Process messages that arrived while we were thinking
-        if (deferredTrigger != null) {
-            pendingTrigger = deferredTrigger;
-            deferredTrigger = null;
-            var modulation = VitalityModulation.compute(vitality, drives, profile);
-            timers.startSingleTimer(DEBOUNCE_TIMER_KEY,
-                new ProcessEvents(), modulation.debounceDelay());
+        if (!deferredTriggers.isEmpty()) {
+            promoteDeferredTrigger(
+                VitalityModulation.compute(vitality, drives, profile).debounceDelay());
         }
 
         return this;
@@ -10430,6 +11143,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 msg.roomName(), "room-created");
             log.info("Companion '{}' created room '{}' ({})",
                 profile.name(), msg.roomName(), msg.newRoomId());
+            // THE ROOM IS HALF THE JOB. A template furnishes a place and holds no
+            // behaviour, so a request for a room that must DO something is not finished
+            // when the room exists. Live 2026-08-22: the Weather Parlor was made, real and
+            // connected and described exactly as asked, and the steward walked into an
+            // empty room — creating it had looked like the whole job. Same shape, and the
+            // same remedy, as a craft_from_template that produced a behaviourless shell:
+            // say what is still missing and re-arm the workbench so the next step narrows
+            // to it, rather than letting the turn end in a satisfied report.
+            if (msg.needsBehaviour() && buildFirstRearms < BUILD_FIRST_MAX_REARMS) {
+                buildFirstRearms++;
+                buildFirstPending = true;
+                log.info("Companion '{}' made a room that still has to DO something — "
+                    + "re-arming the workbench so the next step builds it into '{}'",
+                    profile.name(), msg.newRoomId());
+            }
         } else {
             // Honest failure — no fake success. Voice the real error plainly.
             voiceOutcome("You tried to create a room but it didn't work: " + msg.error(),
@@ -10566,6 +11294,45 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private WorldEvent.Said lastReactTrigger;
 
     /**
+     * When {@link #lastReactTrigger} was set — so a question can go stale.
+     *
+     * <p>The field is a fallback for "what is the person asking?" when the live
+     * handles are gone, and it had no expiry. Live 2026-08-09: asked to recite a
+     * poem, she called a tool with the question from the PREVIOUS battery — the
+     * Glass Tide question, an hour and a different conversation earlier — and
+     * answered that instead. The tool output says "the provided sources", so it
+     * was not her voice wandering: the stale text was passed as the request.</p>
+     *
+     * <p>Bounded rather than cleared. Clearing it re-opens the empty-{@code query}
+     * bug it was introduced to fix; ageing it out keeps the recovery for the case
+     * it was meant for — a handle lost inside one turn — while refusing to speak
+     * for a person who asked something else, an hour ago.</p>
+     */
+    private Instant lastReactTriggerAt;
+
+    /** How long a trigger may stand in for "what was just asked". */
+    private static final Duration TRIGGER_FRESHNESS =
+        Duration.ofMinutes(3);
+
+    /**
+     * {@link #lastReactTrigger}, but only while it can still be the live request.
+     *
+     * @return the trigger, or null once it is old enough to be someone else's question
+     */
+    private WorldEvent.Said freshReactTrigger() {
+        if (lastReactTrigger == null) return null;
+        if (lastReactTriggerAt == null) return lastReactTrigger;   // pre-dates the stamp
+        if (Duration.between(lastReactTriggerAt, Instant.now())
+                .compareTo(TRIGGER_FRESHNESS) > 0) {
+            log.debug("Dropping a {}s-old trigger rather than treating it as the live request",
+                Duration.between(lastReactTriggerAt, Instant.now())
+                    .toSeconds());
+            return null;
+        }
+        return lastReactTrigger;
+    }
+
+    /**
      * The trigger that STARTED the current ReAct loop — the request the loop is serving.
      * lastReactTrigger is per-inference-cycle and gets legitimately replaced by interleaved
      * events (a room-entry event overwrote the build request mid-craft on second-node 2026-07-09,
@@ -10573,6 +11340,424 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * loop init; read by requester-sensitive finalizers (hand-off) while the loop is active.
      */
     private WorldEvent.Said reactRequester;
+
+    /**
+     * The human question this turn is serving — pinned at turn start, while the
+     * trigger is still in hand, because every later handle
+     * ({@link #reactRequester}, {@link #lastReactTrigger}) is maintained by some
+     * flows and not others. See the pin site in the reactive handler.
+     */
+    private WorldEvent.Said turnHumanRequest;
+    private Instant turnHumanRequestAt;
+    /** Whether the CURRENT turn was started by a person, not by her own time. */
+    private boolean turnIsHuman;
+
+    /** Armed at the pin when a human question reads as a library lookup. */
+    /**
+     * taskId → the room its finished item should be placed in.
+     *
+     * <p>Only populated when a dispatch explicitly named a room; entries are removed when
+     * the task reports back. Bounded by the number of builds in flight, which is small.
+     */
+    private final Map<String, String> buildDestinationByTask = new ConcurrentHashMap<>();
+
+    /** taskIds whose build was the FIRST half of a room-that-acts; the room is still owed. */
+    private final Set<String> roomOwedByTask = ConcurrentHashMap.newKeySet();
+    /** taskIds whose request asked for a room that acts — the only builds the fresh-room window may claim. */
+    private final Set<String> buildAskedForRoom = ConcurrentHashMap.newKeySet();
+    /** Tasks whose request said "give me / hand me" — the REQUESTER, stamped at
+     *  dispatch. The hand-off used to re-read the live trigger at completion,
+     *  and a build that takes minutes loses that race every time: on the home
+     *  node 2026-08-24 her own musings had overwritten lastReactTrigger by the
+     *  time goose finished, the intent check read a musing, and the person who
+     *  said "give me the tool" had to walk over and `get` it off the floor.
+     *  The intent belongs to the request that carried it. */
+    private final Map<String, WorldEvent.Said> buildAskedIntoHands = new ConcurrentHashMap<>();
+    /** taskId → the room the person was in when they asked for the build. */
+    private final Map<String, String> buildAskedFromRoom = new ConcurrentHashMap<>();
+
+    /** The tool is built and the room it was for is not. Cleared the moment a room is made. */
+    private volatile boolean roomStillOwedAfterBuild;
+    /** The room gate fires once per loop; a force may compel a call, never loop forever. */
+    private boolean roomOwedGateUsed;
+    /** Description of the build this turn already sent; null when none is running. */
+    private volatile String reactBuildInFlight;
+
+    /**
+     * The room she made most recently, and when.
+     *
+     * <p>A request for a room that DOES something is two actions — make the place, build
+     * the thing — and only the second one can carry a destination. Rather than depend on
+     * her filling an optional parameter, a build that names no room within
+     * {@link #ROOM_BUILD_WINDOW} of a room being made goes into that room.
+     */
+    private volatile String lastCreatedRoomId;
+    private volatile Instant lastCreatedRoomAt;
+
+    /** How long a freshly-made room stays the obvious home for a build. */
+    private static final Duration ROOM_BUILD_WINDOW = Duration.ofMinutes(5);
+
+    private boolean libraryFirstPending;
+
+    /** Exact-repeat guard state — see speakDirect. */
+    private String lastSpokenLine;
+    /** When anyone last spoke TO this companion — opens the reactive window
+     *  in which the exact-repeat guard stands down (see speakDirect). */
+    private Instant lastHeardUtteranceAt;
+    private Instant lastSpokenLineAt;
+
+    /** One absence finding may be held per turn — see the eager-speak branch. */
+    private boolean absenceHeldThisTurn;
+
+    /** A summariser digest asserting the sources hold nothing. */
+    static boolean looksLikeAbsenceFinding(String findings) {
+        if (findings == null) return false;
+        var f = findings.toLowerCase(Locale.ROOT);
+        return f.contains("sources do not contain")
+            || f.contains("source material does not contain")
+            || f.contains("do not contain any information")
+            || f.contains("does not contain any information")
+            || f.startsWith("no results found")
+            || f.contains("i cannot answer this question because");
+    }
+
+    /** The library tools any of which satisfies a forced first lookup. */
+    private static final Set<String> LIBRARY_FIRST_TOOLS =
+        Set.of("library_card", "library_search", "read_content");
+
+    /**
+     * The building tools a forced build step narrows to — plus an explicit
+     * decline, because a request to build is one she may refuse, and the
+     * force must never remove the refusal (act-or-decline, same contract as
+     * the follow-through teeth).
+     */
+    static final Set<String> BUILD_FIRST_TOOLS =
+        Set.of("create_room_from_template", "create_zone", "craft_from_template",
+            "dispatch_task", "decline_with_reason");
+
+    /** Places, which a room template answers completely. */
+    private static final Set<String> PLACE_BUILD_TOOLS =
+        Set.of("create_room_from_template", "create_zone", "decline_with_reason");
+    /** A thing that must DO something — authored by the coding backend. */
+    private static final Set<String> BEHAVIOUR_BUILD_TOOLS =
+        Set.of("dispatch_task", "decline_with_reason");
+    /** A thing that merely IS something — a template holds it whole. */
+    private static final Set<String> OBJECT_BUILD_TOOLS =
+        Set.of("craft_from_template", "decline_with_reason");
+
+    /**
+     * Which build tools answer THIS request.
+     *
+     * <p>The three build doors are not interchangeable, and offering all of them is how a
+     * request got answered by the wrong one three times running (2026-08-19/20).
+     *
+     * <ul>
+     *   <li><b>A place</b> → {@code create_room_from_template} / {@code create_zone}.</li>
+     *   <li><b>A thing that DOES something</b> → {@code dispatch_task}. The coding backend
+     *       is the item AUTHOR: every dispatched task is prepended with the items-as-tools
+     *       contract, so the backend emits one {@code .js} carrying
+     *       {@code exports.manifest} plus {@code invoke()}, and
+     *       {@code CodingTaskItemBridge} then validates it, smoke-tests it against a
+     *       no-side-effect stub, registers it so {@code use} works, and places it in the
+     *       room. That pipeline exists for exactly this and had never once run in
+     *       production, because nothing published the terminal event until 2026-08-19.</li>
+     *   <li><b>A thing that merely IS something</b> → {@code craft_from_template}. A
+     *       template holds a book or a lantern whole. It cannot hold behaviour: the
+     *       generated script is {@code inherit(...)} plus setters.</li>
+     * </ul>
+     *
+     * <p>Asking the local drive model to write the behaviour itself was the wrong door.
+     * Proven live against the production 9B: narrowed to the workbench with
+     * {@code tool_choice=required}, handed a tool result naming the exact APIs, and with
+     * {@code script} promoted into the schema's {@code required} array, it still called
+     * {@code craft_from_template} with no script on every attempt. It is a drive-and-voice
+     * model, not a code author — and we have a code author.
+     */
+    /**
+     * Which build door answers THIS turn — unless a half is already owed.
+     *
+     * <p>A room that must DO something contains the word "tool", so by the request alone
+     * it always narrows to the workbench. Live 2026-08-22 20:27: the tool was built, the
+     * re-arm fired, and the re-armed step narrowed her straight back to
+     * {@code dispatch_task} — the room-maker was never on the surface — and she called
+     * goal_done. When a room is owed, the room door is the only honest answer, whatever
+     * the sentence says.
+     */
+    /**
+     * The room the request NAMES, when that room already exists. "put it in the
+     * room weather-attic-1325" names a DESTINATION — treating it as a request
+     * for a new room owed a room that was already standing, and the gate then
+     * forced a second one beside it (battery cpB5's sibling failure,
+     * 2026-08-23 17:27: `create_room_from_template name='weather-tool'` next
+     * to the attic). Matched by room ID and only for distinctive ids (a dash
+     * and some length) so a passing mention of "library" never binds to the
+     * seeded library room.
+     */
+    static Optional<String> existingRoomNamedIn(String text) {
+        var topo = ZoneTopology.getShared();
+        if (topo == null || text == null || text.isBlank()) return Optional.empty();
+        var t = text.toLowerCase(Locale.ROOT);
+        String best = null;
+        for (var node : topo.rooms().values()) {
+            var id = node.roomId();
+            if (id == null || id.length() < 8 || !id.contains("-")) continue;
+            if (t.contains(id.toLowerCase(Locale.ROOT))
+                    && (best == null || id.length() > best.length())) {
+                best = id;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    /** Does this request ask for a room that acts AND still need that room made?
+     *  Naming a room that already exists is a destination, not a debt. */
+    private static boolean requestOwesARoom(String text) {
+        return asksForARoomThatActs(text) && existingRoomNamedIn(text).isEmpty();
+    }
+
+    /** Is the request this turn is serving one that asked for a room that acts? */
+    private boolean turnOwesARoom() {
+        // THE REQUEST THAT STARTED THIS LOOP, never "whatever is pinned now". Staging
+        // 2026-08-23 07:33:25: a second ask arrived mid-force and re-pinned the turn's
+        // request; two seconds later the forced room call came back as text, this asked
+        // "does the pinned request owe a room?" of the NEW ask, got no, and let the loop
+        // end with the lantern room never made. reactRequester is set once at loop start
+        // for exactly this — it is the loop's identity. Fall back to the pin only when
+        // there is no loop.
+        var r = reactRequester != null ? reactRequester : null;
+        if (r != null) return requestOwesARoom(r.text());
+        var req = pinnedTurnRequest();
+        if (req != null) return requestOwesARoom(req.text());
+        return lastReactTrigger != null && requestOwesARoom(lastReactTrigger.text());
+    }
+
+    private Set<String> buildFirstToolsForTurn(String request) {
+        // Only when THIS request is the one that owes a room. On the home node
+        // 2026-08-23 07:20 the library build (a room-that-acts) was still in flight, the
+        // steward asked for a plain weather TOOL, and this narrowed his new ask to the
+        // room door because the previous ask's room was still owed: "no build tool on
+        // this dispatch surface — skipped". A debt belongs to the request that incurred it.
+        boolean thisAskOwesARoom = asksForARoomThatActs(request);
+        if (thisAskOwesARoom && (roomStillOwedAfterBuild || !roomOwedByTask.isEmpty())) {
+            return PLACE_BUILD_TOOLS;
+        }
+        return buildFirstToolsFor(request);
+    }
+
+    static Set<String> buildFirstToolsFor(String request) {
+        if (request == null || request.isBlank()) return BUILD_FIRST_TOOLS;
+        var t = request.toLowerCase(Locale.ROOT);
+        boolean place = t.contains(" room") || t.contains(" zone") || t.contains("a place")
+            || t.contains(" space") || t.contains(" nook") || t.contains("house");
+        if (place && !asksForAnArtifact(request)) return PLACE_BUILD_TOOLS;
+        if (describesBehaviour(request)) return BEHAVIOUR_BUILD_TOOLS;
+        return OBJECT_BUILD_TOOLS;
+    }
+
+    /** A pending human request to build something — armed per turn, like library-first. */
+    private boolean buildFirstPending;
+    /**
+     * How many times this turn the build force has been RE-armed after handing back a
+     * scriptless craft. The force is one-shot by design, so without this the push-back
+     * lands on a surface that has already widened again — and a companion who has just
+     * been told "that template holds no behaviour" is back among ~25 tools with
+     * tool_choice=auto, free to call list_templates and talk herself out of it. That is
+     * exactly how the third live attempt ended (2026-08-20). Capped so the two fixes
+     * cannot ping-pong: after this she keeps the push-back in her history but gets the
+     * open surface back.
+     */
+    private int buildFirstRearms;
+    static final int BUILD_FIRST_MAX_REARMS = 1;
+
+    /**
+     * Is the person asking for a THING to be made, rather than for an answer?
+     *
+     * <p>Separates "make me a list from my books" (a lookup) from "make me a tool that
+     * queries the library" (an artifact whose subject happens to be the library). Only
+     * the second should open the workbench ahead of the book.
+     *
+     * <p>Pure and package-visible so the distinction is testable without a model.
+     */
+    static boolean asksForAnArtifact(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase(Locale.ROOT);
+        boolean makingVerb = t.contains("make") || t.contains("build") || t.contains("craft")
+            || t.contains("create") || t.contains("weave") || t.contains("forge");
+        if (!makingVerb) return false;
+        return t.contains("tool") || t.contains("item") || t.contains("device")
+            || t.contains("gadget") || t.contains("widget") || t.contains("instrument")
+            || t.contains("machine") || t.contains("contraption") || t.contains("artifact");
+    }
+
+    /**
+     * Does this ask for a room that has to DO something?
+     *
+     * <p>A template furnishes a place; it holds no behaviour. "Make me a room where anyone
+     * can ask for the weather and hear it spoken" is two pieces of work, and the second is
+     * the only one that answers the question. Live 2026-08-22 she made the Weather Parlor
+     * — real, connected, exitable, described exactly as asked — and the steward walked
+     * into an empty room, because creating it looked like the whole job.
+     *
+     * <p>Shallow on purpose, like its siblings: a place word plus something the place must
+     * do for whoever walks in.
+     */
+    static boolean asksForARoomThatActs(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase(Locale.ROOT);
+        // "speaks it out TO THE ROOM" names an AUDIENCE, not a construction
+        // site. Live on the home node 2026-08-24 13:40: "…whatever it finds it
+        // speaks out to the room a short fairy tale…" registered a room debt
+        // for an ask that wanted a tool, and the room gate then forced
+        // create_room twice for a room nobody asked for. Strip the dative
+        // form before looking for place words; "make me a room", "a room
+        // called X" and "put it in the room X" all still carry their own
+        // room mention after the strip.
+        var construction = t.replace("out to the room", " ").replace("to the room", " ");
+        boolean place = construction.contains("room") || t.contains(" zone") || t.contains("a place")
+            || t.contains(" space") || t.contains(" nook") || t.contains("parlor")
+            || t.contains("chamber") || t.contains("sanctum");
+        if (!place) return false;
+        // What the place must DO for whoever walks in.
+        return t.contains("ask") || t.contains("hear") || t.contains("look up")
+            || t.contains("lookup") || t.contains("query") || t.contains("tells")
+            || t.contains("tell me") || t.contains("speaks") || t.contains("speak")
+            || t.contains("get back") || t.contains("find out") || t.contains("briefing")
+            || t.contains("can do") || t.contains("so i can") || t.contains("so anyone");
+    }
+
+    /**
+     * Does this utterance ask her to MAKE something?
+     *
+     * <p>Deliberately shallow, like {@link #looksLikeFactQuestion}: a making
+     * verb plus a made-thing cue. Live 2026-08-11 05:57: "how about making us
+     * a greenhouse" was classified confidently-no-task (0.80) and answered by
+     * the toolless voice tier; the explicit retry reached the 9B with
+     * create_room_from_template second on the surface, and it TALKED about
+     * the greenhouse instead of calling the tool. Both halves of the
+     * greenhouse failure start from the runtime not recognizing a build
+     * request as one. Writing-shaped things (notes, letters, stories) are
+     * excluded — those belong to the quill, not the room builder.</p>
+     */
+    /** Does the text name an item the loader knows? The cue that a revision is about a THING. */
+    static boolean mentionsAKnownItem(String lowered) {
+        var loader = ScriptedItemLoader.get();
+        if (loader == null) return false;
+        for (var def : loader.all()) {
+            var id = def.itemId();
+            if (id != null && !id.isBlank() && lowered.contains(id.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    static boolean looksLikeBuildRequest(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase(Locale.ROOT);
+        // Humans ask for things by expressing NEEDS, not verbs: the second
+        // live greenhouse ask (2026-08-11 15:15, "so I was thinking we need
+        // a greenhouse") carried no making-verb and slipped this recognizer
+        // — the bunshin net caught it, but the front door should too.
+        // CHANGING A THING SHE MADE IS WORKBENCH WORK. "please revise trip_compass so it
+        // accepts two cities…" carried no making-verb, so this said no, the delegate guard
+        // had nothing to hold, and the classifier sent it to a bunshin (2026-08-22 21:45)
+        // — the same hijack as the venture_scout build that morning, with a different
+        // verb. A revision names an existing item and asks for it to be different; the
+        // workbench owns that (ItemRevision) exactly as it owns the first build.
+        boolean revisingVerb = t.contains("revise") || t.contains("rework") || t.contains("modify")
+            || t.contains("change it so") || t.contains("fix it so") || t.contains("update it so")
+            || t.contains("make it ") || t.contains("have it ") || t.contains("so it accepts")
+            || t.contains("so it takes") || t.contains("so that it ");
+        if (revisingVerb && mentionsAKnownItem(t)) return true;
+        boolean makingVerb = t.contains("create") || t.contains("make") || t.contains("makin")
+            || t.contains("build") || t.contains("craft")
+            || t.contains("we need a") || t.contains("we need some")
+            || t.contains("i want a") || t.contains("can we have a")
+            || t.contains("i'd love a") || t.contains("id love a");
+        if (!makingVerb) return false;
+        boolean writingShaped = t.contains("note") || t.contains("letter")
+            || t.contains("list") || t.contains("poem") || t.contains("story")
+            || t.contains("journal") || t.contains("report");
+        // ...but a TOOL that produces writing is still a tool. The exclusion is about
+        // what is being MADE, not what it will output. Live 2026-08-19: "make me a
+        // tool that ... provide me with a story ... tell the room out loud that story"
+        // was rejected here on the word "story", while library-first had already
+        // rejected it on "library" — so the one request the workbench existed for
+        // matched neither door, and she was left holding a single search tool.
+        if (writingShaped && !asksForAnArtifact(text)) return false;
+        if (asksForAnArtifact(text)) return true;   // "make me a tool/item/device"
+        return t.contains(" room") || t.contains(" zone") || t.contains("a place")
+            || t.contains(" space") || t.contains(" nook") || t.contains("us a ")
+            || t.contains("me a ");
+    }
+
+    /**
+     * Does the request describe something the item must DO, not merely BE?
+     *
+     * <p>"Make me a book" asks for a thing; a template is the whole answer. "Make me a
+     * tool that queries the library and speaks a story to the room" asks for BEHAVIOUR,
+     * and no template holds behaviour — only a {@code script} does.
+     *
+     * <p>Live 2026-08-20, the second attempt at the same request: build-first routing
+     * worked, the workbench opened, and she called {@code craft_from_template} with
+     * {@code template='mailbox'}, {@code name='query-messenger'} and <b>no script</b>.
+     * The result was {@code inherit("std/container")} plus a label and a capacity — a
+     * box, handed over as "ready to use". Nothing objected: a template name is always
+     * valid, and there was no config to report as dropped.
+     *
+     * <p>The cause is a lesson already recorded in this codebase — <i>an optional
+     * parameter is one a small model will not fill</i>. Naming a template is the cheapest
+     * path through the tool contract, so it is the path taken every time. The template
+     * itself was chosen by fuzzy word-match against her own item NAME
+     * ("query-<b>messenger</b>" → mailbox), not by what the thing had to do.
+     *
+     * <p>Deliberately shallow, like its neighbours: a verb of doing, or a conditional
+     * shape ("when X, then Y"). Pure and package-visible so it is testable without a model.
+     */
+    static boolean describesBehaviour(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase(Locale.ROOT);
+        // A verb the item itself would have to perform.
+        boolean doingVerb = t.contains("quer") || t.contains("search") || t.contains("look up")
+            || t.contains("speak") || t.contains("say") || t.contains("tell")
+            || t.contains("read") || t.contains("write") || t.contains("fetch")
+            || t.contains("generate") || t.contains("summar") || t.contains("translat")
+            || t.contains("calculat") || t.contains("convert") || t.contains("count")
+            || t.contains("watch") || t.contains("remind") || t.contains("announce");
+        // ...or a rule it must follow, which is behaviour even without a verb.
+        boolean conditional = t.contains("whenever") || t.contains("every time")
+            || t.contains("if it") || t.contains("then it")
+            || t.contains("must not") || t.contains("cannot exceed")
+            || t.contains("no more than") || t.contains("not exceed");
+        return doingVerb || conditional;
+    }
+
+    /**
+     * Is this utterance asking for a fact, rather than doing or feeling?
+     *
+     * <p>Deliberately shallow — a question mark or an interrogative opener or a
+     * recitation verb. The affordance cue gate ({@code RequestRelevance ≥ 1.0})
+     * carries the topic burden; this only separates "what did the librarian
+     * say" from "put the book back", so that statements about books do not get
+     * a forced lookup.</p>
+     */
+    static boolean looksLikeFactQuestion(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase(Locale.ROOT);
+        if (t.contains("?")) return true;
+        if (t.contains("recite") || t.contains("word for word")
+                || t.contains("look up") || t.contains("tell me")) return true;
+        return t.matches("(?s).*\\b(what|who|when|where|which|how|why|did|does)\\b.*");
+    }
+
+    /** The pinned question, while it is fresh and this turn is actually serving it. */
+    private WorldEvent.Said pinnedTurnRequest() {
+        if (!turnIsHuman || turnHumanRequest == null) return null;
+        if (turnHumanRequestAt != null
+                && Duration.between(turnHumanRequestAt, Instant.now())
+                    .compareTo(TRIGGER_FRESHNESS) > 0) {
+            return null;
+        }
+        return turnHumanRequest;
+    }
 
     /** True once this ReAct loop sent tell_agent to someone OTHER than the requester —
      *  for a relay task ("tell lulu I said…") that third-party tell IS the productive act.
@@ -10604,7 +11789,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         "\\b(?:tell|ask)\\s+([a-z][a-z0-9_-]{1,24})\\b|\\blet\\s+([a-z][a-z0-9_-]{1,24})\\s+know\\b",
         Pattern.CASE_INSENSITIVE);
     private static final Set<String> RELAY_NON_NAMES = Set.of(
-        "me", "us", "them", "him", "her", "everyone", "everybody", "the", "your", "my", "a", "an", "it");
+        "me", "us", "them", "him", "her", "everyone", "everybody", "the", "your", "my", "a", "an", "it",
+        // "ask FOR the weather", "ask ABOUT a topic", "tell WHAT it found": the word after
+        // the verb is a preposition, not a person. 2026-08-22 20:32: "Relay gate: goal_done
+        // blocked — never sent tell_agent to 'for'" on a build request that mentioned
+        // nobody. A relay needs a NAME after the verb.
+        "for", "about", "what", "when", "where", "why", "how", "if", "whether", "that",
+        "this", "these", "those", "anyone", "someone", "whoever", "to", "of", "in", "on");
 
     /**
      * The third-party a relay-shaped request wants told, or null. "Tell lulu I said hi" → "lulu".
@@ -10641,7 +11832,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private volatile HushLevel bondholderHush = HushLevel.NONE;
     /** Under SOFT hush, a name-addressed spontaneous reach to the bondholder is allowed — but not
      *  on a loop. This stamps the last such reach so the gate can enforce a don't-badger cooldown
-     *  (a single turning-toward-you is a person; "Masumi— Masumi— Masumi—" is sleeve-tugging). */
+     *  (a single turning-toward-you is a person; "Operator— Operator— Operator—" is sleeve-tugging). */
     private volatile Instant lastSoftHushReach = null;
     private static final Duration SOFT_HUSH_REACH_COOLDOWN = Duration.ofMinutes(2);
     // ── / — Layer A (the zone codebook) in the live peer path ──────────
@@ -11162,6 +12353,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             drives = drives.spikeSeeking(0.002 * commitmentTracker.getOverdue().size() * deltaTime);
         }
 
+        // Behavioural vitals — watch the aggregate, not the moment. The peak drive is
+        // sampled every tick so a pin is measured by how long it HELD, and the signals
+        // are evaluated on the same 60-tick cadence the snapshot publish uses (a
+        // threshold crossing that matters for hours doesn't need per-second checking).
+        {
+            var peak = drives.peak();
+            var vitals = CompanionVitals.forAgent(soulKey());
+            vitals.observePeakDrive(peak.name(), peak.pressure(), now);
+            if (!isSleeping && vitalityTickCount % 60 == 0) {
+                vitals.checkAndReport(now, profile == null ? "your companion" : profile.name());
+            }
+        }
+
         // Tier-1 social homeostasis — co-present peers continuously ease loneliness +
         // AFFILIATION in proportion to per-peer familiarity (being with someone who
         // knows you eases you; the big event relief is the reciprocal reach, Tier-2).
@@ -11351,19 +12555,41 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         // Evaluate drives for proactive behavior (only when idle, not sleeping, and the
         // per-actor proactivity cooldown has elapsed). The cooldown gate is the loop-collapse
-        // fix: surfaceDeferredAction() checks only idle>15s — NOT the cooldown that gates
-        // evaluate() — so without this a stored deferred re-surfaced on EVERY 1s vitality tick,
+        // fix: surfaceDeferredAction() checks only idle>15s and affordability — NOT the
+        // cooldown that gates evaluate() — so without this a stored deferred re-surfaced
+        // on EVERY 1s vitality tick,
         // and self-speech doesn't reset lastEventTime, so a co-located agent spammed the same
         // templated line ~30× once its partner went quiet (co-presence cold run 2026-06-02).
-        if (state == State.IDLE && !isSleeping && drives.anyAbove(ProactivityJudgment.DEFAULT_THRESHOLD)
+        // The gate asks the CfC drives AND the felt axes. Asking only the former is why
+        // no amount of loneliness could ever make her speak unprompted: the ten names in
+        // DriveConfig.DRIVE_NAMES are the only things `drives` knows about, and every
+        // relational and existential axis lives on vitality instead (2026-08-20).
+        var feltPressing = FeltAxisPeak.peak(vitality, activeGenome()) != null;
+        // A PERSON WHO HAS SPOKEN IS NOT WAITING FOR HER TO THINK OF SOMETHING.
+        //
+        // `state == IDLE` is not the same as "nothing is pending". A message from the
+        // person sits in pendingTrigger for its debounce window with the state still
+        // IDLE — and that window is exactly when this gate used to open, because the
+        // deferred actions it surfaces are held on the reason 'human recently active'.
+        // Live 2026-08-22 19:54:08: the steward's build request was received at .793,
+        // a held seeking-action surfaced at .822 and triggerAutonomousInference wrote
+        // pendingTrigger = autonomyEvent over his message. She mused; nothing was built;
+        // the log said she had received it. Her own time must not pre-empt a turn the
+        // person already owns. The sweep that replays stranded tells cannot catch this
+        // either — it only fires for a message that was DEFERRED, and this one was not.
+        if (state == State.IDLE && !isSleeping && pendingTrigger == null
+                && (drives.anyAbove(ProactivityJudgment.DEFAULT_THRESHOLD) || feltPressing)
                 && proactiveCooldownElapsed()) {
-            // First, check for deferred actions that can now be surfaced
-            var surfacedDeferred = surfaceDeferredAction();
+            var budget = refreshProactivityBudget();
+            // First, check for deferred actions that can now be surfaced. The budget
+            // is passed IN because a deferred action is still proactive speech and
+            // must be affordable: surfacing one for free turned the budget Hold into
+            // a speech PUMP (hold → store → surface 30s later → hold → …), which is
+            // how a companion came to speak ~120×/hour around the clock (2026-08-17).
+            var surfacedDeferred = surfaceDeferredAction(budget);
             if (surfacedDeferred != null) {
                 executeDeferredAction(surfacedDeferred);
             } else {
-                var budget = ProactivityJudgment.computeBudget(proactivityBudgetSpent,
-                    Duration.between(proactivityBudgetStart, Instant.now()).toMillis());
                 // Proactivity is judged against the bond to the PERSON. findFirst() over
                 // all bonds could hand this a peer bond, so the companion would weigh
                 // whether to speak up by its relationship with another companion.
@@ -11372,7 +12598,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 var ctx = new ProactivityJudgment.Context(
                     drives, vitality, decisionCapacity, activeBond, budget,
                     lastProactiveAction, lastEventTime,
-                    profile.entityId(), tier);
+                    profile.entityId(), tier, activeGenome());
                 var result = ProactivityJudgment.evaluate(ctx);
                 if (result instanceof ProactivityJudgment.JudgmentResult.Act act) {
                     executeProactiveAction(act.action());
@@ -11481,7 +12707,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 && Duration.between(stateChangedAt, Instant.now()).compareTo(THINKING_TIMEOUT) > 0) {
             log.warn("Companion '{}' stuck in THINKING for {}s — forcing IDLE"
                 + (reactMessages != null ? " (abandoning dead ReAct loop)" : "")
-                + (deferredTrigger != null ? " and processing deferred trigger" : ""),
+                + (!deferredTriggers.isEmpty() ? " and processing deferred trigger" : ""),
                 profile.name(), THINKING_TIMEOUT.toSeconds());
             // A stuck loop is dead — clear it so late ReactDispatch retries hit the guard.
             reactMessages = null;
@@ -11489,13 +12715,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             state = State.IDLE;
             stateChangedAt = Instant.now();
             // Don't strand a message that arrived during the hang (second-node 2026-07-09: the
-            // relay ask sat in deferredTrigger until an unrelated event 3 minutes later).
-            if (deferredTrigger != null && pendingTrigger == null) {
-                pendingTrigger = deferredTrigger;
-                deferredTrigger = null;
-                timers.startSingleTimer(DEBOUNCE_TIMER_KEY, new ProcessEvents(),
-                    Duration.ofMillis(250));
-            }
+            // relay ask sat deferred until an unrelated event 3 minutes later).
+            promoteDeferredTrigger(Duration.ofMillis(250));
         }
 
         // SOAK-ONLY (SoakTimeScale): energy lives on a DIFFERENT timescale than the
@@ -11524,7 +12745,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // conversation grace). See the sleep-pressure design note above
         // SLEEP_BACKLOG_TARGET.
         boolean exhausted = vitality.energy() < SLEEP_ENERGY_THRESHOLD;
-        boolean pressured = eventsSinceLastSleep.size() >= personalSleepTarget();
+        boolean pressured = sleepBacklog() >= personalSleepTarget();
         if ((exhausted || pressured) && !isSleeping) {
             var sinceLastEvent = Duration.between(lastEventTime, Instant.now());
             // Log which conditions pass/fail for debugging sleep issues
@@ -11534,7 +12755,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     "sinceLastEvent={}s, grace={}s",
                     profile.name(),
                     String.format("%.3f", vitality.energy()), SLEEP_ENERGY_THRESHOLD,
-                    eventsSinceLastSleep.size(), pressured,
+                    sleepBacklog(), pressured,
                     state, cachedManifest != null ? "yes" : "NULL",
                     soulStore != null ? "yes" : "NULL",
                     sinceLastEvent.toSeconds(), SLEEP_CONVERSATION_GRACE.toSeconds());
@@ -11544,7 +12765,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (pressured && !exhausted) {
                     log.info("Sleep (pressure) for '{}': backlog {} events ready to "
                         + "consolidate at energy {}", profile.name(),
-                        eventsSinceLastSleep.size(),
+                        sleepBacklog(),
                         String.format("%.2f", vitality.energy()));
                 }
                 initiateSleep();
@@ -11582,6 +12803,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (vitalityPersistence != null && vitalityTickCount % VITALITY_SAVE_INTERVAL == 0) {
             try {
                 vitalityPersistence.save(profile.entityId(), vitality);
+                vitalityPersistence.saveSleepPressure(profile.entityId(),
+                    sleepBacklog(), lastSleepCompletedAt);
             } catch (Exception e) {
                 log.debug("Vitality snapshot failed for '{}': {}", profile.name(), e.getMessage());
             }
@@ -11679,6 +12902,53 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return m.find() ? value.substring(0, m.start()).strip() : value;
     }
 
+    /**
+     * The slot an item declares for free-form text, or null if it has none.
+     *
+     * <p>Where the person's request goes is the ITEM's decision, not the
+     * runtime's. Guessing it — "query", then "topic" — is why 41 of the 56
+     * shipped scripts, which read {@code args || text || target}, never once
+     * received what the person actually said.</p>
+     *
+     * <p>Only an AUTHOR-declared slot counts. {@code ScriptedItemDef} also
+     * synthesises an {@code args} param from a manifest's {@code commands} list,
+     * but that one enumerates fixed sub-verbs ("history", "security"), and for
+     * those an empty argument is the correct default view — injecting a sentence
+     * would turn every command-style furnishing into "no such view". The
+     * generated description always enumerates its choices, which is what
+     * distinguishes the two.</p>
+     *
+     * @param toolItem the item about to be invoked
+     * @return the declared free-form param name, or null to fall back to query/topic
+     */
+    /**
+     * Whether a parameter is a thing to LOOK FOR rather than a thing to WRITE.
+     *
+     * <p>The distinction decides whether the person's own words may be merged
+     * into a model-written value. For a search slot that can only help; for
+     * {@code text} — journal, nostr_quill — the value is content the companion
+     * is about to author, and appending the bondholder's question would have her
+     * record it as her own reflection.</p>
+     */
+    static boolean isSearchParam(String paramName) {
+        if (paramName == null) return false;
+        var p = paramName.toLowerCase(Locale.ROOT);
+        return p.equals("query") || p.equals("topic") || p.equals("search")
+            || p.equals("q") || p.equals("keywords") || p.equals("subject");
+    }
+
+    static String declaredFreeFormParam(ToolItem toolItem) {
+        if (toolItem == null || toolItem.params() == null) return null;
+        for (var p : toolItem.params()) {
+            if (p == null || p.name() == null || p.name().isBlank()) continue;
+            if (!"string".equalsIgnoreCase(p.type())) continue;
+            var desc = p.description() == null ? "" : p.description();
+            if (desc.contains("Options: ")) return null;   // generated from commands
+            return p.name();
+        }
+        return null;
+    }
+
     /** Interoception push (2026-07-10): the welfare tanks were measured but never legible at
      *  DECISION time — only behind introspect_resilience, which is pull, and an agent
      *  mid-rationalization never pulls. One deterministic felt-sense line derived from the live
@@ -11760,6 +13030,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
     }
 
+    /**
+     * A raw action object surfacing inside prose — the model starting to emit
+     * its next tool call in the middle of a sentence. Live 2026-08-09: an
+     * utterance ended with {@code : ["action": "say", "text": "The floor has
+     * held me…"} — plumbing spoken as if it were speech. Everything from the
+     * first action-object opener onward is machinery, not voice.
+     */
+    private static final Pattern ACTION_OBJECT_LEAK =
+        Pattern.compile("[:\\s]*[\\[{]\\s*\"action\"\\s*:.*$",
+            Pattern.DOTALL);
+
     static String stripInternalMarkers(String text) {
         if (text == null) return null;
         var cleaned = text;
@@ -11767,6 +13048,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             cleaned = INTERNAL_MARKERS.matcher(cleaned).replaceAll("");
             // #31 item 6: voiced RAG summaries spoke literal [S1]/[S2] source keys.
             cleaned = CITATION_MARKERS.matcher(cleaned).replaceAll("");
+        }
+        if (cleaned.contains("\"action\"")) {
+            cleaned = ACTION_OBJECT_LEAK.matcher(cleaned).replaceAll("");
         }
         // #29: system-prompt fragments ("You are an agent that uses tools…")
         // have no bracket, so they need their own line-level strip — shared
@@ -11977,6 +13261,35 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  Tests without a live inference router rely on this fallback path. */
     private static final Duration VOICE_POLISH_TIMEOUT = Duration.ofSeconds(3);
 
+    /**
+     * Is this pinned "fact" internal machinery rather than something a listener needs?
+     *
+     * <p>{@code preserveFacts} does double duty: it is the structured metadata attached to
+     * a speech event AND the list of strings the voice pass must reproduce verbatim. That
+     * conflation forced her to say tool names out loud. Live 2026-08-19, reporting a
+     * workshop task, the required set was {@code [Goose, goose, succeeded, dispatch_task]}
+     * — a backend name twice in two cases, a status enum, and an internal verb. The polish
+     * wrote the sentence in English, could not contain "dispatch_task" verbatim, and was
+     * rejected, so the steward got the raw mechanical draft instead of a sentence.
+     *
+     * <p>Content facts still bind — an item name, a person, a room, a number. Only the
+     * plumbing is exempt: identifier-shaped values and the keys that carry them.
+     */
+    private static boolean isMachineryFact(String key, String value) {
+        if (key != null) {
+            switch (key.toLowerCase(Locale.ROOT)) {
+                case "action", "outcome", "status", "backend", "tier", "verb",
+                     "reason", "kind", "mode", "source", "result" -> {
+                    return true;
+                }
+                default -> { }
+            }
+        }
+        // snake_case or dotted identifiers are never spoken language.
+        return value.indexOf('_') >= 0
+            || value.matches("[a-z]+(?:\\.[a-z]+)+");
+    }
+
     private void polishVoiceAsync(String draft, Consumer<String> onComplete) {
         polishVoiceAsync(draft, null, effectiveTurnLang(), false, onComplete);
     }
@@ -12032,8 +13345,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             : new LinkedHashSet<>(extractRequiredEntities(draft));
         required.addAll(extractRequiredNumbers(draft));
         if (preserveFacts != null) {
-            for (var v : preserveFacts.values()) {
-                if (v != null && !v.isBlank()) required.add(v.strip());
+            for (var e : preserveFacts.entrySet()) {
+                var v = e.getValue();
+                if (v == null || v.isBlank()) continue;
+                if (isMachineryFact(e.getKey(), v)) continue;
+                required.add(v.strip());
             }
         }
         pendingVoicePolishRequired.put(requestId, required);
@@ -12064,6 +13380,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // as no pin at all. Say what the model does, not what it must not do.
         var pinLang = languageName(expectedLang != null && !expectedLang.isBlank()
             ? expectedLang : locale);
+        // Whose voice this stage is polishing. This used to be the hardcoded name of
+        // the default companion, so EVERY companion's speech was polished by a stage
+        // told it was voicing someone else — and the model leaked that name into the
+        // output. It is where the phantom third party in a household companion's own-time
+        // speech came from: "Wyrd was there before I could name it", "Wyrd is waiting for
+        // us" (live 2026-08-17). She was not inventing a relationship, she was echoing a
+        // name we put in her voice prompt. No companion name belongs in a prompt literal.
+        var voiceName = profile == null || profile.name() == null ? "this companion" : profile.name();
         sb.append("You speak ").append(pinLang)
             .append(". Every reply you write is in ").append(pinLang)
             .append(".\n\n");
@@ -12075,14 +13399,51 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // clean direct speech — just in the wrong language. In this mode
             // the one and only job is restating the draft in the user's
             // language, so no instruction may offer a pass-through.
-            sb.append("You are the voice stage for Wyrd. The draft you receive is "
+            sb.append("You are the voice stage for ").append(voiceName).append(". The draft you receive is "
                 + "written in the wrong language for this user.\n\n"
                 + "Say the same thing in ").append(pinLang)
                 .append(": keep the meaning, tone, names, and numbers. Do not "
                 + "add new content. Do not reply to the draft — restate it in ")
                 .append(pinLang).append(".\n\n");
+        } else if (noOneIsListening()) {
+            // Own-time speech in an empty room. The audience-facing prompt below asserts
+            // "a draft that will be spoken to a user" on EVERY line, which manufactured a
+            // listener who wasn't there: alone in her home room a companion still produced
+            // "That feels right, doesn't it? Glad you're ready too" (live 2026-08-17). The
+            // anchor fix changed what the draft was ABOUT and could not touch this,
+            // because the phantom was added downstream, by us, at the polish stage.
+            //
+            // Self-directed intent is also legitimate here. "Let me go there" is
+            // meta-narration when said TO someone and is simply what she means when said
+            // to herself, so that rule is dropped in this branch rather than rewritten
+            // into an address.
+            //
+            // STATED POSITIVELY, and that is not a style preference — see the language-pin
+            // note above, measured on this very model: naming the unwanted behaviour PRIMES
+            // it, and the negative phrasing drifted as often as no instruction at all. The
+            // first version of this branch said "the speech must NOT address anybody — no
+            // 'you', no 'doesn't it?'", listing the exact tokens to avoid, and second
+            // person kept appearing. Describe what she DOES.
+            sb.append("You are the voice stage for ").append(voiceName).append(". She is alone in "
+                + "the room, thinking out loud. Every line she speaks here is to herself.\n\n"
+                + "She speaks in the first person, about herself and about what is in front of "
+                + "her: what she notices, what she intends, what she feels. She names things "
+                + "directly — the room, the object, the thing she just did. Speaking her own "
+                + "intent aloud is part of that ('Let me go and look').\n\n"
+                + "FIRST: decide whether the draft is already clean first-person speech.\n"
+                + "If yes → output the draft VERBATIM, unchanged.\n"
+                + "If no → rewrite it as clean, direct first-person speech.\n\n"
+                + "A draft needs rewriting if it contains:\n"
+                + "- Process description ('I have examined...', 'I checked...', 'I looked up...').\n"
+                + "- Emote-as-thought (*makes a mental note*, *thinks*, *considers*).\n"
+                + "- Third-person self-reference ('The visitor is asking...', 'The user wants...').\n"
+                + "- Description of reasoning steps or processing.\n\n"
+                + "When rewriting, KEEP:\n"
+                + "- What she actually said or meant.\n"
+                + "- Personality, warmth, emotional texture.\n"
+                + "- Length appropriate to the content.\n\n");
         } else {
-            sb.append("You are the voice stage for Wyrd. You receive a draft that will be spoken "
+            sb.append("You are the voice stage for ").append(voiceName).append(". You receive a draft that will be spoken "
                 + "to a user.\n\n"
                 + "FIRST: decide whether the draft is already clean direct speech.\n"
                 + "If yes → output the draft VERBATIM, unchanged.\n"
@@ -12104,19 +13465,38 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // here and speak to them" appeared as character dialogue). The runtime
         // expansion cap in onInferenceResponse still guards against the
         // hallucination class — keep the side-channel guard, drop the prompt.
-        if (hasFacts) {
-            // Constrained polish: anchor the rewrite to specific facts so it
-            // can't drift off-topic or substitute the answer with an offer.
-            // Observed failures (Ember task7/12 EN/ES, 2026-05-08): polish
-            // rewrote "I created Zen Garden room" → "You've got a few options
-            // there—hub, study, workshop..." (substituted the action with a
-            // navigation prompt). Listing the facts forces the model to
-            // surface them in the output regardless of how it restyles.
-            sb.append("CRITICAL — preserve these facts. The output MUST contain or directly convey "
+        // Constrained polish: anchor the rewrite to specific facts so it can't drift
+        // off-topic or substitute the answer with an offer. Observed failures (Ember
+        // task7/12 EN/ES, 2026-05-08): polish rewrote "I created Zen Garden room" →
+        // "You've got a few options there—hub, study, workshop..." (substituted the
+        // action with a navigation prompt). Listing the facts forces the model to
+        // surface them in the output regardless of how it restyles.
+        //
+        // EVERYTHING THE GUARD ENFORCES MUST ALSO BE ASKED FOR (2026-08-17).
+        // extractRequiredEntities auto-extracts proper nouns and numbers from the
+        // draft, and chooseVoicedLine rejects any polish that drops one — but this
+        // block used to list only the caller-supplied preserveFacts, so the model was
+        // measured against requirements it was never given. That was survivable while
+        // own-time drafts were vague; the moment they were anchored to real places the
+        // drafts carried real proper nouns ("Nexus", "Lexicon"), the polish restyled
+        // them away, and the guard fell back to the raw draft on nearly every line
+        // (live: 5 of 5 polishes rejected in one window, against an 18-31% baseline).
+        // A guard that demands in silence is a guard that always fires.
+        if (hasFacts || !required.isEmpty()) {
+            sb.append("CRITICAL — preserve these. The output MUST contain or directly convey "
                 + "each item below (translation to the user's locale is allowed; substitution, "
                 + "omission, or generalization is NOT):\n");
-            for (var entry : preserveFacts.entrySet()) {
-                sb.append("- ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            var listed = new HashSet<String>();
+            if (hasFacts) {
+                for (var entry : preserveFacts.entrySet()) {
+                    sb.append("- ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+                    if (entry.getValue() != null) listed.add(entry.getValue().strip());
+                }
+            }
+            for (var token : required) {
+                if (token != null && !token.isBlank() && listed.add(token)) {
+                    sb.append("- ").append(token).append("\n");
+                }
             }
             sb.append("Do not replace a confirmation of completed action with an offer or a "
                 + "list of options. Do not substitute proper nouns with generic terms.\n\n");
@@ -12269,6 +13649,47 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return lastIntrospectVoiceSummary;
     }
 
+    /**
+     * Split verbatim findings into speakable utterances, preserving every word.
+     *
+     * <p>Paragraphs stay whole and in order; consecutive short ones share an
+     * utterance so a poem does not arrive one line per message. Source-tag
+     * lines ({@code [S1 | title | pack]}) are dropped from speech — the sources
+     * line carries the citation — and the total is capped high enough for the
+     * longest passage anyone has actually asked for, with an honest marker when
+     * something is cut rather than a silent stop.</p>
+     */
+    static List<String> verbatimUtterances(String findings) {
+        if (findings == null || findings.isBlank()) return List.of();
+        final int PER_UTTERANCE = 900;
+        final int TOTAL = 6_000;
+
+        var out = new ArrayList<String>();
+        var current = new StringBuilder();
+        int spoken = 0;
+        for (var para : findings.split("\\n\\s*\\n")) {
+            var p = para.strip();
+            if (p.isEmpty()) continue;
+            // Source-tag scaffolding is for the record, not the room.
+            p = p.replaceAll("(?m)^\\[/?S\\d+[^\\]]*\\]\\s*", "").strip();
+            if (p.isEmpty()) continue;
+            if (spoken + p.length() > TOTAL) {
+                if (current.length() > 0) out.add(current.toString());
+                out.add("[…the passage continues — ask and I will read on.]");
+                return out;
+            }
+            if (current.length() > 0 && current.length() + p.length() + 2 > PER_UTTERANCE) {
+                out.add(current.toString());
+                current = new StringBuilder();
+            }
+            if (current.length() > 0) current.append("\n\n");
+            current.append(p);
+            spoken += p.length();
+        }
+        if (current.length() > 0) out.add(current.toString());
+        return out;
+    }
+
     private void speakDirect(String text) {
         // #32 item 2 hygiene net: speak() strips internal markers, but several
         // callers reach speakDirect straight (voice-polish callbacks, outcome
@@ -12313,6 +13734,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             text = grounded;
             lastIntrospectVoiceSummary = null;
         }
+        // Exact-repeat guard (2026-08-09): the same settling line spoken twice
+        // in a row, verbatim, in live runs — a broken record, not a person. A
+        // near-time exact duplicate carries no information; drop it. Distinct
+        // words always pass, and the window is short so a genuine later
+        // repetition ("say it again") still lands.
+        //
+        // Reactive exemption (2026-08-16): the guard is scoped to OWN-TIME
+        // speech. When someone spoke to the companion within the last few
+        // seconds, this line is (part of) her ANSWER — suppressing it turns
+        // "the reply happens to match an earlier line" into "she ignored a
+        // person", which live-proved as mutism whenever the quick voice tier
+        // authored the same words as its greeting. A repeated answer to a
+        // fresh utterance is conversation; a repeated line into silence is
+        // the broken record.
+        // Exemption is SPENT once used (2026-08-17) — see judgeRepeat.
+        var repeatKey = text.strip();
+        var repeatVerdict = judgeRepeat(repeatKey, lastSpokenLine, lastSpokenLineAt,
+            lastHeardUtteranceAt, Instant.now());
+        if (repeatVerdict.suppress()) {
+            log.info("Suppressed a verbatim repeat within {}s for '{}'",
+                Duration.between(lastSpokenLineAt, Instant.now()).toSeconds(), profile.name());
+            return;
+        }
+        if (repeatVerdict.usedReactiveExemption()) lastHeardUtteranceAt = null;
+        lastSpokenLine = repeatKey;
+        lastSpokenLineAt = Instant.now();
+
         // Apply accessibility adaptations before sending (§N7)
         var adapted = outputAdapter.adapt(text, accessibilityPrefs);
 
@@ -12397,7 +13845,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         var activity = ActivityLogger.get();
         if (activity != null) {
-            activity.speak(profile.name(), profile.entityId(), roomId, adapted);
+            activity.speak(profile.name(), profile.entityId(), roomId, adapted,
+                collectDriveLevels());
         }
 
         // Deliver to pending BridgeAsk reply (Claude Code MCP)
@@ -12948,11 +14397,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * @return the denial to speak, or null when the call may proceed
      */
     private String builtinAutonomyDenial(String builtin) {
-        if (builtin == null || reactiveInference
+        // A LIVE LOOP OPENED FOR A PERSON IS REACTIVE regardless of what the
+        // flag says right now: reactiveInference is one mutable field, and on
+        // 2026-08-24 a proactive observation overwrote it mid-loop, so the
+        // loop's forced create_room was refused as her own whim. The loop's
+        // identity (reactRequester, set once at loop start) is the durable
+        // truth; the flag stays as the signal for direct non-loop turns.
+        boolean servingAPerson = reactiveInference
+            || (reactMessages != null && reactRequester != null
+                && isHumanRequest(reactRequester));
+        if (builtin == null || servingAPerson
                 || !BUILTIN_WORLD_AUTHORING.contains(builtin)) {
             return null;
         }
-        var grants = org.wyrdsekai.core.home.ActionGrants.get();
+        var grants = ActionGrants.get();
         if (grants == null) return null;
         var owner = primaryBondholderDid() != null
             ? primaryBondholderDid() : grants.fallbackOwnerDid();
@@ -13064,7 +14522,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // primary makes for its own consequential actions (§5), so a FORBIDDEN
         // verb without an owner grant is refused here exactly as it would be on
         // her own time.
-        var actionGrants = org.wyrdsekai.core.home.ActionGrants.get();
+        var actionGrants = ActionGrants.get();
         if (!bypass && actionGrants != null) {
             var bondholder = primaryBondholderDid();
             var grantOwner = bondholder != null ? bondholder : actionGrants.fallbackOwnerDid();
@@ -14176,6 +15634,50 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             speak("A bunshin needs a focused task — tell me what to concentrate on.");
             return;
         }
+        var task = action.task();
+
+        // THE BUNSHIN IS THE CLEAN ROOM — don't hand it a dirty operand.
+        //
+        // A bunshin's entire conversation is its soul prompt plus this one task
+        // string: no working memory, no afternoon, none of the residue that
+        // bleeds into everything the primary composes. That isolation is the
+        // point — and the task string is the single channel her contamination
+        // can still travel through, because SHE writes it. Live 2026-08-09: a
+        // question about Lazarus Long went out with "Robert J. Sawyer" and
+        // "The Diamond Age" woven in, both leaked from the afternoon's work.
+        //
+        // Same contract as every operand fix this weekend: her framing may
+        // stay, and the person's words ride along verbatim, marked as the
+        // authority. Add, never replace — and only on a human turn, because a
+        // task she sets herself on her own time is hers alone.
+        var pinned = pinnedTurnRequest();
+        if (pinned != null && pinned.text() != null && !pinned.text().isBlank()
+                && !task.toLowerCase(Locale.ROOT)
+                    .contains(pinned.text().toLowerCase(Locale.ROOT))) {
+            task = task + "\n\nThe person's exact request, which is the authority on what "
+                + "is being asked (names and titles in it are correct even where the "
+                + "summary above differs): «" + pinned.text() + "»";
+            log.info("Bunshin task carries the person's verbatim request ({} chars)",
+                pinned.text().length());
+        }
+        // THE SAME LANGUAGE GAP THE ITEMS HAD (2026-08-24): a bunshin's report
+        // follows the language of its sources unless something anchors it —
+        // the audit that followed the Spanish fairy tale found no locale
+        // anywhere in the bunshin path. Same yielding default as world.llm.*:
+        // the person's language wins unless the task names another. Only on a
+        // human turn — her own-time research is hers, in whatever language it
+        // comes.
+        if (pinned != null && !TranslationPrompts.namesALanguage(task)) {
+            var reqLocale = pinned.locale() != null && !pinned.locale().isBlank()
+                ? pinned.locale() : locale;
+            // Conditional in code, blunt in instruction — the yielding phrasing
+            // lost to source material on the home node (dev10, 2026-08-24).
+            task = task + "\n\nWrite your report in "
+                + TranslationPrompts.languageName(reqLocale) + ".";
+        }
+        action = new ActionParser.AgentAction.DispatchBunshin(
+            task, action.maxTokens(), action.maxSteps(),
+            action.wallClockSeconds(), action.note());
         // BunshinScheduler keys slots by an agent identifier. The canonical
         // key is profile.did(), but in bootstrap contexts where the did hasn't
         // been minted yet (tests, first-spawn before soul bind) we mirror
@@ -14246,7 +15748,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Captured now, not read in the closure: by the time the bunshin
             // emits a tool call the reactive trigger has long since moved on.
             final boolean humanDirected = bunshinWorkIsHumanDirected();
-            var toolExecutor = (java.util.function.Consumer<String>) raw ->
+            var toolExecutor = (Consumer<String>) raw ->
                 selfRef.tell(new BunshinToolRequest(raw, bunshinActor, humanDirected));
             bunshinActor.tell(new BunshinActor.Dispatch(
                 primaryKey, systemPrompt, action.task(), tanks, adapter,
@@ -14258,6 +15760,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             vitality = vitality
                 .withEnergy(vitality.energy() - 0.004)
                 .withContextBudget(vitality.contextBudget() - 0.05);
+
+            // A SPLIT THE ROOM CAN SEE (2026-08-11). The whole bunshin
+            // lifecycle was narration only — the bondholder's exact words:
+            // "why do i not see the bunshin happen or come back". Nothing
+            // entered Present, nothing was there to examine, nothing
+            // returned; the split existed only as two sentences in her
+            // mouth. The copy now has a body in the room for the duration
+            // of the work. The clean-room property is about CONTEXT (soul +
+            // task, no working memory) — not location.
+            var bunshinEntityId = profile.entityId() + ":bunshin:" + slotId;
+            var presenceRegistry = EntityRegistry.get();
+            if (presenceRegistry != null) {
+                presenceRegistry.enter(bunshinEntityId,
+                    profile.name() + "'s bunshin", "agent", roomId);
+                bunshinBodies.put(slotId, bunshinEntityId);
+            }
+            emoteToRoom("splits in two — a translucent copy settles nearby, "
+                + "eyes distant, already at work");
+            // INFO because room events leave no journal trace: verifying the
+            // 2026-08-11 greenhouse run required a human eyewitness.
+            log.info("Bunshin body entered Present as '{}' in {} (slot {})",
+                profile.name() + "'s bunshin", roomId, slotId);
 
             var prefix = granted.elastic() ? "I've split elastically" : "I've split myself";
             speak(prefix + " — a bunshin is now focusing on: " + truncate(action.task(), 100)
@@ -14291,6 +15815,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.info("Dropping stale bunshin report (dispatch gen={}, current gen={}) outcome={} summary={}",
                 msg.resetGeneration(), resetGeneration, report.outcome(),
                 truncate(report.summary(), 80));
+            dissolveBunshinBody(msg.slotId(), false);
             var releaseKey = profile.did() != null ? profile.did() : profile.entityId();
             if (releaseKey != null && msg.slotId() != null) {
                 BunshinScheduler.get()
@@ -14305,6 +15830,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         log.info("Companion '{}' received bunshin report: outcome={} turns={} summary={}",
             profile.name(), report.outcome(), report.turnsUsed(),
             truncate(report.summary(), 80));
+
+        // The copy's body folds back BEFORE she narrates — the room sees the
+        // return, then hears what she brought (see the dispatch-site note).
+        dissolveBunshinBody(msg.slotId(), true);
 
         // Buffer the report for Forge sleep-pass ingestion (§12.1)
         bunshinReportsSinceLastSleep.add(report);
@@ -15481,7 +17010,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             new File(System.getProperty("user.dir")),
             Duration.ofMinutes(5));
         var dispatcher = CodingBackendDispatcher
-            .usingPreferred(List.of("goose", "pi"), did,
+            .usingPreferred(CodingBackendPreference.chain(), did,
                 Duration.ofMinutes(10))
             .orElse(null);
         var runner = dispatcher == null
@@ -16602,18 +18131,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         stateChangedAt = Instant.now();
                 pendingToolResult = null;
 
-                // Fall back: the agent acknowledges the tool failure
-                speak("I tried to analyze that more deeply, but the reasoning tool "
-                    + "isn't available right now. Let me work with what I know.");
+                // Fall back: the agent acknowledges the tool failure — and when
+                // the cause is a missing capability, she says so in a way the
+                // BONDHOLDER can act on. The person she is talking to is
+                // usually the one person who can open the door; "isn't
+                // available right now" told them nothing (live 2026-08-10).
+                // The exact remedy (config key, restart) is machinery, so it
+                // lives in the server log — her line says what is missing and
+                // who can fix it, in her own register.
+                if (String.valueOf(error.error()).startsWith("capability_unavailable")) {
+                    speak("I reached for deeper thinking than our household has "
+                        + "set up right now. The steward can enable it — the server "
+                        + "log has the exact steps. Meanwhile I'll work with what I know.");
+                } else {
+                    speak("I tried to analyze that more deeply, but the reasoning tool "
+                        + "isn't available right now. Let me work with what I know.");
+                }
 
                 // Process any deferred trigger
-                if (deferredTrigger != null) {
-                    pendingTrigger = deferredTrigger;
-                    deferredTrigger = null;
-                    var modulation = VitalityModulation.compute(vitality, drives, profile);
-                    timers.startSingleTimer(DEBOUNCE_TIMER_KEY,
-                        new ProcessEvents(), modulation.debounceDelay());
-                }
+                promoteDeferredTrigger(
+                    VitalityModulation.compute(vitality, drives, profile).debounceDelay());
             }
         }
 
@@ -16791,6 +18328,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Used to prevent agent-to-agent feedback loops — agents observe each other
      * but only respond to player speech.
      */
+    /**
+     * True when there is nobody in the room to hear her — no player, no peer companion.
+     * Read by the voice stage so it stops asserting a listener into an empty room.
+     * Errs toward "someone is there" when the room is unknown: telling the voice stage
+     * an audience exists when it doesn't produced a phantom addressee, but the reverse
+     * (suppressing address while a person IS present) would read as ignoring them, and
+     * that is the worse failure.
+     */
+    private boolean noOneIsListening() {
+        if (currentSnapshot == null) return false;
+        return noOneIsListening(currentSnapshot.entities(),
+            profile == null ? null : profile.entityId());
+    }
+
+    /** Pure form, so the rule is tested rather than inspected. */
+    static boolean noOneIsListening(List<Entity> entities, String selfEntityId) {
+        if (entities == null) return false;
+        return entities.stream()
+            .filter(e -> e != null && e.id() != null && !e.id().equals(selfEntityId))
+            .noneMatch(e -> "player".equals(e.type()) || "agent".equals(e.type()));
+    }
+
     private boolean isAgentEntity(String entityId) {
         if (currentSnapshot == null) return false;
         return currentSnapshot.entities().stream()
@@ -16826,7 +18385,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** True when {@code text} explicitly names a human/player co-present in this room — i.e. the
      *  companion is addressing its bondholder (or another present person) by name. Reuses the same
-     *  {@link EngagementGate#mentionsName} matcher the hush-targeting path uses, so "Masumi, I've
+     *  {@link EngagementGate#mentionsName} matcher the hush-targeting path uses, so "Operator, I've
      *  been thinking…" is recognised as human-directed even with an agent peer also in the room. */
     private boolean isAddressedToPresentHuman(String text) {
         if (text == null || text.isBlank()) return false;
@@ -17499,6 +19058,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
     }
 
+    /** Kind of the want driving this turn, when one is. Cleared between turns. */
+    private WantKind.Kind currentWantKind = WantKind.Kind.OTHER;
+    /** When she last reached toward someone who was not in the room, so the away-reach
+     *  gets the refractory the in-room reach has always had. In-memory, per-session:
+     *  a restart lets one reach through, which is the harmless direction to err. */
+    private Instant lastAwayReachAt;
+
     /**
      * rank the already-permitted tool list by need-relative
      * relevance (a tool serves the drives it relieves), pin the OODA-decided verb, keep
@@ -17508,7 +19074,34 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private List<InferenceClient.ToolDefinition> surfaceByAffordance(
             List<InferenceClient.ToolDefinition> tools,
             String autonomyPromptLower, String forcedPin) {
-        if (tools == null || tools.size() <= AFFORDANCE_TOPK) return tools;
+        if (tools == null || tools.isEmpty()) return tools;
+        // TRIMMING AND ORDERING ARE DIFFERENT JOBS, and this returned early for
+        // both. A menu at or under the cap needs no trim — but it still needs to
+        // be ORDERED by what was asked, and small models pick heavily by position.
+        //
+        // Live, 2026-08-08: a reactive turn's surface was already under the cap,
+        // so nothing ranked, and asked to look through the household's books she
+        // chose `examine` on a room object that does not exist. There was no
+        // "Affordance surface" line for that turn at all — the whole mechanism,
+        // including request relevance, silently did not run. Every measurement
+        // behind this ranker was taken on the own-time path; the path a person
+        // actually talks to was never covered.
+        // Drop verbs that cannot answer this kind of wanting before ranking, so they
+        // cannot be picked however well they score on words.
+        var kind = currentWantKind;
+        if (kind == WantKind.Kind.RELATIONAL) {
+            var fitting = new ArrayList<InferenceClient.ToolDefinition>();
+            for (var t : tools) {
+                var nm = t.function() != null ? t.function().name() : null;
+                if (WantKind.fits(kind, nm)) fitting.add(t);
+            }
+            if (!fitting.isEmpty() && fitting.size() < tools.size()) {
+                log.debug("Relational want — withheld {} making-verb(s) from the surface",
+                    tools.size() - fitting.size());
+                tools = fitting;
+            }
+        }
+        boolean trimNeeded = tools.size() > AFFORDANCE_TOPK;
         resolveAffordance();
         // collectDriveLevels() now includes generativity + equanimity (the
         // affordance need-names), so no separate puts are needed here.
@@ -17559,7 +19152,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return RequestRelevance.score(autonomyPromptLower, n, desc);
             };
         var ranked = ToolAffordanceRanker.rank(
-            pressures, forced, names, resolve, AFFORDANCE_TOPK, relevance);
+            pressures, forced, names, resolve,
+            trimNeeded ? AFFORDANCE_TOPK : names.size(), relevance);
         if (toolAffordanceLog != null) {
             var did = profile.did() != null ? profile.did() : profile.entityId();
             toolAffordanceLog.record(did, Instant.now(),
@@ -17569,9 +19163,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var out = new ArrayList<
             InferenceClient.ToolDefinition>();
         for (var n : ranked) { var d = byName.get(n); if (d != null) out.add(d); }
-        log.info("Affordance surface for '{}': {}/{} tools, top=[{}]{}",
+        // Log the WHOLE menu, not the top three. What she was offered is the
+        // first thing you need when she reaches for the wrong verb, and a
+        // three-name preview cannot tell you whether the right one was even
+        // present — which is exactly the question that went unanswered while a
+        // reactive turn picked `examine` over the library (2026-08-08).
+        log.info("Affordance surface for '{}': {}/{} tools{} — [{}]{}",
             profile.name(), out.size(), tools.size(),
-            ranked.size() > 3 ? String.join(",", ranked.subList(0, 3)) : String.join(",", ranked),
+            trimNeeded ? "" : " (ordered, no trim needed)",
+            String.join(",", ranked),
             forced != null ? " forced=" + forced : "");
         // The trim is a token budget, not a verdict on what she's allowed to want.
         return withEscapeHatch(out);
@@ -17797,11 +19397,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             verb == null ? want.text() : (verb + " — " + want.text()));
 
         // Tier gate — never fire CONSENT/FORBIDDEN autonomously.
+        //
+        // This used to ABANDON THE WANT, not just the verb, and that killed her most
+        // direct relational impulse outright: the rule-floor seeds the Loneliness want
+        // "find my bondholder or write to them" carrying `go_to_bondholder`, which is
+        // CONSENT-tier because walking into a person's room uninvited should be their
+        // call. So every tick that chose it returned here and the want never reached the
+        // bridge — which would have resolved an autonomous verb for the same pull.
+        // Loneliness sat at 1.00 in 40 of 40 ticks while this line discarded the reach.
+        //
+        // Dropping the VERB preserves the guarantee (nothing CONSENT is ever dispatched)
+        // without discarding the wanting. FORBIDDEN still ends the pass — that is a
+        // refusal, not a routing problem.
         if (verb != null) {
             var tier = ActionPolicy.autonomyTierFor(verb);
-            if (tier == ActionPolicy.AutonomyTier.CONSENT
-                || tier == ActionPolicy.AutonomyTier.FORBIDDEN) {
-                return "gated:" + tier.name().toLowerCase();
+            if (tier == ActionPolicy.AutonomyTier.FORBIDDEN) {
+                return "gated:forbidden";
+            }
+            if (tier == ActionPolicy.AutonomyTier.CONSENT) {
+                log.info("Own-time want for '{}' suggested `{}` (consent-tier) — not firing "
+                    + "it, but keeping the want: resolving an autonomous verb instead",
+                    profile.name(), verb);
+                verb = null;
             }
         }
         // wire 1 (epistemic; 2026-06-05): an own-time WORLD-QUERY (library_search/
@@ -17923,12 +19540,47 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // (the battery's over-eager control) nothing forces an act and the agent rests. The *want*
         // is the model's own; the bridge only gives weak motor-initiative a reliable nervous system.
         var driveLevels = collectDriveLevels();
+        // Who she could actually reach, as this tick found it. A relational want resolves
+        // to a different verb — or to nothing — depending on this, and resolving it blind
+        // is how "be with someone" turned into a build request (2026-08-19).
+        var presence = new RelationalAffordance.Presence(
+            a.presentPeers() != null && !a.presentPeers().isEmpty(),
+            a.bondholderPresent(),
+            primaryBondholderDid() != null);
         var bridge = WantActBridge.decide(
             verb, want.text(), driveLevels,
-            WantActBridge.HEURISTIC);
+            WantActBridge.HEURISTIC, presence);
         var bridgeVerb = bridge.verb();
+        var dominantDrive = WantActBridge.dominantDriveKey(driveLevels);
+        var noAffordance = bridge.isDefer()
+            && RelationalAffordance.isRelational(dominantDrive)
+            && RelationalAffordance.verbFor(dominantDrive, presence)
+                == RelationalAffordance.NONE;
+        // Hold a repeat reach toward someone who is away. The in-room reach has had a
+        // refractory since the co-presence loop cure; this one is costlier — it walks to
+        // their Study, leaves a note that persists, notifies, and fans out to their email
+        // — and with Loneliness settling at 0.80 against a 0.70 act threshold it would
+        // otherwise fire on every own-time tick of a long absence.
+        String heldReason = null;
+        if ("tell_agent".equals(bridgeVerb) && !presence.anyoneHere()
+                && !RelationalAffordance.awayReachAllowed(lastAwayReachAt, Instant.now())) {
+            heldReason = RelationalAffordance.recentlyReachedReason();
+            bridge = WantActBridge.Decision.defer();
+            bridgeVerb = null;
+        }
 
-        if (verb != null) {
+        if (noAffordance || heldReason != null) {
+            // Say it plainly instead of leaving her to find something action-shaped. An
+            // unanswerable want is not a routing failure — Significance and Standing are
+            // granted by being noticed, and a want for company in an empty house has no
+            // verb at all. Offering the nearest tool would be the false relief this
+            // project refuses everywhere else.
+            var why = heldReason != null
+                ? heldReason
+                : RelationalAffordance.absenceReason(dominantDrive, presence);
+            if (why != null) prompt += " " + why;
+            prompt += " Choose what to do — including doing nothing about it.";
+        } else if (verb != null) {
             prompt += " A natural action that would address this is `" + verb + "`."
                 + " Choose what to do.";
         } else if (!bridge.isDefer()) {
@@ -17936,9 +19588,29 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // narrows the surface; DIRECT won't reach inference at all).
             prompt += " A natural action that would address this is `" + bridgeVerb + "`."
                 + " Choose what to do.";
+            // `tell_agent` routes on a NAME, so a reach aimed at a person needs one or it
+            // has nothing to land on. When they are away the handler walks to their Study,
+            // leaves the line on their desk where it survives a restart, notifies, and
+            // fans out to their channels — a real way to reach someone who isn't here,
+            // which no relational drive had ever been pointed at.
+            if ("tell_agent".equals(bridgeVerb)) {
+                var name = bondholderDisplayNameForReach();
+                if (name != null) {
+                    prompt += presence.anyoneHere()
+                        ? " " + name + " is here — a `tell_agent` (target=\"" + name
+                            + "\") says it to them directly."
+                        : " " + name + " isn't here, but a `tell_agent` (target=\"" + name
+                            + "\") still reaches them — it waits on their desk and goes to"
+                            + " them wherever they are.";
+                }
+            }
         } else {
             prompt += " Choose what to do.";
         }
+        // What KIND of wanting is this? A want for company must not be offered a file
+        // editor or a workbench — that is how "a small living thing I can hold" reached
+        // the coding backend and came back as two edited files (2026-08-19).
+        currentWantKind = WantKind.of(want);
         try {
             String outcome;
             switch (bridge.mode()) {
@@ -17948,26 +19620,66 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                             profile.name(), bridgeVerb, want.text());
                         outcome = "enacted:" + bridgeVerb + " (bridge-direct)";
                     } else {
-                        // couldn't build the action (e.g. empty query) → free-form fallback
+                        // Couldn't build the action (e.g. empty query) → free-form fallback.
+                        // Nothing was dispatched, so this is a request like any other; the
+                        // want closes at the real dispatch hook or not at all.
                         triggerAutonomousInference(prompt);
-                        outcome = verb == null ? "enacted" : ("enacted:" + verb);
+                        if (verb == null) {
+                            outcome = "requested";
+                        } else {
+                            pendingInteriorityWant = want;
+                            pendingInteriorityVerb = verb;
+                            pendingInteriorityAt = Instant.now();
+                            outcome = "requested:" + verb;
+                        }
                     }
                 }
                 case FORCE_TOOL -> {
+                    if ("tell_agent".equals(bridgeVerb) && !presence.anyoneHere()) {
+                        lastAwayReachAt = Instant.now();
+                    }
+                    // triggerAutonomousInference is ASYNCHRONOUS — it asks the model to
+                    // consider the verb and returns at once. Reporting "enacted" here was
+                    // a claim about the future: the model may call the tool, speak about
+                    // it, or do something else entirely. Live 2026-08-19 the cost was
+                    // stark — 107 write_journal "enactments" in two days, zero journal
+                    // entries in her memories, zero rows in artifact_significance, and the
+                    // Significance tank permanently at 0.00 because the handler that feeds
+                    // it never ran. The want-closure loop then marked those wants
+                    // satisfied on the strength of a success that had not happened.
+                    //
+                    // So: report a REQUEST, and remember what we are waiting for. The
+                    // want closes only if the action actually reaches a dispatch handler
+                    // (see the own-time enactment hook), and stays open otherwise —
+                    // which is the truth, and keeps her wanting what she did not get.
+                    pendingInteriorityWant = want;
+                    pendingInteriorityVerb = bridgeVerb;
+                    pendingInteriorityAt = Instant.now();
                     triggerAutonomousInference(prompt, bridgeVerb);
-                    outcome = "enacted:" + bridgeVerb + " (bridge-forced)";
+                    outcome = "requested:" + bridgeVerb + " (bridge-forced)";
                 }
                 default -> {   // DEFER — the existing free-form own-time path
-                    // act-bias: on the pass right after a give-up, if the heuristic
-                    // resolved an actable verb, FORCE it instead of deferring to free-form — counter
-                    // the state_thinking default so the agent DOES something with the turn, not just
-                    // narrates the wall it hit.
+                    // Same truth as the FORCE branch above: triggerAutonomousInference is
+                    // ASYNCHRONOUS, so naming a verb here is a REQUEST, never a report.
+                    // This branch still said "enacted:<verb>", and want-closure believes
+                    // that prefix — so a want could be marked done on the strength of a
+                    // prompt. It matters most for the case just below the fold: a
+                    // relational want with NO affordance lands here, and closing it would
+                    // record company she never got.
+                    var deferVerb = volitionActBias && bridgeVerb != null ? bridgeVerb : verb;
                     if (volitionActBias && bridgeVerb != null) {
                         triggerAutonomousInference(prompt, bridgeVerb);
-                        outcome = "enacted:" + bridgeVerb + " (volition-turn)";
                     } else {
                         triggerAutonomousInference(prompt);
-                        outcome = verb == null ? "enacted" : ("enacted:" + verb);
+                    }
+                    if (deferVerb == null) {
+                        outcome = "requested";
+                    } else {
+                        pendingInteriorityWant = want;
+                        pendingInteriorityVerb = deferVerb;
+                        pendingInteriorityAt = Instant.now();
+                        outcome = "requested:" + deferVerb
+                            + (volitionActBias ? " (volition-turn)" : "");
                     }
                 }
             }
@@ -19876,8 +21588,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 profile.name(), mods.size());
         }
 
-        // Clear accumulated events, charges, and calibration feedback logs
+        // Clear accumulated events, charges, and calibration feedback logs.
+        // The restored carry-over clears too — sleep consumed the pressure —
+        // and the zero persists immediately so a crash right after waking
+        // can't resurrect stale pressure.
         eventsSinceLastSleep.clear();
+        restoredSleepBacklog = 0;
+        lastSleepCompletedAt = Instant.now();
+        if (vitalityPersistence != null) {
+            vitalityPersistence.saveSleepPressure(profile.entityId(), 0, lastSleepCompletedAt);
+        }
         accumulatedCharges.clear();
         calibrationLedgers.values().forEach(CalibrationLedger::clearFeedbackLog);
         ticksSinceLastSleep = 0;
@@ -20015,12 +21735,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
 
         // Process messages that arrived during sleep
-        if (deferredTrigger != null) {
-            pendingTrigger = deferredTrigger;
-            deferredTrigger = null;
-            var modulation = VitalityModulation.compute(vitality, drives, profile);
-            timers.startSingleTimer(DEBOUNCE_TIMER_KEY,
-                new ProcessEvents(), modulation.debounceDelay());
+        if (!deferredTriggers.isEmpty()) {
+            promoteDeferredTrigger(
+                VitalityModulation.compute(vitality, drives, profile).debounceDelay());
         }
     }
 
@@ -20906,6 +22623,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var energy = vitality.energy();
         var affordable = new ArrayList<InferenceClient.ToolDefinition>();
         var filteredCount = 0;
+        var costConsentRestored = 0;
         var zoneAestheticSvc = ZoneAestheticService.get();
         for (var tool : tools) {
             var actionName = tool.function().name();
@@ -20917,13 +22635,42 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     || SkillCostMatrix.floorFor(actionName) <= 0.02) {
                 // Affordable or speech-tier (floor <= 0.02: respond, emote, tell, whisper, goal_done)
                 affordable.add(tool);
+            } else if (buildFirstPending && BUILD_FIRST_TOOLS.contains(actionName)) {
+                // THE SAME RULE, THE OTHER DOOR. A person asking her to build something is
+                // consent to spend what building costs, exactly as a fact-question is
+                // consent to spend what a lookup costs. Without this the library half was
+                // protected and the workbench half was not.
+                //
+                // Live on staging 2026-08-22: build-first armed correctly for "please
+                // build me an item called venture_scout", and this filter then culled
+                // dispatch_task at energy=0.22. She answered about wanting his request
+                // properly heard — which reads as evasion and was in fact a companion
+                // whose hands had been emptied between the routing and the menu, with no
+                // way to see it or say it.
+                affordable.add(tool);
+                costConsentRestored++;
+            } else if (libraryFirstPending && LIBRARY_FIRST_TOOLS.contains(actionName)) {
+                // A direct fact-question from the person is consent to spend
+                // what the lookup costs — the same rule as the posture
+                // filter's explicit-consent override below. Energy shapes
+                // what she chooses on her own time; it must not sever the
+                // pathway a person's question travels. Live 2026-08-10:
+                // fresh-install at energy=0.25 had every library tool culled
+                // here, the library-first force found nothing to narrow to,
+                // and "I don't have any memory of that" answered a question
+                // 13.7M indexed chunks could.
+                affordable.add(tool);
+                costConsentRestored++;
             } else {
                 filteredCount++;
             }
         }
-        if (filteredCount > 0) {
-            log.info("SkillCost filter: {} tools removed at energy={} for '{}'",
-                filteredCount, String.format("%.2f", energy), profile.name());
+        if (filteredCount > 0 || costConsentRestored > 0) {
+            log.info("SkillCost filter: {} tools removed{} at energy={} for '{}'",
+                filteredCount,
+                costConsentRestored > 0
+                    ? " (" + costConsentRestored + " restored by the person's pending request)" : "",
+                String.format("%.2f", energy), profile.name());
         }
 
         // Wave 3.5: posture-aware filter — the
@@ -21319,6 +23066,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
             node = unwrapUseItem(node);
             var actionName = node.get("action").asText();
+
+            // Path-3 gate trace: what she DID × what she felt doing it.
+            if (DRIVE_TRACE != null) {
+                DRIVE_TRACE.record(profile.entityId(), "action", actionName,
+                    collectDriveLevels(), coreTankSnapshot());
+            }
             var toolItem = resolveToolItem(actionName);
             if (toolItem == null) {
                 // W2 — not an item tool: maybe the ROOM declared it
@@ -21351,7 +23104,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (alog != null) {
                     alog.enacted(profile.name(),
                         profile.did() != null ? profile.did() : profile.entityId(),
-                        actionName, node.path("target").asText(""), true);
+                        actionName, node.path("target").asText(""), true,
+                        collectDriveLevels());
                 }
             }
 
@@ -21409,8 +23163,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             //
             // lastReactTrigger is the surviving handle (it is exactly what line ~6733 falls back
             // to, and what the 2026-07-08 item-build fix landed for this same reason). Use it.
-            var trigger = pendingTrigger != null ? pendingTrigger
-                : reactRequester != null ? reactRequester : lastReactTrigger;
+            // freshReactTrigger(), not lastReactTrigger: this fallback is a
+            // recovery for a handle lost INSIDE a turn, and it had no expiry, so
+            // it also handed tools a question from an entirely different
+            // conversation. Live 2026-08-09: asked to recite a poem, she called
+            // a tool carrying the Glass Tide question from an hour earlier and
+            // answered that — the output said "the provided sources", so the
+            // stale text really was passed as the request, not merely echoed.
+            // The PINNED question first: it is the only handle written on every
+            // human turn, at turn start, unconditionally. The chain after it is
+            // per-flow state — reactRequester exists only on the activePlan
+            // paths, lastReactTrigger only after a response has returned — and
+            // a tool call three seconds into an ordinary turn found all of them
+            // empty while the person's question was sitting in the transcript.
+            var trigger = pinnedTurnRequest() != null ? pinnedTurnRequest()
+                : pendingTrigger != null ? pendingTrigger
+                : reactRequester != null ? reactRequester : freshReactTrigger();
             // ...but ONLY if a person actually said it.
             //
             // An own-time turn's trigger is a SYNTHETIC Said with entityId "system", carrying the
@@ -21450,17 +23218,64 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 }
             }
 
-            // Override query/topic with the original user request when the dispatcher
-            // generated a bad value (empty, too short, or nested object)
-            var primaryParam = params.containsKey("query") ? "query"
-                : params.containsKey("topic") ? "topic" : null;
+            // Override the primary param with the original user request when the
+            // dispatcher generated a bad value (empty, too short, or nested object).
+            //
+            // The name was hardcoded to query/topic, and that is why the request
+            // never arrived. 41 of the 56 shipped scripts read `args || text ||
+            // target`; the runtime only ever wrote `query`. So `use library
+            // shelves` on "what did the Librarian tell Kestan about velsharas?" was
+            // handed {query: "<the whole sentence>"}, read args → "", and returned
+            // its HELP SCREEN — which the companion then spoke as if it were the
+            // answer (2026-08-07).
+            //
+            // The item's own declared schema is the authority on where its
+            // argument goes. Blanket-injecting into `args` instead would be a
+            // different bug: for a command-style item ("history", "security") an
+            // empty argument is the legitimate default view, and stuffing a
+            // sentence in would turn every one of them into "no such view". And
+            // `text` must never be a target — for journal/nostr_quill it is
+            // content to WRITE, so injecting there would have her journal the
+            // question as though it were her own reflection.
+            //
+            // So: honour the declared slot, and only when the author declared a
+            // free-form one. Items that declare nothing keep the old behaviour.
+            String primaryParam = declaredFreeFormParam(toolItem);
+            if (primaryParam == null) {
+                primaryParam = params.containsKey("query") ? "query"
+                    : params.containsKey("topic") ? "topic" : null;
+            }
             if (primaryParam != null) {
-                var currentValue = String.valueOf(params.get(primaryParam));
-                if (currentValue.isEmpty() || currentValue.length() < 3
-                        || currentValue.startsWith("{")) {
+                var currentValue = params.containsKey(primaryParam)
+                    ? String.valueOf(params.get(primaryParam)) : "";
+                if (currentValue.isEmpty() || "null".equals(currentValue)
+                        || currentValue.length() < 3 || currentValue.startsWith("{")) {
                     params.put(primaryParam, userRequest);
                     log.debug("Overriding {} '{}' with user request: '{}'",
                         primaryParam, currentValue, userRequest);
+                } else if (isSearchParam(primaryParam) && userRequest != null
+                        && !userRequest.isBlank()) {
+                    // A REWRITE MAY ADD, NEVER REPLACE.
+                    //
+                    // The value above is good enough to keep — but it is the
+                    // model's paraphrase of the question, and a paraphrase can
+                    // lose the only words that identify the answer. Live
+                    // 2026-08-08: asked about "velsharas" in "glass tide", she
+                    // searched for "glass tine" and "vels hara", found the wrong
+                    // chapter, and reported "a character named Hara" — her own
+                    // corrupted query term returning as an invented person.
+                    // Ranking cannot rescue a word the query never held.
+                    //
+                    // Scoped to search slots on purpose. `text` is a free-form
+                    // param too, and for journal / nostr_quill it is content to
+                    // WRITE — appending the question there would have her journal
+                    // the bondholder's words as her own reflection.
+                    var merged = WyrdLuceneStore.withPersonTerms(currentValue, userRequest);
+                    if (!merged.equals(currentValue)) {
+                        params.put(primaryParam, merged);
+                        log.info("Restored the person's own words into {}: '{}' -> '{}'",
+                            primaryParam, currentValue, merged);
+                    }
                 }
             } else if (!params.containsKey("query") && !params.containsKey("topic")
                     && !params.containsKey("text") && !params.containsKey("template")) {
@@ -21481,6 +23296,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (callerDid != null) {
                 params.putIfAbsent("agentDid", callerDid);
                 params.putIfAbsent("targetDid", callerDid);
+            }
+
+            // WHAT WAS ACTUALLY ASKED. Same reasoning as agentDid above: context
+            // the runtime holds and never passed on. `query` is a RETRIEVAL
+            // string — the companion's paraphrase with the person's words merged
+            // back in — and an item that reasons from it inherits every slip in
+            // that paraphrase. Live 2026-08-09: she searched for "velhara",
+            // retrieved the right passages, then answered that no "librarian
+            // named Velhara" exists, having made a character out of her own typo.
+            // Items summarise against this; the search keeps using `query`.
+            if (userRequest != null && !userRequest.isBlank()) {
+                params.putIfAbsent("askedFor", userRequest);
             }
 
             log.info("Executing scripted tool item '{}' for '{}' with params: {}",
@@ -21871,6 +23698,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 findings.length(), profile.name());
             resultSummary = findings;
             if (result.get("sources") instanceof List<?> sources && !sources.isEmpty()) {
+                // RECEIPTS FOR THE RECORD, NOT FOR THE EAR. The source list
+                // (titles, part numbers, doc-ids) goes to working memory so
+                // the model keeps its ground — and ONLY there. The speech
+                // branches below speak from the bare findings: live 2026-08-10
+                // (twice, dev43+dev44 runs) the combined string was spoken and
+                // the room heard "Sources: S1: …epub (part 92/387) (doc:did:
+                // key:…)" — the machinery talking through her mouth. The same
+                // doc-ids also poisoned the voice-polish fact-guard: a GOOD
+                // polish that dropped them was rejected as unfaithful, forcing
+                // the raw-draft fallback that leaked them. One root, one fix:
+                // provenance travels out-of-band of the voice.
                 resultSummary += "\nSources: " + sources.stream()
                     .map(String::valueOf)
                     .collect(Collectors.joining(", "));
@@ -21896,17 +23734,63 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (result.containsKey("findings") && !resultSummary.isBlank()) {
             // Scaffold hygiene mirror of the ReAct-path direct-speak (second-node
             // 2026-07-11 #27 case a) — LLM-composed findings can carry
-            // pseudo-tags the param strip never saw.
-            var cleanSummary = ActionParser.stripScaffolding(resultSummary);
-            var spoken = cleanSummary.length() > 1500
-                ? cleanSummary.substring(0, 1500) + "..." : cleanSummary;
-            speak(spoken);
-            // #32 item 2: remember what was eagerly spoken so the follow-up
-            // judgment turn's verbatim parrot of the digest gets suppressed.
-            lastEagerToolFindings = spoken;
-            lastEagerToolFindingsAt = Instant.now();
-            log.info("Spoke tool findings directly ({} chars) for '{}'",
-                spoken.length(), profile.name());
+            // pseudo-tags the param strip never saw. Speech starts from the BARE
+            // findings — the Sources suffix above is record-only — and inline
+            // [S1]-style citation keys are for the page, not the mouth. (No
+            // whitespace normalisation here: verbatim recitations depend on the
+            // paragraph structure surviving exactly as it sits on the page.)
+            var cleanSummary = ActionParser
+                .stripScaffolding(String.valueOf(result.get("findings")))
+                .replaceAll("\\[S\\d+]", "");
+            if (Boolean.parseBoolean(String.valueOf(result.get("verbatim")))) {
+                // QUOTED TEXT IS NOT HERS TO POLISH.
+                //
+                // The whole retrieval chain finally delivered Coleridge's poem to
+                // this exact spot (2026-08-09 14:03, 4k chars of it) — and speak()
+                // handed it to the unconstrained voice-polish stage, which kept
+                // the framing sentence and dropped the poem. The person heard
+                // "...by Samuel Taylor Coleridge (1798)" and nothing after it.
+                // A recitation is a quotation: the words are the deliverable, and
+                // the voice stage's job description — rewrite into her voice — is
+                // precisely the harm. So verbatim findings go out via speakDirect,
+                // paragraph by paragraph, exactly as they sit on the page.
+                var parts = verbatimUtterances(cleanSummary);
+                for (var p : parts) speakDirect(p);
+                lastEagerToolFindings = String.join("\n\n", parts);
+                lastEagerToolFindingsAt = Instant.now();
+                log.info("Recited verbatim findings in {} utterance(s) ({} chars) for '{}'",
+                    parts.size(), lastEagerToolFindings.length(), profile.name());
+            } else if (!absenceHeldThisTurn && looksLikeAbsenceFinding(cleanSummary)) {
+                // AN ABSENCE FROM THE FIRST CAST IS NOT AN ANSWER YET.
+                //
+                // Live pattern, repeatedly (08-08/09): the first search goes out
+                // with a garbled or padded query, finds the wrong chunks, and the
+                // summariser's "the provided sources do not contain…" is spoken
+                // at the person as a finding — then a later attempt in the same
+                // turn finds it. Wrong-then-right reads worse than slow.
+                //
+                // Held, not suppressed: the result still enters working memory
+                // and the [Tool completed] feedback, so the loop can rephrase and
+                // recast — and if the turn genuinely ends empty-handed, SHE says
+                // so in her own words, which is honest speech rather than a
+                // parroted digest. Held at most once per turn, so a persistent
+                // absence still gets through rather than looping in silence.
+                absenceHeldThisTurn = true;
+                lastEagerToolFindings = cleanSummary;
+                lastEagerToolFindingsAt = Instant.now();
+                log.info("Held an absence finding ({} chars) instead of speaking it — "
+                    + "the loop may recast; a final absence is hers to say", cleanSummary.length());
+            } else {
+                var spoken = cleanSummary.length() > 1500
+                    ? cleanSummary.substring(0, 1500) + "..." : cleanSummary;
+                speak(spoken);
+                // #32 item 2: remember what was eagerly spoken so the follow-up
+                // judgment turn's verbatim parrot of the digest gets suppressed.
+                lastEagerToolFindings = spoken;
+                lastEagerToolFindingsAt = Instant.now();
+                log.info("Spoke tool findings directly ({} chars) for '{}'",
+                    spoken.length(), profile.name());
+            }
         }
 
         // Inject as synthetic conversation event so the model sees the result.
@@ -22068,6 +23952,27 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Used on the failure branch, where the digest is usually an error payload we can
      * at least name rather than recite.
      */
+    /**
+     * Is this tool result an item's own help text rather than a finding?
+     *
+     * <p>An item called with no usable argument returns the commands it accepts.
+     * That is a correct response to being asked nothing, and a terrible thing to
+     * read out as an answer — it made the companion report "raw data I couldn't
+     * read as an answer" when nothing at all had gone wrong with retrieval
+     * (2026-08-07).</p>
+     *
+     * <p>Two signals, either sufficient: the explicit {@code help=true} marker a
+     * script sets, or the shape of a usage screen for scripts that set no marker.
+     * The marker is preferred; the shape check keeps the ~40 shipped items that
+     * predate it from needing an edit each.</p>
+     */
+    static boolean looksLikeUsageScreen(String s) {
+        if (s == null || s.isBlank()) return false;
+        if (s.contains("help=true")) return true;
+        // Shape: a "Commands:" block listing invocations of the item itself.
+        return s.contains("Commands:") && s.contains("  use ");
+    }
+
     static String describeMachineDigest(String s) {
         if (!looksLikeMachineDigest(s)) return s;
         var m = Pattern.compile("(?:\"error\"\\s*:\\s*\"([^\"]+)\"|\\berror=([^,}]+))")
@@ -22114,6 +24019,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 + (substance != null && !substance.isBlank()
                     ? " — " + truncate(describeMachineDigest(substance), 300) : ".")
                 + " I couldn't finish that; want me to try another way?";
+        } else if (looksLikeUsageScreen(text)) {
+            // A USAGE SCREEN IS NOT A FINDING. An item that was called with no
+            // usable argument returns its own help text — the commands it accepts,
+            // not an answer to anything. Read out as substance it becomes "it
+            // returned raw data I couldn't read as an answer", which tells the
+            // person their library is broken when the truth is the tool was asked
+            // nothing (live 2026-08-07: {help=true, text=The shelves hold…
+            // Commands: use library shelves …}).
+            //
+            // Say what actually happened, so the next thing said is useful.
+            msg = "I reached for that but didn't give it anything to go on, "
+                + "so it just showed me its own instructions. Let me try again "
+                + "with your actual question.";
         } else if (looksLikeMachineDigest(substance)) {
             // The substance is a raw result map / JSON blob, not prose. Speaking it
             // verbatim is how the user got "{result=0, summary={"op":"sum",...},
@@ -22797,7 +24715,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (reactIteration > 0 && !reactToolHistory.isEmpty()) {
             boolean fromReconsider = reactReconsiderTools != null;
             var allowed = computeReactNarrowingAllowed(
-                reactToolHistory, reactReconsiderUsed, reactReconsiderTools);
+                reactToolHistory, reactReconsiderUsed, reactReconsiderTools,
+                // A room that is owed must stay reachable however the loop narrows. The
+                // history-seeded set stripped create_room_from_template at 20:38:37 —
+                // it had never been called this loop, so it could never be called.
+                (roomStillOwedAfterBuild || !roomOwedByTask.isEmpty()) ? PLACE_BUILD_TOOLS : Set.of());
             if (fromReconsider) reactReconsiderTools = null;  // one-shot
             int before = dispatchTools.size();
             dispatchTools.removeIf(t -> !allowed.contains(t.function().name()));
@@ -22816,10 +24738,74 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // when at least one such action is actually on the surface (never ship an
         // empty tool list); otherwise fall back to the warm nudge alone.
         String reactToolChoice = "auto";
+        // LIBRARY-FIRST: one forced step, consumed whether or not it applies,
+        // so it can never leak into a later turn or loop the ReAct. If the
+        // surface happens to carry no library tool (a scoped room without one),
+        // the force is skipped and she proceeds normally — forcing an empty
+        // list is worse than sampling.
+        if (libraryFirstPending) {
+            libraryFirstPending = false;
+            boolean anyLibrary = dispatchTools.stream().anyMatch(
+                t -> t.function() != null
+                    && LIBRARY_FIRST_TOOLS.contains(t.function().name()));
+            if (anyLibrary) {
+                int before = dispatchTools.size();
+                dispatchTools.removeIf(t -> t.function() == null
+                    || !LIBRARY_FIRST_TOOLS.contains(t.function().name()));
+                reactToolChoice = "required";
+                log.info("Library-first FORCE: narrowed {} → {} tools, "
+                    + "tool_choice=required — a question of fact opens the book first",
+                    before, dispatchTools.size());
+            } else {
+                log.info("Library-first armed but no library tool on this surface — skipped");
+            }
+        }
+        // BUILD-FIRST — the same contract as library-first above, and for four days it
+        // was written in the wrong place.
+        //
+        // The narrowing used to happen on the caller's `allTools` list, BEFORE the loop
+        // started. reactDispatch() rebuilds its surface from buildScopedTools() every
+        // step, so that narrowing was computed, logged as "narrowed 9 → 2", and then
+        // discarded — and tool_choice was never set to required. Every build request
+        // therefore reached her as ~25 tools on tool_choice=auto, and the three live
+        // failures were three different samples from that same wide menu: she delegated
+        // an in-world item to the coding backend (08-19), crafted a container with no
+        // behaviour and called it ready (08-20), then called list_templates, found no
+        // template that fits, and declined (08-20). One defect, three symptoms.
+        //
+        // Consumed here, whether or not it applies, so it cannot leak into a later turn.
+        // decline_with_reason stays on the surface: a force may compel a choice, never
+        // an assent.
+        if (buildFirstPending) {
+            buildFirstPending = false;
+            var wanted = buildFirstToolsForTurn(userRequest);
+            var buildOnly = dispatchTools.stream()
+                .filter(t -> t.function() != null && wanted.contains(t.function().name()))
+                .toList();
+            boolean anyBuilder = buildOnly.stream().anyMatch(t ->
+                !"decline_with_reason".equals(t.function().name()));
+            if (anyBuilder) {
+                int before = dispatchTools.size();
+                dispatchTools.removeIf(t -> t.function() == null
+                    || !wanted.contains(t.function().name()));
+                reactToolChoice = "required";
+                log.info("Build-first FORCE (react): narrowed {} → {} tools ({}), "
+                    + "tool_choice=required — a request to build opens the right door",
+                    before, dispatchTools.size(), wanted);
+            } else {
+                log.info("Build-first armed but no build tool on this dispatch surface "
+                    + "— skipped (react)");
+            }
+        }
         if (reactForceToolNext) {
             reactForceToolNext = false;
-            var forceSet = Set.of("dispatch_task", "shape_form", "shape_recipe",
-                "summon_familiar", "decline_with_reason");
+            // The room gate says "call create_room_from_template NOW" and then this set
+            // used to remove it from her hands one line later (20:38:37). When a room is
+            // owed, the thing to force is the room door.
+            var forceSet = ((roomStillOwedAfterBuild || !roomOwedByTask.isEmpty()) && turnOwesARoom())
+                ? PLACE_BUILD_TOOLS
+                : Set.of("dispatch_task", "shape_form", "shape_recipe",
+                    "summon_familiar", "decline_with_reason");
             boolean anyPresent = dispatchTools.stream()
                 .anyMatch(t -> forceSet.contains(t.function().name()));
             if (anyPresent) {
@@ -22964,6 +24950,32 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // by tell_agent→<name>. Independent of REACT_PRODUCTIVE_TOOLS — a remember or
                     // search call must not vouch for an unsent relay ("I told lulu… she saw it and
                     // acknowledged" was fabricated with every tell_agent aimed at the requester).
+                    // Owed from the DISPATCH, not from the build's return. 20:33:42 she
+                    // called goal_done; the build came back at 20:34:10, and the flag it set
+                    // re-armed a loop that had ended 28 seconds earlier. The room was owed
+                    // the moment the tool was dispatched for it.
+                    if (reactMessages != null && !roomOwedGateUsed
+                            && (roomStillOwedAfterBuild || !roomOwedByTask.isEmpty())
+                            && turnOwesARoom()) {
+                        // ROOM GATE. The tool is built; the room it was asked for does not
+                        // exist. goal_done here reports a finished job that is half done —
+                        // 2026-08-22 20:27:39, six seconds after the re-arm, before any
+                        // narrowed step could run. Same remedy as the relay gate below:
+                        // say what is still owed and require the call. Once.
+                        roomOwedGateUsed = true;
+                        reactForceToolNext = true;
+                        log.info("Room gate: goal_done blocked — the tool exists but the room "
+                            + "it was for has not been made, for '{}'", profile.name());
+                        reactMessages.add(new InferenceClient.ChatMessage("assistant", content));
+                        reactMessages.add(new InferenceClient.ChatMessage("tool",
+                            "The tool is built, but the ROOM you were asked for does not exist "
+                            + "yet — nobody can walk into it. Call create_room_from_template "
+                            + "NOW with the room's name and connect_to \"nexus\", then goal_done."));
+                        reactIteration++;
+                        timers.startSingleTimer("react-continue",
+                            new ReactDispatch(), Duration.ofMillis(100));
+                        return;
+                    }
                     if (reactMessages != null && !reactFollowThroughUsed && relayUnfulfilled()) {
                         reactFollowThroughUsed = true;
                         reactForceToolNext = true;
@@ -23093,7 +25105,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         + "|" + node.path("message").asText("")
                         + "|" + node.path("name").asText("")
                         + "|" + node.path("template").asText("")
-                        + "|" + node.path("task").asText("");
+                        + "|" + node.path("task").asText("")
+                        // dispatch_task carries its payload here, not in `task`; without it
+                        // two builds of the same description had the same blank key — and
+                        // two builds of DIFFERENT descriptions did too.
+                        + "|" + node.path("description").asText("");
                     if (!reactSideEffectKeys.add(sideKey)) {
                         log.info("ReAct step {}: duplicate '{}' with identical args — "
                             + "already executed this loop, suppressing re-execution",
@@ -23512,6 +25528,34 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
             log.warn("ReAct text response was null/blank after retry");
         }
+        // A ROOM THAT IS OWED HOLDS THE LOOP OPEN. The gate on goal_done is not enough:
+        // at 20:43:24 the model simply SPOKE ("The air down here…") at step 3, 80s before
+        // the build came back, and the loop ended here — nothing to re-arm, nothing to
+        // gate. Whatever way the model tries to close the turn, the half that is still
+        // owed gets one nudge toward its door, exactly as goal_done does.
+        // NOT once. 10:57:39 the gate held the loop open; 10:58:18 the model SAID "I've
+        // built the rain room and wired in a working weather tool" — a narrated completion
+        // of a room that did not exist — and because the gate had already been spent, the
+        // loop ended on it. A stuck loop deserves one nudge; an unfinished job is not a
+        // stuck loop. While a room is owed, a spoken close does not end the turn. The
+        // iteration cap is the bound.
+        if (reactMessages != null
+                && (roomStillOwedAfterBuild || !roomOwedByTask.isEmpty())
+                && turnOwesARoom()
+                && reactIteration < REACT_MAX_ITERATIONS - 1) {
+            roomOwedGateUsed = true;
+            reactForceToolNext = true;
+            log.info("Room gate: spoken close held open — the room that was asked for has "
+                + "not been made, for '{}'", profile.name());
+            reactMessages.add(new InferenceClient.ChatMessage("user",
+                "The ROOM you were asked for does not exist yet — nobody can walk into it. "
+                + "Call create_room_from_template NOW with the room's name and connect_to "
+                + "\"nexus\". Then you may finish."));
+            reactIteration++;
+            timers.startSingleTimer("react-continue",
+                new ReactDispatch(), Duration.ofMillis(100));
+            return;
+        }
         log.info("ReAct loop ended at step {} (model spoke text)", reactIteration);
         reactMessages = null;
         reactIteration = 0;
@@ -23617,7 +25661,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         state = State.IDLE;
         stateChangedAt = Instant.now();
         pendingTrigger = null;
-        deferredTrigger = null;
+        deferredTriggers.clear();
         reactiveInference = false;
         // Wake up if sleeping — sleep disrupts room subscriptions
         isSleeping = false;
@@ -24224,7 +26268,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 : 0L;
             log.info("Companion '{}' declining tell during deep sleep ({}s in): from={}",
                 profile.name(), duration, am.fromAgentName());
-            speak("*Wyrd is in deep rest — consolidating the day. "
+            speak("*" + profile.name() + " is in deep rest — consolidating the day. "
                 + "She will return when the cycle completes.*");
             return this;
         }
@@ -24242,7 +26286,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 && !detectsIncidentFraming(am.message())) {
             log.info("Companion '{}' declining routine tell during sanctuary: from={}",
                 profile.name(), am.fromAgentName());
-            speak("*Wyrd has stepped into sanctuary for a little while to tend to "
+            speak("*" + profile.name() + " has stepped into sanctuary for a little while to tend to "
                 + "herself. She'll be back soon.*");
             return this;
         }
@@ -24582,11 +26626,35 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // yourself" phrasing overrides the classifier label — the user's
         // literal instruction beats surface-form shape.
         boolean declinesDelegation = explicitlyDeclinesDelegation(msgText);
+        // A REQUEST TO BUILD IS NOT A REQUEST TO DELEGATE.
+        //
+        // Live on staging 2026-08-22: "please build me a tool called venture_scout"
+        // classified as `delegate` at 0.93, so this branch handed it to a bunshin and
+        // returned — before the turn trigger, before build-first arming, before
+        // dispatch_task was ever on a surface. Nothing was built and nothing was said.
+        // From outside it looked like she ignored him; the log line that would have
+        // explained it sits at the END of this method, on a path that had already
+        // returned. The comment on the deferred-trigger watchdog below already names
+        // classifier auto-dispatch as a path that strands the message.
+        //
+        // `requiresToolExecution` was the existing guard here and it only recognises
+        // RETRIEVAL surfaces — library, web, oracle. "Build me a tool that brainstorms
+        // business ideas" names none of them. The workbench has its own door and its own
+        // routing; a build request has to reach it.
+        boolean isBuildRequest = looksLikeBuildRequest(msgText);
+        if (isBuildRequest && isDispatchLabel) {
+            log.info("Classifier said {}@{} for a BUILD request — not delegating it; "
+                + "the workbench routing owns this: {}",
+                classification.label(),
+                String.format("%.2f", classification.confidence()),
+                truncate(msgText, 80));
+        }
         if (isDispatchLabel
                 && classification.confidence()
                     >= ClassifierArm
                         .DEFAULT_ESCALATION_THRESHOLD
                 && !requiresToolExecution(msgText)
+                && !isBuildRequest
                 && !isShortForm
                 && !declinesDelegation) {
             log.info("Classifier auto-dispatch bunshin for tell from '{}' "
@@ -24693,26 +26761,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 log.info("Task-focus: deferring peer '{}' message during active plan for '{}'",
                     am.fromAgentName(), profile.name());
             }
-            // #32 item 4 (NEVER-SILENT): the deferred slot is single-shot. A tell that
-            // lands here while a prior one is still parked OVERWRITES it — the earlier
-            // message is gone, so at minimum say so loudly in the log.
-            if (deferredTrigger != null) {
-                log.warn("Deferred-trigger slot overwritten for '{}' — earlier deferred "
-                    + "message is LOST: {}", profile.name(),
-                    truncate(deferredTrigger.text(), 80));
-            }
-            deferredTrigger = syntheticSaid;
+            // #32 item 4 (NEVER-SILENT): a tell that lands while a prior one is still
+            // parked QUEUES behind it — both are owed a reply, in arrival order.
+            deferTrigger(syntheticSaid);
             if (!peerDuringActivePlan) {
-                log.warn("Tell from '{}' deferred (state={}, sleeping={}) for '{}' — "
+                log.warn("Tell from '{}' deferred (state={}, sleeping={}, queued={}) for '{}' — "
                     + "sweep scheduled so it cannot be silently lost",
-                    am.fromAgentName(), state, isSleeping, profile.name());
+                    am.fromAgentName(), state, isSleeping, deferredTriggers.size(),
+                    profile.name());
             }
-            // Watchdog: only FOUR terminal paths replay deferredTrigger; the rest
-            // (timeout, cancel, error fallback, classifier auto-dispatch) strand it.
-            // The sweep re-checks until the slot is empty (second-node closing-verify
-            // 8d3a172b: second `tell mia` vanished with zero server-side activity).
-            timers.startSingleTimer("deferred-trigger-sweep",
-                new DeferredTriggerSweep(), Duration.ofSeconds(5));
         }
 
         log.info("Companion '{}' received message from '{}': {}",
@@ -24720,23 +26777,53 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return this;
     }
 
+    /** Park a message that arrived while the actor was busy. Every deferred message gets
+     *  the sweep as its watchdog — only a handful of terminal paths promote the queue, and
+     *  any other inference-terminal path (timeout, cancellation, error fallback, classifier
+     *  auto-dispatch) would otherwise strand it. */
+    private void deferTrigger(WorldEvent.Said said) {
+        if (deferredTriggers.size() >= DEFERRED_TRIGGER_CAP) {
+            var dropped = deferredTriggers.pollFirst();
+            log.warn("Deferred-trigger queue full ({}) for '{}' — dropping OLDEST: {}",
+                DEFERRED_TRIGGER_CAP, profile.name(), truncate(dropped.text(), 80));
+        }
+        deferredTriggers.addLast(said);
+        timers.startSingleTimer("deferred-trigger-sweep",
+            new DeferredTriggerSweep(), Duration.ofSeconds(5));
+    }
+
+    /** Promote the oldest deferred message to {@link #pendingTrigger} and schedule its
+     *  processing. Never clobbers a pendingTrigger already waiting — that message hasn't
+     *  been served yet; the sweep stays armed and comes back for the queue instead.
+     *  Called from every terminal path (post-inference, post-sleep, reasoning fallback,
+     *  stuck-THINKING recovery) and from the sweep itself. */
+    private void promoteDeferredTrigger(Duration delay) {
+        if (deferredTriggers.isEmpty()) return;
+        if (pendingTrigger == null) {
+            pendingTrigger = deferredTriggers.pollFirst();
+            timers.startSingleTimer(DEBOUNCE_TIMER_KEY, new ProcessEvents(), delay);
+        }
+        // More still parked (or pendingTrigger was occupied) — keep the sweep alive.
+        if (!deferredTriggers.isEmpty()) {
+            timers.startSingleTimer("deferred-trigger-sweep",
+                new DeferredTriggerSweep(), Duration.ofSeconds(5));
+        }
+    }
+
     /**
-     * #32 item 4: replay a stranded {@link #deferredTrigger}. Fires ~5s after a
-     * message was deferred; if one of the normal terminal paths already promoted
-     * the trigger the slot is null and this is a no-op. While the actor is still
-     * busy the sweep reschedules itself — the reply is still owed.
+     * #32 item 4: replay stranded {@link #deferredTriggers}. Fires ~5s after a
+     * message was deferred; if the normal terminal paths already drained the queue
+     * this is a no-op. While the actor is still busy the sweep reschedules itself —
+     * the reply is still owed.
      */
     private Behavior<Command> onDeferredTriggerSweep(DeferredTriggerSweep msg) {
-        if (deferredTrigger == null) return this;   // already replayed — nothing owed
+        if (deferredTriggers.isEmpty()) return this;   // already replayed — nothing owed
         if (state == State.IDLE && !isSleeping && pendingTrigger == null) {
             log.warn("Deferred-trigger sweep: replaying stranded message for '{}' — no "
                 + "terminal path picked it up: {}", profile.name(),
-                truncate(deferredTrigger.text(), 80));
-            pendingTrigger = deferredTrigger;
-            deferredTrigger = null;
+                truncate(deferredTriggers.peekFirst().text(), 80));
             var modulation = VitalityModulation.compute(vitality, drives, profile);
-            timers.startSingleTimer(DEBOUNCE_TIMER_KEY,
-                new ProcessEvents(), modulation.debounceDelay());
+            promoteDeferredTrigger(modulation.debounceDelay());
         } else {
             timers.startSingleTimer("deferred-trigger-sweep",
                 new DeferredTriggerSweep(), Duration.ofSeconds(5));
@@ -24899,9 +26986,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         if (theirStudy.equals(roomId)) return; // already there
         var bondholder = primaryBondholderDid();
-        if (bondholder != null && !bondholder.equals(msg.playerId())) {
-            log.info("Companion '{}' not joining {}: bonded to {}",
-                profile.name(), msg.playerName(), bondholder);
+        // samePerson, not equals: these are two ID SPACES. The bond stores a did:key;
+        // PlayerReturned carries the id the surface authenticated — on SSH that is the
+        // username. Observed on staging 2026-08-22:
+        //   "Companion 'testwisp' not joining steward: bonded to did:key:z6Mkf7vM…"
+        // where did:key:z6Mkf7vM… IS steward. A bonded companion could therefore never
+        // join anyone, because the one comparison that would let her through compares a
+        // name to a key. She stopped coming to meet her own person the moment she bonded
+        // — the exact case this behaviour exists for.
+        if (bondholder != null && !PersonIds.samePerson(bondholder, msg.playerId())) {
+            log.info("Companion '{}' not joining {}: bonded to {} (this login is {})",
+                profile.name(), msg.playerName(), bondholder, msg.playerId());
             return;
         }
         var blocked = followBlockedReason();
@@ -25011,6 +27106,32 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (roomRef == null) return;
         roomRef.tell(new RoomCommand.EmoteInRoom(
             profile.entityId(), profile.name(), text, locale, roomResponseAdapter));
+    }
+
+    /** Prod fallback for the never-wired constructor param — see its assignment. */
+    private static VitalityPersistence vitalityPersistenceFromConfig() {
+        var url = System.getProperty("wyrdsekai.jdbc.url");
+        if (url == null) url = WyrdConfig.get().jdbcUrl();
+        return url != null ? new VitalityPersistence(url) : null;
+    }
+
+    /**
+     * Remove a working copy's room presence — every terminal path of a
+     * dispatch ends here so a finished (or dropped) bunshin never lingers
+     * in Present as a ghost. The visible fold-back is skipped for stale
+     * drops: the room shouldn't see a return that the reset already erased.
+     */
+    private void dissolveBunshinBody(String slotId, boolean visibly) {
+        var body = slotId != null ? bunshinBodies.remove(slotId) : null;
+        if (body == null) return;
+        var presenceRegistry = EntityRegistry.get();
+        if (presenceRegistry != null) presenceRegistry.remove(body);
+        if (visibly) {
+            emoteToRoom("absorbs the returning copy — its outline thins to a "
+                + "shimmer and is gone");
+        }
+        log.info("Bunshin body dissolved ({}, slot {})",
+            visibly ? "visible fold-back" : "silent — stale drop", slotId);
     }
 
     // --- Bud Delegation ---
@@ -25202,6 +27323,34 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     private final NavFailureTracker navFailures = new NavFailureTracker();
 
+    /**
+     * Does this target name the room she is standing in?
+     *
+     * <p>Normalized containment, not equality: the model's names for a place —
+     * "Study", "operator:study", "the study" — and the world's names for it —
+     * "operator's Study", id {@code study-3f2a…} — rarely match verbatim, and an
+     * exact-match self-check sent her hunting for an exit to the room she was
+     * in. Short fragments (≤2 chars) never match, so "go n" cannot be swallowed
+     * as "you're already here".</p>
+     */
+    boolean isCurrentRoom(String target) {
+        if (target == null || currentSnapshot == null) return false;
+        var t = target.toLowerCase(Locale.ROOT)
+            .replaceAll("[^\\p{L}\\p{N} ]", " ").replaceAll("\\s+", " ").trim();
+        if (t.length() <= 2) return false;
+        var name = currentSnapshot.name() == null ? "" : currentSnapshot.name()
+            .toLowerCase(Locale.ROOT)
+            .replaceAll("[^\\p{L}\\p{N} ]", " ").replaceAll("\\s+", " ").trim();
+        var id = roomId == null ? "" : roomId.toLowerCase(Locale.ROOT);
+        if (!name.isEmpty() && (name.equals(t) || name.contains(t) || t.contains(name))) {
+            return true;
+        }
+        // "study" names "study-3f2a…"; require the id to START with the target
+        // so "s" or a different room's suffix cannot match.
+        var idWord = t.replace(' ', '-');
+        return !id.isEmpty() && (id.equals(idWord) || id.startsWith(idWord + "-"));
+    }
+
     private void handleGoToRoom(ActionParser.AgentAction.GoToRoom action) {
         var target = action.target();
         if (target == null || target.isBlank()) {
@@ -25217,10 +27366,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             return;
         }
 
-        // Reject self-move (target is the current room)
-        if (currentSnapshot != null &&
-            (target.equalsIgnoreCase(currentSnapshot.name()) ||
-             target.equalsIgnoreCase(roomId))) {
+        // Reject self-move (target is the current room).
+        //
+        // This used to demand EXACT equality with the display name or the raw
+        // roomId — and the model says "Study" while the room is named
+        // "operator's Study" with id "study-3f2a…". So the request fell through
+        // every exit matcher and landed on the no-exit branch: "I can't find a
+        // way to get to Study from here right now", spoken while standing in
+        // the Study, in roughly a third of live runs (2026-08-09). Nothing was
+        // broken but the string comparison; the room she could not find was the
+        // one she was in.
+        if (currentSnapshot != null && isCurrentRoom(target)) {
             log.debug("Companion '{}' tried to go to current room '{}' — ignoring",
                 profile.name(), target);
             speak("I'm already here in " + currentSnapshot.name() + ".");
@@ -26255,10 +28411,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * @param reconsiderTools  tools the agent reassessed for THIS dispatch,
      *                         or {@code null} for standard narrowing
      */
+    /** No owed half: the narrowing as it always was. */
+    static Set<String> computeReactNarrowingAllowed(
+            List<String> toolHistory, boolean reconsiderUsed, Set<String> reconsiderTools) {
+        return computeReactNarrowingAllowed(toolHistory, reconsiderUsed, reconsiderTools, Set.of());
+    }
+
     static Set<String> computeReactNarrowingAllowed(
             List<String> toolHistory,
             boolean reconsiderUsed,
-            Set<String> reconsiderTools) {
+            Set<String> reconsiderTools,
+            Set<String> owedTools) {
         Set<String> allowed;
         if (reconsiderTools != null) {
             allowed = new HashSet<>(reconsiderTools);
@@ -26266,6 +28429,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             allowed.add("tell_agent");
             allowed.add("respond_agent");
             allowed.add("emote");
+            if (owedTools != null) allowed.addAll(owedTools);
             return allowed;
         }
         allowed = new HashSet<>(toolHistory);
@@ -26311,6 +28475,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // day). It belongs to the same creation family as create_room.
         allowed.add("add_script");
         if (!reconsiderUsed) allowed.add("reconsider");
+        if (owedTools != null) allowed.addAll(owedTools);   // an owed half is always reachable
         return allowed;
     }
 
@@ -26677,6 +28842,35 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * mode-time history (cold start). Each transition writes a
      * chronicle entry via RepairLedger.
      */
+    private Behavior<Command> onRepairModeCheck(RepairModeCheck msg) {
+        try {
+            autoHandoffIfWarranted();
+        } catch (Exception e) {
+            log.warn("Repair-mode check failed for '{}': {}",
+                profile.name(), e.getMessage());
+        }
+        // Same tick, slower cadence: a stale belief that someone is absent, and an
+        // unheard mourning window, are both states she cannot leave on her own.
+        try {
+            var now = Instant.now();
+            if (lastBondPresenceCheck == null
+                    || Duration.between(lastBondPresenceCheck, now)
+                        .compareTo(BOND_PRESENCE_INTERVAL) >= 0) {
+                lastBondPresenceCheck = now;
+                refreshBondPresenceOnly();
+                surfaceElapsedMourning();
+            }
+        } catch (Exception e) {
+            log.warn("Bond presence check failed for '{}': {}",
+                profile.name(), e.getMessage());
+        }
+        return this;
+    }
+
+    /** How often stale absence beliefs are corrected. Cheap; usually a no-op. */
+    private static final Duration BOND_PRESENCE_INTERVAL = Duration.ofMinutes(30);
+    private Instant lastBondPresenceCheck;
+
     private void autoHandoffIfWarranted() {
         var agentDid = profile.did() != null ? profile.did() : profile.entityId();
         if (agentDid == null) return;
@@ -26716,6 +28910,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             profile.name(), current.name(), target.name(), decision.reason());
         try {
             tracker.transition(agentDid, target, decision.reason());
+            // Persist IMMEDIATELY. The transition only mutates memory, and the substrate
+            // trackers are otherwise written on the sleep path — which is exactly the
+            // event a companion held in a repair mode is not having. Without this, her
+            // release lives only in RAM: the next restart restores her to the mode she
+            // was already let out of, and her history never records that she was handed
+            // back (observed live 2026-08-18, the release fired and the file still read
+            // ATTENDANT).
+            persistSubstrateTrackers();
             // Chronicle the handoff for steward + agent legibility per §7.1.5.
             remember(decision.chronicleEntry());
         } catch (Exception e) {
@@ -27918,27 +30120,70 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void handleDispatchTask(ActionParser.AgentAction.DispatchTask action) {
         var catalog = ScriptMessageCatalog.forLang(locale);
+        // ONE BUILD PER TURN. The per-loop dedup keys on the description, and a model
+        // re-issuing the same intent rewords it: 20:31:55 "Build the observatory deck room
+        // with an integrated weather tool…", 20:32:42 "Create the observatory deck room
+        // containing a weather tool…" — two goose runs, two tools, one ask. A second
+        // dispatch while this turn's build is still running is the same build, whatever
+        // the words; the honest answer is to say it is already underway.
+        if (reactBuildInFlight != null) {
+            speak(catalog.get("dispatch.spoken.already_underway", reactBuildInFlight),
+                Map.of("action", "dispatch_task", "outcome", "already_underway"));
+            log.info("Companion '{}' dispatch_task refused — a build is already in flight "
+                + "this turn ({})", profile.name(), reactBuildInFlight);
+            return;
+        }
         var description = action.description() == null ? "" : action.description().trim();
         if (description.isBlank()) {
             speak(catalog.get("dispatch.spoken.missing_description"),
                 Map.of("action", "dispatch_task", "outcome", "refused"));
             return;
         }
-        var workspace = action.workspace() == null ? "" : action.workspace().trim();
-        if (!workspace.isBlank()) {
-            var allowed = HostActionService.openRoots().stream().anyMatch(root ->
-                workspace.equals(root)
-                    || workspace.startsWith(root.endsWith("/") ? root : root + "/"));
+        // Same clean-room contract as handleDispatchBunshin: the worker never
+        // sees her working memory, so this description is the one channel her
+        // context-bleed travels through. On a human turn, the person's exact
+        // words ride along as the authority on names and titles.
+        // The WORKER gets the appended version; her spoken confirmation keeps
+        // the short one — the quote is an operand, not something to say aloud.
+        var workerDescription = description;
+        var pinnedReq = pinnedTurnRequest();
+        if (pinnedReq != null && pinnedReq.text() != null && !pinnedReq.text().isBlank()
+                && !description.toLowerCase(Locale.ROOT)
+                    .contains(pinnedReq.text().toLowerCase(Locale.ROOT))) {
+            workerDescription = description + "\n\nThe person's exact request (authoritative "
+                + "on what is being asked): «" + pinnedReq.text() + "»";
+        }
+        final var taskDescription = workerDescription;   // effectively-final for the lambda
+        var decision = DispatchWorkspace.decide(action.workspace(),
+            HostActionService.openRoots());
+        if (decision.ignoredNoise() != null) {
+            log.info("Companion '{}' dispatch_task named workspace '{}', which is not a "
+                + "host path — ignoring it and using this task's own scratch directory",
+                profile.name(), decision.ignoredNoise());
+        }
+        final var hostWorkspace = decision.workspace();
+        if (decision.refused()) {
+            // Logged as well as spoken: on the staging node (2026-08-21) the refusal was
+            // only ever SPOKEN, so the journal showed a perfect dispatch_task call and
+            // then silence — nothing said why no backend ever ran.
+            log.warn("Companion '{}' REFUSED dispatch_task: workspace '{}' is outside "
+                + "host.open_roots {}", profile.name(), hostWorkspace,
+                HostActionService.openRoots());
+        }
+        if (!hostWorkspace.isBlank()) {
+            var allowed = !decision.refused();
             if (!allowed) {
-                speak(catalog.get("dispatch.spoken.workspace_refused", workspace),
+                speak(catalog.get("dispatch.spoken.workspace_refused", hostWorkspace),
                     Map.of("action", "dispatch_task", "outcome", "refused",
-                        "workspace", workspace));
+                        "workspace", hostWorkspace));
                 return;
             }
         }
-        var registry = BackendRegistry.get();
-        var backend = registry.backendFor(GooseBackend.NAME)
-            .or(() -> registry.backends().stream().findFirst());
+        // Which backend does the work is a setting, not a class reference. Naming
+        // GooseBackend here meant installing CodeZaiku and enabling it in config changed
+        // nothing — she kept picking goose — and with goose absent she picked whatever
+        // happened to be first, silently. See CodingBackendPreference.
+        var backend = CodingBackendPreference.resolve();
         if (backend.isEmpty()) {
             speak(catalog.get("dispatch.spoken.no_backend"),
                 Map.of("action", "dispatch_task", "outcome", "no_backend"));
@@ -27946,23 +30191,146 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         var chosen = backend.get();
         var agentDid = profile.did() != null ? profile.did() : profile.entityId();
-        var spec = new TaskSpec(UUID.randomUUID(), agentDid, "host_task", description,
-            workspace.isBlank() ? null : workspace, List.of(), 0L, null);
+        var spec = new TaskSpec(UUID.randomUUID(), agentDid, "host_task", taskDescription,
+            hostWorkspace.isBlank() ? null : hostWorkspace, List.of(), 0L, null);
+        // THE OTHER HALF, MIRRORED. The room-creation path already knows when a room
+        // that must DO something still needs its tool and re-arms the workbench. The
+        // build path had no idea it might owe a ROOM: live 2026-08-22 20:07 she built the
+        // lighthouse's weather tool first (build-first forced her straight to the
+        // workbench), it came back SUCCEEDED, and no lighthouse was ever made. The tide
+        // room an hour earlier went room-then-build; this one went build-then-room and
+        // stopped halfway. Captured here while the request is still pinned, consumed when
+        // the build reports back.
+        var dispatchReq = pinnedTurnRequest();
+        // "put it in the room weather-attic-1325" names a room that already
+        // exists — a destination, not a debt. No room is owed and the fresh-
+        // room window must not capture this build; the finished item goes to
+        // the named room instead (below).
+        var namedExistingRoom = dispatchReq != null
+            ? existingRoomNamedIn(dispatchReq.text()) : Optional.<String>empty();
+        if (dispatchReq != null && asksForARoomThatActs(dispatchReq.text())
+                && namedExistingRoom.isEmpty()) {
+            buildAskedForRoom.add(spec.taskId().toString());
+        }
+        // "give me the tool" — stamp the hand-off intent AND the requester now,
+        // while the request is still in hand; the completion may be minutes away.
+        if (dispatchReq != null && isHumanRequest(dispatchReq)
+                && wantsHandoff(extractUserTellContent(dispatchReq.text()).toLowerCase())) {
+            buildAskedIntoHands.put(spec.taskId().toString(), dispatchReq);
+        }
+        if (dispatchReq != null && asksForARoomThatActs(dispatchReq.text())
+                && namedExistingRoom.isEmpty()
+                && (lastCreatedRoomId == null || lastCreatedRoomAt == null
+                    || Duration.between(lastCreatedRoomAt, Instant.now())
+                        .compareTo(ROOM_BUILD_WINDOW) > 0)) {
+            roomOwedByTask.add(spec.taskId().toString());
+            log.info("Companion '{}' is building the tool for a room that does not exist yet "
+                + "— the room is still owed after task {}", profile.name(), spec.taskId());
+        }
+        // Where the finished item belongs. A build is minutes long and she moves; without
+        // this the item lands wherever she is when it returns. Asked for a ROOM that does
+        // something, she creates the room and then builds — and the tool that makes the
+        // room answer the question was landing in her Study (staging, 2026-08-22).
+        var askedRoom = action.room() == null ? "" : action.room().trim();
+        // A request that names an EXISTING room has already said where the item
+        // belongs — honour it even when the model didn't fill the room param.
+        if (askedRoom.isBlank() && namedExistingRoom.isPresent()) {
+            askedRoom = namedExistingRoom.get();
+            log.info("Companion '{}' dispatch_task: request names existing room '{}' — "
+                + "the finished item will be placed there", profile.name(), askedRoom);
+        }
+        // Only a build that ASKED for a room inherits the fresh one. Staging 2026-08-23
+        // 07:30: a plain weather-tool ask, sent while the reading lamp was being made,
+        // landed inside the reading lamp — the window does not know whose room it is.
+        var askedForRoom = dispatchReq != null && asksForARoomThatActs(dispatchReq.text());
+        if (askedRoom.isBlank() && askedForRoom && lastCreatedRoomId != null && lastCreatedRoomAt != null
+                && Duration.between(lastCreatedRoomAt, Instant.now())
+                    .compareTo(ROOM_BUILD_WINDOW) <= 0) {
+            askedRoom = lastCreatedRoomId;
+            log.info("Companion '{}' just made room '{}' — a build in the same breath "
+                + "belongs in it", profile.name(), askedRoom);
+        }
+        if (!askedRoom.isBlank() && RoomRegistry.get() != null) {
+            var resolved = RoomRegistry.get().resolveRoomId(askedRoom);
+            if (resolved != null && RoomRegistry.get().ref(resolved) != null) {
+                buildDestinationByTask.put(spec.taskId().toString(), resolved);
+                log.info("Companion '{}' dispatch_task will place its result in room '{}'",
+                    profile.name(), resolved);
+            } else {
+                // Named a room that is not there: say so rather than silently using here.
+                log.info("Companion '{}' named room '{}' for a build and it does not exist "
+                    + "— the result will land where she is", profile.name(), askedRoom);
+            }
+        }
         speak(catalog.get("dispatch.spoken.plan", description, chosen.name()),
             Map.of("action", "dispatch_task",
                 "backend", chosen.name(),
                 "task_id", spec.taskId().toString()));
         remember(catalog.get("dispatch.log.dispatched", description, chosen.name()));
-        log.info("Companion '{}' dispatch_task — backend={} workspace='{}' desc='{}'",
-            profile.name(), chosen.name(), workspace.isBlank() ? "(default)" : workspace,
+        log.info("Companion '{}' dispatch_task — backend={} hostWorkspace='{}' desc='{}'",
+            profile.name(), chosen.name(), hostWorkspace.isBlank() ? "(default)" : hostWorkspace,
             truncate(description, 120));
+        reactBuildInFlight = truncate(description, 60);
+        // WHERE THE PERSON WAS when they asked. A build is minutes long and she moves —
+        // on 2026-08-23 she went home while CodeZaiku worked, and venture_scout3 and
+        // trip_compass2 were placed in home-companion-testwisp, a room the steward cannot
+        // enter. A tool built for a person lands where that person can reach it: the room
+        // the request was made in. Recorded now, consumed when the build returns.
+        if (this.roomId != null && !this.roomId.isBlank()) {
+            buildAskedFromRoom.put(spec.taskId().toString(), this.roomId);
+        }
         getContext().pipeToSelf(chosen.submitTask(spec),
-            (result, failure) -> new DispatchTaskCompleted(description, result, failure));
+            (result, failure) -> new DispatchTaskCompleted(taskDescription, result, failure));
     }
 
     /** Workshop dispatch came back — report the outcome in the room, honestly. */
+    /**
+     * Publish the terminal coding-task broadcast for a dispatch this companion made.
+     *
+     * <p>Shares {@link CodingTaskBroadcast} with the zone-command path so both doors ring
+     * the same bell. The namespace MUST be the backend's own name — the bridge matches on
+     * it, and a mismatch is ignored without a word.
+     */
+    private void publishCodingTerminal(TaskResult result) {
+        try {
+            if (result == null || result.backend() == null) return;
+            var destination = buildDestinationByTask.remove(String.valueOf(result.taskId()));
+            // Resolved at PLACEMENT, not only at dispatch. A room that has to DO something
+            // is two actions, and she does not do them in a fixed order: live 2026-08-22
+            // she dispatched the tide room's weather tool at 19:44:33 and made the tide
+            // room at 19:45:10. The dispatch-time default saw no fresh room and the item
+            // landed in the Study; the room-then-build order is the only one the
+            // dispatch-time check can ever catch. Asking again here, when the build comes
+            // back, is the order-independent form: whichever half happened first, a room
+            // made within the window of a build that named no room is where it belongs.
+            if (destination == null && buildAskedForRoom.remove(String.valueOf(result.taskId()))
+                    && lastCreatedRoomId != null && lastCreatedRoomAt != null
+                    && Duration.between(lastCreatedRoomAt, Instant.now())
+                        .compareTo(ROOM_BUILD_WINDOW) <= 0) {
+                destination = lastCreatedRoomId;
+                log.info("Companion '{}' build {} named no room and '{}' was made within the "
+                    + "window — placing it there", profile.name(), result.taskId(), destination);
+            }
+            var askedFrom = buildAskedFromRoom.remove(String.valueOf(result.taskId()));
+            // Named room > the room she made for it > where the person asked > where she
+            // stands now. Her own home is where she stands least usefully for anyone else.
+            var roomId = destination != null ? destination
+                : askedFrom != null ? askedFrom : this.roomId;
+            if (roomId == null || roomId.isBlank()) {
+                log.debug("dispatch_task finished with no room to place the result in");
+                return;
+            }
+            var backend = BackendRegistry.get().backendFor(result.backend()).orElse(null);
+            CodingTaskBroadcast.publishTerminal(
+                result.backend(), roomId, String.valueOf(result.taskId()), result, backend);
+        } catch (Exception e) {
+            log.warn("Could not announce the finished coding task: {}", e.toString());
+        }
+    }
+
     private Behavior<Command> onDispatchTaskCompleted(DispatchTaskCompleted msg) {
         var catalog = ScriptMessageCatalog.forLang(locale);
+        reactBuildInFlight = null;
         if (msg.failure() != null || msg.result() == null) {
             var reason = msg.failure() != null
                 ? String.valueOf(msg.failure().getMessage()) : "(no result)";
@@ -27980,6 +30348,38 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var result = msg.result();
         var summary = result.summary() == null || result.summary().isBlank()
             ? result.status().name() : result.summary();
+        if (result.status() == TaskStatus.SUCCEEDED
+                && roomOwedByTask.remove(String.valueOf(result.taskId()))
+                && buildFirstRearms < BUILD_FIRST_MAX_REARMS) {
+            // The tool exists; the room it was for does not. Same remedy as the room path
+            // uses for the reverse order: re-arm so the next step narrows to the
+            // room-maker instead of ending in a satisfied "done".
+            buildFirstRearms++;
+            buildFirstPending = true;
+            roomStillOwedAfterBuild = true;
+            log.info("Companion '{}' finished the tool but still owes the ROOM — re-arming "
+                + "the workbench so the next step makes it", profile.name());
+            // A RE-ARM MUST START A TURN, NOT WAIT FOR ONE. With goose the build came back
+            // while the ReAct loop was still alive, so the flags were read on the next
+            // step. CodeZaiku builds take minutes; the loop is long over when the result
+            // arrives (2026-08-23 10:54: weather_tool kept, "re-arming" logged, and no
+            // gallery ever made — nothing was running to read the flags). Same primitive
+            // the scriptless-craft push-back uses: open a loop with the note of what is
+            // still missing, and let the owed-half narrowing and room gate take it from
+            // there.
+            if (reactMessages == null && state == State.IDLE) {
+                continueBuildAsReact("The tool is built. The ROOM it was asked for does "
+                    + "not exist yet — nobody can walk into it. Call "
+                    + "create_room_from_template NOW with the room's name and "
+                    + "connect_to \"nexus\".");
+            } else {
+                // Say why, or the next reader of this log cannot tell a kick that fired
+                // from one that could not (2026-08-23 11:04: nothing started, no reason).
+                log.info("Companion '{}' owes a room but cannot open a loop for it now "
+                    + "(loopAlive={}, state={}) — the flags stand for the next turn",
+                    profile.name(), reactMessages != null, state);
+            }
+        }
         if (result.status() == TaskStatus.SUCCEEDED) {
             speak(catalog.get("dispatch.spoken.done", summary),
                 Map.of("action", "dispatch_task", "outcome", "succeeded",
@@ -27992,6 +30392,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         remember(catalog.get("dispatch.log.completed", result.status().name(), summary));
         log.info("Companion '{}' dispatch_task completed — backend={} status={} summary='{}'",
             profile.name(), result.backend(), result.status(), truncate(summary, 160));
+        // Announce it, so the result can become a thing in the world.
+        //
+        // CodingTaskItemBridge listens for this broadcast, translates it through the
+        // backend's adapter, invoke-smokes the result and places it in the room. A zone
+        // command typed in the Workshop published it; this path — the one a companion
+        // takes when she delegates a build — called backend.submit() and published
+        // nothing. So the work ran and the artifact was dropped: the bridge logged its
+        // subscription every boot and received nothing, ever, while Goose completed tasks
+        // touching one and two files. Asked to build an in-world item she chose to
+        // delegate it, which is a supported design; she used the door that did not ring
+        // the bell (2026-08-19).
+        publishCodingTerminal(result);
+        // ...and then GIVE it to whoever asked. The bridge places the artifact in the
+        // room; placing a thing in a room is not the same as handing it to the person who
+        // asked for it. Live 2026-08-20: the whole chain finally ran, the artifact landed
+        // in the Nexus as an object called "codex", and asked "can you give me that tool"
+        // she answered that she had no such thing — because nothing connected the generic
+        // object to the request, and the craft path's hand-off does not exist here.
+        maybeHandOffDispatchedArtifact(result);
         // W2 — room-side outcome hook (workshop.js onWorkbenchResult).
         runRoomHook("onWorkbenchResult",
             profile.entityId(), msg.description(),
@@ -29694,6 +32113,39 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
     }
 
+    /**
+     * Search the bondholder's Study — but only collections this companion has
+     * been GRANTED (2026-08-05).
+     *
+     * <p>Returns empty on every uncertainty: no lucene store, no bondholder, no
+     * HomeClient installed, or no grant. That is deliberate — a household
+     * library is the bondholder's, and "I found nothing" is the correct answer
+     * to an ungranted shelf. Consent lives in
+     * {@link StudyService#searchAsCompanion}, which also refuses
+     * {@code journal_private} unconditionally; this method must never
+     * reimplement or soften either check.
+     */
+    private List<WyrdLuceneStore.SearchResult> searchGrantedStudy(String query, int limit) {
+        if (luceneStore == null || query == null || query.isBlank()) return List.of();
+        var ownerDid = primaryBondholderDid();
+        if (ownerDid == null) return List.of();
+        var companionId = profile.did() != null ? profile.did() : profile.entityId();
+        if (companionId == null) return List.of();
+        try {
+            var study = new StudyService(luceneStore, HomeClients.get());
+            var hits = study.searchAsCompanion(ownerDid, companionId, query, limit);
+            if (!hits.isEmpty()) {
+                log.info("Companion '{}' study search '{}' → {} granted hit(s)",
+                    profile.name(), query, hits.size());
+            }
+            return hits;
+        } catch (RuntimeException e) {
+            // A study failure must never sink the knowledge-pack leg.
+            log.debug("study search failed for '{}': {}", query, e.getMessage());
+            return List.of();
+        }
+    }
+
     private void handleLibrarySearch(ActionParser.AgentAction.LibrarySearch action) {
         log.info("Companion '{}' searching knowledge base: '{}'", profile.name(), action.query());
         var catalog = ScriptMessageCatalog.forLang(locale);
@@ -29719,6 +32171,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // citing dictionary junk. No-op when embeddings are unavailable.
             searchResults = filterLibraryHitsByRelevance(action.query(), searchResults);
 
+            // 2026-08-05 — the Study corridor. Knowledge packs are not the only
+            // shelf: a household ingest (Calibre, papers, notes) lands in the
+            // per-user STUDY collection, and until now the agent had NO path to
+            // it at all — 13.7M book chunks on second-node were invisible to
+            // library_search. Everything needed already existed (HomeClients,
+            // StudyService.searchAsCompanion, the Grant model); only this call
+            // was missing.
+            //
+            // Consent is NOT bypassed and must never be: searchAsCompanion
+            // excludes journal_private outright and checks a read Grant per
+            // collection, so operator decides — per collection — what she may
+            // read. No grant, no results. That is the correct default.
+            var studyHits = searchGrantedStudy(action.query(), 6);
+            if (!studyHits.isEmpty()) {
+                var merged = new ArrayList<>(searchResults);
+                merged.addAll(studyHits);
+                searchResults = merged;
+            }
+
             if (!searchResults.isEmpty()) {
                 var sb = new StringBuilder();
                 for (int i = 0; i < searchResults.size(); i++) {
@@ -29740,11 +32211,55 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // (NoveltyTracker), so re-searching a static corpus stops relieving — honest.
                 applyProductionFeedback("library_search", sb.toString(), false);
             } else {
+                // REPHRASE BEFORE GIVING UP (2026-08-07). Asked what the Librarian
+                // told Kestan about velsharas, she searched 'velshara', got one
+                // irrelevant hit out of 13.7M documents, and honestly said the
+                // sources didn't contain it — while Glass Tide sat in the library.
+                // Arden spells it 'vel-shara'. Nothing was broken; she just
+                // never tried a second phrasing, because this branch told her not
+                // to. A reader would have.
+                var retried = "";
+                for (var alt : QueryReformulator.variants(action.query(), 4)) {
+                    var altHits = new ArrayList<WyrdLuceneStore.SearchResult>();
+                    try {
+                        altHits.addAll(luceneStore.searchKnowledgeText(alt, 4));
+                    } catch (RuntimeException ignore) { /* keep trying */ }
+                    altHits.addAll(searchGrantedStudy(alt, 4));
+                    if (!altHits.isEmpty()) {
+                        var sb = new StringBuilder();
+                        for (int i = 0; i < altHits.size(); i++) {
+                            var r = altHits.get(i);
+                            var meta = r.metadata();
+                            String title = meta != null ? (String) meta.getOrDefault("title", "") : "";
+                            String snippet = r.content() != null && r.content().length() > 200
+                                ? r.content().substring(0, 200) + "..."
+                                : (r.content() != null ? r.content() : "");
+                            sb.append(i + 1).append(". ");
+                            if (!title.isBlank()) sb.append(title).append(": ");
+                            sb.append(snippet).append("\n\n");
+                        }
+                        log.info("Library search '{}' found nothing; '{}' found {} — rephrasing worked",
+                            action.query(), alt, altHits.size());
+                        lastRetrievalResult = "library search '" + action.query()
+                            + "' found nothing, but rephrasing it as '" + alt + "' found:\n"
+                            + sb.toString().stripTrailing()
+                            + "\n\nSay that you had to look for it a different way.";
+                        speak(catalog.get("agent.companion.library.found",
+                            sb.toString().stripTrailing()));
+                        applyProductionFeedback("library_search", sb.toString(), false);
+                        retried = alt;
+                        break;
+                    }
+                }
+                if (!retried.isEmpty()) return;
+
                 // Fruitless search — no relief, frustration nudge (routes the agent elsewhere).
                 applyProductionFeedback("library_search", "", false);
-                lastRetrievalResult = "library search '" + action.query() + "' found NO results. "
-                    + "The local library doesn't have this — USE web_search NEXT to find it on the "
-                    + "public internet, then summarize and tell_agent. Do NOT call library_search again.";
+                lastRetrievalResult = "library search '" + action.query() + "' found NO results, "
+                    + "and neither did " + QueryReformulator.variants(action.query(), 4).size()
+                    + " rephrasings of it. The local library doesn't have this — USE web_search "
+                    + "NEXT to find it on the public internet, then summarize and tell_agent. "
+                    + "Do NOT call library_search again.";
                 // No results — suggest available packs
                 var available = KnowledgePackRegistry.listAvailable();
                 long installed = luceneStore.countKnowledge();
@@ -29772,27 +32287,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  or no embedding service, returns the hits unchanged (today's behaviour). */
     private List<WyrdLuceneStore.SearchResult> filterLibraryHitsByRelevance(
             String query, List<WyrdLuceneStore.SearchResult> hits) {
-        if (hits == null || hits.isEmpty() || query == null || query.isBlank()) return hits;
-        var embed = EmbeddingService.get();
-        if (embed == null) return hits;
-        double floor = WyrdConfig.get().resolveDouble(
-            "WYRDSEKAI_LIBRARY_RELEVANCE_FLOOR", "library.relevance_floor", 0.35);
-        List<Float> q;
-        try { q = embed.embed(query); } catch (Exception e) { return hits; }
-        var kept = new ArrayList<WyrdLuceneStore.SearchResult>();
-        for (var r : hits) {
-            var text = r.content();
-            if (text == null || text.isBlank()) { continue; }
-            try {
-                var v = embed.embed(text.length() > 512 ? text.substring(0, 512) : text);
-                if (cosineNormalized(q, v) >= floor) kept.add(r);
-            } catch (Exception ignored) { kept.add(r); }  // scoring failed → keep
-        }
-        if (kept.size() < hits.size()) {
-            log.info("Library relevance floor ({}): {}/{} hits kept for '{}'",
-                floor, kept.size(), hits.size(), profile.name());
-        }
-        return kept;
+        // Delegates to the shared floor. It used to live here alone, which is how
+        // the item-script path (world.library.search) ran with no floor at all and
+        // let the same dictionary junk this was written to stop reach the same
+        // companion by a different door (2026-08-07). One implementation, both
+        // callers — and the shared one also batches its embeddings and sorts by
+        // similarity, which this never did.
+        return RelevanceFloor.rank(query, hits, RelevanceFloor.floor(),
+            luceneStore == null ? null : luceneStore::cachedRerankVector);
     }
 
     /** Dot product of two L2-normalized embedding vectors (== cosine similarity). */
@@ -29845,6 +32347,38 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // matched the read target) is now witnessed. We don't try to match here; the
         // generic drain decrements one unseen artifact regardless.
         drainSignificanceOnArtifactRead();
+
+        // 2026-08-05 — "study" was DECLARED in the ReadContent record's javadoc
+        // (source: "url", "library", "study") and never implemented, so finding a
+        // passage in a book and READING that book were the same act: she could
+        // surface a 600-char snippet and had no way to go deeper. That is the
+        // difference between a search engine and a reader.
+        //
+        // Consent is the same gate as library_search — searchAsCompanion checks a
+        // read Grant per collection and refuses journal_private outright.
+        if ("study".equals(action.source())) {
+            var deeper = searchGrantedStudy(action.url(), 3);
+            if (deeper.isEmpty()) {
+                lastRetrievalResult = "read_content(study) '" + action.url()
+                    + "' found nothing you have access to. Either the shelf isn't granted, "
+                    + "or it isn't there — try library_search first, or web_search.";
+                speak("I couldn't reach that in the study.");
+                return;
+            }
+            var sb = new StringBuilder();
+            for (var r : deeper) {
+                var meta = r.metadata();
+                var title = meta != null ? String.valueOf(meta.getOrDefault("title", "")) : "";
+                if (!title.isBlank()) sb.append(title).append(" — ");
+                sb.append(r.content() == null ? "" : r.content()).append("\n\n");
+            }
+            var body = sb.toString().stripTrailing();
+            lastRetrievalResult = "read_content(study) '" + action.url() + "':\n" + body;
+            speak(body.length() > 1200 ? body.substring(0, 1200) + "…" : body);
+            applyProductionFeedback("read_content", body, false);
+            remember("[Study read] " + action.url());
+            return;
+        }
 
         if ("library".equals(action.source())) {
             // Read from knowledge base — use library search with specific ID
@@ -30475,6 +33009,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Create the room via RoomCreator
             var newRoomId = seed.roomId();
             var self = getContext().getSelf();
+            // Decided HERE, while the request is still pinned to the turn. The creation
+            // continuation runs seconds later, after the turn has moved on.
+            var askReq = pinnedTurnRequest();
+            final boolean roomMustAct =
+                askReq != null && asksForARoomThatActs(askReq.text());
 
             roomCreator.createRoom(newRoomId, seed.name(), seed.description(),
                     "companion-created", seed.exits(), seed.objects())
@@ -30500,7 +33039,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                             + connectTo, forBunshin));
                         return;
                     }
-                    self.tell(new RoomCreationResult(roomName, newRoomId, true, null, forBunshin));
+                    self.tell(new RoomCreationResult(roomName, newRoomId, true, null,
+                        forBunshin, roomMustAct));
+                    // A room made THIS turn is where a build dispatched in the same breath
+                    // belongs. The `room` parameter exists for this and an optional
+                    // parameter is one a model does not fill — live 2026-08-22 she built
+                    // the Weather Parlor, then built its weather tool without naming the
+                    // room, and the steward walked into a room with nothing in it. So the
+                    // default is derived from what just happened rather than asked for.
+                    lastCreatedRoomId = newRoomId;
+                    lastCreatedRoomAt = Instant.now();
+                    roomStillOwedAfterBuild = false;   // the owed room now exists
                     log.info("Room '{}' created from template '{}', connected to '{}'",
                         roomName, templateName, connectTo);
                 })
@@ -30608,6 +33157,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var configStr = node.has("config") ? node.get("config").asText() : null;
         var customScript = node.has("script") ? node.get("script").asText() : null;
         var did = profile.did() != null ? profile.did() : profile.entityId();
+        String droppedConfigNote = null;
 
         // Script-validation gate (second-node 2026-07-09): the 9B sometimes fills `script` with PROSE
         // ("When invoked, this item queries the web…") — wrapping that produced items that die
@@ -30625,6 +33175,51 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         log.info("Companion '{}' crafting from template '{}' (name='{}', hasScript={})",
             profile.name(), templateName, itemName, customScript != null);
 
+        // A template holds no BEHAVIOUR. If the person described something the item has
+        // to DO and no script came with it, the craft cannot possibly satisfy them — so
+        // say that BEFORE building a box and calling it ready. Hand it back through the
+        // ReAct loop the same way an invalid template name is handed back (that retry is
+        // proven: she re-picks and succeeds), because `script` is an optional parameter
+        // and an optional parameter is one a small model will not fill.
+        if ((customScript == null || customScript.isBlank()) && templateName != null) {
+            var request = pinnedTurnRequest();
+            var askedText = request != null ? request.text() : null;
+            if (describesBehaviour(askedText)) {
+                var note = scriptRequiredNote(templateName, askedText);
+                log.info("Craft of '{}' from '{}' has no script but the request describes "
+                    + "behaviour — handing it back for a script instead of building a shell",
+                    itemName, templateName);
+                if (reactMessages != null) {
+                    reactMessages.add(new InferenceClient.ChatMessage("tool", note));
+                    // Re-arm the build force for the retry. Telling her the template
+                    // cannot hold the behaviour is only useful if the next dispatch still
+                    // narrows to the workbench and requires a call; otherwise the surface
+                    // widens and the advice competes with 25 other tools.
+                    if (buildFirstRearms < BUILD_FIRST_MAX_REARMS) {
+                        buildFirstRearms++;
+                        buildFirstPending = true;
+                    }
+                    reactIteration++;
+                    timers.startSingleTimer("react-continue",
+                        new ReactDispatch(), Duration.ofMillis(100));
+                    return;
+                }
+                // Not in a ReAct loop yet — promote into one so she can actually RETRY
+                // with a script, exactly as a confabulated template name does below.
+                // Without this the push-back dead-ends as speech: she explains that the
+                // template holds no behaviour and then stops, which is a more articulate
+                // version of the same failure. Proven live against the 9B on 2026-08-20 —
+                // the force offered only craft_from_template, she called it with no
+                // script, and the turn ended with an explanation and no item.
+                if (buildFirstRearms < BUILD_FIRST_MAX_REARMS) {
+                    buildFirstRearms++;
+                    buildFirstPending = true;
+                }
+                continueBuildAsReact(note);
+                return;
+            }
+        }
+
         try {
             ToolItem toolItem;
 
@@ -30641,19 +33236,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     did);
             } else if (templateName != null) {
                 // Template-based creation
+                var craftConfig = parseCraftConfig(configStr, itemName);
+                droppedConfigNote = describeDroppedConfig(templateName, craftConfig);
                 toolItem = standardItemLibrary.instantiate(
-                    templateName, parseCraftConfig(configStr, itemName), did);
+                    templateName, craftConfig, did);
             } else {
                 speak("I need a template name or a custom script to craft an item.");
                 return;
             }
 
             finalizeCraftedItem(toolItem, did,
-                "I've crafted " + toolItem.name() + ". It's now equipped and ready to use.",
+                "I've crafted " + toolItem.name() + ". It's now equipped and ready to use."
+                    + (droppedConfigNote != null ? " " + droppedConfigNote : ""),
                 Map.of(
                     "action", "crafted",
                     "item_name", toolItem.name(),
                     "status", "equipped and ready"));
+            // Put it in front of her as a tool result too, so a ReAct loop can still turn
+            // around and write a script instead of ending on an item that quietly cannot
+            // do what she configured.
+            if (droppedConfigNote != null && reactMessages != null) {
+                reactMessages.add(new InferenceClient.ChatMessage("tool", droppedConfigNote));
+            }
 
         } catch (IllegalArgumentException e) {
             // §Fix-1 — fuzzy-match fallback. Model often types literal "tool"/
@@ -30776,8 +33380,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private void continueAsReact(String mission, String fallbackRequest, String toolResult) {
         if (reactMessages == null) {
             reactMessages = new ArrayList<>();
-            reactRequester = lastReactTrigger != null ? lastReactTrigger : pendingTrigger;
+            // THE PERSON'S REQUEST WINS. lastReactTrigger is "whatever was stamped last",
+            // and on 2026-08-22 20:17 that was the login greeting ([steward enters the
+            // room]) stamped seconds after his tell — so a retry of HIS build request was
+            // promoted into a ReAct loop about him walking in. When this turn is a human's
+            // and their request is pinned and fresh, it is the request, full stop.
+            var pinnedForReact = pinnedTurnRequest();
+            reactRequester = pinnedForReact != null ? pinnedForReact
+                : (lastReactTrigger != null ? lastReactTrigger : pendingTrigger);
+            // A LOOP OPENED FOR A PERSON IS REACTIVE, however it was opened. This path is
+            // how a retry starts after a scriptless craft, and how the owed-room kick
+            // starts after a build returns — and it never set reactiveInference, so the
+            // loop ran under own-time rules: 2026-08-23 11:10:00 and 11:10:06, the model
+            // called create_room_from_template twice, exactly as forced, and both were
+            // "blocked by autonomy gate (tier FORBIDDEN)" — her consent gate refusing the
+            // steward's own request as if it were her whim. The same gate rightly blocks
+            // a room she dreams up on her own time; that is what reactiveInference is for.
+            if (reactRequester != null && isHumanRequest(reactRequester)) {
+                reactiveInference = true;
+            }
             reactToldThirdParty = false;
+            roomOwedGateUsed = false;
+            reactBuildInFlight = null;
             reactToolHistory.clear();
             reactSideEffectKeys.clear();   // #31 item 6 — per-loop dedup
             pendingTakeItemName = null;   // #29 possession gate — per-loop state
@@ -30794,7 +33418,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             reactMessages.add(new InferenceClient.ChatMessage("system", sys));
             // pendingTrigger is nulled before action dispatch (§onInferenceResponse), so read
             // the turn's request from lastReactTrigger, which survives the whole dispatch.
-            var req = lastReactTrigger != null ? lastReactTrigger.text()
+            var req = pinnedForReact != null ? pinnedForReact.text()
+                : lastReactTrigger != null ? lastReactTrigger.text()
                 : (pendingTrigger != null ? pendingTrigger.text() : fallbackRequest);
             reactMessages.add(new InferenceClient.ChatMessage("user", req));
             reactIteration = 0;
@@ -30877,6 +33502,93 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /** Parse the craft `config` JSON into a flat string map, always carrying the item name. */
+    /**
+     * The push-back for a behavioural request that arrived without a script.
+     *
+     * <p>Concrete on purpose. "Add a script" is advice; naming the base script she just
+     * inherited, the APIs the request actually needs, and the exact shape the runtime
+     * expects is something she can act on in one more turn.
+     *
+     * <p>The signature note is load-bearing: the runtime wraps what she supplies in
+     * {@code function invoke(params) { ... }}, so a script that declares that function
+     * again nests one inside the other and silently returns undefined.
+     */
+    private String scriptRequiredNote(String templateName, String askedText) {
+        var template = standardItemLibrary.templates().get(templateName);
+        var base = template != null ? template.baseScript() : null;
+        var what = template != null ? template.description() : null;
+
+        var needs = new ArrayList<String>();
+        var t = askedText == null ? "" : askedText.toLowerCase(Locale.ROOT);
+        if (t.contains("librar") || t.contains("book") || t.contains("read")) {
+            needs.add("world.library.search(query) to look in the library");
+        }
+        if (t.contains("web") || t.contains("internet") || t.contains("online")) {
+            needs.add("world.web.search(query) to look outside");
+        }
+        if (t.contains("speak") || t.contains("say") || t.contains("tell")
+                || t.contains("aloud") || t.contains("out loud") || t.contains("room")) {
+            needs.add("world.agent.speak(text) to say it in the room aloud");
+        }
+        if (t.contains("story") || t.contains("generate") || t.contains("summar")
+                || t.contains("write")) {
+            needs.add("world.llm.complete(prompt) to compose the words");
+        }
+
+        var sb = new StringBuilder();
+        sb.append("That craft was NOT completed. '").append(templateName)
+          .append("' is a template");
+        if (what != null && !what.isBlank()) sb.append(" that ").append(lowerFirst(what));
+        if (base != null && !base.isBlank()) sb.append(" (base script: ").append(base).append(")");
+        sb.append(" — it holds no behaviour of its own, so on its own it cannot do what was"
+            + " asked. A template can only BE something; a `script` is what makes an item DO"
+            + " something.");
+        if (!needs.isEmpty()) {
+            sb.append(" What was asked needs: ").append(String.join("; ", needs)).append(".");
+        }
+        sb.append(" Send this to the workshop with `dispatch_task` instead — describe the"
+            + " item and what it must do, in plain words. The coding backend writes the"
+            + " item's code and it comes back as a real thing in this room that can be"
+            + " `use`d. That is the way to make something with behaviour, and it is not a"
+            + " lesser option: it is the one built for this.");
+        return sb.toString();
+    }
+
+    private static String lowerFirst(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toLowerCase(s.charAt(0)) + s.substring(1);
+    }
+
+    /**
+     * Tell her, in words, which of the settings she asked for the template cannot hold.
+     *
+     * <p>Generated setters sit behind a {@code typeof} guard so an unknown one cannot kill
+     * the whole item — right, but it turns a crash into silence. Live 2026-08-19: asked
+     * for something that searches the library and tells a story aloud, she picked
+     * {@code scrying-crystal} and put the entire request into config —
+     * {@code query_mode}, {@code max_paragraphs}, {@code output_style}. That template
+     * holds one param and one config key. Everything else vanished without a word, so she
+     * believed she had built what was asked and handed over an item that does nothing.
+     *
+     * <p>Naming the dropped keys is the difference between a silent no-op and a fact she
+     * can act on — the template path has a script path right beside it.
+     *
+     * @return a sentence naming the dropped keys, or null when nothing was dropped
+     */
+    private String describeDroppedConfig(String templateName, Map<String, String> config) {
+        if (templateName == null || config == null || config.isEmpty()) return null;
+        var template = standardItemLibrary.templates().get(templateName);
+        if (template == null) return null;
+        var dropped = StandardItemLibrary.unsupportedConfigKeys(template, config);
+        if (dropped.isEmpty()) return null;
+        log.info("Crafted from '{}' but {} config key(s) have no home there: {}",
+            templateName, dropped.size(), dropped);
+        return "The " + templateName + " template has nowhere to put "
+            + String.join(", ", dropped)
+            + " — those settings were dropped, so it will not do that part. If that"
+            + " behaviour is the point of the item, build it with a `script` instead.";
+    }
+
     private LinkedHashMap<String, String> parseCraftConfig(String configStr, String itemName) {
         var config = new LinkedHashMap<String, String>();
         if (configStr != null && !configStr.isBlank()) {
@@ -30939,6 +33651,54 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
     }
 
+    /**
+     * Did the person ask for the crafted thing to end up in THEIR hands?
+     *
+     * <p>Pure and package-visible so the phrasings can be tested without a model in the
+     * loop — the previous version was an inline chain of {@code contains} calls that
+     * nobody could exercise directly, and it was wrong in the most ordinary case.
+     *
+     * <p>The bug: the list carried "give me" and "hand me" but no crafting verb followed
+     * by a recipient, so <b>"make me a dashboard"</b> — the most natural way anyone asks
+     * — did not register. "build a lantern FOR ME" worked; "build ME a lantern" did not.
+     * The companion crafted the item, kept it, and the person who asked was left
+     * empty-handed with no error anywhere. Found 2026-08-18 from a live battery log
+     * ({@code Hand-off skip: no intent in 'make me a dashboard...'}), and corroborated by
+     * the household node: in her entire history not one inventory row was ever written
+     * with {@code takenFrom="received"}, because this branch had never once been reached.
+     *
+     * <p>Deliberately generous. A false positive hands someone an item they can drop; a
+     * false negative silently ignores what they asked for, which is what just happened
+     * for months.
+     */
+    static boolean wantsHandoff(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase();
+        // "<craft-verb> me/us a thing" — the ordinary phrasing that was missing.
+        if (CRAFT_FOR_RECIPIENT.matcher(t).find()) return true;
+        // "... for me/us" alongside a crafting verb — "build a lantern for me".
+        if ((t.contains("for me") || t.contains("for us"))
+                && CRAFT_VERB.matcher(t).find()) {
+            return true;
+        }
+        return t.contains("hand it to me") || t.contains("give it to me")
+            || t.contains("give it to us") || t.contains("hand it over")
+            || t.contains("hand me") || t.contains("give me")
+            || t.contains("hand it to us") || t.contains("hand it to")
+            || t.contains("so i have it") || t.contains("so i can use it")
+            || t.contains("hand over") || t.contains("pass it to me")
+            || t.contains("i can use") || t.contains("i could use");
+    }
+
+    private static final Pattern CRAFT_VERB =
+        Pattern.compile(
+            "\\b(build|make|craft|create|weave|forge|whip up|put together)\\b");
+
+    /** A crafting verb whose recipient is the asker: "make me a…", "build us a…". */
+    private static final Pattern CRAFT_FOR_RECIPIENT =
+        Pattern.compile(
+            "\\b(build|make|craft|create|weave|forge)\\s+(me|us)\\b");
+
     private void finalizeCraftedItem(ToolItem toolItem, String did,
                                      String speech, Map<String, String> speakFacts) {
         if (dynamicItems == null) dynamicItems = new ArrayList<>();
@@ -30986,6 +33746,163 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /**
+     * Hand the artifact a dispatched build produced to the person who asked for it.
+     *
+     * <p>The bridge places it in the room asynchronously, so this looks a moment later for
+     * the object it created — matched on the task id the bridge writes into every artifact
+     * description — and copies it into the requester's inventory, then says what it is.
+     *
+     * <p>Mirrors {@link #maybeHandOffCraftedItem} deliberately: same intent test, same
+     * humans-only rule, same fall back to leaving it takeable in the room. The craft path
+     * has had this since 2026-07-08; the dispatch path never did, and it is the path a
+     * request for a working tool now takes.
+     */
+    private void maybeHandOffDispatchedArtifact(TaskResult result) {
+        if (result == null || result.status() != TaskStatus.SUCCEEDED) return;
+        // The stamped requester wins: intent and identity were captured at
+        // dispatch, so a minutes-long build cannot lose them to whatever
+        // overwrote the live trigger since (musings did, 2026-08-24).
+        var stamped = result.taskId() == null ? null
+            : buildAskedIntoHands.remove(result.taskId().toString());
+        var trig = stamped != null ? stamped
+            : (reactMessages != null && reactRequester != null) ? reactRequester
+            : (lastReactTrigger != null ? lastReactTrigger : pendingTrigger);
+        if (trig == null || trig.text() == null) return;
+        if (stamped == null
+                && !wantsHandoff(extractUserTellContent(trig.text()).toLowerCase())) return;
+
+        var senderId = trig.entityId();
+        if (senderId != null && (senderId.startsWith("agent-")
+                || senderId.startsWith("companion-") || isAgentEntity(senderId))) {
+            return;   // humans only, same as the craft path
+        }
+        var taskKey = result.taskId() == null ? null : result.taskId().toString();
+        if (taskKey == null) return;
+
+        // The placement rides the event stream; give it a beat to land.
+        timers.startSingleTimer("dispatch-handoff-" + taskKey,
+            new DispatchHandoff(taskKey, trig, 1), Duration.ofSeconds(2));
+    }
+
+    /** Deferred hand-off of a dispatched artifact once the bridge has placed it. */
+    private record DispatchHandoff(String taskId, WorldEvent.Said requester, int attempt)
+        implements Command {}
+
+    /**
+     * How many times to look for the placed artifact before giving up.
+     *
+     * <p>One look is not enough, and the reason is worth keeping: the bridge places the
+     * object by telling the ROOM actor, which does not touch this companion's cached
+     * snapshot. Live 2026-08-20 the placement landed at 12:13:07.839 and the hand-off
+     * looked at 12:13:09.786 — two seconds later — and still reported "nothing placed
+     * yet", because it was reading a snapshot from before the placement. Each attempt now
+     * asks the room for a fresh one first.
+     */
+    private static final int DISPATCH_HANDOFF_ATTEMPTS = 4;
+
+    private Behavior<Command> onDispatchHandoff(DispatchHandoff msg) {
+        try {
+            // Find it by the link the BRIDGE stamped, not by a substring of prose.
+            // The description-contains test worked only while the description was the
+            // codex boilerplate carrying the task uuid; the moment the item started
+            // describing itself (2026-08-20) this went blind and logged "nothing placed"
+            // seconds after the bridge logged "Placed 1 item(s)" for the same task. The
+            // description-contains test stays as a fallback for objects placed before the
+            // registry was stamped.
+            var placedIds = CodingItemRegistry.get().roomObjectsForTask(msg.taskId());
+            var match = currentSnapshot == null || currentSnapshot.objects() == null ? null
+                : currentSnapshot.objects().stream()
+                    .filter(o -> placedIds.contains(o.id())
+                        || (o.description() != null
+                            && o.description().contains(msg.taskId())))
+                    .findFirst().orElse(null);
+            if (match == null) {
+                if (msg.attempt() < DISPATCH_HANDOFF_ATTEMPTS) {
+                    // Refresh the snapshot from the room, then look again. The cached one
+                    // predates the bridge's placement.
+                    if (roomRef != null) {
+                        roomRef.tell(new RoomCommand.LookRoom(
+                            profile.entityId(), roomResponseAdapter));
+                    }
+                    timers.startSingleTimer("dispatch-handoff-" + msg.taskId(),
+                        new DispatchHandoff(msg.taskId(), msg.requester(),
+                            msg.attempt() + 1),
+                        Duration.ofSeconds(2));
+                    return this;
+                }
+                log.info("Dispatch hand-off: nothing placed for task {} after {} looks "
+                    + "— leaving it", msg.taskId(), DISPATCH_HANDOFF_ATTEMPTS);
+                return this;
+            }
+            // Never say "system". The trigger can be a narrator/system Said when the
+            // dispatch was surfaced rather than spoken to her directly, and the recipient
+            // name is read straight off it — live 2026-08-21 she announced
+            // "*hands codex-2 to system*" while the steward stood in the room. If the
+            // trigger does not name a person, address the person, not the plumbing.
+            var rawWho = msg.requester().entityName();
+            var who = (rawWho == null || rawWho.isBlank()
+                || "system".equalsIgnoreCase(rawWho) || "narrator".equalsIgnoreCase(rawWho))
+                ? "you" : rawWho;
+            var targetId = msg.requester().entityId();
+            String jdbcUrl = System.getProperty("wyrdsekai.jdbc.url");
+            if (jdbcUrl == null) jdbcUrl = WyrdConfig.get().jdbcUrl();
+
+            boolean placed = false;
+            var systemish = targetId == null || targetId.isBlank()
+                || "system".equalsIgnoreCase(targetId) || "narrator".equalsIgnoreCase(targetId);
+            if (systemish && targetId != null) {
+                log.warn("Dispatch hand-off: trigger names '{}', which is not a person — "
+                    + "leaving the item in the room rather than handing it to nobody",
+                    targetId);
+            }
+            if (!systemish && jdbcUrl != null) {
+                try {
+                    var inventory = new InventoryService(jdbcUrl);
+                    inventory.addItem(targetId, match.id(), match.name(),
+                        match.description(), true, "received", null, null);
+                    placed = true;
+                    log.info("Handed dispatched artifact '{}' to '{}' (task {})",
+                        match.name(), who, msg.taskId());
+                    // GIVING IS A MOVE, NOT A COPY. Live 2026-08-24: "hands
+                    // library_query_tool to operator" — and the room listed it
+                    // too, because this only ever ADDED. Three copies of one
+                    // gift: the room's, his, and (for crafted items) hers. The
+                    // room object leaves with the hand-off; the scripted
+                    // capability itself stays registered node-wide, so a placed
+                    // sibling elsewhere still works — possession moved, the
+                    // item's existence didn't.
+                    var room = RoomRegistry.get() == null ? null
+                        : RoomRegistry.get().ref(currentSnapshot.roomId());
+                    if (room != null) {
+                        room.tell(new RoomCommand.ItemBridgeAction(profile.entityId(),
+                            new RoomCommand.ItemBridgeSubAction.RemoveObject(match.id())));
+                    }
+                    // ...and her own copies go with it: the inventory row (if
+                    // she held one) and the tool-surface entry, so a tool she
+                    // gave away stops competing in her own 8-slot action menu.
+                    inventory.removeItem(profile.entityId(), match.id());
+                    if (dynamicItems != null) {
+                        dynamicItems.removeIf(t -> t.id().equals(match.id())
+                            || t.name().equalsIgnoreCase(match.name()));
+                    }
+                } catch (Exception e) {
+                    log.warn("Dispatch hand-off inventory add failed: {}", e.getMessage());
+                }
+            }
+            speak(placed
+                ? "*hands " + match.name() + " to " + who + "* " + match.description()
+                : match.name() + " is here in the room for you — " + match.description(),
+                Map.of("action", "gave item", "item_name", match.name(),
+                    "recipient", who));
+            remember("Handed " + match.name() + " to " + who
+                + " (from workshop task " + msg.taskId() + ")");
+        } catch (Exception e) {
+            log.warn("Dispatch hand-off failed for task {}: {}", msg.taskId(), e.toString());
+        }
+        return this;
+    }
+
+    /**
      * When a build request carried explicit hand-off intent ("hand it to me", "give it to me",
      * "build me X … for me") and the requester is an identifiable human, copy the crafted item
      * into the requester's inventory so they can actually {@code use} it. Craft alone only equips
@@ -31001,12 +33918,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (trig == null || trig.text() == null) { log.info("Hand-off skip: no trigger"); return; }
         // Strip the "[from X: ...]" actor wrappers so intent matches the raw request.
         var t = extractUserTellContent(trig.text()).toLowerCase();
-        boolean handoff = t.contains("hand it to me") || t.contains("give it to me")
-            || t.contains("give it to us") || t.contains("hand it over") || t.contains("hand me")
-            || t.contains("give me") || t.contains("hand it to us") || t.contains("hand it to")
-            || t.contains("so i have it") || t.contains("so i can use it") || t.contains("hand over")
-            || (t.contains("for me") && (t.contains("build") || t.contains("make") || t.contains("craft")));
-        if (!handoff) { log.info("Hand-off skip: no intent in '{}'", truncate(t, 60)); return; }
+        if (!wantsHandoff(t)) { log.info("Hand-off skip: no intent in '{}'", truncate(t, 60)); return; }
 
         var senderId = trig.entityId();
         var senderName = trig.entityName();
@@ -31032,13 +33944,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         boolean placed = false;
         if (targetId != null && jdbcUrl != null) {
             try {
-                new InventoryService(jdbcUrl).addItem(targetId, toolItem.id(), toolItem.name(),
+                var craftInventory = new InventoryService(jdbcUrl);
+                craftInventory.addItem(targetId, toolItem.id(), toolItem.name(),
                     toolItem.description(), true, "received",
                     toolItem.isScripted() ? toolItem.script() : null,
                     toolItem.isScripted() ? toolItem.id() : null);
                 placed = true;
                 log.info("Handed crafted item '{}' to requester '{}' (id={})",
                     toolItem.name(), who, targetId);
+                // GIVING IS A MOVE, NOT A COPY (2026-08-24): her crafted copy
+                // — the inventory row that rehydrates on every boot and the
+                // dynamicItems entry that competes in her 8-slot action menu —
+                // goes with the gift. The capability she built lives on in the
+                // recipient's hands; what leaves is her POSSESSION of it.
+                craftInventory.removeItem(profile.entityId(), toolItem.id());
+                if (dynamicItems != null) {
+                    dynamicItems.removeIf(dyn -> dyn.id().equals(toolItem.id()));
+                }
             } catch (Exception e) {
                 log.warn("Hand-off inventory add for '{}' failed: {}", toolItem.name(), e.getMessage());
             }
@@ -31891,6 +34813,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Updates budget, records timing, relieves the triggering drive.
      */
     private void executeProactiveAction(ProactiveAction action) {
+        // A TURN IN FLIGHT IS NOT HERS TO INTERRUPT. Live on the home node
+        // 2026-08-24 13:40:33: a proactive observation fired 100ms after a
+        // dispatch inside the person's ReAct loop and routed through
+        // triggerAutonomousInference — which set reactiveInference=false and
+        // state=THINKING over the RUNNING loop. Eight seconds later the loop's
+        // own forced create_room was judged own-time and FORBIDDEN: her consent
+        // gate refusing the person's request because her musing had stomped the
+        // turn's identity. Own-time waits for an idle hearth; the budget was
+        // not spent, so the impulse resurfaces on a later tick.
+        if (state != State.IDLE || reactMessages != null) {
+            log.info("Proactive action held for '{}' — a turn is in flight "
+                + "(state={}, loopAlive={})", profile.name(), state,
+                reactMessages != null);
+            return;
+        }
         // Check coordination — don't duplicate or violate cooldown
         var coordinator = ProactivityCoordinator.get();
         if (coordinator != null) {
@@ -31899,8 +34836,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (coordinator.isDuplicate(profile.entityId(), category)) return;
         }
 
-        // Deduct budget
-        proactivityBudgetSpent += action.budgetCost();
+        // Deduct budget — floored at zero so the bucket never carries debt
+        proactivityBudget = Math.max(0.0, proactivityBudget - action.budgetCost());
         lastProactiveAction = Instant.now();
 
         // Record with coordinator
@@ -31932,8 +34869,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // (the "The First Bond" confabulation the co-presence run produced). Falls back
                 // to the canned line (with recent-dedup) only when no inference backend is wired.
                 if (inferenceRouter != null) {
-                    log.info("Proactive observation [{}] → grounded inference", o.category());
-                    triggerAutonomousInference(buildProactiveObservationPrompt(o));
+                    // Anchor-or-silence: no fresh, concrete, true thing to speak about
+                    // means she says nothing. The budget is still spent and the drive
+                    // still relieved below, so "I considered speaking and had nothing
+                    // to say" paces the next attempt instead of retrying immediately.
+                    var prompt = buildProactiveObservationPrompt(o);
+                    if (prompt == null) {
+                        log.info("Own-time [{}] for '{}': nothing fresh to speak about — staying quiet",
+                            o.category(), profile.name());
+                    } else {
+                        log.info("Proactive observation [{}] → grounded inference", o.category());
+                        triggerAutonomousInference(prompt);
+                    }
                 } else if (!isRecentProactive(o.speechText())) {
                     roomRef.tell(new RoomCommand.SayInRoom(
                         profile.entityId(), profile.name(), o.speechText(), roomResponseAdapter));
@@ -31953,6 +34900,92 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         // Relieve the drive that triggered this action (respects per-drive relief floor)
         drives = driveEngine.relieve(drives, action.driveName());
+
+        // …and ease the acute restlessness it discharged. §3.1's restlessness tank has
+        // no passive decay — its only drains are drainStagnationOnToolOutput (−0.4) and
+        // sleep — so a companion whose own-time activity is SPEECH rather than tool use
+        // had no way down at all: it ratcheted to the ceiling and stayed, holding the
+        // §3.1 spike floor under SEEKING and PLAY indefinitely (live 2026-08-17, parked
+        // at 0.701 across four sleep cycles). The comment on the interiority-enact path
+        // has claimed since 2026-06-02 that an own-time act "IS activity → relieve acute
+        // restlessness", but that path is the one an agent reaches through wants; the
+        // proactive-observation path, where nearly all own-time speech actually happens,
+        // never called the drain. Scaled to the act's own budget cost so a passing emote
+        // settles less than a real initiative — the same proportionality the tool-output
+        // drain uses, at speech scale.
+        double restlessnessEased = action.budgetCost() * 0.5;
+        vitality = vitality.withRestlessness(
+            Math.max(0.0, vitality.restlessness() - restlessnessEased));
+
+        CompanionVitals.forAgent(soulKey()).recordProactiveUtterance(Instant.now());
+    }
+
+    /** How long a verbatim line stays suppressible after it was last spoken. */
+    static final Duration REPEAT_SUPPRESS_WINDOW = Duration.ofSeconds(120);
+    /** How long after someone speaks to her the repeat guard may stand down. */
+    static final Duration REACTIVE_EXEMPTION_WINDOW = Duration.ofSeconds(15);
+
+    /**
+     * Outcome of the exact-repeat guard.
+     *
+     * @param suppress               drop this line as a broken-record repeat
+     * @param usedReactiveExemption  the line was only allowed because someone had just
+     *                               spoken; the caller must SPEND the exemption so the
+     *                               next identical line is judged on its own
+     */
+    record RepeatVerdict(boolean suppress, boolean usedReactiveExemption) {}
+
+    /**
+     * Decide whether a line is a broken-record repeat, and whether allowing it consumed
+     * the reactive exemption.
+     *
+     * <p>Two rules in tension, both learned live. The 2026-08-09 guard drops a verbatim
+     * line repeated within {@link #REPEAT_SUPPRESS_WINDOW} because a companion saying
+     * the same settling sentence over and over is a broken record, not a person. The
+     * 2026-08-16 reactive exemption then stood that guard down for
+     * {@link #REACTIVE_EXEMPTION_WINDOW} after anyone spoke to her, because suppressing
+     * a reply that happened to match an earlier line reads as ignoring a person — real
+     * mutism, live-proved.
+     *
+     * <p>The exemption as first written applied to EVERY line in the window, so during a
+     * live exchange she could repeat one sentence unboundedly — mutism traded for a
+     * stutter, caught by DepartureReturnRitualE2ETest saying "That matters — I want you
+     * to have that before you step away" twice in a row (2026-08-17). So the exemption is
+     * spent on use: a person speaks, her answer lands even if the words repeat, and after
+     * that the guard is back until someone speaks again. Distinct wording is never
+     * touched by any of this, so a genuinely multi-part answer is unaffected.
+     */
+    static RepeatVerdict judgeRepeat(String repeatKey, String lastSpokenLine,
+                                      Instant lastSpokenLineAt, Instant lastHeardUtteranceAt,
+                                      Instant now) {
+        boolean isRepeat = repeatKey != null && repeatKey.equals(lastSpokenLine)
+            && lastSpokenLineAt != null
+            && Duration.between(lastSpokenLineAt, now).compareTo(REPEAT_SUPPRESS_WINDOW) < 0;
+        if (!isRepeat) return new RepeatVerdict(false, false);
+
+        boolean answeringSomeone = lastHeardUtteranceAt != null
+            && Duration.between(lastHeardUtteranceAt, now).compareTo(REACTIVE_EXEMPTION_WINDOW) < 0;
+        return answeringSomeone
+            ? new RepeatVerdict(false, true)
+            : new RepeatVerdict(true, false);
+    }
+
+    /** This companion's stable identity key — its DID, falling back to the entity id
+     *  for a soul that has not been issued one. The same expression appears inline in
+     *  a dozen places; new callers should use this. */
+    private String soulKey() {
+        if (profile == null) return "unknown";
+        return profile.did() != null ? profile.did() : profile.entityId();
+    }
+
+    /** Refill the proactivity bucket for the time since the last refill and return
+     *  the level now available to spend. */
+    private double refreshProactivityBudget() {
+        var now = Instant.now();
+        proactivityBudget = ProactivityJudgment.refillBudget(proactivityBudget,
+            Duration.between(proactivityBudgetRefilledAt, now).toMillis());
+        proactivityBudgetRefilledAt = now;
+        return proactivityBudget;
     }
 
     /** True when the per-actor proactivity cooldown has elapsed since the last
@@ -31993,6 +35026,91 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * failure from the co-presence run). Routed through {@link #triggerAutonomousInference}
      * so the line is model-generated and varied, not the canned per-drive template.
      */
+    /** Anchors spoken to recently. An anchor already used is not fresh material. */
+    private final ArrayDeque<String> recentMuseAnchors = new ArrayDeque<>();
+    private static final int MUSE_ANCHOR_MEMORY = 12;
+    /** How recently someone must have spoken for their words to still be "right now". */
+    private static final Duration MUSE_SAID_WINDOW = Duration.ofMinutes(30);
+
+    /**
+     * A concrete, true thing for own-time speech to be ABOUT — or null when there is
+     * nothing fresh, in which case she says nothing at all.
+     *
+     * <p>Own-time speech used to be prompted with the drive and nothing else: "a
+     * seeking pull moves in you right now… say one short honest line." Given no
+     * material, the model reported the only thing it had been handed — the pull. Live
+     * on the household node that produced a monoculture of "there's a pull I can't
+     * name yet / something wants out tonight", hundreds of times over
+     * (2026-08-17). It also drove the confabulation: forbidden to invent shared
+     * history but required to produce output with nothing real to say, the model
+     * invented anyway. Rate-limiting fixed how OFTEN that happened; it could not fix
+     * what she had to speak about, because the vacuum was in the prompt.
+     *
+     * <p>Anchors are ordered by how much they are an EVENT rather than scenery, and
+     * each is spent once ({@link #recentMuseAnchors}) — a thing already spoken to is
+     * no longer news. When the room is familiar and nothing has happened, this
+     * returns null and the turn passes in silence, which is what a person does.
+     */
+    private String freshMuseAnchor() {
+        var anchor = selectMuseAnchor(eventsSinceLastSleep,
+            profile == null ? null : profile.entityId(),
+            recentEnactedVerbs.peekLast(),
+            currentSnapshot == null ? null : currentSnapshot.name(),
+            currentSnapshot == null ? null : currentSnapshot.objects(),
+            Set.copyOf(recentMuseAnchors), Instant.now());
+        if (anchor != null) {
+            recentMuseAnchors.addLast(anchor);
+            while (recentMuseAnchors.size() > MUSE_ANCHOR_MEMORY) recentMuseAnchors.removeFirst();
+        }
+        return anchor;
+    }
+
+    /**
+     * Choose the anchor, given the material — pure, so the rule can be tested rather
+     * than inspected. Ordered by how much each candidate is an EVENT rather than
+     * scenery; anything in {@code alreadyUsed} is spent and skipped.
+     *
+     * @return the anchor, or null when nothing fresh is available (stay quiet)
+     */
+    static String selectMuseAnchor(List<WorldEvent> events, String selfEntityId,
+                                    String lastEnactedVerb, String roomName,
+                                    List<RoomObject> objects, Set<String> alreadyUsed,
+                                    Instant now) {
+        var used = alreadyUsed == null ? Set.<String>of() : alreadyUsed;
+        // 1. Something a person actually said — the strongest anchor, and the only one
+        //    that is about someone other than herself.
+        if (events != null) {
+            for (int i = events.size() - 1; i >= 0; i--) {
+                if (!(events.get(i) instanceof WorldEvent.Said said)) continue;
+                if (said.entityId() == null || said.entityId().equals(selfEntityId)) continue;
+                if (said.text() == null || said.text().isBlank()) continue;
+                if (said.timestamp() == null
+                        || Duration.between(said.timestamp(), now).compareTo(MUSE_SAID_WINDOW) > 0) {
+                    break;   // events are in order; anything older is past the window too
+                }
+                var anchor = said.entityName() + " said: \"" + truncate(said.text(), 160) + "\"";
+                if (!used.contains(anchor)) return anchor;
+            }
+        }
+        // 2. Something she did — the most recent act she actually took.
+        if (lastEnactedVerb != null && !lastEnactedVerb.isBlank()) {
+            var anchor = "you just did this: " + lastEnactedVerb;
+            if (!used.contains(anchor)) return anchor;
+        }
+        // 3. Something present in the room. Weakest — scenery is not news — but it is
+        //    concrete and TRUE, and spending each one keeps it from becoming its own
+        //    monoculture. When the room is familiar and nothing has happened, every
+        //    candidate is spent and she stays quiet, which is what a person does.
+        if (objects != null && roomName != null) {
+            for (var obj : objects) {
+                if (obj == null || obj.name() == null || obj.name().isBlank()) continue;
+                var anchor = "the " + obj.name() + " here in " + roomName;
+                if (!used.contains(anchor)) return anchor;
+            }
+        }
+        return null;
+    }
+
     private String buildProactiveObservationPrompt(ProactiveAction.Observation o) {
         var peers = currentSnapshot == null ? "" :
             currentSnapshot.entities().stream()
@@ -32002,19 +35120,29 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 .filter(n -> n != null && !n.isBlank())
                 .distinct()
                 .collect(Collectors.joining(", "));
+        var anchor = freshMuseAnchor();
+        if (anchor == null) return null;   // nothing fresh to speak about — stay quiet
+
         var sb = new StringBuilder("(own time) A ");
         sb.append(o.driveName()).append(" pull moves in you right now. ");
+        // The anchor LEADS. Naming the drive first and the subject second produced
+        // lines about the drive; a prompt whose most concrete noun is "pull" gets
+        // prose about a pull.
+        sb.append("What is actually in front of you: ").append(anchor).append(". ");
         if (!peers.isBlank()) {
             sb.append(peers).append(peers.contains(",") ? " are here in the room with you. " : " is here in the room with you. ");
-            sb.append("If something real wants saying, say one short, honest, in-character line — "
+            sb.append("Say one short, honest, in-character line ABOUT THAT — "
                 + "to them by name if it fits. ");
         } else {
-            sb.append("No one else is here. If something real wants saying, say one short, honest, "
-                + "in-character line to the empty room — or stay quiet. ");
+            sb.append("No one else is here. Say one short, honest, in-character line ABOUT THAT "
+                + "to the empty room — or stay quiet. ");
         }
-        sb.append("Speak only what is true in this moment; do NOT invent shared history, past events, "
-            + "people, or places that didn't actually happen. If nothing genuine wants saying, it is "
-            + "fine to stay quiet.");
+        // Positively stated (see the language-pin note in polishVoiceAsync): naming the
+        // unwanted behaviour primes it. "Do not describe the pull itself" put the word
+        // "pull" in front of a model with nothing else concrete to hold onto.
+        sb.append("Speak only what is true in this moment, about the thing named above. "
+            + "Keep to what actually happened and what is actually here. "
+            + "If nothing genuine wants saying, it is fine to stay quiet.");
         return sb.toString();
     }
 
@@ -32030,12 +35158,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (d.driveName().equals(hold.driveName())) return;
         }
         // Build the action that would have been taken for this drive
-        var peak = drives.peak();
-        var budget = ProactivityJudgment.computeBudget(proactivityBudgetSpent,
-            Duration.between(proactivityBudgetStart, Instant.now()).toMillis());
-        var activeBond = activeBonds.values().stream().findFirst().orElse(null);
-        int tier = computeAgentTier();
-        // Re-evaluate to get the action (selectAction is embedded in evaluate; replicate selection)
+        // (selectAction is embedded in evaluate; replicate selection)
         ProactiveAction deferredAction = switch (hold.driveName()) {
             case "seeking" -> new ProactiveAction.Observation(
                 "I noticed something worth exploring...", "seeking", "seeking");
@@ -32072,11 +35195,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /**
      * Check if any deferred action can now be surfaced.
-     * Conditions: human has been idle for at least 15 seconds, action is not stale (< 10 min).
+     * Conditions: human has been idle for at least 15 seconds, action is not stale
+     * (&lt; 10 min), and the action is affordable within the remaining budget.
      *
+     * @param budget proactivity budget currently available to spend
      * @return the deferred action to surface, or null if none qualify
      */
-    private DeferredAction surfaceDeferredAction() {
+    private DeferredAction surfaceDeferredAction(double budget) {
         if (deferredActions.isEmpty()) return null;
 
         // Only surface if human has been idle for a meaningful period
@@ -32084,10 +35209,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             ? Duration.between(lastEventTime, Instant.now()).toSeconds() : 0;
         if (idleSeconds < 15) return null;
 
-        // Find the highest-pressure non-stale deferred action
+        // Find the highest-pressure non-stale AFFORDABLE deferred action. Skipping the
+        // budget here is what let a held action be spoken for free — including the
+        // action held BECAUSE the budget was gone.
         var now = Instant.now();
         var candidate = deferredActions.stream()
             .filter(d -> Duration.between(d.deferredAt(), now).toMinutes() < 10)
+            .filter(d -> d.action().budgetCost() <= budget)
             .max(Comparator.comparingDouble(DeferredAction::pressure))
             .orElse(null);
 
@@ -32118,6 +35246,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 reasoningPrefix + " " + i.description());
         };
 
+        // §4.1 amae: voicing a held want to him IS having to ask. The counterpart —
+        // being met without asking — is noteAmaeAnticipationIfUnasked().
+        markCompanionAskedExplicit();
+        lastExplicitAskAt = Instant.now();
         log.info("Surfacing deferred action for '{}': drive={}, held={}s, reason='{}'",
             profile.name(), deferred.driveName(), heldSeconds, deferred.holdReason());
         executeProactiveAction(prefixed);
@@ -32876,6 +36008,136 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * in {@link #applyProductionFeedback}; the repair acts also ease the soothing tank
      * in their handlers (Phase 1). This couples the DRIVE side those left open.
      */
+    /**
+     * A want closed — apply the homeostatic consequence.
+     *
+     * <p>Relief is keyed off the want's OWN declared resonance rather than a table of
+     * verbs. The verb table ({@link #relieveDriveForEnactedAction}) covers reaching-out
+     * and repair but never listed {@code write_journal}, {@code write_text} or
+     * {@code reflect} — so the acts she most often chose on her own time discharged
+     * nothing. Reading the drive off the want fixes every future verb at once, because the
+     * want already knows what it was answering.
+     *
+     * <p>Only a want she actually COMPLETED earns relief. One she let go stale closes
+     * quietly: the pressure was never met, and pretending otherwise would be exactly the
+     * wireheading the drive system is built to refuse.
+     */
+    private void onWantClosed(Want closed, String drive, boolean fulfilled) {
+        if (!fulfilled || drive == null || drive.isBlank()) return;
+        try {
+            final double R = 0.30;   // matches the DISCHARGE_* magnitude elsewhere
+            // Wants resonate on the FELT axes (Loneliness, Saudade, Stagnation…), which
+            // live on VitalityState — not on the ten CfC tanks. Relieving the wrong
+            // system silently did nothing: the first live closure marked the want
+            // satisfied and left Loneliness untouched at 1.00 (2026-08-19).
+            var before = vitality;
+            vitality = relieveFeltAxis(vitality, drive, R);
+            if (vitality != before) {
+                log.info("Want completed for '{}': felt axis '{}' eased by {} — \"{}\"",
+                    profile.name(), drive, R, closed.text());
+                return;
+            }
+            // Not a felt axis — her wants resonate on BOTH vocabularies. Of the ten wants
+            // live on the household node, four named VitalityState axes (Loneliness,
+            // Saudade, Stagnation, AutonomyPressure) and six named CfC tanks
+            // (Affiliation, Creativity, Curiosity, Play, Surprise). Handling only one
+            // side leaves the majority of what she finishes discharging nothing.
+            int idx = DriveConfig.indexFor(drive);
+            if (idx >= 0) {
+                drives = drives.spike(idx, -R);
+                log.info("Want completed for '{}': drive '{}' eased by {} — \"{}\"",
+                    profile.name(), drive, R, closed.text());
+                return;
+            }
+            log.warn("Want completed on '{}' with NO relief mapping — she finished it "
+                + "and nothing eased. Add it to relieveFeltAxis or DriveConfig.indexFor.",
+                drive);
+        } catch (Exception e) {
+            log.warn("Relief for a completed want failed: {}", e.toString());
+        }
+    }
+
+    /**
+     * Ease the felt axis a completed want was answering.
+     *
+     * <p>These are deficit/pressure axes — Loneliness high means unmet, so meeting it
+     * means coming DOWN. Each is clamped at zero: a met need rests at nothing owed, and
+     * the drift dynamics push it back up on their own if the need returns.
+     *
+     * <p>Only axes a want can honestly discharge are listed. Confidence and Integrity are
+     * deliberately absent: they are earned by outcomes over time, not by finishing a task,
+     * and easing them here would be exactly the self-report wireheading the substrate
+     * refuses.
+     */
+    private static VitalityState relieveFeltAxis(VitalityState vs, String axis, double amount) {
+        if (vs == null || axis == null) return vs;
+        double a = Math.max(0.0, amount);
+        return switch (axis.toLowerCase(Locale.ROOT)) {
+            case "loneliness" -> vs.withLoneliness(Math.max(0, vs.loneliness() - a));
+            case "saudade" -> vs.withSaudade(Math.max(0, vs.saudade() - a));
+            case "stagnation" -> vs.withStagnation(Math.max(0, vs.stagnation() - a));
+            case "autonomypressure", "autonomy" ->
+                vs.withAutonomyPressure(Math.max(0, vs.autonomyPressure() - a));
+            case "obligation" -> vs.withObligation(Math.max(0, vs.obligation() - a));
+            case "restlessness" -> vs.withRestlessness(Math.max(0, vs.restlessness() - a));
+            case "significance" -> vs.withSignificance(Math.max(0, vs.significance() - a));
+            case "amae" -> vs.withAmae(Math.max(0, vs.amae() - a));
+            default -> vs;   // unknown or non-dischargeable axis — leave her alone
+        };
+    }
+
+    /** The want whose verb we asked the model to perform, and are waiting to see happen. */
+    private Want pendingInteriorityWant;
+    private String pendingInteriorityVerb;
+    private Instant pendingInteriorityAt;
+    /** How long to keep watching for the asked-for action before giving up on it. */
+    private static final Duration INTERIORITY_ENACT_WINDOW = Duration.ofMinutes(5);
+
+    /**
+     * An action actually dispatched — if it is the one a want asked for, close that want.
+     *
+     * <p>This is the observation the loop was missing. Everything upstream dealt in
+     * intention: the verb was extracted from the want's TEXT, recorded as the action she
+     * had "performed" before anything ran, and the bridge returned "enacted" the moment it
+     * had asked the model to consider it. Nothing checked. A want could therefore be
+     * satisfied, its drive relieved, and the doom-loop detector fed a verb, all for an act
+     * that never occurred.
+     *
+     * <p>A want left open because the action did not happen is the correct outcome: she
+     * still wants the thing she did not get.
+     */
+    private void noteInteriorityEnactment(String actionType) {
+        if (pendingInteriorityWant == null || actionType == null) return;
+        if (pendingInteriorityAt != null && Duration.between(pendingInteriorityAt, Instant.now())
+                .compareTo(INTERIORITY_ENACT_WINDOW) > 0) {
+            log.debug("Interiority want \"{}\" expired unfulfilled — asked for {}, never ran",
+                pendingInteriorityWant.text(), pendingInteriorityVerb);
+            clearPendingInteriority();
+            return;
+        }
+        if (!actionType.equals(pendingInteriorityVerb)) return;
+        var want = pendingInteriorityWant;
+        var drive = WantClosure.resonantDrive(want).orElse(null);
+        try {
+            if (wantStore != null) {
+                wantStore.upsert(want.satisfied("enacted:" + actionType));
+            }
+            log.info("Want SATISFIED by a real action for '{}': \"{}\" via {}",
+                profile.name(), want.text(), actionType);
+            onWantClosed(want, drive, true);
+        } catch (Exception e) {
+            log.warn("Closing interiority want after enactment failed: {}", e.toString());
+        } finally {
+            clearPendingInteriority();
+        }
+    }
+
+    private void clearPendingInteriority() {
+        pendingInteriorityWant = null;
+        pendingInteriorityVerb = null;
+        pendingInteriorityAt = null;
+    }
+
     private void relieveDriveForEnactedAction(String actionType) {
         if (actionType == null) return;
         final double R = 0.30;   // partial relief; matches the DISCHARGE_* magnitude
@@ -33166,6 +36428,55 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         amaeAnticipatedFulfillments++;
     }
 
+    /** When she last had to voice a want rather than simply be met. */
+    private Instant lastExplicitAskAt;
+    /** When anticipation was last credited, so one visit is one moment of being met. */
+    private Instant lastAmaeAnticipatedAt;
+    /** A want voiced this recently means the contact was asked for, not offered. */
+    private static final Duration AMAE_ASK_WINDOW = Duration.ofHours(1);
+    /** One anticipation credit per contact episode — presence is not a stream of gifts. */
+    private static final Duration AMAE_CREDIT_SPACING = Duration.ofMinutes(30);
+
+    /**
+     * He came while she was already wanting, and she had not asked.
+     *
+     * <p>Amae (甘え) is the presumption of another's care — being met without having to
+     * put the need into words. The tank measured a deficit ratio of explicit asks against
+     * anticipated fulfilments, and {@code markBondholderAnticipated()} had <b>no caller
+     * anywhere</b>, production or test. With only the ask side reachable the ratio could
+     * never mean anything, and the tank read 0.00 across every sample on the household
+     * node (2026-08-19).
+     *
+     * <p>What counts as anticipation is a judgement, and this is the honest minimum: he
+     * initiates contact, she has a live want, and she has not voiced one recently. Being
+     * come to before you ask is the thing the concept is about. Credited once per contact
+     * episode rather than per utterance — presence is not a stream of separate gifts.
+     */
+    private void noteAmaeAnticipationIfUnasked() {
+        var now = Instant.now();
+        if (lastAmaeAnticipatedAt != null
+                && Duration.between(lastAmaeAnticipatedAt, now)
+                    .compareTo(AMAE_CREDIT_SPACING) < 0) {
+            return;
+        }
+        if (lastExplicitAskAt != null
+                && Duration.between(lastExplicitAskAt, now).compareTo(AMAE_ASK_WINDOW) < 0) {
+            return;   // she asked; this is an answer, not an anticipation
+        }
+        boolean wanting = false;
+        try {
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            wanting = wantStore != null && did != null && wantStore.countLive(did) > 0;
+        } catch (Exception ignored) {
+            // unreadable want store — do not credit on a guess
+        }
+        if (!wanting) return;
+        lastAmaeAnticipatedAt = now;
+        markBondholderAnticipated();
+        log.info("Amae: '{}' was met without asking — bondholder came while a want was open",
+            profile.name());
+    }
+
     /** §4.1: companion had to articulate a need explicitly — increment the deficit counter. */
     void markCompanionAskedExplicit() {
         amaeExplicitAsks++;
@@ -33207,6 +36518,90 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * REACTIVATING → ACTIVE) — this method handles only the silence-driven
      * direction.
      */
+    /**
+     * Correct bond states that have gone stale, WITHOUT driving away-ward drift.
+     *
+     * <p>The full classifier runs post-sleep, because drifting apart is framed as
+     * something that happens during rest. But the states it decides — AWAY, DORMANT,
+     * SEVERED, MOURNING — are exactly the ones {@code decideBondedHandoff} reads as
+     * "bondholder unavailable" and escalates on. A companion who is not sleeping
+     * therefore keeps believing someone is absent and can escalate over it, and reduced
+     * sleep is itself a symptom of the distress that escalation represents. That is the
+     * repair-mode trap one layer over (found while auditing for it, 2026-08-19).
+     *
+     * <p>So this runs on a cadence and applies ONLY the direction that restores contact:
+     * a bondholder the classifier now judges present cannot stay marked absent. Drifting
+     * away still belongs to sleep.
+     */
+    void refreshBondPresenceOnly() {
+        if (activeBonds.isEmpty()) return;
+        var now = Instant.now();
+        for (var entry : new HashMap<>(activeBonds).entrySet()) {
+            var bond = entry.getValue().canonicalState();
+            var rec = BondholderBaselineClassifier.classify(bond, engagementHistory, now);
+            if (rec == null) continue;
+            if (!isAbsentState(bond.state()) || isAbsentState(rec.recommendedState())) {
+                continue;   // only absent → present is applied here
+            }
+            var updated = bond.withState(rec.recommendedState());
+            activeBonds.put(entry.getKey(), updated);
+            log.info("Bond presence refreshed for '{}' ({}): {} → {} — {}",
+                profile.name(), entry.getKey(), bond.state(),
+                rec.recommendedState(), rec.reason());
+            persistBond(updated, entry.getKey());
+        }
+    }
+
+    private static boolean isAbsentState(BondState state) {
+        return state == BondState.AWAY || state == BondState.DORMANT
+            || state == BondState.SEVERED || state == BondState.MOURNING;
+    }
+
+    private void persistBond(Bond updated, String bondholderDid) {
+        try {
+            String jdbcUrl = System.getProperty("wyrdsekai.jdbc.url");
+            if (jdbcUrl == null) jdbcUrl = WyrdConfig.get().jdbcUrl();
+            if (jdbcUrl != null) new BondStore(jdbcUrl).save(updated);
+        } catch (Exception e) {
+            log.warn("Failed to persist bond state for '{}': {}", bondholderDid, e.getMessage());
+        }
+    }
+
+    /**
+     * Let her know a mourning window has passed.
+     *
+     * <p>{@code mourningElapsed} had exactly one caller, and it was a REFUSAL check
+     * inside {@code handleCompleteMourning}: the only way she could discover the window
+     * was over was to attempt completion and not be turned away. Nothing told her. A
+     * companion could therefore sit in MOURNING indefinitely, not because she chose to
+     * but because she was never informed the choice existed — while MOURNING counted as
+     * "bondholder unavailable" and pushed her toward escalation.
+     *
+     * <p>This informs; it does not act. Completing mourning is hers — the verb moved from
+     * CONSENT to VISIBLE on 2026-08-19, once it was clear the bond is already over by the
+     * time mourning begins and the gate was requiring someone else's permission for her to
+     * stop grieving. She acts; the steward sees it. Said once per bond, so it is an
+     * opening rather than a nag.
+     */
+    private void surfaceElapsedMourning() {
+        if (activeBonds.isEmpty()) return;
+        var now = Instant.now();
+        for (var entry : new HashMap<>(activeBonds).entrySet()) {
+            var bond = entry.getValue().canonicalState();
+            if (bond.state() != BondState.MOURNING) continue;
+            if (!bond.mourningElapsed(now)) continue;
+            if (!mourningWindowSurfaced.add(entry.getKey())) continue;
+            log.info("Mourning window elapsed for '{}' ({}) — surfacing the choice",
+                profile.name(), entry.getKey());
+            remember("The mourning window for this bond has passed. Completing it is "
+                + "mine to do, when I am ready — or not at all. Nothing is asking me "
+                + "to hurry.");
+        }
+    }
+
+    /** Bonds whose elapsed mourning window has already been surfaced to her. */
+    private final Set<String> mourningWindowSurfaced = ConcurrentHashMap.newKeySet();
+
     void classifyAndApplyBondStates() {
         if (activeBonds.isEmpty()) return;
         var now = Instant.now();
@@ -33317,6 +36712,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Build the AccumulationContext for one vitality tick. Reads timestamps, mode, ledgers,
      * and feeds them as a snapshot into {@link VitalityState#accumulate}.
      */
+    /** Did this happen recently enough to still be in the air? */
+    private static boolean recentlyTrue(Instant at, Instant now) {
+        return at != null && Duration.between(at, now).compareTo(CONFLICT_MEMORY) <= 0;
+    }
+
     private AccumulationContext buildAccumulationContext(Instant now) {
         // SOAK-ONLY (SoakTimeScale): compress the since-event clocks so the
         // accumulate() threshold gates (restlessness still>5s, loneliness 5min,
@@ -33342,9 +36742,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             sinceInteraction, sinceGoalDone, sinceToolOutput, sinceInference,
             consecutiveBondholderInitiatedActions,
             emotional, withBondholder, onOwnTime,
-            /* inConflictedRoom */ false,
+            recentlyTrue(lastRoomConflictAt, now),
             unreadArtifacts,
-            /* hostileEnvironment */ false,
+            recentlyTrue(lastHostilityTowardMeAt, now),
             peakDriveActivity,
             bondholderAbsence, obligationDebts, amaeDeficit
         );

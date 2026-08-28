@@ -72,16 +72,7 @@ public final class PackDownloader {
 
         var tempFile = Files.createTempFile("pack-download-", detectExtension(url));
         try {
-            HttpResponse<Path> response;
-            try {
-                response = HTTP.send(request, HttpResponse.BodyHandlers.ofFile(tempFile));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Download interrupted", e);
-            }
-            if (response.statusCode() != 200) {
-                throw new IOException("HTTP " + response.statusCode() + " downloading " + url);
-            }
+            var response = sendWithRetries(request, tempFile, url, progress);
 
             long size = Files.size(tempFile);
             if (progress != null) progress.accept("Downloaded " + formatSize(size));
@@ -299,6 +290,80 @@ public final class PackDownloader {
                 }
             });
         }
+    }
+
+    /**
+     * How many times to ask before giving up on a download.
+     *
+     * <p>Not arbitrary. Measured against archive.org on 2026-08-21, which is where the
+     * bundled knowledge packs live: the download URL redirects to one of several storage
+     * nodes, and an individual node intermittently answers
+     * {@code 500 Internal Server Error} from nginx while its siblings serve the same
+     * file fine. Nine consecutive requests produced two 500s, both from the same node;
+     * every retry that landed elsewhere succeeded.
+     *
+     * <p>Since each attempt is redirected afresh, a retry is not merely hope — it is a
+     * decent chance of a different, healthy node.
+     */
+    private static final int MAX_ATTEMPTS = 4;
+
+    /** Grows 1s, 2s, 4s: long enough to move on, short enough that nobody walks away. */
+    private static final Duration RETRY_BASE = Duration.ofSeconds(1);
+
+    /**
+     * Fetch, retrying the failures that are worth retrying.
+     *
+     * <h2>Why this exists</h2>
+     * A single attempt meant one bad node aborted a whole pack install with
+     * {@code "HTTP 500 downloading …"} — a dead end for a person who did nothing wrong
+     * and whose next move would have been to try again by hand. Found because the live
+     * test failed the suite on 2026-08-21; the test was the symptom, this is the defect.
+     *
+     * <p>Retries a transient server condition (5xx, 408, 429) and a broken connection.
+     * Does NOT retry a 404 or a 403 — those do not get better by asking again, and
+     * hiding them behind three more attempts would just make the real answer slower.
+     */
+    private static HttpResponse<Path> sendWithRetries(HttpRequest request, Path tempFile,
+            String url, Consumer<String> progress) throws IOException {
+        IOException last = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                var response = HTTP.send(request,
+                    HttpResponse.BodyHandlers.ofFile(tempFile,
+                        StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING));
+                if (response.statusCode() == 200) return response;
+                if (!worthRetrying(response.statusCode()) || attempt == MAX_ATTEMPTS) {
+                    throw new IOException("HTTP " + response.statusCode()
+                        + " downloading " + url
+                        + (attempt > 1 ? " (after " + attempt + " attempts)" : ""));
+                }
+                last = new IOException("HTTP " + response.statusCode());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Download interrupted", e);
+            } catch (IOException e) {
+                if (attempt == MAX_ATTEMPTS) throw e;
+                last = e;
+            }
+            var wait = RETRY_BASE.multipliedBy(1L << (attempt - 1));
+            var note = "Download failed (" + last.getMessage() + ") — retrying in "
+                + wait.toSeconds() + "s (attempt " + (attempt + 1) + "/" + MAX_ATTEMPTS + ")";
+            log.warn("[PackDownloader] {} for {}", note, url);
+            if (progress != null) progress.accept(note);
+            try {
+                Thread.sleep(wait.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Download interrupted", e);
+            }
+        }
+        throw last != null ? last : new IOException("Download failed: " + url);
+    }
+
+    /** Transient server-side conditions. A 404 is an answer, not a hiccup. */
+    static boolean worthRetrying(int statusCode) {
+        return statusCode >= 500 || statusCode == 408 || statusCode == 429;
     }
 
     private static String detectExtension(String url) {

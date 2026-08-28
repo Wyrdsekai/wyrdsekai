@@ -105,7 +105,7 @@ public final class EmbeddingService implements AutoCloseable {
     private volatile OrtSession session;
     private HuggingFaceTokenizer tokenizer;
 
-    // ── Memory leak defense (CodePlane Issue 2: ORT RSS accumulation) ────
+    // ── Memory leak defense (CodeZaiku Issue 2: ORT RSS accumulation) ────
     // ONNX Runtime's session memory grows over weeks even with proper close()
     // calls (see ORT issues #5176, #6058, #11118, #22271, #26831). Defense:
     // periodically rebuild the session to bound the leak. Old sessions are
@@ -427,6 +427,118 @@ public final class EmbeddingService implements AutoCloseable {
         } catch (Exception e) {
             log.warn("Embedding failed for text ({}chars): {}", text.length(), e.getMessage());
             return Collections.nCopies(dimension, 0f);
+        }
+    }
+
+    /**
+     * Embed MANY texts in a single ONNX session run.
+     *
+     * <p><b>Why this exists.</b> {@link #embed(String)} was the only entry point
+     * and pinned the batch dimension to 1, so every rerank candidate cost a
+     * separate session run. Measured on a live household: a two-stage Study
+     * search scored <b>2 of 60</b> candidates inside its 2.5s budget, leaving the
+     * semantic half of retrieval essentially decorative. Truncating inputs to 600
+     * chars raised that only to 6 of 60 — which showed the cost is dominated by
+     * per-call overhead, not sequence length. Batching is the actual fix.</p>
+     *
+     * <p>Sequences are padded to the longest in the batch and masked, so padding
+     * contributes nothing to the pooled vector — each row is pooled with its own
+     * attention mask, exactly as the single-text path does.</p>
+     *
+     * <p>Falls back to per-text embedding if the batched run fails, so a model
+     * that dislikes batching degrades in speed rather than breaking retrieval.</p>
+     *
+     * @param texts inputs; null/blank entries yield zero vectors
+     * @return one embedding per input, in the same order
+     */
+    public List<List<Float>> embedBatch(List<String> texts) {
+        if (texts == null || texts.isEmpty()) return List.of();
+        if (texts.size() == 1) return List.of(embed(texts.get(0)));
+
+        try {
+            int n = texts.size();
+            var toks = new ArrayList<TokenizerOutput>(n);
+            var blank = new boolean[n];
+            int maxLen = 1;
+            for (int i = 0; i < n; i++) {
+                var t = texts.get(i);
+                if (t == null || t.isBlank()) {
+                    blank[i] = true;
+                    toks.add(null);
+                    continue;
+                }
+                var tk = tokenize(t);
+                toks.add(tk);
+                maxLen = Math.max(maxLen, tk.inputIds().length);
+            }
+
+            var ids = new long[n * maxLen];
+            var mask = new long[n * maxLen];
+            var types = new long[n * maxLen];
+            for (int i = 0; i < n; i++) {
+                var tk = toks.get(i);
+                if (tk == null) continue;
+                var rowIds = tk.inputIds();
+                var rowMask = tk.attentionMask();
+                System.arraycopy(rowIds, 0, ids, i * maxLen, rowIds.length);
+                System.arraycopy(rowMask, 0, mask, i * maxLen, rowMask.length);
+                // remaining positions stay 0 — padding, masked out below
+            }
+
+            var shape = new long[]{n, maxLen};
+            var inputTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(ids), shape);
+            var maskTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(mask), shape);
+            var typeTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(types), shape);
+
+            var declared = session.getInputNames();
+            var inputs = new HashMap<String, OnnxTensorLike>();
+            if (declared.contains("input_ids"))      inputs.put("input_ids", inputTensor);
+            if (declared.contains("attention_mask")) inputs.put("attention_mask", maskTensor);
+            if (declared.contains("token_type_ids")) inputs.put("token_type_ids", typeTensor);
+
+            try (var result = session.run(inputs)) {
+                var output = (OnnxTensor) result.get(0);
+                float[][][] raw = (float[][][]) output.getValue();
+
+                var out = new ArrayList<List<Float>>(n);
+                for (int i = 0; i < n; i++) {
+                    if (blank[i]) {
+                        out.add(Collections.nCopies(dimension, 0f));
+                        continue;
+                    }
+                    var rowMask = toks.get(i).attentionMask();
+                    var pooled = new float[dimension];
+                    int active = 0;
+                    for (int t = 0; t < rowMask.length; t++) {
+                        if (rowMask[t] == 0) continue;
+                        active++;
+                        for (int d = 0; d < dimension; d++) pooled[d] += raw[i][t][d];
+                    }
+                    if (active > 0) {
+                        for (int d = 0; d < dimension; d++) pooled[d] /= active;
+                    }
+                    float norm = 0;
+                    for (float v : pooled) norm += v * v;
+                    norm = (float) Math.sqrt(norm);
+                    if (norm > 0) {
+                        for (int d = 0; d < dimension; d++) pooled[d] /= norm;
+                    }
+                    var emb = new ArrayList<Float>(dimension);
+                    for (float v : pooled) emb.add(v);
+                    out.add(emb);
+                }
+                return out;
+            } finally {
+                inputTensor.close();
+                maskTensor.close();
+                typeTensor.close();
+            }
+        } catch (Exception e) {
+            log.warn("Batched embedding of {} texts failed ({}) — falling back to per-text",
+                texts.size(), e.getMessage());
+            var out = new ArrayList<List<Float>>(texts.size());
+            for (var t : texts) out.add(embed(t));
+            return out;
         }
     }
 

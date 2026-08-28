@@ -13,14 +13,14 @@ import java.time.Instant;
  * through walls).
  *
  * <ul>
- *   <li>{@link ZoneBroadcast} -- zone service broadcast (CodePlane board event, IoT status, etc.)</li>
+ *   <li>{@link ZoneBroadcast} -- zone service broadcast (CodeZaiku board event, IoT status, etc.)</li>
  *   <li>{@link SystemEvent} -- system-level event (node joined/left, inference status, health alert)</li>
  *   <li>{@link AdjacentActivity} -- activity in a neighboring room (attenuated: type and count only, no content)</li>
  * </ul>
  */
 public sealed interface AgentEvent {
 
-    /** Zone service broadcast (CodePlane board event, IoT status, etc.) */
+    /** Zone service broadcast (CodeZaiku board event, IoT status, etc.) */
     record ZoneBroadcast(String namespace, String roomId,
                          S2CMessage message,
                          Instant timestamp) implements AgentEvent {}

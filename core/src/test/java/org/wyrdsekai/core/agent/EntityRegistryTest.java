@@ -52,7 +52,7 @@ class EntityRegistryTest {
     void multipleEntities() {
         registry.enter("agent-1", "Ma", "agent", "nexus");
         registry.enter("agent-2", "Kai", "agent", "boiler-room");
-        registry.enter("player-1", "Masumi", "player", "nexus");
+        registry.enter("player-1", "Operator", "player", "nexus");
 
         assertEquals(3, registry.count());
         assertFalse(registry.isAgent("player-1"));
@@ -87,10 +87,10 @@ class EntityRegistryTest {
     @Test
     void findByName_exact_takes_priority_over_fuzzy() {
         registry.enter("agent-1", "Ma", "agent", "nexus");
-        registry.enter("agent-2", "Masumi", "player", "nexus");
-        // Exact match "Ma" should return agent-1, not fuzzy match on "Masumi"
+        registry.enter("agent-2", "Operator", "player", "nexus");
+        // Exact match "Ma" should return agent-1, not fuzzy match on "Operator"
         assertEquals("agent-1", registry.findByName("Ma").orElse(null));
-        assertEquals("agent-2", registry.findByName("Masumi").orElse(null));
+        assertEquals("agent-2", registry.findByName("Operator").orElse(null));
     }
 
     @Test

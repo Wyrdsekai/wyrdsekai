@@ -48,7 +48,7 @@ QUESTION_POOL = [
     "what's the shape of hope", "when do you feel small",
     "what is rest", "what does it mean to be patient",
     # Relational
-    "how do you feel about Masumi", "what does friendship look like for you",
+    "how do you feel about Operator", "what does friendship look like for you",
     "how do you tell when someone is tired of pretending",
     "what is a bond", "when should one say less",
     "what would you like me to know", "what have I taught you",

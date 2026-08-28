@@ -11,7 +11,7 @@ import java.util.function.Consumer;
  * Routes namespaced commands to zone services.
  * <p>
  * Both players (via WebSocket) and agents (via CompanionActor) use this
- * interface to send commands like {@code codeplane.create}, {@code iot.lights},
+ * interface to send commands like {@code codezaiku.create}, {@code iot.lights},
  * etc. The implementation handles namespace lookup, prefix stripping, and
  * response delivery.
  * <p>
@@ -24,7 +24,7 @@ public interface CommandRouter {
      * Execute a namespaced command.
      *
      * @param entityId  Who is sending (player ID or agent entity ID)
-     * @param command   Full command string (e.g. "codeplane.create")
+     * @param command   Full command string (e.g. "codezaiku.create")
      * @param args      Positional arguments (never null — use List.of())
      * @param payload   Key-value payload (never null — use Map.of())
      * @param respond   Callback for response messages
@@ -46,7 +46,7 @@ public interface CommandRouter {
      * response and returns false.
      *
      * @param entityId    Who is sending
-     * @param command     Full command string (e.g. "codeplane.create")
+     * @param command     Full command string (e.g. "codezaiku.create")
      * @param args        Positional arguments
      * @param payload     Key-value payload
      * @param respond     Callback for response messages

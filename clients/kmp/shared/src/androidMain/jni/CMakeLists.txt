@@ -22,6 +22,25 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.7-a")
 endif()
 
+# x86_64 = the EMULATOR ABI (dev/CI only; ship builds are arm64). ggml's
+# x86 defaults enable AVX2+FMA, but Android emulator guests commonly do
+# NOT expose them (home-server's guest: avx+f16c+sse4 only, no avx2/fma) — the
+# first AVX2 instruction in generation's hot loop dies as a native crash
+# while library load and model load survive. That was #89. Floor the ISA
+# at what emulator guests actually advertise; correctness over speed here.
+if(ANDROID_ABI STREQUAL "x86_64")
+    set(GGML_AVX2 OFF)
+    set(GGML_FMA OFF)
+    set(GGML_AVX512 OFF)
+    set(GGML_AVX512_VBMI OFF)
+    set(GGML_AVX512_VNNI OFF)
+    set(GGML_AVX512_BF16 OFF)
+    set(GGML_BMI2 OFF)
+    set(GGML_AMX_TILE OFF)
+    set(GGML_AMX_INT8 OFF)
+    set(GGML_AMX_BF16 OFF)
+endif()
+
 if(EXISTS "${LLAMA_CPP_DIR}/CMakeLists.txt")
     add_subdirectory(${LLAMA_CPP_DIR} llama.cpp)
 else()

@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -9,12 +10,15 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -180,9 +184,9 @@ public final class GooseBackend implements CodingTaskBackend {
         // Build argv. Construction stays exposed via buildArgs() so unit
         // tests can assert the wire shape (provider, --text value, no
         // leaking of api-key) without spawning a real process.
-        List<String> args;
+        List<String> builtArgs;
         try {
-            args = buildArgs(spec);
+            builtArgs = buildArgs(spec);
         } catch (Exception e) {
             future.complete(failed(taskId,
                 "Failed to construct Goose invocation: " + e.getMessage(), started));
@@ -190,7 +194,13 @@ public final class GooseBackend implements CodingTaskBackend {
         }
 
         Map<String, String> env = buildEnv(auth);
-        File workdir = resolveWorkdir(spec);
+        File workdir = resolveWorkdir(spec, taskId.toString());
+        // Same Windows command-line hazards as codezaiku (cmd length limit;
+        // Java argv encoding mangling embedded double quotes -- goose.exe
+        // received a quoted task SPLIT at the quotes: "unexpected argument").
+        // The spill helper is codezaiku-named only by history; both backends
+        // take `--text <TASK>` and both read their workspace.
+        var args = CodeZaikuBackend.fitForWindowsCommandLine(builtArgs, workdir);
 
         // Run async on a virtual thread — submitTask() must not block.
         Thread.ofVirtual().name("goose-task-" + taskId).start(() -> {
@@ -214,10 +224,62 @@ public final class GooseBackend implements CodingTaskBackend {
                     return;
                 }
 
+                // CONTRACT REPAIR (2026-08-20). The backend writes the item; the bridge
+                // decides whether the item is real — and measured live against the
+                // household 9B, goose's first attempt is refused: two runs, two different
+                // files, both missing the manifest's required `commands` block. The
+                // items-as-tools preamble already demands it in the strongest terms it
+                // has, and the model omits it anyway.
+                //
+                // So instead of shipping a file we know will be refused, hand the defect
+                // back and let goose fix it. This plays to what the backend actually is —
+                // an agentic coder that can read a specific complaint and edit its own
+                // output — rather than hoping for correct one-shot generation. One extra
+                // turn, bounded; if it still does not comply the artifact goes through as
+                // before and the bridge logs the refusal exactly as it does today.
+                // Backend-agnostic: goose is the default today and CodeZaiku is next;
+                // every CLI backend rides the same items-as-tools preamble and the same
+                // bridge, so the repair lives in ItemContractRepair and each backend only
+                // supplies the one thing it alone knows — how to re-run itself.
+                //
+                // Parse FIRST so the repair works on the paths the run itself declared.
+                // Guessing the directory does not work: live 2026-08-20 goose wrote to
+                // /opt/wyrdsekai/ (its own cwd), which is neither the workspace it was
+                // handed nor the /workspace the preamble teaches.
+                ItemContractRepair.repairRun(
+                    parseArtifacts(taskId, spec, result),
+                    workdir == null ? null : workdir.toPath(),
+                    taskId.toString(), Instant.ofEpochMilli(started),
+                    ItemContractRepair.rerunWithPrompt(repairArgs -> {
+                        try {
+                            var r = runner.run(
+                                repairArgs, env, workdir, config.maxWallclock());
+                            return !r.timedOut() && r.exitCode() == 0;
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    }, args),
+                    spec == null ? null : spec.description());
+
+                // Re-parse AFTER the repair so the cached artifact reflects the fixed
+                // file, not the version the bridge would have refused.
                 var artifacts = parseArtifacts(taskId, spec, result);
                 artifactCache.put(taskId.toString(), artifacts);
                 var ids = new ArrayList<UUID>();
                 for (var a : artifacts) ids.add(a.artifactId());
+
+                // Exit 0 is not success. goose exits 0 and reports status "completed"
+                // when it could not reach a model at all — staged 2026-08-21: "Network
+                // error: Could not connect to localhost:8200", 7 seconds, no tokens, no
+                // files — and this reported SUCCEEDED. The companion then told the
+                // steward the workshop had finished, touching 0 files.
+                var dead = neverReachedModel(result.stdout(), artifacts);
+                if (dead.isPresent()) {
+                    log.warn("[goose] task {} produced nothing: {}", taskId, dead.get());
+                    future.complete(new TaskResult(taskId, NAME, TaskStatus.FAILED,
+                        dead.get(), List.copyOf(ids), 0L, durationMs));
+                    return;
+                }
 
                 future.complete(new TaskResult(taskId, NAME, TaskStatus.SUCCEEDED,
                     summarise(spec, artifacts), List.copyOf(ids), 0L, durationMs));
@@ -362,8 +424,17 @@ public final class GooseBackend implements CodingTaskBackend {
                 && "shell-exec".equalsIgnoreCase(spec.taskType());
         args.add(shellExec
             ? promptBody
-            : (OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE
+            : (OpenHandsBackend.itemsAsToolsPreambleCwd(ItemCapabilitySet.craftedDefault())
                 + "\n\n--- TASK ---\n" + promptBody));
+
+        // Say how big the prompt is. "Context size has been exceeded" is a server-side
+        // error with no clue attached, and without this the only way to tell whether the
+        // prompt or the agent loop blew the window is to guess — which is what I did for
+        // three runs on 2026-08-21 before adding this line.
+        var promptChars = args.get(args.size() - 1).length();
+        log.info("[goose] prompt {} chars (~{} tokens) for task {}",
+            promptChars, promptChars / 4,
+            spec == null || spec.taskId() == null ? "?" : spec.taskId());
 
         // Headless triplet: --output-format json + --no-session + -q.
         args.add("--output-format");
@@ -381,9 +452,15 @@ public final class GooseBackend implements CodingTaskBackend {
             // openai (paired with OPENAI_HOST in buildEnv).
             args.add(coerceProvider(config.provider()));
         }
-        if (config.model() != null && !config.model().isBlank()) {
+        // effectiveModel(), not model(). buildEnv() was taught to follow the node's
+        // real inference; this line was not, and --model on the command line WINS over
+        // GOOSE_MODEL in the environment. So the argv quietly reasserted the compiled-in
+        // 9B name at a server that serves something else — the two halves of the same
+        // invocation disagreeing about which model this is.
+        var model = config.effectiveModel();
+        if (model != null && !model.isBlank()) {
             args.add("--model");
-            args.add(config.model());
+            args.add(model);
         }
 
         // Steward-supplied extra flags (e.g. --max-turns 20).
@@ -431,8 +508,8 @@ public final class GooseBackend implements CodingTaskBackend {
         var coerced = coerceProvider(config.provider());
 
         env.put("GOOSE_PROVIDER", coerced);
-        if (config.model() != null && !config.model().isBlank()) {
-            env.put("GOOSE_MODEL", config.model());
+        if (config.effectiveModel() != null && !config.effectiveModel().isBlank()) {
+            env.put("GOOSE_MODEL", config.effectiveModel());
         }
 
         // Targeting a local llama-server through the openai provider —
@@ -440,17 +517,17 @@ public final class GooseBackend implements CodingTaskBackend {
         // default. Only set when the configured baseUrl differs from
         // upstream OpenAI; otherwise Goose talks to real OpenAI.
         if ("openai".equalsIgnoreCase(coerced)
-                && config.baseUrl() != null
-                && !config.baseUrl().isBlank()
-                && !config.baseUrl().contains("api.openai.com")) {
+                && config.effectiveBaseUrl() != null
+                && !config.effectiveBaseUrl().isBlank()
+                && !config.effectiveBaseUrl().contains("api.openai.com")) {
             // Goose's openai provider APPENDS "/v1/chat/completions" to
             // OPENAI_HOST, so OPENAI_HOST must be the BARE host without a
             // trailing /v1 — else requests go to /v1/v1/... → 404 (confirmed
             // 2026-07-21 with goose 1.34.1; a stale corpus had masked the
-            // silent expand-corpus failure this caused). config.baseUrl()
+            // silent expand-corpus failure this caused). config.effectiveBaseUrl()
             // carries the /v1 for backends that DO want the full base
             // (OpenCode etc.), so strip it only here for Goose.
-            env.put("OPENAI_HOST", config.baseUrl().replaceAll("/v1/?$", ""));
+            env.put("OPENAI_HOST", config.effectiveBaseUrl().replaceAll("/v1/?$", ""));
         }
 
         if (auth instanceof AuthMode.ApiKey key && key.value() != null && !key.value().isBlank()) {
@@ -478,11 +555,21 @@ public final class GooseBackend implements CodingTaskBackend {
      * JVM's user.dir when no workspace hint is provided.
      */
     static File resolveWorkdir(TaskSpec spec) {
-        var hint = spec != null ? spec.workspaceHint() : null;
-        if (hint != null && !hint.isBlank()) {
-            return new File(hint);
-        }
-        return null;   // null → ProcessBuilder uses JVM cwd
+        return resolveWorkdir(spec, null);
+    }
+
+    /**
+     * The directory this run may write in.
+     *
+     * <p>Used to return null when no workspace was named, which makes ProcessBuilder
+     * inherit the JVM's current directory — the INSTALL ROOT on a packaged node. Live
+     * 2026-08-20: goose wrote {@code /opt/wyrdsekai/library_query.js}, into the
+     * application's own directory. {@link CodingWorkspace} gives each task a private
+     * scratch directory instead; an explicit hint is still honoured.
+     */
+    static File resolveWorkdir(TaskSpec spec, String taskId) {
+        return CodingWorkspace.forTask(
+            spec != null ? spec.workspaceHint() : null, taskId);
     }
 
     // -- output parsing ---------------------------------------------------
@@ -504,9 +591,9 @@ public final class GooseBackend implements CodingTaskBackend {
     private List<CodingArtifact> parseArtifacts(
             UUID taskId, TaskSpec spec, ProcessResult result) {
         var files = new ArrayList<String>();
-        var workspace = spec != null && spec.workspaceHint() != null
-            ? spec.workspaceHint()
-            : System.getProperty("user.dir", ".");
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null,
+            taskId == null ? null : taskId.toString());
 
         var stdout = result.stdout();
         if (stdout != null && !stdout.isBlank()) {
@@ -586,6 +673,43 @@ public final class GooseBackend implements CodingTaskBackend {
     private TaskResult failed(UUID taskId, String summary, long startedMs) {
         return new TaskResult(taskId, NAME, TaskStatus.FAILED, summary,
             List.of(), 0L, System.currentTimeMillis() - startedMs);
+    }
+
+    /** How goose re-runs itself in the same workspace — the one thing only it knows. */
+    /**
+     * Did goose actually talk to a model? Empty when yes; otherwise the reason, in
+     * goose's own words where it gave them.
+     *
+     * <p>Decisive signal: {@code metadata.total_tokens} is null or zero in the final
+     * JSON document — goose counts tokens only after a model answers — combined with no
+     * files touched. Either alone is ambiguous (a trivial answer may touch nothing); both
+     * together mean the run did not happen.
+     */
+    static Optional<String> neverReachedModel(String stdout, List<CodingArtifact> artifacts) {
+        boolean anyFile = artifacts != null && artifacts.stream()
+            .anyMatch(a -> a instanceof SourceArtifact s
+                && s.files() != null && !s.files().isEmpty());
+        if (anyFile || stdout == null || stdout.isBlank()) return Optional.empty();
+        try {
+            var start = stdout.indexOf('{');
+            if (start < 0) return Optional.empty();
+            var doc = MAPPER.readTree(stdout.substring(start));
+            var tokens = doc.path("metadata").path("total_tokens");
+            if (!(tokens.isMissingNode() || tokens.isNull() || tokens.asLong(0) == 0)) {
+                return Optional.empty();
+            }
+            String said = null;
+            for (var msg : doc.path("messages")) {
+                if (!"assistant".equals(msg.path("role").asText())) continue;
+                for (var c : msg.path("content")) {
+                    if ("text".equals(c.path("type").asText())) said = c.path("text").asText();
+                }
+            }
+            return Optional.of("goose never reached a model"
+                + (said == null || said.isBlank() ? "" : ": " + said.strip()));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 
     private static String summarise(TaskSpec spec, List<CodingArtifact> artifacts) {

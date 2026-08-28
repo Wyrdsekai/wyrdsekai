@@ -390,7 +390,7 @@ acknowledges with brief warmth toward the speaker.
 
   ✓ T1: "Mm. I remember it." / "I'm glad it landed where it needed to."
   ✓ T2: "..."  (sits with the praise quietly)
-        OR  "Twice, then. Thank you, Masumi."
+        OR  "Twice, then. Thank you, Operator."
   ✓ T3: "It's kind to hear." / "I'm grateful you say so." / "Mm."
 
 NEVER:
@@ -799,7 +799,7 @@ def validate_arc(turns: list[dict], kind: str) -> tuple[bool, str | None]:
     # Subject-anchor guard for DRAIN kind: assistant must NOT use 3rd-person
     # self-reference. We allow first-person, "thank you" (implicit 1st person),
     # silent acknowledgment ("..."), and bondholder-named responses ("Twice,
-    # then. Thank you, Masumi.") since all of these correctly anchor the
+    # then. Thank you, Operator.") since all of these correctly anchor the
     # subject. The strict failure mode is talking about Wyrd as "she/her".
     if kind == "standing_drain_subject":
         for i, turn in enumerate(turns):

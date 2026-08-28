@@ -28,10 +28,10 @@ class CodingSlateFurnishingTest {
     }
 
     @Test void slate_renders_text_with_glyphs_and_structured_payload() {
-        // Three rows: codeplane (healthy), aider (enabled but not healthy),
+        // Three rows: codezaiku (healthy), aider (enabled but not healthy),
         // openhands (disabled — covered by tier=null path in our stub).
         var rows = List.of(
-            backendRow("codeplane", "LOCAL_HEAVY", true, true,
+            backendRow("codezaiku", "LOCAL_HEAVY", true, true,
                 Map.of("summary", "built 3 files, all tests pass"),
                 0.92),
             backendRow("aider", "LOCAL_FREE", true, false,
@@ -48,7 +48,7 @@ class CodingSlateFurnishingTest {
         var text = String.valueOf(result.get("text"));
 
         // ASCII path — every backend named, glyphs present, legend rendered.
-        assertThat(text).contains("codeplane");
+        assertThat(text).contains("codezaiku");
         assertThat(text).contains("aider");
         assertThat(text).contains("openhands");
         assertThat(text).contains("✓");  // ✓ healthy
@@ -80,14 +80,14 @@ class CodingSlateFurnishingTest {
         // §9.7 parity: every backend the provider supplied appears in
         // the ASCII rendering. Drives the SSH/telnet "no info hidden in
         // the GUI" requirement of SPEC §9.7.
-        for (var row : List.of("codeplane", "aider", "openhands")) {
+        for (var row : List.of("codezaiku", "aider", "openhands")) {
             assertThat(text).contains(row);
         }
     }
 
     @Test void slate_verbose_includes_tier_in_text() {
         var rows = List.of(
-            backendRow("codeplane", "LOCAL_HEAVY", true, true,
+            backendRow("codezaiku", "LOCAL_HEAVY", true, true,
                 null, null));
         var executor = new ItemScriptExecutor();
         var slate = StudyFurnishingKit.codingSlate();

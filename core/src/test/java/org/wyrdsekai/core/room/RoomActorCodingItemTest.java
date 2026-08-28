@@ -286,7 +286,7 @@ class RoomActorCodingItemTest {
         var scriptPath = tmpDir.resolve("hello_oracle.js");
         Files.writeString(scriptPath, """
             // Test item — proves the bridge → loader → executor chain.
-// v1.5 D7: embodiment block is REQUIRED by
+            //  v1.5 D7: embodiment block is REQUIRED by
             // ScriptedItemLoader.register() (hot-reload path, no migration shim).
             exports.manifest = {
               name: "hello_oracle",

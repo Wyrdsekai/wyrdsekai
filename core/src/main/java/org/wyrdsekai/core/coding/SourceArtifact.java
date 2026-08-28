@@ -8,7 +8,7 @@ import java.util.UUID;
 /**
  * Source-code artifact produced by a coding task.
  *
- * <p>. Backend-specific extras (CodePlane
+ * <p>. Backend-specific extras (CodeZaiku
  * boardId, Aider session id, OpenHands trace id, etc.) live in
  * {@code backendMetadata} so the wire shape stays uniform across backends.</p>
  *

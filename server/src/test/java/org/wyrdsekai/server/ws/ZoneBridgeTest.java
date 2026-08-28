@@ -24,15 +24,15 @@ class ZoneBridgeTest {
 
         @Test
         void registerRoundtrip() throws Exception {
-            var msg = new ZoneBridgeMessage.Register("codeplane", "secret123");
+            var msg = new ZoneBridgeMessage.Register("codezaiku", "secret123");
             var json = Json.mapper().writeValueAsString(msg);
             assertTrue(json.contains("\"type\":\"register\""));
-            assertTrue(json.contains("\"namespace\":\"codeplane\""));
+            assertTrue(json.contains("\"namespace\":\"codezaiku\""));
 
             var parsed = Json.mapper().readValue(json, ZoneBridgeMessage.class);
             assertInstanceOf(ZoneBridgeMessage.Register.class, parsed);
             var reg = (ZoneBridgeMessage.Register) parsed;
-            assertEquals("codeplane", reg.namespace());
+            assertEquals("codezaiku", reg.namespace());
             assertEquals("secret123", reg.secret());
         }
 
@@ -47,13 +47,13 @@ class ZoneBridgeTest {
 
         @Test
         void registeredRoundtrip() throws Exception {
-            var msg = new ZoneBridgeMessage.Registered("codeplane");
+            var msg = new ZoneBridgeMessage.Registered("codezaiku");
             var json = Json.mapper().writeValueAsString(msg);
             assertTrue(json.contains("\"type\":\"registered\""));
 
             var parsed = Json.mapper().readValue(json, ZoneBridgeMessage.class);
             assertInstanceOf(ZoneBridgeMessage.Registered.class, parsed);
-            assertEquals("codeplane", ((ZoneBridgeMessage.Registered) parsed).namespace());
+            assertEquals("codezaiku", ((ZoneBridgeMessage.Registered) parsed).namespace());
         }
 
         @Test
@@ -77,7 +77,7 @@ class ZoneBridgeTest {
 
         @Test
         void commandResponseRoundtrip() throws Exception {
-            var proseNode = Json.mapper().valueToTree(new S2CMessage.Prose(0, "codeplane", "Experiment approved",
+            var proseNode = Json.mapper().valueToTree(new S2CMessage.Prose(0, "codezaiku", "Experiment approved",
                 List.of(), null, "normal"));
             var msg = new ZoneBridgeMessage.CommandResponse(
                 "req-123", "player-1", List.of(proseNode));
@@ -94,22 +94,22 @@ class ZoneBridgeTest {
 
         @Test
         void registrationErrorRoundtrip() throws Exception {
-            var msg = new ZoneBridgeMessage.RegistrationError("codeplane", "already registered");
+            var msg = new ZoneBridgeMessage.RegistrationError("codezaiku", "already registered");
             var json = Json.mapper().writeValueAsString(msg);
             assertTrue(json.contains("\"type\":\"error\""));
 
             var parsed = Json.mapper().readValue(json, ZoneBridgeMessage.class);
             assertInstanceOf(ZoneBridgeMessage.RegistrationError.class, parsed);
             var err = (ZoneBridgeMessage.RegistrationError) parsed;
-            assertEquals("codeplane", err.namespace());
+            assertEquals("codezaiku", err.namespace());
             assertEquals("already registered", err.reason());
         }
 
         @Test
         void commandResponseWithMultipleMessages() throws Exception {
             var messages = List.<JsonNode>of(
-                Json.mapper().valueToTree(new S2CMessage.Prose(0, "codeplane", "Step 1 done", List.of(), null, "normal")),
-                Json.mapper().valueToTree(new S2CMessage.Prose(0, "codeplane", "Step 2 done", List.of(), null, "normal")),
+                Json.mapper().valueToTree(new S2CMessage.Prose(0, "codezaiku", "Step 1 done", List.of(), null, "normal")),
+                Json.mapper().valueToTree(new S2CMessage.Prose(0, "codezaiku", "Step 2 done", List.of(), null, "normal")),
                 Json.mapper().valueToTree(new S2CMessage.Notification(0, "info", "Complete", "All steps done"))
             );
             var msg = new ZoneBridgeMessage.CommandResponse("req-456", "player-2", messages);
@@ -128,7 +128,7 @@ class ZoneBridgeTest {
         @Test
         void onResponseDeliversToCorrectCallback() {
             // We can't easily mock WsContext, so test the response routing logic directly
-            var handler = new TestableProxyZoneHandler("codeplane");
+            var handler = new TestableProxyZoneHandler("codezaiku");
 
             var received = new ArrayList<S2CMessage>();
             var requestId = handler.simulateHandle("player-1", "approve", List.of(), Map.of(), received::add);
@@ -144,7 +144,7 @@ class ZoneBridgeTest {
 
         @Test
         void onResponseIgnoresUnknownRequestId() {
-            var handler = new TestableProxyZoneHandler("codeplane");
+            var handler = new TestableProxyZoneHandler("codezaiku");
 
             // Response with no matching request — should not throw
             var proseNode = Json.mapper().valueToTree(Map.of("text", "Mystery"));
@@ -154,7 +154,7 @@ class ZoneBridgeTest {
 
         @Test
         void onResponseDeliversMultipleMessages() {
-            var handler = new TestableProxyZoneHandler("codeplane");
+            var handler = new TestableProxyZoneHandler("codezaiku");
             var received = new ArrayList<S2CMessage>();
             var requestId = handler.simulateHandle("player-1", "status", List.of(), Map.of(), received::add);
 
@@ -169,7 +169,7 @@ class ZoneBridgeTest {
 
         @Test
         void onDisconnectSendsErrorToPendingRequests() {
-            var handler = new TestableProxyZoneHandler("codeplane");
+            var handler = new TestableProxyZoneHandler("codezaiku");
             var received = new ArrayList<S2CMessage>();
 
             handler.simulateHandle("player-1", "long-running", List.of(), Map.of(), received::add);
@@ -196,7 +196,7 @@ class ZoneBridgeTest {
 
         @Test
         void validNamespaces() {
-            assertTrue("codeplane".matches("[a-z][a-z0-9-]*"));
+            assertTrue("codezaiku".matches("[a-z][a-z0-9-]*"));
             assertTrue("hearth".matches("[a-z][a-z0-9-]*"));
             assertTrue("my-zone-1".matches("[a-z][a-z0-9-]*"));
             assertTrue("a".matches("[a-z][a-z0-9-]*"));
@@ -248,7 +248,7 @@ class ZoneBridgeTest {
             if (respond != null) {
                 for (var jsonNode : response.messages()) {
                     var text = jsonNode.has("text") ? jsonNode.get("text").asText() : jsonNode.toPrettyString();
-                    respond.accept(new S2CMessage.ZoneResponse(0, response.requestId(), "codeplane", text, jsonNode, List.of()));
+                    respond.accept(new S2CMessage.ZoneResponse(0, response.requestId(), "codezaiku", text, jsonNode, List.of()));
                 }
             }
         }

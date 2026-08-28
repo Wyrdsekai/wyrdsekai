@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.agent.AgentProfile;
 import org.wyrdsekai.core.identity.AgentIdentity;
+import org.wyrdsekai.core.identity.AgentIdentityProvisioner;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -89,11 +90,32 @@ public class SoulAutoForge {
             log.info("  Generating genome...");
             var genome = SoulForgeCliTool.generateGenome(ollamaApiUrl, model, seed);
 
-            // Step 3: Generate identity
-            var householdSecret = new byte[32];
-            SecureRandom.getInstanceStrong().nextBytes(householdSecret);
-            var identity = AgentIdentity.generate(householdSecret);
-            log.info("  DID: {}", identity.did());
+            // Step 3: Generate identity.
+            //
+            // Prefer the real one. Until AgentIdentityStore existed, this minted a
+            // keypair under a RANDOM per-soul secret, signed once, pushed the secret
+            // to a TheSafe slot, and dropped the encrypted private key on the floor
+            // — so the slot held a key that decrypted nothing, and the forged soul
+            // was signed-once-then-orphaned. When provisioning is on, the identity
+            // is persisted with its key and the secret is the household's, so the
+            // soul can sign again later; the sink is then deliberately NOT called,
+            // because writing the household secret into a per-DID slot would spread
+            // it far beyond the one place it belongs.
+            byte[] householdSecret;
+            AgentIdentity identity;
+            boolean identityPersisted = false;
+            var provisioned = AgentIdentityProvisioner.isEnabled()
+                ? AgentIdentityProvisioner.secret().orElse(null) : null;
+            if (provisioned != null) {
+                householdSecret = provisioned;
+                identity = AgentIdentity.generate(householdSecret);
+                identityPersisted = AgentIdentityProvisioner.record(identity, null);
+            } else {
+                householdSecret = new byte[32];
+                SecureRandom.getInstanceStrong().nextBytes(householdSecret);
+                identity = AgentIdentity.generate(householdSecret);
+            }
+            log.info("  DID: {} (key persisted={})", identity.did(), identityPersisted);
 
             // Step 4: Embed fragments
             log.info("  Embedding {} fragments...", content.fragments().size());
@@ -135,16 +157,19 @@ public class SoulAutoForge {
             // Step 5b: Sign the manifest with the soul's OWN Ed25519 key.
             // Real signature over the canonical bytes (verifiable against the DID),
             // replacing the historical no-sign path that shipped orphaned manifests.
-            // The household secret is what decrypts the private key; persist it via
-            // the sink so signing capability survives forge instead of being dropped.
             try {
                 String sigB64 = identity.sign(manifest.canonicalBytes(), householdSecret);
                 manifest = manifest.signed(Base64.getDecoder().decode(sigB64));
-                if (secretSink != null) {
+                // Only the legacy path needs the sink: there, the secret is a random
+                // per-soul one and losing it means losing the ability to re-sign.
+                // With the identity persisted, the household secret is already where
+                // it belongs and must NOT be copied into a per-DID slot.
+                if (!identityPersisted && secretSink != null) {
                     secretSink.accept(identity.did(), householdSecret);
                 }
-                log.info("  Signed manifest (Ed25519 over canonical bytes); secret persisted={}",
-                    secretSink != null);
+                log.info("  Signed manifest (Ed25519 over canonical bytes); "
+                        + "identity persisted={}, legacy secret slot written={}",
+                    identityPersisted, !identityPersisted && secretSink != null);
             } catch (Exception signEx) {
                 // Never fail the forge on a signing hiccup — an unsigned manifest is
                 // handled by the load-time verify gate (flagged, not fatal).

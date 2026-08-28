@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Files;
@@ -42,10 +43,28 @@ class StackExchangeInstallTest {
         Files.createDirectories(packDir.resolve("chunks"));
 
         // Step 1: Download
+        //
+        // A HEAD probe says the host is up; it does not say the GET will work. On
+        // 2026-08-21 archive.org answered the probe and then returned HTTP 500 for the
+        // body, so this test FAILED the whole suite for a third party's outage. A gate
+        // that goes red for something nobody here can fix is a gate people learn to
+        // ignore — and "red, but it's pre-existing" is precisely how a real regression
+        // gets carried.
+        //
+        // So: failing to OBTAIN the input aborts (skips); failing to CONVERT it once
+        // obtained is a real failure and still fails. Those are different facts and
+        // deserve different outcomes.
         System.out.println("Downloading pets.stackexchange.com.7z...");
-        PackDownloader.download(
-            DUMP_URL,
-            packDir, System.out::println);
+        try {
+            PackDownloader.download(
+                DUMP_URL,
+                packDir, System.out::println);
+        } catch (IOException e) {
+            Assumptions.abort(
+                "archive.org could not serve the dump (" + e.getMessage() + ") — "
+                    + "skipping: this test cannot run without its input, and an upstream "
+                    + "outage is not a regression in this repository");
+        }
 
         // Step 2: Check extraction
         System.out.println("Files after download:");

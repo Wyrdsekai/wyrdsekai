@@ -11,7 +11,7 @@ package org.wyrdsekai.core.coding;
  *   <li>{@link #LOCAL_FREE} — runs on local hardware against a local model,
  *       no per-token cost (e.g. Aider against the household Qwen).</li>
  *   <li>{@link #LOCAL_HEAVY} — runs locally but consumes nontrivial host
- *       resources (RAM, disk, wallclock) — e.g. CodePlane long-running
+ *       resources (RAM, disk, wallclock) — e.g. CodeZaiku long-running
  *       boards, OpenHands Docker sandboxes.</li>
  *   <li>{@link #CLOUD_PAID} — outbound API call against a paid provider
  *       (Claude, OpenAI, Gemini). Always cost-policy gated.</li>

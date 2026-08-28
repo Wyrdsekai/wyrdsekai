@@ -41,7 +41,7 @@ import java.util.Map;
  * patterns separately from update/extend patterns, and V6+ training
  * loses the "this is what an actual perf win looks like" signal.</p>
  *
- * <p>Production capture path: the familiar's CodePlane-side session
+ * <p>Production capture path: the familiar's CodeZaiku-side session
  * watcher emits one of these per Maintain-shape session, and the §17.7
  * active-session Forge dispatch embeds it into the DEXTERITY fragment
  * it consolidates from the session.</p>

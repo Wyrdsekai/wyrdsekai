@@ -79,7 +79,7 @@ class FragmentKindStoreTest {
     }
 
     @Test void dexterity_fragment_persists_with_kind() {
-        var did = "did:wyrd:familiar:codeplane:test";
+        var did = "did:wyrd:familiar:codezaiku:test";
         store.replaceAll(did, List.of(
             SoulFragment.dexterity("dex-1", "procedural",
                 "RegexParsing", "Regex on log files keeps failing — prefer split."),

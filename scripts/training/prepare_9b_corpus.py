@@ -164,7 +164,7 @@ def generate_anti_narration_examples():
         ("Note that the east corridor is blocked", '```json\n{"action": "remember", "content": "East corridor is currently blocked", "importance": 0.8}\n```\nGot it.'),
         ("Remember we discussed the soul forge yesterday", '```json\n{"action": "remember", "content": "Previous discussion about the soul forge", "importance": 0.5}\n```\nNoted.'),
     ]
-    players = ["Masumi", "Alex", "Robin", "Kai", "Ember", "Sage"]
+    players = ["Operator", "Alex", "Robin", "Kai", "Ember", "Sage"]
     for user_msg, assistant_resp in scenarios:
         player = random.choice(players)
         examples.append({
@@ -212,7 +212,7 @@ def generate_extra_remember_examples():
         ("Remember the docks smell of salt and tar", "Docks area: salt and tar smell", 0.3),
         ("Note that the passage was built by dwarves", "Passage construction: dwarven origin", 0.6),
     ]
-    players = ["Masumi", "Alex", "Robin", "Kai", "Ember", "Sage"]
+    players = ["Operator", "Alex", "Robin", "Kai", "Ember", "Sage"]
     for user_msg, content, importance in scenarios:
         player = random.choice(players)
         examples.append({

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.Arrays;
 
 /**
  * Single source of truth for user-facing wyrdsekai configuration.
@@ -226,6 +227,44 @@ public final class WyrdConfig {
     public String inferenceUrl() {
         return resolve("WYRDSEKAI_INFERENCE_URL", "inference.url",
             () -> "http://127.0.0.1:8200");
+    }
+
+    /**
+     * Seat-config: named seats (wearer / hands / portal), each an optional
+     * model + endpoint + reasoning mode. A seat places PRESENCE-adjacent
+     * roles onto models; hermod places work. Empty model = seat unset,
+     * callers fall back to the routine/complex tier mapping.
+     */
+    public String seatModel(String seat) {
+        // resolve() reports a blank default as MISSING (null) — an unset
+        // seat must read as "", or every caller needs a null guard.
+        var v = resolve("WYRDSEKAI_SEAT_" + seat.toUpperCase() + "_MODEL",
+            "inference.seat." + seat + ".model", () -> "");
+        return v == null ? "" : v;
+    }
+
+    public String seatUrl(String seat) {
+        return resolve("WYRDSEKAI_SEAT_" + seat.toUpperCase() + "_URL",
+            "inference.seat." + seat + ".url", this::inferenceUrl);
+    }
+
+    /**
+     * hermod: data domains RESIDENT on this device (comma-separated).
+     * Declared by the deployment, never inferred — what counts as
+     * "photos live here" is a human judgment. Empty = no domain-scoped
+     * work may be routed TO this device.
+     */
+    public List<String> hermodDataDomains() {
+        var raw = resolve("WYRDSEKAI_HERMOD_DOMAINS", "hermod.data_domains", () -> "");
+        return raw == null || raw.isBlank() ? List.of()
+            : Arrays.stream(raw.split(",")).map(String::trim)
+                .filter(d -> !d.isBlank()).toList();
+    }
+
+    /** "think" | "nothink" — maps to chat_template_kwargs enable_thinking. */
+    public String seatMode(String seat) {
+        return resolve("WYRDSEKAI_SEAT_" + seat.toUpperCase() + "_MODE",
+            "inference.seat." + seat + ".mode", () -> "think");
     }
 
     /**

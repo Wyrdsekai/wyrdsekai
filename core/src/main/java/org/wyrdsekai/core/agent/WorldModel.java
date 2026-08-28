@@ -31,6 +31,10 @@ public final class WorldModel {
      * and library_search fallthroughs were caused by recall/tell_agent being
      * blocked from an earlier plant in the same probe run.
      */
+    /** Actions whose effect is deferred — the room cannot show it at observation time. */
+    private static final Set<String> ASYNC_EFFECT_ACTIONS = Set.of(
+        "dispatch_task", "dispatch_bunshin", "revise_form", "workbench_submit");
+
     private static final Set<String> LOOP_EXEMPT_ACTIONS = Set.of(
         "tell_agent",   // reply delivery — must be repeatable across turns
         "recall",       // memory query — probing same DID is normal
@@ -90,11 +94,34 @@ public final class WorldModel {
         transitions.computeIfAbsent(key, k -> Collections.synchronizedList(new ArrayList<>()))
             .add(transition);
 
-        // Track recent actions for loop detection
-        synchronized (recentActions) {
-            recentActions.addLast(actionType + ":" + actionTarget);
-            while (recentActions.size() > RECENT_WINDOW) {
-                recentActions.removeFirst();
+        // Track recent actions for loop detection — FAILED ones. A loop is repeating
+        // something that did not work; doing successful work twice is just work. This
+        // counted every call, so on 2026-08-23 09:32 two SUCCESSFUL builds (a library
+        // tool, then a weather tool, for two different asks) made the third build request
+        // "You've already tried dispatch_task recently" — and because build-first had
+        // narrowed the surface to that one tool, there was nothing left to call. The
+        // steward asked for a tool and got silence. dispatch_task has no target, so by
+        // name alone every build is "the same action"; success is the thing that tells
+        // a productive third call from a stuck one.
+        // Counted toward a loop when the action FAILED, or SUCCEEDED WITHOUT CHANGING
+        // THE WORLD. The first cut of this ("successes never count") exempted
+        // go_to_room(library) reporting success while staying in the nexus — a real loop
+        // the integration test pins. `changed` is what separates a productive repeat (a
+        // build that left a new artifact) from spinning (an examine that looked at the
+        // same room, a move that went nowhere).
+        // For an ASYNC-EFFECT action, success IS the effect. `changed` compares room
+        // snapshots at observation time, and a dispatch's artifact lands minutes later —
+        // so a SUCCESSFUL dispatch_task always recorded as "unchanged" and two good
+        // builds poisoned the third (live 2026-08-23 17:11: the weather-attic tool was
+        // blocked after two working builds, again, despite the failed-or-unchanged
+        // refinement). A failed async action still counts: that is the stuck case.
+        var asyncEffect = ASYNC_EFFECT_ACTIONS.contains(actionType);
+        if (!success || (!changed && !asyncEffect)) {
+            synchronized (recentActions) {
+                recentActions.addLast(actionType + ":" + actionTarget);
+                while (recentActions.size() > RECENT_WINDOW) {
+                    recentActions.removeFirst();
+                }
             }
         }
 

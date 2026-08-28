@@ -9,6 +9,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
+import java.util.List;
+import java.util.Map;
+import org.wyrdsekai.core.search.SearchCollections;
 
 /**
  * Tests for StudyService — journal, documents, pinboard, notes, voice memos.
@@ -174,19 +177,19 @@ class StudyServiceTest {
     void merge_inserts_unknown_item_then_getDelta_excludes_peer_that_has_it() {
         study.setServerDeviceId("srv-1");
         var u = "did:key:zSync002";
-        var phoneClock = java.util.Map.of("phone-A", 1);
+        var phoneClock = Map.of("phone-A", 1);
         var remote = new StudyService.StudyMergeItem(
             "note:zSync002:900", u, "note", "from phone", "hello from the phone",
             "notes", 900L, 1, phoneClock, "phone-A", false);
-        assertEquals(1, study.mergeFromPeer(u, java.util.List.of(remote)), "unknown item is inserted");
+        assertEquals(1, study.mergeFromPeer(u, List.of(remote)), "unknown item is inserted");
 
         // A peer whose summary already covers phone-A@1 should get NO delta back.
-        var delta = study.getDeltaForPeer(u, java.util.Map.of("phone-A", 1));
+        var delta = study.getDeltaForPeer(u, Map.of("phone-A", 1));
         assertTrue(delta.stream().noneMatch(i -> i.id().equals("note:zSync002:900")),
             "an item the peer already dominates must not be re-sent");
 
         // A peer that has never seen phone-A SHOULD get it.
-        var deltaFresh = study.getDeltaForPeer(u, java.util.Map.of());
+        var deltaFresh = study.getDeltaForPeer(u, Map.of());
         assertTrue(deltaFresh.stream().anyMatch(i -> i.id().equals("note:zSync002:900")),
             "a peer missing the item must receive it");
     }
@@ -196,15 +199,15 @@ class StudyServiceTest {
         study.setServerDeviceId("srv-1");
         var u = "did:key:zSync003";
         var id = "note:zSync003:100";
-        study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
+        study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
             id, u, "note", "v1", "original", "notes", 100L, 1,
-            java.util.Map.of("phone-A", 1), "phone-A", false)));
+            Map.of("phone-A", 1), "phone-A", false)));
 
         // remote DOMINATES (phone-A:2 > 1) → content fast-forwards
-        assertEquals(1, study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
+        assertEquals(1, study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
             id, u, "note", "v2", "edited on phone", "notes", 200L, 2,
-            java.util.Map.of("phone-A", 2), "phone-A", false))));
-        var after = store.getById(org.wyrdsekai.core.search.SearchCollections.STUDY, id);
+            Map.of("phone-A", 2), "phone-A", false))));
+        var after = store.getById(SearchCollections.STUDY, id);
         assertNotNull(after);
         assertEquals("edited on phone", after.content(), "a dominating remote must fast-forward local");
     }
@@ -215,17 +218,17 @@ class StudyServiceTest {
         var u = "did:key:zSync005";
         var id = "note:zSync005:1";
         // seed a phone item {phone-A:1}
-        study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
+        study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
             id, u, "note", "v1", "original", "notes", 100L, 1,
-            java.util.Map.of("phone-A", 1), "phone-A", false)));
+            Map.of("phone-A", 1), "phone-A", false)));
         // a SERVER edit ticks srv-1 → local becomes {phone-A:1, srv-1:1}, content "server edit"
         study.editItem(id, u, "server edit");
         // remote {phone-A:2} — neither dominates (remote higher on phone-A, local higher on srv-1)
-        int merged = study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
+        int merged = study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
             id, u, "note", "v?", "phone edit", "notes", 300L, 2,
-            java.util.Map.of("phone-A", 2), "phone-A", false)));
+            Map.of("phone-A", 2), "phone-A", false)));
         assertEquals(0, merged, "a concurrent remote must NOT be applied");
-        var after = store.getById(org.wyrdsekai.core.search.SearchCollections.STUDY, id);
+        var after = store.getById(SearchCollections.STUDY, id);
         assertEquals("server edit", after.content(), "local content is kept on a concurrent conflict");
     }
 
@@ -235,16 +238,16 @@ class StudyServiceTest {
         var u = "did:key:zSync004";
         var id = "note:zSync004:1";
         // tombstone for an id we never had → no-op
-        assertEquals(0, study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
-            id, u, "note", "", "", "notes", 1L, 1, java.util.Map.of("phone-A", 1), "phone-A", true))),
+        assertEquals(0, study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
+            id, u, "note", "", "", "notes", 1L, 1, Map.of("phone-A", 1), "phone-A", true))),
             "a tombstone for an unknown item is a no-op");
 
         // insert, then a dominating tombstone deletes it
-        study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
-            id, u, "note", "x", "here", "notes", 2L, 1, java.util.Map.of("phone-A", 1), "phone-A", false)));
-        study.mergeFromPeer(u, java.util.List.of(new StudyService.StudyMergeItem(
-            id, u, "note", "x", "here", "notes", 3L, 2, java.util.Map.of("phone-A", 2), "phone-A", true)));
-        assertNull(store.getById(org.wyrdsekai.core.search.SearchCollections.STUDY, id),
+        study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
+            id, u, "note", "x", "here", "notes", 2L, 1, Map.of("phone-A", 1), "phone-A", false)));
+        study.mergeFromPeer(u, List.of(new StudyService.StudyMergeItem(
+            id, u, "note", "x", "here", "notes", 3L, 2, Map.of("phone-A", 2), "phone-A", true)));
+        assertNull(store.getById(SearchCollections.STUDY, id),
             "a dominating tombstone must delete the local item");
     }
 }

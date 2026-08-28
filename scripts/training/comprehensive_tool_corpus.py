@@ -27,7 +27,7 @@ import re
 # ═══════════════════════════════════════════════════════════════════════
 
 PLAYER_NAMES = [
-    "Claude", "Masumi", "Alex", "Robin", "Sam", "Jordan", "Kai", "Ember",
+    "Claude", "Operator", "Alex", "Robin", "Sam", "Jordan", "Kai", "Ember",
     "River", "Quinn", "Sage", "Raven", "Nova", "Ash", "Finn", "Morgan",
     "Wren", "Lyra", "Nyx", "Sol", "Zara", "Ori", "Jude", "Thorn",
 ]
@@ -1430,8 +1430,8 @@ def generate_additional_examples():
     examples.append(make_example("boiler-room", "[from Claude] Remember the current pressure reading",
         action_block('{"action":"remember","content":"Boiler room pressure: 87 PSI. Checked during today\'s audit. Within normal range.","importance":0.6}')))
 
-    examples.append(make_example("nexus", "[from Claude] Don't forget — we need to coordinate with CodePlane team about gpu-host access",
-        action_block('{"action":"remember","content":"Need to coordinate with CodePlane team about gpu-host GPU access. Shared resource.","importance":0.9}')))
+    examples.append(make_example("nexus", "[from Claude] Don't forget — we need to coordinate with CodeZaiku team about gpu-host access",
+        action_block('{"action":"remember","content":"Need to coordinate with CodeZaiku team about gpu-host GPU access. Shared resource.","importance":0.9}')))
 
     examples.append(make_example("nexus", "[from Claude] Remember that Enter and Leave events should be persisted but Said should not",
         action_block('{"action":"remember","content":"Event persistence rules: Enter/Leave = persist (presence is state). Said/Emoted/Whispered = transient (don\'t bloat journal).","importance":0.9}')))

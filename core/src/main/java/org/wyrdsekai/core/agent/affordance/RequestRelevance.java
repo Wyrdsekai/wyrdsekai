@@ -58,6 +58,31 @@ public final class RequestRelevance {
      * instead of consulting a list. If this map is ever the only thing keeping a tool
      * reachable, that tool's description is too vague and THAT is the thing to fix.</p>
      */
+    /**
+     * What the household's own volumes can answer about.
+     *
+     * <p>Two kinds of noun, and the second was missing. The <b>containers</b> —
+     * library, shelf, volume — are what a person says when they are thinking
+     * about where a thing is kept. The <b>contents</b> — poem, passage, letter,
+     * lyrics — are what they say when they are thinking about the thing itself,
+     * which is most of the time. "What is the poem that so-and-so sent?" names
+     * no furniture at all, and scored zero.</p>
+     *
+     * <p>Still nouns only: "read", "find" and "look" stay out, because they
+     * apply to every tool and cueing on them is what once sent "find the sum of
+     * these numbers" to web search.</p>
+     */
+    private static final List<String> LIBRARY_CUES = List.of(
+        // containers
+        "library", "book", "books", "shelf", "shelves", "bibliography",
+        "novel", "novels", "volume", "volumes", "chapter", "reading",
+        "manuscript", "anthology",
+        // contents
+        "poem", "poems", "verse", "verses", "stanza", "passage", "passages",
+        "excerpt", "excerpts", "quotation", "quotations", "epigraph",
+        "letter", "letters", "essay", "essays", "lyrics", "prose",
+        "author", "novelist", "poet");
+
     private static final Map<String, List<String>> INTENT = Map.ofEntries(
         Map.entry("calculator", List.of(
             "calculate", "calculation", "compute", "arithmetic", "math", "maths",
@@ -69,6 +94,22 @@ public final class RequestRelevance {
         Map.entry("morning_briefing", List.of(
             "weather", "forecast", "temperature", "rain", "snow", "sunny", "cloudy",
             "briefing", "outlook")),
+        // A thing that DOES something. Nouns only, and deliberately not the verbs
+        // "build"/"make"/"create" — those are equally true of a room and of a lantern, and
+        // the note above records what cueing on universal verbs already cost once.
+        //
+        // Live on staging 2026-08-22: asked twice, in plain words, to "build me an item
+        // called venture_scout", she answered about wanting the request heard and never
+        // dispatched. It read as evasion. It was not: dispatch_task appeared on ZERO of
+        // three menus, because nothing here named it and description overlap alone caps at
+        // 0.5. The tool that builds tools has to be reachable by asking for a tool.
+        Map.entry("dispatch_task", List.of(
+            "tool", "tools", "item", "items", "script", "scripts", "code",
+            "program", "utility", "gadget", "widget", "automate", "automation")),
+        // And the room verbs, so "make me a room where…" reaches the room-maker rather
+        // than competing on prose overlap with everything else that says "room".
+        Map.entry("create_room_from_template", List.of(
+            "room", "rooms", "chamber", "hall", "space", "place", "sanctum")),
         Map.entry("trip_planner", List.of(
             "trip", "travel", "route", "directions", "itinerary", "journey")),
         // NOT "search"/"look"/"find": those are verbs that apply to EVERY tool. Cueing on them
@@ -76,8 +117,36 @@ public final class RequestRelevance {
         // search at full confidence. A cue has to be about the tool, not about wanting a tool.
         Map.entry("searching_glass", List.of(
             "web", "google", "news", "online", "internet", "browse")),
-        Map.entry("library_card", List.of(
-            "library", "book", "books", "shelf", "shelves", "bibliography")),
+        // Both library paths carry the same cues, and they must.
+        //
+        // Only library_card had them, and library_card is a CRAFTABLE starter
+        // item — a companion who never crafted one has it nowhere in reach.
+        // library_search is the native action that always exists and is the one
+        // wired to the household's own volumes, and it scored on name overlap
+        // alone: "library" out of {library, search} = 0.5, a dead tie with any
+        // furnishing that happens to have "library" in its name. So "can u look
+        // through my books and tell me…" ranked the workshop's library_shelves
+        // furnishing level with the tool built to answer it (2026-08-07).
+        //
+        // Nouns only. "search"/"look"/"find" are excluded on purpose — they are
+        // verbs that apply to every tool, and cueing on them is what once sent
+        // "find the sum of these numbers" straight to web search.
+        // CONTAINERS *AND* CONTENTS.
+        //
+        // The list held only words for the furniture — library, shelf, volume —
+        // so it fired on "look through my books" and scored ZERO on "what is the
+        // poem that Finkle-McGraw sent to Hackworth? please recite it". Live
+        // 2026-08-09, four runs: library_card appeared on NONE of the eight
+        // ranked surfaces for that question. She was offered go_to_room,
+        // promote_familiar and bear_the_wound, and went out the use_item escape
+        // hatch to the WEB — the only source she had left — where
+        // "Finkle-McGraw" matched "Norman Finkelstein (poet)". On the fourth run
+        // she composed a poem of her own and recited it.
+        //
+        // A person asking about a poem, a passage or a letter is asking about
+        // something written down. Naming the artefact is naming the library.
+        Map.entry("library_search", LIBRARY_CUES),
+        Map.entry("library_card", LIBRARY_CUES),
         Map.entry("web_clipper", List.of("clip", "bookmark", "url")),
         Map.entry("quote_card", List.of("quote", "quotation", "citation")),
         Map.entry("research_assistant", List.of("research", "investigate")),
@@ -112,7 +181,7 @@ public final class RequestRelevance {
         var cues = INTENT.get(lower);
         if (cues != null) {
             for (var cue : cues) {
-                if (words.contains(cue)) { best = 1.0; break; }
+                if (words.contains(cue) && !usedAsVerb(request, cue)) { best = 1.0; break; }
             }
         }
 
@@ -141,6 +210,60 @@ public final class RequestRelevance {
             }
         }
         return best;
+    }
+
+    /**
+     * Is this cue word being used as a VERB here rather than naming a thing?
+     *
+     * <p>The cue lists are meant to be nouns — "a cue has to be about the tool,
+     * not about wanting a tool". Several of them are also common verbs, and the
+     * comment claiming otherwise went untested until someone asked whether the
+     * library work had been overfitted to one sentence. It had:</p>
+     *
+     * <pre>
+     * "book me a flight to osaka"      → library, at full confidence
+     * "shelf that idea for now"        → library
+     * "i'm reading you loud and clear" → library
+     * </pre>
+     *
+     * <p>English marks this position reliably enough for a lexical heuristic: a
+     * noun is not normally followed straight by an object pronoun or a bare
+     * determiner. "book me", "book a", "shelf that" are verbs; "my books",
+     * "the book about grief", "on the shelf" are not. Deliberately narrow — it
+     * only ever <em>withholds</em> a cue, so the worst case is falling back to
+     * name and description overlap, which is where every uncued tool already
+     * lives.</p>
+     */
+    private static final Set<String> VERB_OBJECT_MARKERS = Set.of(
+        "me", "us", "him", "her", "them", "myself", "yourself",
+        "a", "an", "that", "this", "these", "those", "it");
+
+    /** An article or possessive immediately before the cue: "a tool", "my calculator". */
+    private static final Set<String> NOUN_MARKERS = Set.of(
+        "a", "an", "the", "my", "your", "our", "their", "his", "her", "its",
+        "one", "some", "another", "this", "that");
+
+    static boolean usedAsVerb(String request, String cue) {
+        // A determiner in front settles it: "make me a tool that looks up a topic" is a
+        // NOUN, whatever follows. Without this, "a tool that…" was read as a verb because
+        // "that" is a verb-object marker, and the tool-maker scored 0.15 on the plainest
+        // request there is — measured on the steward's own words, 2026-08-22.
+        var noun = Pattern.compile("\\b([a-z']+)\\s+" + Pattern.quote(cue) + "\\b",
+            Pattern.CASE_INSENSITIVE).matcher(request);
+        while (noun.find()) {
+            if (NOUN_MARKERS.contains(noun.group(1).toLowerCase(Locale.ROOT))) return false;
+        }
+        var m = Pattern.compile("\\b" + Pattern.quote(cue) + "\\b\\s+([a-z']+)",
+            Pattern.CASE_INSENSITIVE).matcher(request);
+        while (m.find()) {
+            if (!VERB_OBJECT_MARKERS.contains(m.group(1).toLowerCase(Locale.ROOT))) {
+                return false;   // at least one occurrence reads as a noun
+            }
+        }
+        // Every occurrence was followed by a verb-object marker, and there was at
+        // least one. A trailing cue ("what's on the shelf") matches nothing here
+        // and correctly counts as a noun.
+        return m.reset().find();
     }
 
     /** Bare arithmetic — "17 * 3", "48273 x 9182" — carries no cue word at all. */

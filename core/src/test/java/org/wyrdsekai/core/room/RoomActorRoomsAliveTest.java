@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
 
 /**
  * W2 "rooms alive" (, audit 2026-07-11) — integration
@@ -64,7 +65,7 @@ class RoomActorRoomsAliveTest {
 
     /** Fish the probe until a Said event containing {@code needle} arrives. */
     private static WorldEvent.Said expectSaidContaining(
-            org.apache.pekko.actor.testkit.typed.javadsl.TestProbe<RoomNotification> probe,
+            TestProbe<RoomNotification> probe,
             String needle, Duration timeout) {
         var deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {

@@ -10,16 +10,16 @@ import java.util.*;
 import java.util.function.Function;
 
 /**
- * Adapts Wyrdsekai's BehavioralEvaluator to CodePlane's SolutionEvaluator
+ * Adapts Wyrdsekai's BehavioralEvaluator to CodeZaiku's SolutionEvaluator
  * contract ( &sect;5.2).
  *
- * CodePlane's SolutionEvaluator works with String candidates (serialized solutions)
+ * CodeZaiku's SolutionEvaluator works with String candidates (serialized solutions)
  * and a generic EvaluationContext. This adapter deserializes the candidate JSON
  * into a SoulVariant, runs BehavioralEvaluator.evaluate(), and maps the result
- * back to CodePlane's Result format.
+ * back to CodeZaiku's Result format.
  *
- * Since Wyrdsekai and CodePlane are sibling projects that cannot directly depend
- * on each other, this adapter uses local record types that mirror CodePlane's
+ * Since Wyrdsekai and CodeZaiku are sibling projects that cannot directly depend
+ * on each other, this adapter uses local record types that mirror CodeZaiku's
  * SolutionEvaluator interface.
  *
  * @see BehavioralEvaluator
@@ -29,7 +29,7 @@ public class CrucibleEvaluatorAdapter {
 
     /**
      * Result from evaluating a candidate solution.
-     * Mirrors CodePlane's SolutionEvaluator.EvaluationResult.
+     * Mirrors CodeZaiku's SolutionEvaluator.EvaluationResult.
      */
     public record EvaluationResult(
         double fitness,
@@ -40,7 +40,7 @@ public class CrucibleEvaluatorAdapter {
 
     /**
      * Context for evaluation.
-     * Mirrors CodePlane's SolutionEvaluator.EvaluationContext.
+     * Mirrors CodeZaiku's SolutionEvaluator.EvaluationContext.
      */
     public record EvaluationContext(
         String taskDescription,

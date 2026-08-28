@@ -103,10 +103,15 @@ public final class SqlRecipeQueue {
     public boolean markCompleted(String id, QueuedRecipe.Status terminal,
             Instant completedAt, CadenceTier newTier, int newConsecutive,
             String runId, String message) {
+        // SKIPPED is a legitimate terminal here: a run that never started (no coding
+        // backend, unsatisfiable resource requisite) still has to leave the queue, and
+        // must do so WITHOUT being counted as an outcome. PENDING/IN_PROGRESS remain
+        // rejected — completing into a non-terminal state is always a caller bug.
         if (terminal != QueuedRecipe.Status.SUCCEEDED
-                && terminal != QueuedRecipe.Status.FAILED) {
+                && terminal != QueuedRecipe.Status.FAILED
+                && terminal != QueuedRecipe.Status.SKIPPED) {
             throw new IllegalArgumentException(
-                "markCompleted requires SUCCEEDED or FAILED, got " + terminal);
+                "markCompleted requires SUCCEEDED, FAILED or SKIPPED, got " + terminal);
         }
         var sql = "UPDATE recipe_queue "
             + "SET status = ?, completed_at = ?, cadence_tier = ?, "
@@ -133,6 +138,32 @@ public final class SqlRecipeQueue {
     }
 
     // -- reads ----------------------------------------------------------
+
+    /**
+     * Retire a PENDING row without running it and without recording an outcome.
+     *
+     * <p>For rows that cannot run as configured. Marking them FAILED would feed the
+     * consecutive-deploy-failure ceiling (see
+     * {@code RecipeBudgetTracker#consecutiveDeployFailures}, which reads exactly the
+     * SUCCEEDED/FAILED rows); leaving them PENDING would block the queue head forever,
+     * since a missing parameter never resolves itself. SKIPPED does neither.
+     *
+     * @return true if this call retired the row; false if it was no longer PENDING.
+     */
+    public boolean markSkipped(String id, Instant at, String message) {
+        var sql = "UPDATE recipe_queue SET status = 'SKIPPED', completed_at = ?, "
+            + "message = ? WHERE id = ? AND status = 'PENDING'";
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var st = conn.prepareStatement(sql)) {
+            st.setLong(1, at.toEpochMilli());
+            st.setString(2, message);
+            st.setString(3, id);
+            return st.executeUpdate() == 1;
+        } catch (Exception e) {
+            log.warn("SqlRecipeQueue.markSkipped({}) failed: {}", id, e.getMessage());
+            return false;
+        }
+    }
 
     /** Single row by id, or empty. */
     public Optional<QueuedRecipe> find(String id) {
@@ -341,7 +372,37 @@ public final class SqlRecipeQueue {
                     + " ON recipe_queue(agent_did)");
             }
         }
+        retireNeverRanFailures(conn);
         migrated = true;
+    }
+
+    /**
+     * One-time repair: rows recorded as FAILED for a run that never started.
+     *
+     * <p>{@link RecipeRunner} rejects a recipe whose required params are missing before
+     * any step executes, and that rejection was stored as FAILED — indistinguishable
+     * from a run that tried and broke. Three of them trip the consecutive-deploy-failure
+     * ceiling, which pauses the recipe until a steward intervenes, and the rows are
+     * permanent, so correcting the cause is not enough to release the recipe: the
+     * history keeps the ceiling tripped forever. On a household node
+     * {@code retrain-classifier-head} accumulated fourteen of these and stayed paused
+     * (2026-08-18).
+     *
+     * <p>Matched on the exact message {@link RecipeRunner} writes, so only rows that
+     * provably never ran are touched. Idempotent: after the first pass there is nothing
+     * left to match.
+     */
+    private void retireNeverRanFailures(Connection conn) throws SQLException {
+        var sql = "UPDATE recipe_queue SET status = 'SKIPPED' "
+            + "WHERE status = 'FAILED' AND message LIKE 'missing required params:%'";
+        try (var st = conn.prepareStatement(sql)) {
+            int healed = st.executeUpdate();
+            if (healed > 0) {
+                log.info("Retired {} queue row(s) recorded as FAILED for runs that never "
+                    + "started (missing required params) — they no longer count toward "
+                    + "the deploy-failure ceiling", healed);
+            }
+        }
     }
 
     private static boolean hasTable(Connection conn, String table) throws SQLException {

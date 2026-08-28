@@ -34,19 +34,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@link TestServerBootstrap} and verifies the zone bridge protocol with a raw WebSocket
  * client. No external dependencies.
  *
- * <p><b>Mode 2: Cross-machine integration</b> (gated on {@code CODEPLANE_URL}) — connects
+ * <p><b>Mode 2: Cross-machine integration</b> (gated on {@code CODEZAIKU_URL}) — connects
  * to a running Wyrdsekai server (local or remote via {@code WYRDSEKAI_URL}) that has a real
- * CodePlane instance connected via the zone bridge. Tests the full round-trip:
+ * CodeZaiku instance connected via the zone bridge. Tests the full round-trip:
  * <pre>
- * home-server (Wyrdsekai)              gpu-host (CodePlane)
- *   player command ──→ zone bridge ──→ CodePlane processes ──→ response back
+ * home-server (Wyrdsekai)              gpu-host (CodeZaiku)
+ *   player command ──→ zone bridge ──→ CodeZaiku processes ──→ response back
  * </pre>
  *
  * <p>Environment variables:
  * <ul>
  *   <li>{@code WYRDSEKAI_URL} — base URL of running Wyrdsekai (e.g. {@code http://home-server:7070}).
  *       If set, skips TestServerBootstrap and connects to the remote server.
- *   <li>{@code CODEPLANE_URL} — base URL of running CodePlane (e.g. {@code http://gpu-host:8080}).
+ *   <li>{@code CODEZAIKU_URL} — base URL of running CodeZaiku (e.g. {@code http://gpu-host:8080}).
  *       Enables cross-machine integration tests.
  * </ul>
  */
@@ -74,7 +74,7 @@ class ZoneBridgeExternalTest {
             baseUrl = localServer.baseUrl();
         }
 
-        // Workspace for codeplane.create tests — env var or temp dir
+        // Workspace for codezaiku.create tests — env var or temp dir
         var wsEnv = System.getenv("INTEGRATION_WORKSPACE");
         if (wsEnv != null && !wsEnv.isBlank()) {
             workspace = wsEnv;
@@ -254,17 +254,17 @@ class ZoneBridgeExternalTest {
         }
     }
 
-    // ── Cross-machine integration tests (require CODEPLANE_URL) ────────────
+    // ── Cross-machine integration tests (require CODEZAIKU_URL) ────────────
     //
-    // These tests verify the full round-trip between Wyrdsekai and CodePlane
-    // across the zone bridge. CodePlane must be running and connected.
+    // These tests verify the full round-trip between Wyrdsekai and CodeZaiku
+    // across the zone bridge. CodeZaiku must be running and connected.
 
     @Test
-    @EnabledIfEnvironmentVariable(named = "CODEPLANE_URL", matches = ".+")
-    void codeplane_registers_via_zone_bridge() throws Exception {
-        // Verify CodePlane registered its namespace via the REST endpoint
+    @EnabledIfEnvironmentVariable(named = "CODEZAIKU_URL", matches = ".+")
+    void codezaiku_registers_via_zone_bridge() throws Exception {
+        // Verify CodeZaiku registered its namespace via the REST endpoint
         // — no namespace interference, works with multiple zone services
-        waitForCodePlaneRegistration();
+        waitForCodeZaikuRegistration();
 
         var httpClient = HttpClient.newHttpClient();
         var req = HttpRequest.newBuilder()
@@ -278,27 +278,27 @@ class ZoneBridgeExternalTest {
         var namespaces = json.path("namespaces");
         boolean found = false;
         for (var ns : namespaces) {
-            if ("codeplane".equals(ns.asText())) { found = true; break; }
+            if ("codezaiku".equals(ns.asText())) { found = true; break; }
         }
-        assertTrue(found, "CodePlane should be registered in zone namespaces: " + resp.body());
+        assertTrue(found, "CodeZaiku should be registered in zone namespaces: " + resp.body());
     }
 
     @Test
-    @EnabledIfEnvironmentVariable(named = "CODEPLANE_URL", matches = ".+")
-    void codeplane_status_round_trip() throws Exception {
-        // Player sends codeplane.status → routes through zone bridge →
-        // CodePlane responds with active boards and system info
-        waitForCodePlaneRegistration();
+    @EnabledIfEnvironmentVariable(named = "CODEZAIKU_URL", matches = ".+")
+    void codezaiku_status_round_trip() throws Exception {
+        // Player sends codezaiku.status → routes through zone bridge →
+        // CodeZaiku responds with active boards and system info
+        waitForCodeZaikuRegistration();
 
         var playerWs = connectPlayer();
         try {
             drainInitialMessages(playerWs);
 
             playerWs.send("""
-                {"type":"command","id":"status-1","roomId":"nexus","command":"codeplane.status"}""");
+                {"type":"command","id":"status-1","roomId":"nexus","command":"codezaiku.status"}""");
 
             var response = waitForZoneResponse(playerWs, BRIDGE_TIMEOUT);
-            assertNotNull(response, "Should receive codeplane.status response via zone bridge");
+            assertNotNull(response, "Should receive codezaiku.status response via zone bridge");
 
             // Response should contain system info
             var text = response.path("text").asText("");
@@ -311,10 +311,10 @@ class ZoneBridgeExternalTest {
     }
 
     @Test
-    @EnabledIfEnvironmentVariable(named = "CODEPLANE_URL", matches = ".+")
-    void codeplane_list_round_trip() throws Exception {
-        // Player asks CodePlane to list available models
-        waitForCodePlaneRegistration();
+    @EnabledIfEnvironmentVariable(named = "CODEZAIKU_URL", matches = ".+")
+    void codezaiku_list_round_trip() throws Exception {
+        // Player asks CodeZaiku to list available models
+        waitForCodeZaikuRegistration();
 
         var playerWs = connectPlayer();
         try {
@@ -322,23 +322,23 @@ class ZoneBridgeExternalTest {
 
             playerWs.send("""
                 {"type":"command","id":"list-1","roomId":"nexus",\
-                "command":"codeplane.list","payload":{"what":"models"}}""");
+                "command":"codezaiku.list","payload":{"what":"models"}}""");
 
             var response = waitForZoneResponse(playerWs, BRIDGE_TIMEOUT);
-            assertNotNull(response, "Should receive codeplane.list response via zone bridge");
+            assertNotNull(response, "Should receive codezaiku.list response via zone bridge");
         } finally {
             playerWs.close();
         }
     }
 
     @Test
-    @EnabledIfEnvironmentVariable(named = "CODEPLANE_URL", matches = ".+")
-    void codeplane_full_pipeline_produces_code_and_tests() throws Exception {
+    @EnabledIfEnvironmentVariable(named = "CODEZAIKU_URL", matches = ".+")
+    void codezaiku_full_pipeline_produces_code_and_tests() throws Exception {
         // Full end-to-end: player creates a board with a coding task,
-        // CodePlane runs the agent pipeline (LLM inference, tool calls, code gen),
+        // CodeZaiku runs the agent pipeline (LLM inference, tool calls, code gen),
         // all events broadcast back through the zone bridge to the player.
         //
-        // Topology: home-server (test) → relay-node (Wyrdsekai) → gpu-host (CodePlane + GPU)
+        // Topology: home-server (test) → relay-node (Wyrdsekai) → gpu-host (CodeZaiku + GPU)
         //
         // Verification:
         //   1. Board creation response received
@@ -348,7 +348,7 @@ class ZoneBridgeExternalTest {
         //   5. Tests run (TestResult event with pass/fail counts)
         //   6. Agent completed (success or failure — pipeline ran to completion)
         //   7. Status query confirms board reached terminal state
-        waitForCodePlaneRegistration();
+        waitForCodeZaikuRegistration();
 
         var playerWs = connectPlayer();
         try {
@@ -357,7 +357,7 @@ class ZoneBridgeExternalTest {
             // Create a board with a concrete coding task
             playerWs.send("""
                 {"type":"command","id":"create-full","roomId":"nexus",\
-                "command":"codeplane.create",\
+                "command":"codezaiku.create",\
                 "payload":{\
                   "prompt":"Create a Java file HelloWorld.java that prints Hello World, and a shell script test.sh that compiles and runs it, verifying the output contains Hello World",\
                   "workspace":"%s"\
@@ -426,20 +426,20 @@ class ZoneBridgeExternalTest {
 
             // Assertions — core proof: events flow through the zone bridge
             assertFalse(allEvents.isEmpty(),
-                "Should receive pipeline events from CodePlane");
+                "Should receive pipeline events from CodeZaiku");
             // At least 2 events (agent activity + completion)
             assertTrue(allEvents.size() >= 2,
                 "Should receive multiple pipeline events, got " + allEvents.size());
             assertTrue(agentCompleted,
                 "Agent should complete (success or failure) within 5 minutes");
-            // Soft checks — log but don't fail (depends on CodePlane agent behavior)
+            // Soft checks — log but don't fail (depends on CodeZaiku agent behavior)
             if (!agentClaimed) System.out.println("  NOTE: No 'claimed' event detected in text");
             if (!toolCallSeen) System.out.println("  NOTE: No tool call event detected in text");
             if (!codeChangeSeen) System.out.println("  NOTE: No code change event detected in text");
 
-            // 7. Verify final status via codeplane.status
+            // 7. Verify final status via codezaiku.status
             playerWs.send("""
-                {"type":"command","id":"status-final","roomId":"nexus","command":"codeplane.status"}""");
+                {"type":"command","id":"status-final","roomId":"nexus","command":"codezaiku.status"}""");
             var finalStatus = waitForZoneResponse(playerWs, BRIDGE_TIMEOUT);
             assertNotNull(finalStatus, "Final status should be available after pipeline completion");
             System.out.println("  Final status: " + finalStatus.path("text").asText(""));
@@ -450,10 +450,10 @@ class ZoneBridgeExternalTest {
     }
 
     @Test
-    @EnabledIfEnvironmentVariable(named = "CODEPLANE_URL", matches = ".+")
-    void codeplane_status_reflects_board_lifecycle() throws Exception {
+    @EnabledIfEnvironmentVariable(named = "CODEZAIKU_URL", matches = ".+")
+    void codezaiku_status_reflects_board_lifecycle() throws Exception {
         // Create a board, verify status shows it, then check after pipeline runs
-        waitForCodePlaneRegistration();
+        waitForCodeZaikuRegistration();
 
         var playerWs = connectPlayer();
         try {
@@ -462,7 +462,7 @@ class ZoneBridgeExternalTest {
             // Create a board
             playerWs.send("""
                 {"type":"command","id":"create-lc","roomId":"nexus",\
-                "command":"codeplane.create",\
+                "command":"codezaiku.create",\
                 "payload":{\
                   "prompt":"Create a file called hello.txt with the text Hello",\
                   "workspace":"%s/lifecycle"\
@@ -474,7 +474,7 @@ class ZoneBridgeExternalTest {
             // Check status — should show at least one board
             // Note: active pipelines flood the WebSocket, so we may need to skip broadcast events
             playerWs.send("""
-                {"type":"command","id":"status-lc","roomId":"nexus","command":"codeplane.status"}""");
+                {"type":"command","id":"status-lc","roomId":"nexus","command":"codezaiku.status"}""");
 
             var statusResponse = waitForZoneResponse(playerWs, BRIDGE_TIMEOUT);
             assertNotNull(statusResponse, "Status should return after board creation");
@@ -492,10 +492,10 @@ class ZoneBridgeExternalTest {
     // ── Helpers ───────────────────────────────────────────────────────────
 
     /**
-     * Wait for CodePlane to register its "codeplane" namespace on the zone bridge.
+     * Wait for CodeZaiku to register its "codezaiku" namespace on the zone bridge.
      * Polls the REST endpoint GET /api/zone/namespaces — no namespace interference.
      */
-    private static void waitForCodePlaneRegistration() throws Exception {
+    private static void waitForCodeZaikuRegistration() throws Exception {
         var httpClient = HttpClient.newHttpClient();
         var namespacesUrl = baseUrl + "/api/zone/namespaces";
 
@@ -510,8 +510,8 @@ class ZoneBridgeExternalTest {
                     var json = mapper.readTree(resp.body());
                     var namespaces = json.path("namespaces");
                     for (var ns : namespaces) {
-                        if ("codeplane".equals(ns.asText())) {
-                            return; // CodePlane registered
+                        if ("codezaiku".equals(ns.asText())) {
+                            return; // CodeZaiku registered
                         }
                     }
                 }
@@ -520,7 +520,7 @@ class ZoneBridgeExternalTest {
             }
             Thread.sleep(2000);
         }
-        fail("CodePlane did not register on the zone bridge within 120 seconds");
+        fail("CodeZaiku did not register on the zone bridge within 120 seconds");
     }
 
     private static ZoneBridgeWsClient connectZoneBridge() throws Exception {

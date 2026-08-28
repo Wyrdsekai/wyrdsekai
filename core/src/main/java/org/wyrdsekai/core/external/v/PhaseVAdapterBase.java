@@ -46,6 +46,14 @@ import java.util.Set;
  * {@link #invoke(AdapterRequest)}.</p>
  */
 abstract class PhaseVAdapterBase implements ExternalAdapter {
+    /**
+     * Every Phase-V adapter is scaffolding: each one answers {@code ok({stub:true, ...})}
+     * with empty data rather than an error, so an item built on it reports "nothing found"
+     * forever and no branch can detect it. Nothing here is advertised to an item author
+     * until it declares what it actually reaches.
+     */
+    @Override public Set<String> wiredCapabilities() { return Set.of(); }
+
 
     protected static final Logger log = LoggerFactory.getLogger(PhaseVAdapterBase.class);
 

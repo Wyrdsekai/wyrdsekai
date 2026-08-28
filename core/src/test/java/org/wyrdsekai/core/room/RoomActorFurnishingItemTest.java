@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
 
 /**
  * Furnishing-as-scripted-item: {@code use <furnishing>} on a RoomObject whose
@@ -134,7 +135,7 @@ class RoomActorFurnishingItemTest {
     }
 
     private String awaitNarration(
-            org.apache.pekko.actor.testkit.typed.javadsl.TestProbe<RoomNotification> probe,
+            TestProbe<RoomNotification> probe,
             String marker) {
         var found = new AtomicReference<String>();
         for (int i = 0; i < 20 && found.get() == null; i++) {

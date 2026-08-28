@@ -16,7 +16,7 @@ import java.util.UUID;
  * @param taskId            originating task ID.
  * @param sourceArtifactId  ID of the {@link SourceArtifact} this build came
  *                           from. Free-form string (not enforced UUID) so
- *                           legacy CodePlane codex IDs (8-hex) still fit.
+ *                           legacy CodeZaiku codex IDs (8-hex) still fit.
  * @param status            {@code "success"}, {@code "failed"},
  *                           {@code "untested"}, or backend-specific value.
  * @param testsPassed       number of tests that passed (0 if no test step).

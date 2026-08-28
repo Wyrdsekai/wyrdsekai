@@ -79,12 +79,24 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class ItemBuildToolSelectionLiveE2ETest {
 
     private static final String DRIVE_URL = "http://localhost:8200";
+    /** The model family these gates are ABOUT. Checked, not assumed. */
+    private static final String EXPECTED_DRIVE_FAMILY = "wyrdsekai-3.5-9b";
     private static final String DRIVE_MODEL = "wyrdsekai-3.5-9b-drive-v6-q4km.gguf";
     private static final String ROOM_ID = "nexus";
 
-    /** The build/authoring tools — the surface she must reach to actually make an item. */
+    /**
+     * The build/authoring tools — the surface she must reach to actually make an item.
+     *
+     * <p>{@code dispatch_task} belongs here (added 2026-08-20). The coding backend is the
+     * item AUTHOR for anything with BEHAVIOUR: the dispatch carries the items-as-tools
+     * contract, the backend emits one {@code .js} with {@code exports.manifest} and
+     * {@code invoke()}, and CodingTaskItemBridge validates, smoke-tests, registers and
+     * places it. {@link #craftSucceeded()} already treated it as a success; leaving it out
+     * of this set only made the diagnostic summary lie about what was offered.
+     */
     private static final Set<String> BUILD_TOOLS =
-        Set.of("workbench_submit", "craft_from_template", "shape_form", "run_script");
+        Set.of("workbench_submit", "craft_from_template", "shape_form", "run_script",
+            "dispatch_task");
 
     private static final AgentProfile PROFILE = new AgentProfile(
         "Wyrd", "agent-wyrd", "agent",
@@ -109,7 +121,7 @@ class ItemBuildToolSelectionLiveE2ETest {
 
     @BeforeAll
     static void setupClass() {
-        assumeTrue(driveReachable(), "prod 9B drive not reachable on :8200 — skipping live e2e");
+        assumeTrue(driveServesExpectedModel(), "prod 9B drive not reachable on :8200 — skipping live e2e");
         AgentEventStream.init();
         EntityRegistry.init();
         testKit = ActorTestKit.create("item-build-live-e2e",
@@ -283,6 +295,20 @@ class ItemBuildToolSelectionLiveE2ETest {
                 var name = m.substring(arrow + "tool call →".length()).trim();
                 if (!name.isEmpty()) trace.add(name);
             }
+            // The DIRECT path (a forced first step, no ReAct loop yet) never logs
+            // "tool call →" — it logs the raw payload. Without this the trace was blank
+            // for exactly the case the force exists to produce, and a correct run looked
+            // like a total miss (2026-08-20).
+            int raw = m.indexOf("Tool call raw content:");
+            if (raw >= 0) {
+                var body = m.substring(raw);
+                int a = body.indexOf("\"action\":\"");
+                if (a >= 0) {
+                    var rest = body.substring(a + "\"action\":\"".length());
+                    int q = rest.indexOf('"');
+                    if (q > 0) trace.add(rest.substring(0, q));
+                }
+            }
         }
         return trace;
     }
@@ -375,13 +401,33 @@ class ItemBuildToolSelectionLiveE2ETest {
             List.of(), List.of(), List.of());
     }
 
-    private static boolean driveReachable() {
+    /**
+     * True only when the drive on :8200 is serving the model this test is ABOUT.
+     *
+     * <p>This used to ask whether anything answered {@code /health}, which is a
+     * cheaper question than the one the test then measures. Any model on that
+     * port satisfied it, so the 9B behaviour gates below would run against
+     * whatever happened to be loaded and fail as though the 9B had regressed.
+     * That happened for real: a 27B was put on :8200 to serve a different
+     * component, and these tests reported the 9B missing a build action it was
+     * never asked for. A precondition weaker than its assertion is a second
+     * gate that will eventually disagree with the first.</p>
+     */
+    private static boolean driveServesExpectedModel() {
         try {
             var resp = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(DRIVE_URL + "/health"))
+                HttpRequest.newBuilder(URI.create(DRIVE_URL + "/v1/models"))
                     .timeout(Duration.ofSeconds(3)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
-            return resp.statusCode() == 200;
+            if (resp.statusCode() != 200) return false;
+            // Match on the family marker rather than the exact filename: the
+            // quant/revision moves, the model this test speaks about does not.
+            var served = resp.body().toLowerCase(java.util.Locale.ROOT);
+            var want = EXPECTED_DRIVE_FAMILY.toLowerCase(java.util.Locale.ROOT);
+            if (served.contains(want)) return true;
+            System.out.println("  [skip] :8200 is serving something else, not "
+                + EXPECTED_DRIVE_FAMILY + " — this gate measures that model, so it is not run.");
+            return false;
         } catch (Exception e) {
             return false;
         }

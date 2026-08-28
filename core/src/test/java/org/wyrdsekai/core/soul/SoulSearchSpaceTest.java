@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for SoulSearchSpace and CrucibleEvaluatorAdapter —
- * the CodePlane SearchSpace bridge ( &sect;5).
+ * the CodeZaiku SearchSpace bridge ( &sect;5).
  */
 class SoulSearchSpaceTest {
 

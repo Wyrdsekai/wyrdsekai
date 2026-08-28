@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.inference;
 
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -16,7 +18,7 @@ import java.util.List;
  * Handles the differences between OpenAI and Anthropic wire formats
  * while keeping InferenceClient as the single HTTP transport layer.
  * <p>
- * Protocol knowledge referenced from CodePlane:
+ * Protocol knowledge referenced from CodeZaiku:
  * - AnthropicProvider.java (commit 3290271)
  * - OpenAiProvider.java (commit 3290271)
  */
@@ -48,6 +50,8 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
      * @param backendHint "ollama", "sglang", "vllm", "llama-server", or null (generic OpenAI)
      */
     record OpenAI(String backendHint) implements ApiProvider {
+        private static final Logger log = LoggerFactory.getLogger(ApiProvider.class);
+
 
         /** Backward-compatible: generic OpenAI (no backend-specific params). */
         public OpenAI() { this(null); }
@@ -135,6 +139,39 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
                     if (obj.has("tools") && !obj.has("tool_choice")) {
                         obj.put("tool_choice", "required");
                     }
+                    // NAME THE TOOL WHEN THERE IS ONLY ONE. The generic "required" is a
+                    // request the small model can decline: live 2026-08-22 20:48:49 a ReAct
+                    // step offered exactly one tool (create_room_from_template) with
+                    // tool_choice=required and the 9B answered 1,569 chars of prose — "I see
+                    // the sky gallery has been dispatched and is coming up" — about a room
+                    // that did not exist. The named form {"type":"function","function":
+                    // {"name":…}} is the lever llama-server's grammar actually enforces; when
+                    // the caller has narrowed to a single tool it is the only honest choice.
+                    // Every force in the actor benefits; none has to know about this.
+                    if (obj.has("tools") && obj.get("tools").isArray()
+                            && obj.get("tools").size() == 1
+                            && obj.has("tool_choice") && obj.get("tool_choice").isTextual()
+                            && "required".equals(obj.get("tool_choice").asText())) {
+                        var only = obj.get("tools").get(0).path("function").path("name").asText("");
+                        if (!only.isBlank()) {
+                            var named = Json.mapper().createObjectNode();
+                            named.put("type", "function");
+                            named.putObject("function").put("name", only);
+                            obj.set("tool_choice", named);
+                            // A single forced tool is the rarest and most consequential
+                            // request this provider sends; when it comes back as prose
+                            // there is no way to know WHY without the body. Logged once
+                            // per force, bounded, with the messages' roles and sizes rather
+                            // than their text — enough to replay by hand against the seat.
+                            var roles = new StringBuilder();
+                            for (var msg : obj.path("messages")) {
+                                roles.append(msg.path("role").asText("?")).append(':')
+                                    .append(msg.path("content").asText("").length()).append(' ');
+                            }
+                            log.info("[force] single tool '{}' named; messages=[{}] max_tokens={}",
+                                only, roles.toString().trim(), obj.path("max_tokens").asText("?"));
+                        }
+                    }
                 }
                 var body = Json.mapper().writeValueAsString(node);
                 var builder = HttpRequest.newBuilder()
@@ -189,7 +226,7 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
 
         /**
          * Build Anthropic Messages API request.
-         * Key differences from OpenAI (ref: CodePlane AnthropicProvider.java):
+         * Key differences from OpenAI (ref: CodeZaiku AnthropicProvider.java):
          * - Endpoint: /v1/messages
          * - Auth: x-api-key header (not Bearer token)
          * - System message: top-level field, not in messages array
@@ -217,7 +254,7 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
                 req.put("reasoning_effort", "none");
 
                 // Extract system messages → top-level "system" field
-                // (ref: CodePlane AnthropicProvider.java:145-156)
+                // (ref: CodeZaiku AnthropicProvider.java:145-156)
                 StringBuilder systemContent = new StringBuilder();
                 ArrayNode messagesArray = req.putArray("messages");
                 for (var msg : request.messages()) {
@@ -257,7 +294,7 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
          *   content: [{type:"text", text:"..."}], model, stop_reason,
          *   usage: {input_tokens, output_tokens}}
          * <p>
-         * Stop reason mapping (ref: CodePlane AnthropicProvider.java:251-256):
+         * Stop reason mapping (ref: CodeZaiku AnthropicProvider.java:251-256):
          *   end_turn → stop, max_tokens → length, tool_use → tool_calls
          */
         @Override

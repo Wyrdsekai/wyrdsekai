@@ -1,0 +1,47 @@
+# A CLEAN machine for testing `wyrd coding install`.
+#
+# The point is the word clean: this box has no goose, no codezaiku, no npm
+# globals, no ~/.local/bin, no leftover bundle. On a development machine every
+# one of those exists, so an install test there can pass because the binary was
+# ALREADY present -- which is how a broken manifest entry reaches a release.
+#
+# Build (from the repo root, with a built .deb):
+#   docker build -f packaging/test/Dockerfile.coding-install \
+#     --build-arg DEB=build/installers/wyrdsekai_0.2.0-dev22_amd64.deb \
+#     -t wyrdsekai-coding-install-test .
+#
+# Run:
+#   docker run --rm wyrdsekai-coding-install-test              # all backends
+#   docker run --rm wyrdsekai-coding-install-test goose codezaiku
+FROM debian:bookworm-slim
+
+ARG DEB
+ARG WITH_NODE=1
+
+# ca-certificates + curl for the downloads the installer performs; the JRE is
+# what the .deb depends on. Node only when we want to cover npm backends --
+# left switchable so the no-node case is testable too, since that is a real
+# household.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl tar gzip default-jre-headless \
+    && if [ "$WITH_NODE" = "1" ]; then \
+         apt-get install -y --no-install-recommends nodejs npm ; \
+       fi \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ${DEB} /tmp/wyrdsekai.deb
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/wyrdsekai.deb \
+    && rm -rf /var/lib/apt/lists/* /tmp/wyrdsekai.deb
+
+COPY packaging/test/coding-install-matrix.sh /usr/local/bin/coding-install-matrix
+RUN chmod +x /usr/local/bin/coding-install-matrix
+
+# A non-root user, because the household node does not run its tooling as root
+# and a per-user install prefix is exactly the case that broke resolution.
+RUN useradd -m -s /bin/bash household
+USER household
+ENV WYRDSEKAI_DATA_DIR=/home/household/.wyrdsekai
+ENV SKIP_DOCKER=1
+
+ENTRYPOINT ["/usr/local/bin/coding-install-matrix"]

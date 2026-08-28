@@ -13,7 +13,7 @@ import java.util.List;
  * (embedding generation, Milvus insert/search) are null at runtime
  * until the inference backend supports embeddings (M2+).
  * <p>
- * Adapted from CodePlane with Wyrdsekai-specific field types.
+ * Adapted from CodeZaiku with Wyrdsekai-specific field types.
  */
 public final class SemanticIndex {
 

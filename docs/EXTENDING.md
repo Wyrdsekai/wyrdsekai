@@ -84,14 +84,44 @@ next sleep-Forge cycle instead of becoming memory immediately.
 A companion can summon a coding agent. Which ones are available is configuration,
 not code — each gets a `WYRDSEKAI_CODING_<BACKEND>_*` group:
 
-`goose` (the default), `codex`, `opencode`, `openhands`, `aider`, `gemini-cli`,
-`claude-sdk`, `codeplane`, `devin`.
+`codezaiku` (the bundled default), `goose` (the recommended alternative —
+`wyrd coding install goose && wyrd coding use goose`), `codex`, `opencode`,
+`openhands`, `aider`, `gemini-cli`, `claude-sdk`, `devin`.
 
 ```bash
-WYRDSEKAI_CODING_DEFAULT_BACKEND=goose
+WYRDSEKAI_CODING_DEFAULT_BACKEND=codezaiku
 WYRDSEKAI_CODING_GOOSE_ENABLED=true
 WYRDSEKAI_CODING_GOOSE_MODEL=…
 ```
+
+The `wyrd coding` commands manage all of this:
+
+```bash
+wyrd coding list               # what this node could install (from the manifest)
+wyrd coding install <backend>  # fetch + sha-verify + place it
+wyrd coding use <backend>      # set the default, then print the chain the
+                               # node will ACTUALLY use — read it, because
+                               # this setting has silently failed before
+wyrd coding probe [backend]    # submit one small real task through the same
+                               # code path the server uses, judged by files
+                               # on disk. "Installed" is a claim about bytes;
+                               # a probe is a claim about work.
+```
+
+A backend whose binary cannot be found, or whose credentials are missing,
+does not register — `probe` and the boot log say exactly why, with the
+one-command recovery. Keyless is a first-class configuration: against the
+node's own inference endpoint, `codezaiku`, `goose`, `pi` and `openhands`
+need no API key at all.
+
+**Size the drive for its consumers.** These floors were measured, not
+estimated: the CodeZaiku loop assembles ~10K tokens, so its drive needs a
+**12K context minimum, 16K comfortable**; OpenHands holds long multi-file
+conversations and wants **32K**. A drive that passes a health check at 8K
+will still fail real dispatches — the context window is part of the
+contract, not a tuning knob. For agentic loops, prompt-processing speed
+matters more than generation speed: every turn re-reads the whole context.
+
 
 Container-shaped backends take resource ceilings —
 `WYRDSEKAI_CODING_OPENHANDS_MAX_RAM_GB`, `_MAX_DISK_GB`, `_MAX_WALLCLOCK_MIN` —

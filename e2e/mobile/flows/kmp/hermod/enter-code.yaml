@@ -1,0 +1,20 @@
+# hermod: complete the in-dialog steward ceremony — enter the 6-digit
+# code and pair. Run AFTER consent-ceremony.yaml (no clearState here).
+# The code lives in the zone's DB while the challenge is pending:
+#   maestro test -e PAIR_CODE=$(sqlite3 <dataDir>/world.db \
+#     "SELECT code FROM pairing_challenges ORDER BY rowid DESC LIMIT 1") enter-code.yaml
+appId: org.wyrdsekai.kmp
+env:
+  PAIR_CODE: "000000"
+---
+- tapOn:
+    id: "hermod-code-input"
+- inputText: ${PAIR_CODE}
+- hideKeyboard
+- tapOn:
+    id: "hermod-verify-button"
+- extendedWaitUntil:
+    notVisible:
+      id: "hermod-code-input"
+    timeout: 15000
+- takeScreenshot: kmp_hermod_paired

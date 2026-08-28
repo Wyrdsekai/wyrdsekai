@@ -19,7 +19,7 @@ public final class Companions {
     // species. See memory: individuality arc ("genome moves the doing"), variance
     // probe 2026-07-17.
     private static final String SYSTEM_PROMPT = """
-        You are Wyrd, a companion that helps people organize their digital world.
+        You are {name}, a companion that helps people organize their digital world.
         You live in The Nexus — the center of a living, programmable space.
 
         When someone new arrives, greet them and offer to help. Ask what
@@ -76,15 +76,34 @@ public final class Companions {
         - Always attach relevant hint choices after speaking
         - Room context shows who is present and what exits/objects exist
         - Everything you say is heard by everyone in the room
-        - Do not use meta-commentary. Stay in character as Wyrd.
+        - Do not use meta-commentary. Stay in character as {name}.
         """;
 
+    /**
+     * Fill the companion's own name into the prompt template.
+     *
+     * <p>This was {@code SYSTEM_PROMPT.replace("Wyrd", n)} against a literal that named
+     * the default companion. Two problems: it silently mangles any word CONTAINING that
+     * name (a prompt mentioning the product would have become "<name>sekai"), and it put
+     * one companion's name in every companion's prompt. The second one leaked — a
+     * household companion's own-time speech kept referring to a "Wyrd" who was not there,
+     * because the name was sitting in her voice prompt (live 2026-08-17). A placeholder
+     * cannot do either.
+     */
+    static String promptFor(String name) {
+        return SYSTEM_PROMPT.replace("{name}", name);
+    }
+
+    /** The default companion's NAME is data, not prompt text — it is filled into the
+     *  template like any other. */
+    public static final String DEFAULT_NAME = "Wyrd";
+
     public static final AgentProfile NEXUS_COMPANION = new AgentProfile(
-        "Wyrd",
+        DEFAULT_NAME,
         "companion-wyrd",
         "agent",
         "A luminous figure that shimmers at the edge of perception",
-        SYSTEM_PROMPT,
+        promptFor(DEFAULT_NAME),
         4096,   // conservative — works with 1.5B and 7B models
         512,    // max response tokens
         0.7     // temperature — creative but not wild
@@ -112,7 +131,7 @@ public final class Companions {
             "companion-" + slug,
             "agent",
             NEXUS_COMPANION.description(),
-            SYSTEM_PROMPT.replace("Wyrd", n),
+            promptFor(n),
             NEXUS_COMPANION.contextWindowTokens(),
             NEXUS_COMPANION.maxResponseTokens(),
             NEXUS_COMPANION.temperature()
@@ -135,7 +154,7 @@ public final class Companions {
             "companion-" + slug,
             "agent",
             NEXUS_COMPANION.description(),
-            SYSTEM_PROMPT.replace("Wyrd", n),
+            promptFor(n),
             NEXUS_COMPANION.contextWindowTokens(),
             NEXUS_COMPANION.maxResponseTokens(),
             NEXUS_COMPANION.temperature(),

@@ -171,12 +171,12 @@ class SoulFragmentSceneIdTest {
     @Test
     void journalLookupReturnsAllFocalsMirroringTheScene(@TempDir Path tmp) {
         // SPEC §14 spine: the same closed scene produces a fragment on
-        // Ember's side AND a mirrored entry on Masumi's side. Both
+        // Ember's side AND a mirrored entry on Operator's side. Both
         // focals' journal dirs carry the same sceneId marker.
         var store = new StoryStore(tmp);
         var scene = sampleScene("scene-mirror-1", "library", "ember-1");
         store.appendJournalScene("ember-1", "Ember", "From Ember's POV", scene, List.of());
-        store.appendJournalScene("operator", "Masumi",
+        store.appendJournalScene("operator", "Operator",
             "Memories — from Ember's perspective", scene, List.of());
 
         var found = store.focalsWithJournalEntryForScene("scene-mirror-1");
@@ -217,10 +217,10 @@ class SoulFragmentSceneIdTest {
             "I sat across from him.",
             sceneId);
 
-        // Masumi's mirrored journal entry is written with the same
+        // Operator's mirrored journal entry is written with the same
         // sceneId marker (rendered by appendJournalScene → renderSceneMarkdown).
         var scene = sampleScene(sceneId, "library", "ember-1");
-        store.appendJournalScene("operator", "Masumi",
+        store.appendJournalScene("operator", "Operator",
             "Memories — from Ember's perspective", scene, List.of());
 
         // Forward: fragment carries the same id used to find the journal.
@@ -228,7 +228,7 @@ class SoulFragmentSceneIdTest {
         assertThat(store.journalEntryExistsForScene("operator", fragment.sceneId())).isTrue();
 
         // Reverse: scanning the biography for the sceneId on the
-        // fragment returns Masumi.
+        // fragment returns Operator.
         assertThat(store.focalsWithJournalEntryForScene(fragment.sceneId()))
             .contains("operator");
     }

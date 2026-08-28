@@ -62,7 +62,7 @@ object ActionParser {
         data class Consume(val itemName: String) : AgentAction()
 
         /**
-         * Agent sends a zone command (e.g. codeplane.create, iot.lights).
+         * Agent sends a zone command (e.g. codezaiku.create, iot.lights).
          * Same commands available to players -- agents have equal access.
          */
         data class ZoneCommand(
@@ -116,7 +116,7 @@ object ActionParser {
         /**
          * Agent interacts with a Codex or Artifact item.
          * Operations: examine, commit, push, branch, diff, build, deploy, destroy.
-         * Routes through the zone bridge as a codeplane.codex command.
+         * Routes through the zone bridge as a codezaiku.codex command.
          */
         data class CodexAction(
             val operation: String,

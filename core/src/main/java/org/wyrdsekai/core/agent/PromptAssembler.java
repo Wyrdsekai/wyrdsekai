@@ -38,9 +38,29 @@ import java.util.stream.Collectors;
  *   7.   Trigger event         — very end (what to respond to)
  *   8.   Output constraints    — after trigger (structured output, lore mode, disclosure)
  *
- * Adapted from CodePlane's CastingActor (layered, token-budgeted prompt assembly).
+ * Adapted from CodeZaiku's CastingActor (layered, token-budgeted prompt assembly).
  */
 public final class PromptAssembler {
+
+    /**
+     * The identity system message, with an optional node-level preamble.
+     *
+     * <p>{@code WYRDSEKAI_SYSTEM_PREAMBLE} (toml {@code inference.system_preamble})
+     * prepends one operator-chosen line to every identity prompt on this node.
+     * Exists for substrates whose runtime behavior is steered by a system-prompt
+     * directive — the first user: Muse Glimmer's reasoning dial, where
+     * "Reasoning strength: low" cured 7/33 probe mutism while keeping the
+     * P4/P4b grant discrimination intact (encounter corpus, 2026-08-11).
+     * Unset = byte-identical prompts to before.</p>
+     */
+    private static String identitySystem(AgentProfile profile) {
+        var preamble = WyrdConfig.get().resolve(
+            "WYRDSEKAI_SYSTEM_PREAMBLE", "inference.system_preamble", () -> null);
+        return preamble != null && !preamble.isBlank()
+            ? preamble.strip() + "\n\n" + profile.systemPrompt()
+            : profile.systemPrompt();
+    }
+
 
     private static final int CHARS_PER_TOKEN = 4; // conservative estimate
     private static final double USABLE_FRACTION = 0.85; // 85% of context window
@@ -250,7 +270,7 @@ public final class PromptAssembler {
         }
 
         // L1 — system prompt (identity, never trimmed)
-        messages.add(new ChatMessage("system", profile.systemPrompt()));
+        messages.add(new ChatMessage("system", identitySystem(profile)));
 
         // L1.1 — voice-tier behavioral rule. Distinct from the full assembler's
         // CORE_RULES (which talks about tools and goal_done). The voice path
@@ -478,7 +498,7 @@ public final class PromptAssembler {
         }
 
         // Layer 1: System prompt (identity, never trimmed)
-        messages.add(new ChatMessage("system", profile.systemPrompt()));
+        messages.add(new ChatMessage("system", identitySystem(profile)));
 
         // Calculate token budget.
         // #32 item 5: clamp to the SMALLEST backend this prompt can land on.
@@ -493,7 +513,7 @@ public final class PromptAssembler {
             (int) (profile.contextWindowTokens() * USABLE_FRACTION)
                 - profile.maxResponseTokens(),
             MIN_BACKEND_SAFE_PROMPT_TOKENS);
-        int systemTokens = estimateTokens(profile.systemPrompt());
+        int systemTokens = estimateTokens(identitySystem(profile));
         int conversationTokens = recentSaid.stream()
             .mapToInt(e -> estimateTokens(formatSaidEvent(e, profile.entityId())))
             .sum();

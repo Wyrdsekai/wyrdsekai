@@ -20,7 +20,7 @@ class SalienceScorerTest {
 
     private static AgentEvent.ZoneBroadcast zoneBroadcast(String text) {
         var prose = new S2CMessage.Prose(1L, "zone", text, List.of(), null, null, null, false, List.of());
-        return new AgentEvent.ZoneBroadcast("codeplane", "room-1", prose, NOW);
+        return new AgentEvent.ZoneBroadcast("codezaiku", "room-1", prose, NOW);
     }
 
     private static AgentEvent.SystemEvent systemEvent(AgentEvent.SystemEventType type) {

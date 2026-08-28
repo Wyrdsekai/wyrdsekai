@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Two main paths are pinned: {@code enabled=true} + Docker present →
  * registered; {@code enabled=true} + Docker absent → silently skipped (so
  * a host without Docker doesn't see OpenHands in the registry list and
- * the selection policy falls through cleanly to OpenCode/CodePlane).</p>
+ * the selection policy falls through cleanly to OpenCode/CodeZaiku).</p>
  *
  * <p>Note: the Docker-availability gate is exercised indirectly via the
  * static probe ({@code OpenHandsBackend.probeDockerDefault}). On CI hosts

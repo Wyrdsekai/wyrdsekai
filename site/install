@@ -1,0 +1,75 @@
+#!/bin/sh
+# wyrdsekai one-line installer — https://wyrdsekai.org/install
+#
+#   curl -fsSL https://wyrdsekai.org/install | bash
+#
+# Downloads the 0.1.5 release artifact for this platform from GitHub,
+# verifies it against the release's SHA256SUMS, and installs it. Nothing
+# here is served from wyrdsekai.org except this script — artifacts and
+# checksums both come from the same GitHub release, so this script cannot
+# substitute a payload the checksums don't match.
+set -eu
+
+VERSION="0.1.5"
+BASE="https://github.com/Wyrdsekai/wyrdsekai/releases/download/v${VERSION}"
+
+say() { printf '\033[36m[wyrdsekai]\033[0m %s\n' "$*"; }
+die() { printf '\033[31m[wyrdsekai]\033[0m %s\n' "$*" >&2; exit 1; }
+
+OS=$(uname -s)
+ARCH=$(uname -m)
+
+case "$OS" in
+    Linux)
+        [ "$ARCH" = "x86_64" ] || die "Prebuilt Linux packages are x86_64 only (this is $ARCH) — build from source: https://github.com/Wyrdsekai/wyrdsekai#build-from-source"
+        if command -v dpkg >/dev/null 2>&1; then
+            ART="wyrdsekai_${VERSION}_amd64.deb"
+        else
+            ART="wyrdsekai-${VERSION}.tar.gz"
+        fi
+        ;;
+    Darwin)
+        ART="Wyrdsekai-${VERSION}.pkg"
+        ;;
+    *)
+        die "Unsupported platform: $OS. Windows: download Wyrdsekai-${VERSION}.msi from ${BASE%/download/*}/releases"
+        ;;
+esac
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+cd "$TMP"
+
+say "downloading $ART (~1.2-1.7 GB)…"
+curl -fL --progress-bar -O "$BASE/$ART"
+curl -fsSL -O "$BASE/SHA256SUMS"
+
+say "verifying checksum…"
+if command -v sha256sum >/dev/null 2>&1; then
+    grep " $ART\$" SHA256SUMS | sha256sum -c - || die "CHECKSUM MISMATCH — refusing to install. Re-run, and if it persists, report it."
+else
+    grep " $ART\$" SHA256SUMS | shasum -a 256 -c - || die "CHECKSUM MISMATCH — refusing to install. Re-run, and if it persists, report it."
+fi
+
+case "$ART" in
+    *.deb)
+        say "installing (needs sudo)…"
+        sudo dpkg -i "$ART" || { sudo apt-get -f install -y && sudo dpkg -i "$ART"; }
+        say "installed. Next:  wyrd setup"
+        ;;
+    *.pkg)
+        say "installing (needs sudo)…"
+        sudo installer -pkg "$ART" -target /
+        say "installed. Next:  wyrd setup"
+        ;;
+    *.tar.gz)
+        say "no dpkg on this system — unpacking the generic dist to /opt/wyrdsekai (needs sudo)…"
+        sudo mkdir -p /opt
+        sudo tar -xzf "$ART" -C /opt
+        sudo mv /opt/wyrdsekai-${VERSION} /opt/wyrdsekai 2>/dev/null || true
+        say "unpacked. Next:  sudo /opt/wyrdsekai/bin/wyrd setup"
+        ;;
+esac
+
+say "verify anytime: the checksums live with the release —"
+say "  ${BASE}/SHA256SUMS"

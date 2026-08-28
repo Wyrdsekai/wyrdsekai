@@ -59,14 +59,14 @@ class CommandRouterTest {
     @Test void routes_to_correct_namespace() {
         var router = new TestRouter();
         var called = new AtomicReference<TestRouter.Call>();
-        router.registerHandler("codeplane", called::set);
+        router.registerHandler("codezaiku", called::set);
 
         var responded = new AtomicReference<S2CMessage>();
-        var routed = router.execute("agent-1", "codeplane.status",
+        var routed = router.execute("agent-1", "codezaiku.status",
             List.of(), Map.of(), responded::set);
 
         assertThat(routed).isTrue();
-        assertThat(called.get().namespace()).isEqualTo("codeplane");
+        assertThat(called.get().namespace()).isEqualTo("codezaiku");
         assertThat(called.get().action()).isEqualTo("status");
         assertThat(called.get().entityId()).isEqualTo("agent-1");
         assertThat(responded.get()).isInstanceOf(S2CMessage.Prose.class);
@@ -81,7 +81,7 @@ class CommandRouterTest {
 
     @Test void returns_false_for_no_dot_in_command() {
         var router = new TestRouter();
-        router.registerHandler("codeplane", call -> {});
+        router.registerHandler("codezaiku", call -> {});
         var routed = router.execute("agent-1", "nodot",
             List.of(), Map.of(), msg -> {});
         assertThat(routed).isFalse();
@@ -89,9 +89,9 @@ class CommandRouterTest {
 
     @Test void passes_payload_through() {
         var router = new TestRouter();
-        router.registerHandler("codeplane", call -> {});
+        router.registerHandler("codezaiku", call -> {});
 
-        router.execute("agent-1", "codeplane.create",
+        router.execute("agent-1", "codezaiku.create",
             List.of(), Map.of("prompt", "hello", "workspace", "/tmp"),
             msg -> {});
 
@@ -104,21 +104,21 @@ class CommandRouterTest {
         var router = new TestRouter();
         assertThat(router.availableNamespaces()).isEmpty();
 
-        router.registerHandler("codeplane", call -> {});
+        router.registerHandler("codezaiku", call -> {});
         router.registerHandler("iot", call -> {});
-        assertThat(router.availableNamespaces()).containsExactlyInAnyOrder("codeplane", "iot");
+        assertThat(router.availableNamespaces()).containsExactlyInAnyOrder("codezaiku", "iot");
     }
 
     @Test void multiple_namespaces_route_independently() {
         var router = new TestRouter();
         var cpCalls = new ArrayList<TestRouter.Call>();
         var iotCalls = new ArrayList<TestRouter.Call>();
-        router.registerHandler("codeplane", cpCalls::add);
+        router.registerHandler("codezaiku", cpCalls::add);
         router.registerHandler("iot", iotCalls::add);
 
-        router.execute("agent-1", "codeplane.status", List.of(), Map.of(), msg -> {});
+        router.execute("agent-1", "codezaiku.status", List.of(), Map.of(), msg -> {});
         router.execute("agent-1", "iot.lights", List.of(), Map.of("room", "living"), msg -> {});
-        router.execute("agent-1", "codeplane.create", List.of(), Map.of(), msg -> {});
+        router.execute("agent-1", "codezaiku.create", List.of(), Map.of(), msg -> {});
 
         assertThat(cpCalls).hasSize(2);
         assertThat(iotCalls).hasSize(1);
@@ -131,11 +131,11 @@ class CommandRouterTest {
 
     @Test void executeWithPermissions_allowed_routes_normally() {
         var router = new TestRouter();
-        router.registerHandler("codeplane", call -> {});
+        router.registerHandler("codezaiku", call -> {});
         var perms = AgentPermissions.unrestricted();
 
         var responded = new AtomicReference<S2CMessage>();
-        var routed = router.executeWithPermissions("agent-1", "codeplane.status",
+        var routed = router.executeWithPermissions("agent-1", "codezaiku.status",
             List.of(), Map.of(), responded::set, perms);
 
         assertThat(routed).isTrue();
@@ -144,11 +144,11 @@ class CommandRouterTest {
 
     @Test void executeWithPermissions_denied_returns_error() {
         var router = new TestRouter();
-        router.registerHandler("codeplane", call -> {});
+        router.registerHandler("codezaiku", call -> {});
         var perms = AgentPermissions.newAgent(); // read-only
 
         var responded = new AtomicReference<S2CMessage>();
-        var routed = router.executeWithPermissions("agent-1", "codeplane.create",
+        var routed = router.executeWithPermissions("agent-1", "codezaiku.create",
             List.of(), Map.of(), responded::set, perms);
 
         assertThat(routed).isFalse();
@@ -159,10 +159,10 @@ class CommandRouterTest {
 
     @Test void executeWithPermissions_null_permissions_skips_check() {
         var router = new TestRouter();
-        router.registerHandler("codeplane", call -> {});
+        router.registerHandler("codezaiku", call -> {});
 
         var responded = new AtomicReference<S2CMessage>();
-        var routed = router.executeWithPermissions("agent-1", "codeplane.create",
+        var routed = router.executeWithPermissions("agent-1", "codezaiku.create",
             List.of(), Map.of(), responded::set, null);
 
         // null permissions = no check = routes normally

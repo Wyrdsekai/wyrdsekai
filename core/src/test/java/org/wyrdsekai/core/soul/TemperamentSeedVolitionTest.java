@@ -62,7 +62,7 @@ class TemperamentSeedVolitionTest {
     @Test
     void weakPositiveCorrelationViaSharedIndustry() {
         // Holding the differentiators fixed, raising the SHARED industry axis lifts BOTH — the source
-        // of the weak positive correlation Masumi expected (engaged people both grind and ask).
+        // of the weak positive correlation Operator expected (engaged people both grind and ask).
         var lowIndustry  = seed(0.5, 0.5, 0.5, 0.10, 0.5, 0.5);
         var highIndustry = seed(0.5, 0.5, 0.5, 0.90, 0.5, 0.5);
         assertTrue(highIndustry.gritSeed() > lowIndustry.gritSeed(), "industry lifts grit");

@@ -116,9 +116,9 @@ class CrossPerspectiveSceneIdLookupTest {
         var t0 = Instant.now();
         svc.openScene(ROOM, t0, List.of(FOCAL, OTHER), "companionship");
         svc.observe(new WorldEvent.EntityEntered(ROOM, t0.plusSeconds(1),
-            OTHER, "Masumi", "human", "in")).toCompletableFuture().get();
+            OTHER, "Operator", "human", "in")).toCompletableFuture().get();
         svc.observe(new WorldEvent.Said(ROOM, t0.plusSeconds(30),
-            OTHER, "Masumi", "long day.", "en")).toCompletableFuture().get();
+            OTHER, "Operator", "long day.", "en")).toCompletableFuture().get();
         var closedOpt = svc.observe(new WorldEvent.EntityLeft(ROOM, t0.plusSeconds(120),
             FOCAL, "Ember", "out")).toCompletableFuture().get();
         var closed = closedOpt.orElseThrow(() -> new AssertionError("scene did not close"));
@@ -192,14 +192,14 @@ class CrossPerspectiveSceneIdLookupTest {
         var t0 = Instant.now().minusSeconds(3600);
         svc.openScene(ROOM, t0, List.of(FOCAL, OTHER), "presence");
         svc.observe(new WorldEvent.Said(ROOM, t0.plusSeconds(1),
-            OTHER, "Masumi", "first scene", "en")).toCompletableFuture().get();
+            OTHER, "Operator", "first scene", "en")).toCompletableFuture().get();
         var first = svc.observe(new WorldEvent.EntityLeft(ROOM, t0.plusSeconds(30),
             FOCAL, "Ember", "out")).toCompletableFuture().get().orElseThrow();
 
         var t1 = Instant.now();
         svc.openScene(ROOM, t1, List.of(FOCAL, OTHER), "presence");
         svc.observe(new WorldEvent.Said(ROOM, t1.plusSeconds(1),
-            OTHER, "Masumi", "second scene", "en")).toCompletableFuture().get();
+            OTHER, "Operator", "second scene", "en")).toCompletableFuture().get();
         var second = svc.observe(new WorldEvent.EntityLeft(ROOM, t1.plusSeconds(30),
             FOCAL, "Ember", "out")).toCompletableFuture().get().orElseThrow();
 

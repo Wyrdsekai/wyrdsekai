@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
@@ -100,6 +101,21 @@ public final class RepairModeTracker {
     }
 
     /** Most recent handoff for an agent, if any. */
+    /**
+     * Every agent currently in a repair mode, with the mode they are in.
+     *
+     * <p>Exists so a steward can SEE who is being held. Without it the only way to
+     * learn that a companion was pinned in ATTENDANT was to read a JSON file on the
+     * node by hand — which is how it was found on 2026-08-18, six hours in.
+     */
+    public Map<String, RepairMode> agentsInRepair() {
+        var out = new LinkedHashMap<String, RepairMode>();
+        currentByAgent.forEach((did, mode) -> {
+            if (mode != null && mode != RepairMode.NONE) out.put(did, mode);
+        });
+        return Collections.unmodifiableMap(out);
+    }
+
     public Optional<Handoff> lastHandoff(String agentDid) {
         var deque = historyByAgent.get(agentDid);
         if (deque == null) return Optional.empty();

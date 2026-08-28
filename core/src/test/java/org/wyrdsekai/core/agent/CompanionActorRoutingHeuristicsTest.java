@@ -3,6 +3,9 @@ package org.wyrdsekai.core.agent;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Pure-unit tests for the static routing heuristics in CompanionActor that
@@ -60,9 +63,9 @@ class CompanionActorRoutingHeuristicsTest {
     void requiresToolExecution_strips_relayed_prefix() {
         // Both "from" prefix and actual content should be evaluated
         assertThat(CompanionActor.requiresToolExecution(
-                "[from operator] research quantum computing")).isTrue();
+                "[from alder] research quantum computing")).isTrue();
         assertThat(CompanionActor.requiresToolExecution(
-                "[from operator] how are you feeling")).isFalse();
+                "[from alder] how are you feeling")).isFalse();
     }
 
     @Test
@@ -87,7 +90,7 @@ class CompanionActorRoutingHeuristicsTest {
     void narratesOwnOutcome_gates_create_room() {
         assertThat(CompanionActor.narratesOwnOutcome(
                 new ActionParser.AgentAction.CreateRoom(
-                        "Book Nook", "cozy", java.util.List.of(), null, null)))
+                        "Book Nook", "cozy", List.of(), null, null)))
                 .as("create_room voices its real outcome => prose suppressed").isTrue();
     }
 
@@ -223,7 +226,7 @@ class CompanionActorRoutingHeuristicsTest {
 
     @Test
     void extractUserTellContent_unwraps_from_prefix() {
-        assertThat(CompanionActor.extractUserTellContent("[from operator] what's up"))
+        assertThat(CompanionActor.extractUserTellContent("[from alder] what's up"))
                 .isEqualTo("what's up");
     }
 
@@ -247,15 +250,15 @@ class CompanionActorRoutingHeuristicsTest {
     @Test
     void extractRequiredEntities_captures_proper_nouns_numbers_urls() {
         var entities = CompanionActor.extractRequiredEntities(
-                "I told Masumi about the 14 templates at https://wyrdsekai.local/list");
-        assertThat(entities).contains("Masumi", "14", "https://wyrdsekai.local/list");
+                "I told Alder about the 14 templates at https://wyrdsekai.local/list");
+        assertThat(entities).contains("Alder", "14", "https://wyrdsekai.local/list");
     }
 
     @Test
     void extractRequiredEntities_skips_common_sentence_starters() {
         var entities = CompanionActor.extractRequiredEntities(
-                "The Masumi I know would not say that. This is just my read.");
-        assertThat(entities).contains("Masumi");
+                "The Alder I know would not say that. This is just my read.");
+        assertThat(entities).contains("Alder");
         assertThat(entities).doesNotContain("The", "This");
     }
 
@@ -277,6 +280,46 @@ class CompanionActorRoutingHeuristicsTest {
         var entities = CompanionActor.extractRequiredEntities(
                 "PLAY is high. SEEKING is moderate. CARE drives the response.");
         assertThat(entities).contains("PLAY", "SEEKING", "CARE");
+    }
+
+    @Test
+    void extractRequiredEntities_ignores_sentence_initial_capitalization() {
+        // Live 2026-08-17: 18% of a household node's polishes were rejected (367 of
+        // 2,018 in a day) because openers like "Something" / "There" / "Tonight" were
+        // read as proper nouns that must survive verbatim ("missing facts=[Something]"),
+        // and a rejected polish speaks the RAW draft — so about one line in five came
+        // out needlessly mechanical. Every sentence starts capitalized; that carries no
+        // evidence of a name.
+        var entities = CompanionActor.extractRequiredEntities(
+                "Something has been holding itself. There is nothing left to say. "
+                + "Tonight it finally has a name.");
+        assertThat(entities).isEmpty();
+    }
+
+    @Test
+    void extractRequiredEntities_keeps_a_name_that_also_appears_mid_sentence() {
+        // The skip is positional, not by token: a real name used mid-sentence anywhere
+        // in the draft is still required.
+        var entities = CompanionActor.extractRequiredEntities(
+                "Alder has been carrying something. I could tell Alder tonight.");
+        assertThat(entities).contains("Alder");
+    }
+
+    @Test
+    void extractRequiredEntities_keeps_sentence_initial_all_caps_and_numbers() {
+        // ALL-CAPS is not grammatical capitalization, and numbers never were.
+        var entities = CompanionActor.extractRequiredEntities(
+                "SEEKING is moderate. 13 memories merged into cleaner shapes.");
+        assertThat(entities).contains("SEEKING", "13");
+    }
+
+    @Test
+    void isSentenceInitial_reads_only_terminal_punctuation_as_a_boundary() {
+        var text = "*stirs* The pull — Alder, again: Bramble\nSomething";
+        assertThat(CompanionActor.isSentenceInitial(text, text.indexOf("The"))).isTrue();
+        assertThat(CompanionActor.isSentenceInitial(text, text.indexOf("Alder"))).isFalse();
+        assertThat(CompanionActor.isSentenceInitial(text, text.indexOf("Bramble"))).isFalse();
+        assertThat(CompanionActor.isSentenceInitial(text, text.indexOf("Something"))).isTrue();
     }
 
     @Test
@@ -330,7 +373,7 @@ class CompanionActorRoutingHeuristicsTest {
         // "85F" must NOT be spoken — the raw draft is delivered so the fact
         // survives. Required facts are built exactly as the runtime builds them.
         var draft = "The forecast: low 58F, high 85F, clear skies.";
-        var required = new java.util.LinkedHashSet<String>(
+        var required = new LinkedHashSet<String>(
                 CompanionActor.extractRequiredEntities(draft));
         required.addAll(CompanionActor.extractRequiredNumbers(draft));
         var polish = "Looks like a low around 58F today with clear skies.";  // 85F dropped
@@ -342,7 +385,7 @@ class CompanionActorRoutingHeuristicsTest {
     @Test
     void chooseVoicedLine_keeps_polish_when_every_fact_survives() {
         var draft = "The forecast: low 58F, high 85F, clear skies.";
-        var required = new java.util.LinkedHashSet<String>(
+        var required = new LinkedHashSet<String>(
                 CompanionActor.extractRequiredEntities(draft));
         required.addAll(CompanionActor.extractRequiredNumbers(draft));
         var polish = "It'll dip to 58F overnight and climb to 85F under clear skies.";
@@ -354,16 +397,16 @@ class CompanionActorRoutingHeuristicsTest {
     void chooseVoicedLine_clean_line_passes_verbatim() {
         // A clean draft the 4B echoed unchanged is delivered verbatim.
         var line = "I've put the kettle on — it'll be a minute.";
-        assertThat(CompanionActor.chooseVoicedLine(line, line, java.util.Set.of()))
+        assertThat(CompanionActor.chooseVoicedLine(line, line, Set.of()))
                 .isEqualTo(line);
     }
 
     @Test
     void chooseVoicedLine_blank_polish_falls_back_to_raw() {
         var draft = "Here is the answer you asked for.";
-        assertThat(CompanionActor.chooseVoicedLine(draft, "", java.util.Set.of()))
+        assertThat(CompanionActor.chooseVoicedLine(draft, "", Set.of()))
                 .isEqualTo(draft);
-        assertThat(CompanionActor.chooseVoicedLine(draft, null, java.util.Set.of()))
+        assertThat(CompanionActor.chooseVoicedLine(draft, null, Set.of()))
                 .isEqualTo(draft);
     }
 
@@ -373,7 +416,7 @@ class CompanionActorRoutingHeuristicsTest {
         // facts too — if polish paraphrases them away, the exact confirmation
         // is spoken instead.
         var draft = "I've crafted Zone Scryer. It's ready to use.";
-        var required = java.util.Set.of("Zone Scryer", "crafted");
+        var required = Set.of("Zone Scryer", "crafted");
         var polish = "Your Zone Scryer is all set and ready to go!";  // "crafted" gone
         assertThat(CompanionActor.chooseVoicedLine(draft, polish, required))
                 .isEqualTo(draft);
@@ -384,7 +427,7 @@ class CompanionActorRoutingHeuristicsTest {
         var draft = "I crafted the Zone Scryer for you just now.";  // >=30 chars
         var polish = "I crafted the Zone Scryer for you just now, ".repeat(6)
                 + "and oh how I have longed to tell you.";  // >2.5x, >120 chars
-        assertThat(CompanionActor.chooseVoicedLine(draft, polish, java.util.Set.of()))
+        assertThat(CompanionActor.chooseVoicedLine(draft, polish, Set.of()))
                 .isEqualTo(draft);
     }
 

@@ -687,7 +687,7 @@ class PromptAssemblerTest {
         for (int i = 0; i < 10; i++) {
             said.add(said("p" + i, "Player" + i, "msg-" + i));
         }
-        var trigger = said("operator", "Masumi", "trigger-text");
+        var trigger = said("operator", "Operator", "trigger-text");
 
         var messages = PromptAssembler.assembleVoice(
             PROFILE, NEXUS, said, trigger, null, null, null, null);
@@ -710,7 +710,7 @@ class PromptAssemblerTest {
     }
 
     @Test void assembleVoice_trigger_is_last_user_turn() {
-        var trigger = said("operator", "Masumi", "come with me to beta");
+        var trigger = said("operator", "Operator", "come with me to beta");
         var messages = PromptAssembler.assembleVoice(
             PROFILE, NEXUS, List.of(), trigger, null, null, null, null);
 
@@ -752,10 +752,10 @@ class PromptAssemblerTest {
             null, null, null, null, null, voice, null, null, null, null);
 
         var said = List.of(
-            said("operator", "Masumi", "I'm not sure if this is going to work"),
+            said("operator", "Operator", "I'm not sure if this is going to work"),
             said("wyrd-companion", "Wyrd", "It's worth trying — we've come this far together."),
-            said("operator", "Masumi", "yeah, you're right"));
-        var trigger = said("operator", "Masumi", "come with me to beta");
+            said("operator", "Operator", "yeah, you're right"));
+        var trigger = said("operator", "Operator", "come with me to beta");
 
         var messages = PromptAssembler.assembleVoice(
             beefyProfile, NEXUS, said, trigger, null, null, null, manifest);
@@ -772,10 +772,10 @@ class PromptAssemblerTest {
             "Wyrd", "wyrd-companion", "agent", "Companion",
             "You are Wyrd. Be helpful and warm.", 8192, 512, 0.7);
         var said = List.of(
-            said("operator", "Masumi", "hey"),
+            said("operator", "Operator", "hey"),
             said("wyrd-companion", "Wyrd", "hi"),
-            said("operator", "Masumi", "how's the weather"));
-        var trigger = said("operator", "Masumi", "anyway, come with me to beta");
+            said("operator", "Operator", "how's the weather"));
+        var trigger = said("operator", "Operator", "anyway, come with me to beta");
 
         var voiceMessages = PromptAssembler.assembleVoice(
             beefyProfile, NEXUS, said, trigger, null, null, null, null);

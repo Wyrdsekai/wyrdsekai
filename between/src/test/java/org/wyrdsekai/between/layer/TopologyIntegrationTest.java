@@ -256,13 +256,13 @@ class TopologyIntegrationTest {
             replicator.setSnapshotTrigger(receivedEvents::add);
 
             // Simulate what RoomActor does: call onRoomEvent after persisting
-            var event = new WorldEvent.Said("home-ma", Instant.now(), "player-1", "Masumi", "Hello");
+            var event = new WorldEvent.Said("home-ma", Instant.now(), "player-1", "Operator", "Hello");
             replicator.onRoomEvent("home-ma", event);
 
             assertThat(receivedEvents).containsExactly("home-ma");
 
             // Also verify the event-sourced path doesn't crash (no callback, just NATS publish which is no-op)
-            var esEvent = new WorldEvent.Said("nexus", Instant.now(), "player-1", "Masumi", "World");
+            var esEvent = new WorldEvent.Said("nexus", Instant.now(), "player-1", "Operator", "World");
             replicator.onRoomEvent("nexus", esEvent);
             // No exception = the chain works
         }
@@ -301,11 +301,11 @@ class TopologyIntegrationTest {
 
             // Trigger a state change (say something in the room)
             var event1 = new WorldEvent.Said("study-operator", Instant.now(),
-                "player-1", "Masumi", "First message");
+                "player-1", "Operator", "First message");
             replicator.onRoomEvent("study-operator", event1);
 
             var event2 = new WorldEvent.Said("study-operator", Instant.now(),
-                "player-1", "Masumi", "Second message");
+                "player-1", "Operator", "Second message");
             replicator.onRoomEvent("study-operator", event2);
 
             // Every change triggers a snapshot
@@ -366,9 +366,9 @@ class TopologyIntegrationTest {
             var service = new AccountService(store);
 
             // Create account
-            var account = service.createAccount("Masumi");
+            var account = service.createAccount("Operator");
             assertThat(account.did()).startsWith("did:key:");
-            assertThat(account.displayName()).isEqualTo("Masumi");
+            assertThat(account.displayName()).isEqualTo("Operator");
 
             // Register a device for auto-login
             service.registerDevice(account.did(), "device-macbook-001");
@@ -377,7 +377,7 @@ class TopologyIntegrationTest {
             var autoLogin = service.autoLogin("device-macbook-001");
             assertThat(autoLogin).isPresent();
             assertThat(autoLogin.get().did()).isEqualTo(account.did());
-            assertThat(autoLogin.get().displayName()).isEqualTo("Masumi");
+            assertThat(autoLogin.get().displayName()).isEqualTo("Operator");
         }
 
         @Test
@@ -390,7 +390,7 @@ class TopologyIntegrationTest {
             // With null NATS it would NPE, so we test the direct data structure behavior.
 
             // Test the data model and local caching behavior
-            var presence = PlayerPresence.online("did:key:z6MkTest", "Masumi", "node-1", "nexus");
+            var presence = PlayerPresence.online("did:key:z6MkTest", "Operator", "node-1", "nexus");
 
             assertThat(presence.did()).isEqualTo("did:key:z6MkTest");
             assertThat(presence.nodeId()).isEqualTo("node-1");
@@ -444,12 +444,12 @@ class TopologyIntegrationTest {
             var service = new AccountService(store);
 
             // Create the zone creator
-            var creator = service.createAccount("Masumi");
+            var creator = service.createAccount("Operator");
 
             // Create a zone
-            var zone = ZoneSetup.createZone("Masumi's Household", creator);
+            var zone = ZoneSetup.createZone("Operator's Household", creator);
             assertThat(zone.zoneId()).startsWith("zone-");
-            assertThat(zone.zoneName()).isEqualTo("Masumi's Household");
+            assertThat(zone.zoneName()).isEqualTo("Operator's Household");
             assertThat(zone.creatorDid()).isEqualTo(creator.did());
             assertThat(zone.secret()).hasSize(32);
 
@@ -530,7 +530,7 @@ class TopologyIntegrationTest {
             var store = new AccountStore(inMemoryDb());
             var service = new AccountService(store);
 
-            var account = service.createAccount("Masumi");
+            var account = service.createAccount("Operator");
             service.registerDevice(account.did(), "device-macbook");
             service.registerDevice(account.did(), "device-iphone");
             service.registerDevice(account.did(), "device-ipad");

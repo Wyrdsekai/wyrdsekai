@@ -12,7 +12,7 @@ import java.time.Instant;
  * <p>Published to {@code zone.{zoneId}.presence.{did}} via NATS. Other nodes maintain
  * a local map of online players, enabling:
  * <ul>
- *   <li>"Masumi is in The Nexus on gpu-host"</li>
+ *   <li>"Operator is in The Nexus on gpu-host"</li>
  *   <li>Companion knows where its human is</li>
  *   <li>Room assignments know which node the player is on</li>
  * </ul></p>

@@ -360,4 +360,47 @@ class PairingServiceTest {
         var linked = service.linkDeviceToUser("bogus-token", "user-abc");
         assertThat(linked).isFalse();
     }
+
+    // ── Session-minted device identity (hermod consent path) ────────
+
+    @Test
+    void pairForUser_mints_a_real_registry_device() {
+        var r = service.pairForUser("user-abc", "phone-a1b2c3", "phone");
+        assertThat(r.token()).startsWith("wyrd_dev_");
+        assertThat(r.householdId()).isEqualTo("test-household");
+
+        // Same registry, same doors as the code ceremony.
+        var device = service.validateDeviceToken(r.token());
+        assertThat(device).isPresent();
+        assertThat(device.get().userId()).isEqualTo("user-abc");
+        assertThat(service.findUserForDevice(r.token())).contains("user-abc");
+    }
+
+    @Test
+    void pairForUser_is_idempotent_per_user_and_name() {
+        var first = service.pairForUser("user-abc", "phone-a1b2c3", "phone");
+        var again = service.pairForUser("user-abc", "phone-a1b2c3", "phone");
+        // Re-consent must not breed identities — ONE stable device id.
+        assertThat(again.token()).isEqualTo(first.token());
+
+        // A different device (name) or account gets its own identity.
+        assertThat(service.pairForUser("user-abc", "phone-d4e5f6", "phone").token())
+            .isNotEqualTo(first.token());
+        assertThat(service.pairForUser("user-xyz", "phone-a1b2c3", "phone").token())
+            .isNotEqualTo(first.token());
+    }
+
+    @Test
+    void pairForUser_never_resurrects_a_revoked_device() {
+        var first = service.pairForUser("user-abc", "phone-a1b2c3", "phone");
+        var device = service.validateDeviceToken(first.token()).orElseThrow();
+        service.revokeDevice(device.id());
+
+        // Revocation is FINAL for that identity; a fresh consent mints a
+        // fresh row rather than quietly re-opening the revoked one.
+        var second = service.pairForUser("user-abc", "phone-a1b2c3", "phone");
+        assertThat(second.token()).isNotEqualTo(first.token());
+        assertThat(service.validateDeviceToken(first.token())).isEmpty();
+        assertThat(service.validateDeviceToken(second.token())).isPresent();
+    }
 }

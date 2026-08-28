@@ -27,7 +27,7 @@ import java.util.Map;
  * @param type         Event type (from list above)
  * @param agentDid     The agent undergoing growth
  * @param description  Human-readable description
- * @param experimentId Link to CodePlane experiment (null for Level 1)
+ * @param experimentId Link to CodeZaiku experiment (null for Level 1)
  * @param variantId    Variant involved (null for lifecycle events)
  * @param metrics      Arbitrary metrics (fitness, divergence, etc.)
  * @param signature    Agent's Ed25519 signature over this event

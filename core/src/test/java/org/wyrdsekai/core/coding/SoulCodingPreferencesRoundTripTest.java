@@ -63,7 +63,7 @@ class SoulCodingPreferencesRoundTripTest {
             Map.of(
                 "explore", "openhands",
                 "refactor", "aider",
-                "implement_feature", "codeplane"
+                "implement_feature", "codezaiku"
             )
         );
         var manifest = birth("did:key:withprefs").withCodingPreferences(prefs);
@@ -78,7 +78,7 @@ class SoulCodingPreferencesRoundTripTest {
         assertThat(loaded.codingPreferences().taskTypeOverrides())
             .containsEntry("explore", "openhands")
             .containsEntry("refactor", "aider")
-            .containsEntry("implement_feature", "codeplane");
+            .containsEntry("implement_feature", "codezaiku");
     }
 
     @Test void coding_preferences_uses_snake_case_json_property_names()

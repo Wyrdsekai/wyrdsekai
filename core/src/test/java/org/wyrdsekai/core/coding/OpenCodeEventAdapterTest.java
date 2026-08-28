@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Phase 2b — unit tests for {@link OpenCodeEventAdapter}.
  *
- * <p>Mirrors the shape of the existing CodePlane adapter tests: feed a
+ * <p>Mirrors the shape of the existing CodeZaiku adapter tests: feed a
  * synthetic {@link AgentEvent.ZoneBroadcast} carrying a structured
  * {@code task_completed} payload and assert the resulting
  * {@link CodingArtifact} has the right identity, files, and sibling
@@ -86,9 +86,9 @@ class OpenCodeEventAdapterTest {
         data.put("event", "task_completed");
         data.put("taskId", "x");
         data.put("workspace", "/tmp");
-        var event = new AgentEvent.ZoneBroadcast("codeplane",
+        var event = new AgentEvent.ZoneBroadcast("codezaiku",
             "workshop",
-            new S2CMessage.ZoneResponse(0L, "req", "codeplane",
+            new S2CMessage.ZoneResponse(0L, "req", "codezaiku",
                 "ok", data, List.of()),
             Instant.now());
 

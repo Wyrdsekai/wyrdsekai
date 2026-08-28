@@ -222,7 +222,7 @@ class ClassifierForgeRetrainIntegrationTest {
                 "tell Alice I'll be thirty minutes late",
                 "let Ember know the files are ready",
                 "pass on to the kids that dinner is at six",
-                "forward the news to Masumi when he's back",
+                "forward the news to Operator when he's back",
                 "give Chief the update on the project",
                 "send a message to Lain about the party tonight",
                 "let my sister know I'm thinking of her"},

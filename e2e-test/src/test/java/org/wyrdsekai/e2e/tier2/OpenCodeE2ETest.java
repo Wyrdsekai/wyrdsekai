@@ -320,9 +320,9 @@ class OpenCodeE2ETest {
         // Negative cases — drift-protection on the namespace + event guards.
         assertNull(adapter.translateEvent(null));
         var wrongNs = new AgentEvent.ZoneBroadcast(
-            "codeplane", "workshop",
+            "codezaiku", "workshop",
             new S2CMessage.ZoneResponse(0L, UUID.randomUUID().toString(),
-                "codeplane", "ok", data, List.of()),
+                "codezaiku", "ok", data, List.of()),
             Instant.now());
         assertNull(adapter.translateEvent(wrongNs),
             "namespace mismatch must skip translation");
@@ -375,7 +375,7 @@ class OpenCodeE2ETest {
     @Test @Order(6)
     void task6_selection_policy_picks_opencode() {
         // Drive the GraalJS policy script directly — no inference, no
-        // workshop, just verify that when CodePlane is absent / unhealthy
+        // workshop, just verify that when CodeZaiku is absent / unhealthy
         // the policy script picks "opencode" out of the fallback chain.
         //
         // The detailed scenario coverage lives in
@@ -387,16 +387,16 @@ class OpenCodeE2ETest {
             List.of("opencode", "openhands"),
             "code", "write a tiny utility function");
         assertEquals("opencode", pickedWith,
-            "When CodePlane is unavailable, OpenCode must win the chain.");
+            "When CodeZaiku is unavailable, OpenCode must win the chain.");
 
-        // Sanity: CodePlane wins when it IS available — pins the
+        // Sanity: CodeZaiku wins when it IS available — pins the
         // "OpenCode is the secondary default, not the override" intent.
-        var pickedWithCodeplane = pickBackend(
-            List.of("codeplane", "opencode"),
-            List.of("codeplane", "opencode"),
+        var pickedWithCodeZaiku = pickBackend(
+            List.of("codezaiku", "opencode"),
+            List.of("codezaiku", "opencode"),
             "code", "write a tiny utility function");
-        assertEquals("codeplane", pickedWithCodeplane,
-            "CodePlane must keep priority when it's in the available chain.");
+        assertEquals("codezaiku", pickedWithCodeZaiku,
+            "CodeZaiku must keep priority when it's in the available chain.");
     }
 
     // ── Task 7 ──────────────────────────────────────────────────────
@@ -479,7 +479,7 @@ class OpenCodeE2ETest {
             ws.sendSay("nexus", "go east");
 
             // Look for the OpenCode-specific narration. The workshop.js
-            // emits one of two narrations depending on whether CodePlane is
+            // emits one of two narrations depending on whether CodeZaiku is
             // also available; both contain "luminous slate" / "OpenCode".
             String narration = waitForAnyProse(ws, "luminous slate",
                 "OpenCode", "small luminous", "free, local");

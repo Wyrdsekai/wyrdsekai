@@ -11,6 +11,10 @@ import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.List;
+import org.wyrdsekai.common.util.Json;
+import org.wyrdsekai.core.agent.ActionToolBuilder;
+import org.wyrdsekai.core.item.StandardItemLibrary;
 
 /**
  * The room-template names the TOOL offers must be the ones the LIBRARY registers.
@@ -68,10 +72,10 @@ class RoomTemplateEnumMatchesLibraryTest {
     @Test
     @DisplayName("craft_from_template is constrained the same way")
     void craftToolCarriesTheEnum(@TempDir Path tmp) {
-        var library = new org.wyrdsekai.core.item.StandardItemLibrary(tmp);
+        var library = new StandardItemLibrary(tmp);
         assertEquals(
             new TreeSet<>(library.templates().keySet()),
-            new TreeSet<>(org.wyrdsekai.core.item.StandardItemLibrary.TEMPLATE_NAMES),
+            new TreeSet<>(StandardItemLibrary.TEMPLATE_NAMES),
             "item TEMPLATE_NAMES has drifted from the library");
 
         var param = ToolItemStarterKit.craftFromTemplate().params().stream()
@@ -81,7 +85,7 @@ class RoomTemplateEnumMatchesLibraryTest {
             "craft_from_template must constrain its template too "
             + "records the same template-not-found failure for crafting");
         assertEquals(
-            new TreeSet<>(org.wyrdsekai.core.item.StandardItemLibrary.TEMPLATE_NAMES),
+            new TreeSet<>(StandardItemLibrary.TEMPLATE_NAMES),
             new TreeSet<>(param.enumValues()));
     }
 
@@ -93,17 +97,17 @@ class RoomTemplateEnumMatchesLibraryTest {
         // and a live run would "disprove" a fix that was never delivered. This is
         // the same shape as the ActionPolicy rows that were inert because nothing
         // read them.
-        for (var tool : java.util.List.of(
+        for (var tool : List.of(
                 ToolItemStarterKit.createRoomFromTemplate(),
                 ToolItemStarterKit.craftFromTemplate())) {
-            var json = org.wyrdsekai.common.util.Json.mapper()
+            var json = Json.mapper()
                 .writeValueAsString(tool.toToolDefinition());
             assertTrue(json.contains("\"enum\""),
                 tool.id() + " emits no enum into its schema — the constraint never "
                 + "reaches the model:\n" + json);
         }
 
-        var roomJson = org.wyrdsekai.common.util.Json.mapper()
+        var roomJson = Json.mapper()
             .writeValueAsString(ToolItemStarterKit.createRoomFromTemplate().toToolDefinition());
         for (var name : StandardRoomLibrary.TEMPLATE_NAMES) {
             assertTrue(roomJson.contains("\"" + name + "\""),
@@ -121,10 +125,10 @@ class RoomTemplateEnumMatchesLibraryTest {
         // bunshin path (which offers the parsed action) still confabulated, and a
         // furnished-but-orphaned room shipped next to a reachable-but-empty one.
         // Two surfaces, one source of truth, or they drift.
-        var tools = org.wyrdsekai.core.agent.ActionToolBuilder
-            .buildFromNames(java.util.List.of("create_room"));
+        var tools = ActionToolBuilder
+            .buildFromNames(List.of("create_room"));
         assertEquals(1, tools.size(), "create_room must build a tool definition");
-        var json = org.wyrdsekai.common.util.Json.mapper().writeValueAsString(tools.get(0));
+        var json = Json.mapper().writeValueAsString(tools.get(0));
         assertTrue(json.contains("\"enum\""),
             "parsed create_room emits no enum — the bunshin surface is unconstrained:\n" + json);
         for (var name : StandardRoomLibrary.TEMPLATE_NAMES) {

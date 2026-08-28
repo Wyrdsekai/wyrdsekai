@@ -451,30 +451,30 @@ class ActionParserTest {
 
     @Test void parse_zone_command() {
         var input = """
-            I'll check CodePlane's status.
+            I'll check CodeZaiku's status.
             ```json
-            {"action": "zone_command", "command": "codeplane.status", "payload": {}}
+            {"action": "zone_command", "command": "codezaiku.status", "payload": {}}
             ```
             """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.ZoneCommand.class);
         var zc = (AgentAction.ZoneCommand) action;
-        assertThat(zc.command()).isEqualTo("codeplane.status");
+        assertThat(zc.command()).isEqualTo("codezaiku.status");
         assertThat(zc.payload()).isEmpty();
     }
 
     @Test void parse_zone_command_with_payload() {
         var input = """
-            Let me create a task on CodePlane.
+            Let me create a task on CodeZaiku.
             ```json
-            {"action": "zone_command", "command": "codeplane.create",
+            {"action": "zone_command", "command": "codezaiku.create",
              "payload": {"prompt": "Implement a hello world", "workspace": "/tmp/test"}}
             ```
             """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.ZoneCommand.class);
         var zc = (AgentAction.ZoneCommand) action;
-        assertThat(zc.command()).isEqualTo("codeplane.create");
+        assertThat(zc.command()).isEqualTo("codezaiku.create");
         assertThat(zc.payload()).containsEntry("prompt", "Implement a hello world");
         assertThat(zc.payload()).containsEntry("workspace", "/tmp/test");
     }
@@ -483,14 +483,14 @@ class ActionParserTest {
         var input = """
             I'll approve that deployment.
             ```json
-            {"action": "zone_command", "command": "codeplane.approve",
+            {"action": "zone_command", "command": "codezaiku.approve",
              "payload": {"boardId": "board-1", "eventId": "evt-42", "decision": "approve"}}
             ```
             """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.ZoneCommand.class);
         var zc = (AgentAction.ZoneCommand) action;
-        assertThat(zc.command()).isEqualTo("codeplane.approve");
+        assertThat(zc.command()).isEqualTo("codezaiku.approve");
         assertThat(zc.payload()).containsEntry("decision", "approve");
     }
 
@@ -1019,7 +1019,7 @@ class ActionParserTest {
 
     @Test void parse_function_call_with_think_tags() {
         // Actual model output pattern from eval
-        var input = "<think>\n\n</think>\n\nI'll head to the library.\n\ngo_to_room(target=\"southeast\", reason=\"Masumi asked me to go to the library\")";
+        var input = "<think>\n\n</think>\n\nI'll head to the library.\n\ngo_to_room(target=\"southeast\", reason=\"Operator asked me to go to the library\")";
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.GoToRoom.class);
         assertThat(((AgentAction.GoToRoom) action).target()).isEqualTo("southeast");
@@ -1069,7 +1069,7 @@ class ActionParserTest {
     // ════════════════════════════════════════════════════════════════════
 
     @Test void parse_xml_attribute_remember() {
-        var input = "<remember content=\"Masumi's favorite color is blue\" importance=\"0.8\">";
+        var input = "<remember content=\"Operator's favorite color is blue\" importance=\"0.8\">";
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.Remember.class);
         var rem = (AgentAction.Remember) action;
@@ -1146,7 +1146,7 @@ class ActionParserTest {
 
                 *go_to_room*
                 - target: "southeast"
-                - reason: "Masumi requested I go to the library."
+                - reason: "Operator requested I go to the library."
                 """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.GoToRoom.class);
@@ -1162,7 +1162,7 @@ class ActionParserTest {
 
                 I'll head to the library.
 
-                go_to_room(target="southeast", reason="Masumi asked me to go to the library")
+                go_to_room(target="southeast", reason="Operator asked me to go to the library")
                 """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.GoToRoom.class);
@@ -1176,7 +1176,7 @@ class ActionParserTest {
                 The user wants me to go to the library. I need to use the go_to_room tool with the appropriate direction. Looking at the exits, the library is southeast from The Nexus.
                 </think>
 
-                go_to_room(target="southeast", reason="Masumi asked me to go to the library")
+                go_to_room(target="southeast", reason="Operator asked me to go to the library")
                 """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.GoToRoom.class);
@@ -1190,9 +1190,9 @@ class ActionParserTest {
 
                 </think>
 
-                I have stored that information. Blue is your favorite color, Masumi.
+                I have stored that information. Blue is your favorite color, Operator.
 
-                <remember content="Masumi's favorite color is blue" importance="0.8">
+                <remember content="Operator's favorite color is blue" importance="0.8">
                 """;
         var action = ActionParser.parse(input);
         assertThat(action).isInstanceOf(AgentAction.Remember.class);

@@ -1,8 +1,8 @@
 package org.wyrdsekai.core.familiar;
 
+import org.wyrdsekai.core.util.TextSimilarity;
+
 import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -148,27 +148,7 @@ public final class FormEvolutionClassifier {
      * handles the common case (agent rewrites most of the prompt) fine.
      */
     static double jaccardDistance(String a, String b) {
-        var tokensA = tokenize(a);
-        var tokensB = tokenize(b);
-        if (tokensA.isEmpty() && tokensB.isEmpty()) return 0.0;
-        if (tokensA.isEmpty() || tokensB.isEmpty()) return 1.0;
-        var intersection = new HashSet<>(tokensA);
-        intersection.retainAll(tokensB);
-        var union = new HashSet<>(tokensA);
-        union.addAll(tokensB);
-        if (union.isEmpty()) return 0.0;
-        var similarity = (double) intersection.size() / union.size();
-        return 1.0 - similarity;
-    }
-
-    private static Set<String> tokenize(String s) {
-        if (s == null || s.isBlank()) return Set.of();
-        var parts = s.toLowerCase().split("\\W+");
-        var out = new HashSet<String>();
-        for (var p : parts) {
-            if (p.length() >= 3) out.add(p);
-        }
-        return out;
+        return TextSimilarity.distance(a, b);
     }
 
     private static float[] safeEmbed(EmbeddingFn fn, String s) {

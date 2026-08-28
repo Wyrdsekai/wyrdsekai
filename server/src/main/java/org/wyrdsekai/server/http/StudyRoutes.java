@@ -4,6 +4,7 @@ import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.identity.StudyOwnerGuard;
 import org.wyrdsekai.core.library.CalibreCatalogIndexer;
 import org.wyrdsekai.core.library.DocumentIndexer;
 import org.wyrdsekai.core.library.StudyService;
@@ -12,7 +13,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.ArrayList;
 
 /**
  * HTTP endpoints for the private Study subsystem.
@@ -50,6 +56,14 @@ public final class StudyRoutes {
 
     private static final Logger log = LoggerFactory.getLogger(StudyRoutes.class);
 
+    /**
+     * (owner|collection) keys with an ingest currently running. Static because
+     * the constraint is per-node, whatever routes instance took the request —
+     * the ledger file and the extraction workers are node-global resources.
+     * add() is the atomic claim; the job's finally releases.
+     */
+    private static final Set<String> ACTIVE_INGESTS = ConcurrentHashMap.newKeySet();
+
     private final StudyService studyService;
     private final DocumentIndexer documentIndexer;
 
@@ -75,6 +89,12 @@ public final class StudyRoutes {
         app.post("/api/study/consent/grant", this::handleGrantConsent);
         app.post("/api/study/consent/revoke", this::handleRevokeConsent);
         app.get("/api/study/consent", this::handleListConsent);
+        // Everything a person needs to share a shelf, in one call: who they are,
+        // which companions exist, which shelves exist. Added 2026-08-07 because
+        // the consent model was complete and had no usable interface — enabling
+        // it meant reading two DIDs out of sqlite and hand-writing curl, and a
+        // permission nobody can grant may as well not exist.
+        app.get("/api/study/sharing-context", this::handleSharingContext);
         app.get("/api/study/consent/search", this::handleSearchAsCompanion);
 
         // L2 — Shared Shelves
@@ -140,6 +160,19 @@ public final class StudyRoutes {
             return;
         }
 
+        // Resolve the owner SYNCHRONOUSLY, before the async job starts. The
+        // indexing below runs in a CompletableFuture that only logs failures, so
+        // a refusal raised in there would return 200 to the caller and silently
+        // index nothing — the exact silent-failure shape that let 13.7M rows be
+        // written under an owner referring to nobody.
+        final String owner;
+        try {
+            owner = StudyOwnerGuard.require(body.user());
+        } catch (StudyOwnerGuard.UnresolvableOwnerException e) {
+            ctx.status(400).json(Map.of("error", e.getMessage()));
+            return;
+        }
+
         var dir = Path.of(body.path());
         var collection = body.collection() != null ? body.collection()
             : dir.getFileName().toString();
@@ -154,6 +187,28 @@ public final class StudyRoutes {
             default -> CalibreCatalogIndexer.isCalibreLibrary(dir) ? "catalog" : "full";
         };
 
+        // ONE INGEST PER (owner, collection) AT A TIME.
+        //
+        // Every POST used to fire a fresh async job unconditionally, so a
+        // double-submit — an impatient re-run, a retried curl, two terminals —
+        // ran two full passes over the same 74k-book tree at once. The index
+        // survives that (content-derived ids + updateDocument = last-write-
+        // wins), but everything else degrades: double extraction CPU for
+        // hours, two writers interleaving one ledger file, and two "Processed
+        // N files" streams shredding any progress monitoring. Refusing is
+        // kinder than racing: the second caller is told a run is active, and
+        // the ledger already makes a SEQUENTIAL re-run cheap and correct.
+        var ingestKey = owner + "|" + collection;
+        if (!ACTIVE_INGESTS.add(ingestKey)) {
+            log.info("[Study] Ingest already running for '{}' — refusing duplicate", collection);
+            ctx.status(409).json(Map.of(
+                "status", "already_indexing",
+                "collection", collection,
+                "message", "An ingest for this collection is already running. It is "
+                    + "resumable: if it was interrupted, re-run after it stops."));
+            return;
+        }
+
         log.info("[Study] Indexing documents for {}: {} -> collection '{}' (mode={})",
             body.user(), body.path(), collection, mode);
 
@@ -162,14 +217,18 @@ public final class StudyRoutes {
             try {
                 if (mode.equals("catalog")) {
                     new CalibreCatalogIndexer(studyService).indexCatalog(
-                        body.user(), collection, dir,
+                        owner, collection, dir,
                         msg -> log.info("[Study] {}: {}", collection, msg));
                 } else {
-                    documentIndexer.indexDirectory(body.user(), collection, dir,
+                    documentIndexer.indexDirectory(owner, collection, dir,
                         msg -> log.info("[Study] {}: {}", collection, msg));
                 }
             } catch (Exception e) {
                 log.error("[Study] Document indexing failed for {}: {}", collection, e.getMessage());
+            } finally {
+                // Always release, even on failure — a slot leaked here would
+                // refuse every future ingest of this collection until restart.
+                ACTIVE_INGESTS.remove(ingestKey);
             }
         });
 
@@ -233,6 +292,42 @@ public final class StudyRoutes {
     }
 
     // --- L2: Agent Consent ---
+
+
+    /** Person + companions + shelves — the whole grant UX in one request. */
+    private void handleSharingContext(Context ctx) {
+        var jdbc = System.getProperty("wyrdsekai.jdbc.url");
+        String person = null;
+        var companions = new ArrayList<Map<String, String>>();
+        if (jdbc != null && !jdbc.isBlank()) {
+            try (var conn = DriverManager.getConnection(jdbc)) {
+                try (var ps = conn.prepareStatement(
+                        "SELECT did FROM person_identities ORDER BY created_at LIMIT 1");
+                     var rs = ps.executeQuery()) {
+                    if (rs.next()) person = rs.getString(1);
+                } catch (SQLException ignore) { /* pre-migration node */ }
+
+                // A name can map to several DIDs (a re-birth leaves both rows).
+                // Return them newest-first so a caller taking the first gets the
+                // live one rather than an arbitrary row.
+                try (var ps = conn.prepareStatement(
+                        "SELECT name, did FROM companions WHERE archived=0 "
+                            + "ORDER BY last_seen_at DESC, born_at DESC");
+                     var rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        companions.add(Map.of("name", rs.getString("name"),
+                                              "did", rs.getString("did")));
+                    }
+                } catch (SQLException ignore) { /* no companions yet */ }
+            } catch (SQLException e) {
+                log.debug("[Study] sharing-context db read failed: {}", e.getMessage());
+            }
+        }
+        ctx.json(Map.of(
+            "person", person == null ? "" : person,
+            "personReady", person != null,
+            "companions", companions));
+    }
 
     private void handleGrantConsent(Context ctx) {
         var body = ctx.bodyAsClass(ConsentRequest.class);

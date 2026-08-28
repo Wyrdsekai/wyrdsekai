@@ -393,6 +393,51 @@ fetch_openhands() {
     fi
 }
 
+fetch_codezaiku() {
+    # CodeZaiku publishes ONE platform-independent tarball -- it is a JVM app,
+    # so there is no per-platform asset and no triple to substitute. The sha
+    # therefore lands under the single key "any" rather than per platform.
+    local repo="Wyrdsekai/codezaiku"
+    local tag; tag="$(github_latest_tag "$repo")" || {
+        echo "[codezaiku] FATAL: failed to query $repo latest release" >&2
+        return 1
+    }
+    if [[ -z "$tag" ]]; then
+        echo "[codezaiku] FATAL: no tag_name in API response" >&2
+        return 1
+    fi
+    local version="${tag#v}"
+    echo "[codezaiku] tag=$tag version=$version"
+
+    local tarball="codezaiku-${version}.tar.gz"
+    update_url_template codezaiku \
+        "https://github.com/${repo}/releases/download/${tag}/${tarball}"
+
+    # Take the checksum from the release's OWN SHA256SUMS rather than hashing a
+    # download here: it is the same file the upstream installer verifies
+    # against, so the manifest and the installer cannot disagree about what a
+    # good artifact is.
+    local sums; sums="$(curl -fsSL \
+        "https://github.com/${repo}/releases/download/${tag}/SHA256SUMS" 2>/dev/null)" || {
+        echo "[codezaiku] FATAL: no SHA256SUMS in $tag — refusing to record an unverified sha" >&2
+        return 1
+    }
+    local sha; sha="$(printf '%s\n' "$sums" | awk -v f="$tarball" '$2 == f {print $1}' | head -1)"
+    if [[ -z "$sha" ]]; then
+        echo "[codezaiku] FATAL: $tarball not listed in SHA256SUMS" >&2
+        return 1
+    fi
+    # One artifact for every platform, but the installer keys on
+    # "<platform>-<arch>" and has NO platform-independent key -- so record the
+    # same sha under each. Writing a single "any" key parses fine and then
+    # fails at install time with "no sha256 entry for platform 'linux-x64'".
+    for pl in "${PLATFORMS[@]}"; do
+        update_sha codezaiku "$pl" "$sha"
+    done
+    update_version codezaiku "$version"
+    echo "[codezaiku]   all platforms -> $sha"
+}
+
 fetch_devin() {
     echo "[devin] config-only backend — nothing to fetch"
 }
@@ -401,13 +446,14 @@ fetch_devin() {
 
 requested=("${@+$@}")
 if [[ ${#requested[@]} -eq 0 ]]; then
-    requested=(goose codex claude-sdk gemini-cli cline continue openhands devin)
+    requested=(goose codezaiku codex claude-sdk gemini-cli cline continue openhands devin)
 fi
 
 failures=0
 for backend in "${requested[@]}"; do
     case "$backend" in
         goose)        fetch_goose      || failures=$((failures + 1)) ;;
+        codezaiku)    fetch_codezaiku  || failures=$((failures + 1)) ;;
         codex)        fetch_codex      || failures=$((failures + 1)) ;;
         claude-sdk)   fetch_claude_sdk || failures=$((failures + 1)) ;;
         gemini-cli)   fetch_gemini_cli || failures=$((failures + 1)) ;;

@@ -20,7 +20,11 @@ import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.between.BetweenActor;
+import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.between.federation.FederationService;
+import org.wyrdsekai.core.hermod.HermodGrantStore;
+
+import java.nio.file.Path;
 import org.wyrdsekai.core.identity.PlayerPresence;
 import org.wyrdsekai.core.identity.AccountService;
 import org.wyrdsekai.core.identity.PlayerPresence;
@@ -33,6 +37,9 @@ import org.wyrdsekai.core.persistence.InventoryService;
 import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.PairingService;
 import org.wyrdsekai.core.persistence.WardService;
+import org.wyrdsekai.core.item.ItemRetirement;
+import org.wyrdsekai.core.item.CarriedItemUse;
+import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.room.RoomCommand;
 import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.ZoneGuardian;
@@ -66,6 +73,7 @@ import org.wyrdsekai.core.home.RelayGovernors;
 import org.wyrdsekai.core.home.ResidencyStore;
 import org.wyrdsekai.core.identity.PlayerAccount;
 import org.wyrdsekai.core.item.HomeOwnerItemProvider;
+import org.wyrdsekai.core.item.HouseholdItemContent;
 import org.wyrdsekai.core.item.ToolItemStarterKit;
 import org.wyrdsekai.core.library.StudyService;
 import org.wyrdsekai.core.item.ItemProviderRegistry;
@@ -103,6 +111,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.time.Clock;
 
 /**
  * Javalin WebSocket handler for Wyrdsekai connections.
@@ -191,7 +200,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
     private final Map<String, String> playerLastRoom = new ConcurrentHashMap<>();
     /** Tracks display name per session for entity name in events. */
     private final Map<String, String> sessionPlayerNames = new ConcurrentHashMap<>();
-    /** Zone command handlers keyed by namespace prefix (e.g. "codeplane" → handler). §83.7 */
+    /** Zone command handlers keyed by namespace prefix (e.g. "codezaiku" → handler). §83.7 */
     private final Map<String, ZoneCommandHandler> zoneHandlers = new ConcurrentHashMap<>();
     /**
      * Zone session sinks: playerId → (sessionId → send function). Lets zone
@@ -307,7 +316,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
 
     /**
      * Register a zone command handler for a namespace prefix (§83.7).
-     * Commands like "codeplane.approve" route to the handler registered under "codeplane".
+     * Commands like "codezaiku.approve" route to the handler registered under "codezaiku".
      */
     public void registerZoneHandler(String namespace, ZoneCommandHandler handler) {
         zoneHandlers.put(namespace, handler);
@@ -1280,12 +1289,17 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                 handleDrop(sessionRef, playerId, currentRoomId, room, drop, locale);
             }
 
+            case C2SMessage.Retire retire -> {
+                if (!checkWard(sessionRef, currentRoomId, playerId, "drop", retire.id(), locale)) return;
+                handleRetire(sessionRef, playerId, currentRoomId, room, retire, locale);
+            }
+
             case C2SMessage.Use use -> {
                 if (!checkWard(sessionRef, currentRoomId, playerId, "use", use.id(), locale)) return;
                 // Check inventory for scripted item first — lets players invoke library_card,
                 // echo_stone, etc. from their home zone.
                 if (tryInvokeCarriedScript(sessionRef, playerId, use.objectName(),
-                        use.target(), use.id())) {
+                        use.target(), use.id(), currentRoomId, locale)) {
                     return;
                 }
                 askRoom(room, ref -> new RoomCommand.UseObject(playerId, use.objectName(), use.target(), locale, ref),
@@ -1542,14 +1556,30 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             // surfaces, but PLAYER providers never got setSafe, so
             // world.safe.list/has answered empty on player-invoked items.
             visitor.setSafe(TheSafe.local());
+            // The household's own library / model / web. Without it every content
+            // surface answers "visiting foreign zone" — inside the person's own house.
+            visitor.withHouseholdContent(HouseholdItemContent.get());
+            // Name the person. Without this the knowledge search has no caller
+            // and reaches no private shelf — the steward's own books were
+            // invisible from his own hands for exactly this reason.
+            visitor.withCaller(playerId);
             return visitor;
         }
         var home = new HomeOwnerItemProvider(
             localZone, localZone, playerId, homeClient, system);
+        // The acting person, for every caller-aware surface (see StudyReach).
+        home.withCaller(playerId);
         // Template catalog for world.catalog.* (second-node 2026-07-11 #26).
         home.withCatalog(STD_ITEM_LIBRARY);
         // world.safe.list/has for player-invoked items (#31 item 1).
         home.setSafe(TheSafe.local());
+        // world.library.search / world.llm.* / world.web.* — the CONTENT surfaces.
+        // HomeOwnerItemProvider extends the FOREIGN-zone provider and only ever added
+        // the household ADMIN surfaces, so a person standing in their own house read
+        // "Knowledge search unavailable — visiting foreign zone" from every item they
+        // used. Only the companion's own provider had the real library and the real
+        // model. See HouseholdItemContent.
+        home.withHouseholdContent(HouseholdItemContent.get());
         // Supplier wiring for Ledger/Manifest/Trunk/Shelf/Lantern/....
         var fed = federationService;
         if (fed != null) {
@@ -1574,6 +1604,22 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
         // acting player's id as caller so steward-only checks apply.
         home.withAuth(authService)
             .withWards(wardService);
+        // hermod data-domain grants (Ward Room grant stone): flat files
+        // under <dataDir>/hermod-grants/, verified against this node's
+        // own authority key. Read open; revoke steward-gated in-provider.
+        // Failure to wire degrades to "not available here", never fatal.
+        try {
+            var hermodDataDir = Path.of(System.getenv().getOrDefault(
+                "WYRDSEKAI_DATA_DIR", System.getProperty("user.home") + "/.wyrdsekai"));
+            home.withHermodGrants(new HermodGrantStore(
+                hermodDataDir.resolve("hermod-grants"),
+                NodeIdentity.loadOrGenerate(hermodDataDir.resolve("node-identity.json"))
+                    .publicKeyBytes(),
+                Clock.systemUTC()));
+        } catch (Exception hermodGrantErr) {
+            log.warn("hermod grant store not wired ({}): grant stone reads empty",
+                hermodGrantErr.getMessage());
+        }
         var parental = ParentalControlService.get();
         if (parental != null) home.withParental(parental);
         var maintenance = MaintenanceService.get();
@@ -1634,32 +1680,21 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
 
     private boolean tryInvokeCarriedScript(
             ActorRef<ClientSessionActor.SessionMessage> sessionRef,
-            String playerId, String objectName, String target, String requestId) {
-        if (playerId == null || objectName == null || objectName.isBlank()) return false;
-        var found = inventoryService.findByName(playerId, objectName);
-        if (found.isEmpty() || !found.get().isScripted()) return false;
-        var item = found.get();
+            String playerId, String objectName, String target, String requestId,
+            String currentRoomId, String locale) {
+        if (playerId == null) return false;
+        var resolved = CarriedItemUse.resolve(
+            inventoryService, playerId, objectName, target).orElse(null);
+        if (resolved == null) return false;
+        var item = resolved.item();
         try {
             var provider = buildPlayerProvider(playerId);
-            var params = new HashMap<String, Object>();
-            params.put("target", target != null ? target : "");
-            // Many item scripts read params.query (portal/search/book items); the
-            // SSH path was fixed for this in second-node 2026-07-09 but the WS/web/phone
-            // path was not, so a carried search item got an empty query here.
-            params.put("query", target != null ? target : "");
-            params.put("entityId", playerId);
-            // #1 (2026-07-19 OSS hardening; polarity fixed after adversarial review)
-            // — DEFAULT-DENY: a carried scripted item runs UNRESTRICTED only if it
-            // is a positively-identified bundled/disk-installed item. Everything
-            // else — crafted, companion-GIVEN (takenFrom=roomId), or cross-zone
-            // TRANSITED (takenFrom="remote_zone") — runs under the vetted crafted
-            // ceiling. The old `"crafted".equals(takenFrom)` test failed OPEN and
-            // let given/transited scripts run with full authority.
-            var itemCaps = ToolItemStarterKit.isTrustedScriptId(item.objectId())
-                ? ItemCapabilitySet.UNRESTRICTED
-                : ItemCapabilitySet.craftedDefault();
+            CarriedItemUse.attachRoomVoice(provider, currentRoomId, playerId);
+            CarriedItemUse.attachLocale(provider, locale);
+            var params = CarriedItemUse.params(playerId, resolved.target(), locale);
+            var itemCaps = CarriedItemUse.capabilitiesFor(item.objectId());
             var result = itemScriptExecutor.execute(
-                item.objectId(), item.scriptSource(), params, provider, itemCaps);
+                item.objectId(), resolved.source(), params, provider, itemCaps);
             var text = ItemScriptResponse.extractText(
                 result, item.objectName());
             sessionRef.tell(new ClientSessionActor.SendMessage(
@@ -1675,6 +1710,49 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                     0L, "script_error", "Item malfunctioned: " + e.getMessage(), requestId)));
         }
         return true;
+    }
+
+    /**
+     * Take an object out of the world — the counterpart {@code drop} never was.
+     *
+     * <p>Same behaviour as the shell and telnet: unregister the scripted item and move
+     * its script to {@code items/retired/} so a restart does not bring it back, then clear
+     * the inventory row and the room object. Soft, because these are things the companion
+     * made and a typo must not erase one.
+     */
+    private void handleRetire(ActorRef<ClientSessionActor.SessionMessage> sessionRef,
+                              String playerId, String currentRoomId,
+                              ActorRef<RoomCommand> room, C2SMessage.Retire retire,
+                              String locale) {
+        var name = retire.objectName() == null ? "" : retire.objectName().trim();
+        if (name.isEmpty()) {
+            sessionRef.tell(new ClientSessionActor.SendMessage(
+                new S2CMessage.Prose(0, "narrator", "Retire what?",
+                    List.of(), null, "normal", locale)));
+            return;
+        }
+        var outcome = ItemRetirement.retireAnywhere(name,
+            n -> {
+                try {
+                    if (room == null) return false;
+                    var resp = Rooms.<RoomResponse>ask(room,
+                        ref -> new RoomCommand.TakeObject(playerId, n, locale, ref),
+                        ASK_TIMEOUT).toCompletableFuture()
+                        .get(5, java.util.concurrent.TimeUnit.SECONDS);
+                    return resp instanceof RoomResponse.ObjectTakenOk;
+                } catch (Exception e) {
+                    return false;
+                }
+            },
+            n -> {
+                var carried = inventoryService.findTakeableByName(playerId, n);
+                carried.ifPresent(inv -> inventoryService.removeItem(playerId, inv.objectId()));
+                return carried.isPresent();
+            });
+        // Narration, not a rejection — see the telnet copy.
+        sessionRef.tell(new ClientSessionActor.SendMessage(
+            new S2CMessage.Prose(0, "narrator", outcome.describe(name),
+                List.of(), null, "normal", locale)));
     }
 
     private void handleDrop(ActorRef<ClientSessionActor.SessionMessage> sessionRef,
@@ -1763,7 +1841,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                                String locale) {
         var command = cmd.command().toLowerCase();
 
-        // Check for namespaced zone command (§83.7): "codeplane.approve" → namespace="codeplane", action="approve"
+        // Check for namespaced zone command (§83.7): "codezaiku.approve" → namespace="codezaiku", action="approve"
         var dotIndex = command.indexOf('.');
         if (dotIndex > 0 && dotIndex < command.length() - 1) {
             var namespace = command.substring(0, dotIndex);
@@ -1909,7 +1987,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                 String text;
                 if (connectionRegistry != null) {
                     var names = connectionRegistry.all().stream()
-                        .map(org.wyrdsekai.server.session.ClientConnection::playerName)
+                        .map(ClientConnection::playerName)
                         .filter(n -> n != null && !n.isBlank())
                         .distinct()
                         .toList();
@@ -2591,8 +2669,20 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             return;
         }
 
+        // A move must never LEAVE before the destination is real: an exit can
+        // outlive its room's actor (persisted room not respawned), and leaving
+        // first strands the session in a room that will never send EnterRoom.
+        if (toRoom == null) {
+            log.warn("Move rejected: no actor for target room {} (from {})", toRoomId, fromRoomId);
+            var catalog = ScriptMessageCatalog.forLang(locale);
+            sessionRef.tell(new ClientSessionActor.RoomResponseMsg(
+                new RoomResponse.Rejected("move_failed", catalog.get("ui.move_failed")),
+                requestId));
+            return;
+        }
+
         var displayName = sessionPlayerNames.getOrDefault(sessionId, "player");
-        Rooms.<RoomResponse>ask(fromRoom, 
+        Rooms.<RoomResponse>ask(fromRoom,
             ref -> new RoomCommand.LeaveRoom(playerId, displayName, direction, ref),
             ASK_TIMEOUT
         ).thenAccept(leaveResp -> {

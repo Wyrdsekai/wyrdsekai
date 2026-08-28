@@ -5,36 +5,36 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests for WorkshopProvisioner — covers per-bondholder CodePlane workshop
+ * Tests for WorkshopProvisioner — covers per-bondholder CodeZaiku workshop
  * provisioning.
  */
 class WorkshopProvisionerTest {
 
     @Test void workshopRoomId_format() {
         assertThat(WorkshopProvisioner.workshopRoomId("user-123"))
-            .isEqualTo("workshop-codeplane-user-123");
+            .isEqualTo("workshop-codezaiku-user-123");
     }
 
     @Test void isWorkshopRoom_detectsWorkshopRooms() {
-        assertThat(WorkshopProvisioner.isWorkshopRoom("workshop-codeplane-abc")).isTrue();
+        assertThat(WorkshopProvisioner.isWorkshopRoom("workshop-codezaiku-abc")).isTrue();
         assertThat(WorkshopProvisioner.isWorkshopRoom("workshop")).isFalse();
         assertThat(WorkshopProvisioner.isWorkshopRoom("study-abc")).isFalse();
         assertThat(WorkshopProvisioner.isWorkshopRoom(null)).isFalse();
     }
 
     @Test void bondholderIdFromWorkshop_extractsBondholderId() {
-        assertThat(WorkshopProvisioner.bondholderIdFromWorkshop("workshop-codeplane-user-123"))
+        assertThat(WorkshopProvisioner.bondholderIdFromWorkshop("workshop-codezaiku-user-123"))
             .isEqualTo("user-123");
         assertThat(WorkshopProvisioner.bondholderIdFromWorkshop("nexus")).isNull();
-        assertThat(WorkshopProvisioner.bondholderIdFromWorkshop("workshop-codeplane-"))
+        assertThat(WorkshopProvisioner.bondholderIdFromWorkshop("workshop-codezaiku-"))
             .isEmpty();
     }
 
     @Test void createWorkshopSeed_hasCoreFurnishings() {
-        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Masumi");
+        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Operator");
 
-        assertThat(seed.roomId()).isEqualTo("workshop-codeplane-u-1");
-        assertThat(seed.name()).isEqualTo("Masumi's CodePlane Workshop");
+        assertThat(seed.roomId()).isEqualTo("workshop-codezaiku-u-1");
+        assertThat(seed.name()).isEqualTo("Operator's CodeZaiku Workshop");
 
         var objectIds = seed.objects().stream().map(o -> o.id()).toList();
         assertThat(objectIds).contains(
@@ -48,12 +48,12 @@ class WorkshopProvisionerTest {
     }
 
     @Test void createWorkshopSeed_hasAliases() {
-        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Masumi");
-        assertThat(seed.aliases()).contains("workshop", "codeplane", "code", "studio");
+        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Operator");
+        assertThat(seed.aliases()).contains("workshop", "codezaiku", "code", "studio");
     }
 
     @Test void createWorkshopSeed_hasExitToNexus() {
-        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Masumi");
+        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Operator");
         assertThat(seed.exits()).hasSize(1);
         var exit = seed.exits().get(0);
         assertThat(exit.direction()).isEqualTo("out");
@@ -64,8 +64,8 @@ class WorkshopProvisionerTest {
         // Re-provisioning a workshop must produce identical room state. The
         // ZoneGuardian.seedRoom path is idempotent against the journal, but
         // the seed itself also has to be stable for re-seeds to be no-ops.
-        var a = WorkshopProvisioner.createWorkshopSeed("u-1", "Masumi");
-        var b = WorkshopProvisioner.createWorkshopSeed("u-1", "Masumi");
+        var a = WorkshopProvisioner.createWorkshopSeed("u-1", "Operator");
+        var b = WorkshopProvisioner.createWorkshopSeed("u-1", "Operator");
 
         assertThat(a.roomId()).isEqualTo(b.roomId());
         assertThat(a.name()).isEqualTo(b.name());
@@ -75,8 +75,8 @@ class WorkshopProvisionerTest {
         assertThat(a.objects()).isEqualTo(b.objects());
     }
 
-    @Test void createWorkshopSeed_describesCodePlaneNature() {
-        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Masumi");
+    @Test void createWorkshopSeed_describesCodeZaikuNature() {
+        var seed = WorkshopProvisioner.createWorkshopSeed("u-1", "Operator");
         // Description should reference the spec's working metaphors so the
         // familiar (and the bondholder) sees a coherent room.
         var desc = seed.description();

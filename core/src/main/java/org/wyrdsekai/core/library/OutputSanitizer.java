@@ -19,7 +19,7 @@ import java.util.regex.PatternSyntaxException;
  *   <li>WARN — pass through but flag the match</li>
  *   <li>LOG_ONLY — log the match, no modification or flag</li>
  * </ul>
- * Adapted from CodePlane. Self-contained — no domain-specific imports.
+ * Adapted from CodeZaiku. Self-contained — no domain-specific imports.
  */
 public final class OutputSanitizer {
 

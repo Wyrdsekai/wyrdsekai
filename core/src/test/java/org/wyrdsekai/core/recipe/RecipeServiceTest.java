@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,8 +49,13 @@ class RecipeServiceTest {
         assertEquals(RecipeRunner.Status.SUCCESS, svc.status(started.runId()).get().status());
     }
 
-    @Test void household_recipe_shadows_bundled_name(@TempDir Path dir) throws IOException {
-        // A household file named like a bundled recipe takes precedence.
+    @Test void household_recipe_cannot_shadow_bundled_name(@TempDir Path dir) throws IOException {
+        // INTENT FLIPPED 2026-08-16 (was: "a household file takes precedence",
+        // a dev convenience). Bundled recipes carry welfare:permanent gates —
+        // sleep-forge writes companion WEIGHTS behind them — and a file dropped
+        // straight into data/recipes/ bypasses AuthoredRecipeValidator's
+        // shadow check entirely. So loadManifest now loads bundled names from
+        // the classpath ONLY. Dev iteration edits the source resource instead.
         Files.writeString(dir.resolve("retrain-classifier-head.recipe.yaml"), """
             recipe: retrain-classifier-head
             description: local override
@@ -57,7 +63,8 @@ class RecipeServiceTest {
               - { id: a, kind: SHELL, command: "echo override" }
             """);
         var svc = new RecipeService(dir, new RecipeRunner(okRunner()));
-        assertEquals("local override", svc.inspect("retrain-classifier-head").description());
+        assertNotEquals("local override", svc.inspect("retrain-classifier-head").description(),
+                "bundled recipe must load from the classpath, never a household impostor");
     }
 
     @Test void unknown_recipe_throws(@TempDir Path dir) {

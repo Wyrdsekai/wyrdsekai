@@ -64,7 +64,7 @@ SGLANG_MODELS = {
 # Qwen3 (pure transformer) vs Qwen3.5 (hybrid DeltaNet)
 QWEN3_MODELS = {"qwen3-8b", "qwen3-4b"}  # pure transformer
 
-PLAYER_NAMES = ["Masumi", "Alex", "Robin", "Kai", "Ember", "Sage"]
+PLAYER_NAMES = ["Operator", "Alex", "Robin", "Kai", "Ember", "Sage"]
 
 # ═══════════════════════════════════════════════════════════════════════
 # System prompt — matches real PromptAssembler output

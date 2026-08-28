@@ -12,6 +12,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.BiPredicate;
 
 /**
  * Which head should decide whether a turn gets tools?
@@ -64,7 +66,7 @@ class WhichHeadGatesTasksTest {
             rows.add(new Row(n.get("task").asBoolean(), n.get("kind").asText(), n.get("text").asText()));
         }
 
-        record Strategy(String name, java.util.function.BiPredicate<Classification, Classification> gate) {}
+        record Strategy(String name, BiPredicate<Classification, Classification> gate) {}
         var strategies = List.of(
             new Strategy("task_present >=0.50 (SHIPPED)",
                 (t, r) -> "actionable".equals(t.label()) && t.confidence() >= 0.5),
@@ -98,7 +100,7 @@ class WhichHeadGatesTasksTest {
 
         for (var s : strategies) {
             int tpc = 0, fp = 0, fn = 0;
-            var missedKinds = new java.util.TreeMap<String, Integer>();
+            var missedKinds = new TreeMap<String, Integer>();
             for (int i = 0; i < rows.size(); i++) {
                 boolean gets = s.gate().test(tp.get(i), rt.get(i));
                 if (rows.get(i).task() && gets) tpc++;
@@ -135,7 +137,7 @@ class WhichHeadGatesTasksTest {
         var evalPath = Path.of("/tmp/headeval/eval.jsonl");
         if (!Files.exists(evalPath)) Assumptions.abort("eval set missing");
         var mapper = new ObjectMapper();
-        var counts = new java.util.TreeMap<String, int[]>();  // label -> [onTask, onNonTask]
+        var counts = new TreeMap<String, int[]>();  // label -> [onTask, onNonTask]
         for (var line : Files.readAllLines(evalPath)) {
             if (line.isBlank()) continue;
             var n = mapper.readTree(line);

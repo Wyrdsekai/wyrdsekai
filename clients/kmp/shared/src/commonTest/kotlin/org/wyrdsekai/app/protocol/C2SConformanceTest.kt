@@ -121,14 +121,14 @@ class C2SConformanceTest {
     fun roundtripCommandNamespaced() {
         val msg = C2SMessage.Command(
             id = "msg-009b",
-            command = "codeplane.approve",
+            command = "codezaiku.approve",
             args = emptyList(),
             payload = mapOf("eventId" to "evt-42", "decision" to "approve"),
         )
         val json = msg.toJson()
         val parsed = WireJson.decodeFromString<JsonObject>(json)
 
-        assertEquals("codeplane.approve", parsed["command"]?.jsonPrimitive?.content)
+        assertEquals("codezaiku.approve", parsed["command"]?.jsonPrimitive?.content)
         assertNotNull(parsed["payload"])
     }
 

@@ -134,7 +134,7 @@ class TemplateCreationIntegrationTest {
         // Put an item — note: each execute creates a fresh context, so state won't persist
         // between calls. This tests the script logic, not persistence.
         var put = executor.execute(item.id(), item.script(),
-            Map.of("action", "put", "item_name", "letter from Masumi"), provider);
+            Map.of("action", "put", "item_name", "letter from Operator"), provider);
         assertNotNull(put);
         // Put should succeed (starts empty each time due to fresh context)
         assertTrue(put.containsKey("stored") || put.containsKey("error"));

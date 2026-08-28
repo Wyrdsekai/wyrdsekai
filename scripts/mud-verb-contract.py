@@ -143,7 +143,7 @@ def assert_contains(output: str, needle: str, label: str) -> None:
 
 def assert_not_echo(output: str, verb: str, label: str) -> None:
     """The bug signature: a verb sent to a foreign zone should NOT show up
-    as `Masumi: <verb>` echo — that means the visitor command dispatcher
+    as `Operator: <verb>` echo — that means the visitor command dispatcher
     fell through to `say`. This is the regression guard."""
     echo_re = re.compile(r":\s*" + re.escape(verb) + r"\b", re.IGNORECASE)
     if echo_re.search(output):

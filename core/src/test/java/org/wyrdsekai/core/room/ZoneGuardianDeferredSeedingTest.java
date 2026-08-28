@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.wyrdsekai.common.model.Exit;
 import org.wyrdsekai.common.model.RoomObject;
 import org.wyrdsekai.common.model.RoomSnapshot;
+import org.wyrdsekai.core.persistence.RoomMetadataService;
+import org.wyrdsekai.core.test.TestDb;
 
 import java.time.Duration;
 import java.util.List;
@@ -120,6 +122,35 @@ class ZoneGuardianDeferredSeedingTest {
         libraryRef.tell(new RoomCommand.GetSnapshot(probe.getRef()));
         var librarySnapshot = probe.receiveMessage(Duration.ofSeconds(5));
         assertThat(librarySnapshot.name()).isEqualTo("The Library");
+    }
+
+    /**
+     * A room the household BUILT is not a seed — it lives in the rooms table
+     * and the journal. The guardian must give it its actor back at boot, or
+     * every exit pointing at it dangles after a restart: the WS move path is
+     * a plain registry lookup and cannot spawn, so the world advertised
+     * "A path to Greenhouse" while the greenhouse had no actor (home zone,
+     * 2026-08-14, one restart after the companion built it).
+     */
+    @Test
+    void persisted_rooms_respawn_after_boot_seeding() throws Exception {
+        var metadata = new RoomMetadataService(TestDb.createInMemory());
+        metadata.register("greenhouse-respawn", "Greenhouse", "player-created", "companion-x");
+
+        testKit.spawn(ZoneGuardian.create(null, testSeeds("respawn"), metadata, null));
+
+        // No ApplyRoomView — the seed timeout (3s) fires and must ALSO
+        // respawn the persisted, non-seed room.
+        try { Thread.sleep(4000); } catch (InterruptedException ignored) {}
+
+        ActorRef<RoomCommand> ref = RoomRegistry.get().ref("greenhouse-respawn");
+        assertThat(ref)
+            .as("a persisted player-created room must be respawned at boot")
+            .isNotNull();
+        // The rehydration half of the 2026-07-30 alias fix: reachable by NAME.
+        assertThat(RoomRegistry.get().resolve("Greenhouse"))
+            .as("respawned room must be resolvable by its name alias")
+            .isNotNull();
     }
 
     @Test

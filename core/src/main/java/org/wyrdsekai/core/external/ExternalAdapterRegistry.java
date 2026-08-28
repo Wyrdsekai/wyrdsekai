@@ -92,8 +92,14 @@ public final class ExternalAdapterRegistry {
         try {
             return adapter.invoke(request);
         } catch (Exception e) {
-            log.warn("adapter {} threw: {}", adapter.namespace(), e.getMessage());
-            return AdapterResponse.fail("adapter_threw", e.getMessage(), true);
+            // getMessage() is null for an NPE, which is how an adapter fault reached a
+            // person as "Script error: null" on 2026-08-21. Name the adapter, the method
+            // and the exception type — an error nobody can act on is barely an error.
+            var detail = e.getMessage() == null || e.getMessage().isBlank()
+                ? e.getClass().getSimpleName() : e.getMessage();
+            var where = adapter.namespace() + "." + request.method();
+            log.warn("adapter {} threw: {}", where, detail, e);
+            return AdapterResponse.fail("adapter_threw", where + ": " + detail, true);
         }
     }
 

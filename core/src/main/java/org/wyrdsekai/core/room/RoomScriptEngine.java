@@ -9,7 +9,7 @@ import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.agent.LocalCommandRouter;
 import org.wyrdsekai.core.agent.WorldApiZoneCommandDispatcher;
 import org.wyrdsekai.core.coding.BackendRegistry;
-import org.wyrdsekai.core.coding.CodePlaneBackend;
+import org.wyrdsekai.core.coding.CodeZaikuBackend;
 import org.wyrdsekai.core.coding.DefaultCodingBackendProvider;
 import org.wyrdsekai.core.coding.ScriptedCodingBackendProvider;
 import org.wyrdsekai.scripting.api.BridgeDataProvider;
@@ -63,18 +63,18 @@ public class RoomScriptEngine implements Closeable {
         // the policy script (§4.4 / Phase 2c — explore→openhands etc.).
         // We pick ScriptedCodingBackendProvider when a coding-backend.js is
         // discoverable on disk; otherwise fall back to the Phase 1a default
-        // so unit tests without script bundles still resolve "codeplane".
+        // so unit tests without script bundles still resolve "codezaiku".
         var registry = BackendRegistry.get();
         var policyPath = locateCodingBackendPolicy();
         if (policyPath != null) {
             var fallbackChain = List.of(
-                CodePlaneBackend.NAME,
+                CodeZaikuBackend.NAME,
                 "opencode", "openhands", "goose", "cline", "continue",
                 "claude-sdk", "codex", "gemini", "devin");
             worldApi.setCodingBackendProvider(
                 new ScriptedCodingBackendProvider(
                     registry, policyPath,
-                    CodePlaneBackend.NAME,
+                    CodeZaikuBackend.NAME,
                     fallbackChain,
                     /* soulStore */ null,
                     /* householdPolicy */ null,

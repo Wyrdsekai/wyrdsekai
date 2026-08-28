@@ -27,7 +27,13 @@ import org.wyrdsekai.core.household.MaintenanceService;
 import org.wyrdsekai.core.household.ParentalControlService;
 import org.wyrdsekai.core.issue.Issue;
 import org.wyrdsekai.core.issue.IssueService;
+import org.wyrdsekai.core.item.CarriedItemUse;
 import org.wyrdsekai.core.item.EquipmentService;
+import org.wyrdsekai.core.item.HomeOwnerItemProvider;
+import org.wyrdsekai.core.item.HouseholdItemContent;
+import org.wyrdsekai.core.item.ItemProviderRegistry;
+import org.wyrdsekai.core.item.ItemScriptResponse;
+import org.wyrdsekai.core.item.VisitorItemProvider;
 import org.wyrdsekai.core.item.StudyFurnishingKit;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.InventoryService;
@@ -35,6 +41,7 @@ import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.WardService;
 import org.wyrdsekai.core.room.ExamineLookup;
 import org.wyrdsekai.core.room.RenameService;
+import org.wyrdsekai.core.item.ItemRetirement;
 import org.wyrdsekai.core.room.RoomCommand;
 import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.RoomResponse;
@@ -43,6 +50,7 @@ import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.scripting.i18n.ScriptMessageCatalog;
+import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 import org.wyrdsekai.server.session.ClientConnection;
 import org.wyrdsekai.server.session.ClientConnectionRegistry;
 import org.wyrdsekai.server.session.ClientSessionActor;
@@ -593,8 +601,20 @@ public class TelnetSession implements Runnable {
                 }
             }
 
+            case ParsedCommand.Retire retire -> {
+                if (checkWard(currentRoomId, "drop", out)) {
+                    handleRetire(retire.objectName(), out);
+                }
+            }
+
             case ParsedCommand.Use use -> {
                 if (checkWard(currentRoomId, "use", out)) {
+                    // Look in your own hands before asking the room. Without this the
+                    // room — which does not hold what you are carrying — answered
+                    // "No such object" for an item you had just picked up. SSH and WS
+                    // both learned this; telnet never did, while the SSH javadoc claimed
+                    // the fix covered "SSH/Telnet users". See CarriedItemUse.
+                    if (tryInvokeCarriedScript(use.objectName(), use.target(), out)) break;
                     askRoom(currentRoomId,
                         ref -> new RoomCommand.UseObject(playerId, use.objectName(), use.target(), ref), "use");
                 }
@@ -891,6 +911,7 @@ public class TelnetSession implements Runnable {
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_tell"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_take"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_drop"));
+                    TelnetCodec.sendLine(out, catalog.get("telnet.help_retire"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_use"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_examine"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_inventory"));
@@ -1221,6 +1242,106 @@ public class TelnetSession implements Runnable {
                 sessionRef.tell(new ClientSessionActor.RoomResponseMsg(resp, "take"));
             }
         });
+    }
+
+    /**
+     * Take an item out of the world — the counterpart {@code drop} never was.
+     *
+     * <p>Same behaviour as the shell's: unregister the scripted item, move its script to
+     * {@code items/retired/} so a restart does not bring it back, and clear the room and
+     * inventory copies. Soft, because these are things the companion made.
+     */
+    /**
+     * Run a carried scripted item and stream its result back as lines.
+     *
+     * <p>Resolution — which item, which script source, which params — is
+     * {@link CarriedItemUse}, shared with the SSH shell and the WebSocket handler. This
+     * method owns only what is genuinely telnet's: how the answer is written out.
+     *
+     * @return true when an item was found and invoked; the caller must not then ask the
+     *         room, which does not hold what you are carrying
+     */
+    private boolean tryInvokeCarriedScript(String objectName, String target,
+                                           OutputStream out) {
+        if (playerId == null) return false;
+        var resolved = CarriedItemUse.resolve(
+            inventoryService, playerId, objectName, target).orElse(null);
+        if (resolved == null) return false;
+        var item = resolved.item();
+        try {
+            // Prefer the rich provider registered for this entity (all the household
+            // surfaces are wired into it). A telnet-only session may have none, in which
+            // case a visitor-grade provider still beats refusing to run the item.
+            var zone = this.localZoneId != null ? this.localZoneId
+                : System.getenv().getOrDefault("WYRDSEKAI_ZONE_ID", "home");
+            var provider = ItemProviderRegistry.forEntity(playerId);
+            if (provider == null) {
+                provider = new VisitorItemProvider(zone, zone)
+                    .withHouseholdContent(HouseholdItemContent.get());
+            }
+            CarriedItemUse.attachRoomVoice(provider, currentRoomId, playerId);
+            CarriedItemUse.attachLocale(provider, locale);
+            var executor = new ItemScriptExecutor();
+            try {
+                var result = executor.execute(item.objectId(), resolved.source(),
+                    CarriedItemUse.params(playerId, resolved.target(), locale), provider,
+                    CarriedItemUse.capabilitiesFor(item.objectId()));
+                var text = ItemScriptResponse.extractText(result, item.objectName());
+                for (var line : text.split("\n")) TelnetCodec.sendLine(out, line);
+            } finally {
+                executor.close();
+            }
+            renderer.sendPrompt(currentRoomName);
+            log.info("Telnet player {} invoked carried scripted item '{}'",
+                playerId, item.objectName());
+        } catch (Exception e) {
+            log.error("Telnet: failed to execute carried item {} for {}: {}",
+                item.objectId(), playerId, e.getMessage());
+            try {
+                TelnetCodec.sendLine(out,
+                    "The " + item.objectName() + " malfunctions: " + e.getMessage());
+                renderer.sendPrompt(currentRoomName);
+            } catch (IOException ignored) {}
+        }
+        return true;
+    }
+
+    private void handleRetire(String objectName, OutputStream out) {
+        if (objectName == null || objectName.isBlank()) {
+            sessionRef.tell(new ClientSessionActor.SendMessage(
+                new S2CMessage.Prose(0, "narrator", "Retire what?",
+                    List.of(), null, "normal", locale)));
+            return;
+        }
+        var name = objectName.trim();
+        var outcome = ItemRetirement.retireAnywhere(name,
+            this::removeRoomObjectByName,
+            n -> {
+                var carried = inventoryService.findTakeableByName(playerId, n);
+                carried.ifPresent(inv -> inventoryService.removeItem(playerId, inv.objectId()));
+                return carried.isPresent();
+            });
+        // Narration, not a rejection: Rejected renders as "Error [notice]: …", so a
+        // successful retire announced itself as an error (2026-08-20).
+        sessionRef.tell(new ClientSessionActor.SendMessage(
+            new S2CMessage.Prose(0, "narrator", outcome.describe(name),
+                List.of(), null, "normal", locale)));
+        sessionRef.tell(new ClientSessionActor.RoomResponseMsg(
+            new RoomResponse.Ok(null), "retire", loadInventory(playerId)));
+    }
+
+    /** Pull a room object out by NAME and discard it — see the shell's copy for why. */
+    private boolean removeRoomObjectByName(String name) {
+        try {
+            var room = RoomRegistry.get().ref(currentRoomId);
+            if (room == null) return false;
+            var resp = Rooms.<RoomResponse>ask(room,
+                ref -> new RoomCommand.TakeObject(playerId, name, ref), ASK_TIMEOUT)
+                .toCompletableFuture().get(5, java.util.concurrent.TimeUnit.SECONDS);
+            return resp instanceof RoomResponse.ObjectTakenOk;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void handleDrop(String objectName, OutputStream out) {

@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.ArrayList;
 
 /**
  * second-node, 2026-07-13. mia was asked <b>"what is 17 times 3?"</b>. She holds 110 tools, one of which
@@ -100,7 +101,7 @@ class ToolMenuIsNotArbitraryTest {
     @Test
     void registrationOrderIsStableAcrossManyTools() {
         var index = new ToolSearchIndex();
-        var expected = new java.util.ArrayList<String>();
+        var expected = new ArrayList<String>();
         for (int i = 0; i < 40; i++) {
             var name = "tool_" + i;
             expected.add(name);

@@ -56,6 +56,11 @@ expect class TokenStore() {
     fun loadApiBaseUrl(): String?
     fun saveDebugMode(enabled: Boolean)
     fun loadDebugMode(): Boolean
+    // Consent to serve household hermod errands from this device while
+    // charging. Off by default — lending compute is a choice, never a side
+    // effect of pairing.
+    fun saveHermodConsent(enabled: Boolean)
+    fun loadHermodConsent(): Boolean
     // MCP-layer credentials. Separate from auth token because /api/mcp/login
     // mints a new session token from these every cold start; the older
     // wyrd_auth_token holds the most recent mint but isn't sufficient on its

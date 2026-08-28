@@ -10,18 +10,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ZoneSetupTest {
 
     @Test void create_zone() {
-        var creator = PlayerAccount.create("Masumi");
-        var zone = ZoneSetup.createZone("Masumi's Zone", creator);
+        var creator = PlayerAccount.create("Operator");
+        var zone = ZoneSetup.createZone("Operator's Zone", creator);
 
         assertThat(zone.zoneId()).startsWith("zone-");
-        assertThat(zone.zoneName()).isEqualTo("Masumi's Zone");
+        assertThat(zone.zoneName()).isEqualTo("Operator's Zone");
         assertThat(zone.creatorDid()).isEqualTo(creator.did());
         assertThat(zone.secret()).hasSize(32);
         assertThat(zone.createdAt()).isNotNull();
     }
 
     @Test void generate_and_validate_join_token() {
-        var creator = PlayerAccount.create("Masumi");
+        var creator = PlayerAccount.create("Operator");
         var zone = ZoneSetup.createZone("Test Zone", creator);
 
         var token = ZoneSetup.generateJoinToken(zone, creator.did());
@@ -42,7 +42,7 @@ class ZoneSetupTest {
     }
 
     @Test void tampered_token_rejected() {
-        var creator = PlayerAccount.create("Masumi");
+        var creator = PlayerAccount.create("Operator");
         var zone = ZoneSetup.createZone("Test Zone", creator);
 
         var token = ZoneSetup.generateJoinToken(zone, creator.did());
@@ -55,7 +55,7 @@ class ZoneSetupTest {
     }
 
     @Test void wrong_secret_rejected() {
-        var creator = PlayerAccount.create("Masumi");
+        var creator = PlayerAccount.create("Operator");
         var zone = ZoneSetup.createZone("Test Zone", creator);
 
         var token = ZoneSetup.generateJoinToken(zone, creator.did());

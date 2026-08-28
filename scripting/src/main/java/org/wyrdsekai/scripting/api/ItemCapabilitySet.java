@@ -134,12 +134,54 @@ public final class ItemCapabilitySet {
         "embed.encode",
         // Benign reads and self-scheduling.
         "oracle.query", "web.fetch_raw",
+        // ── The steward's granted directories ──────────────────────────────
+        // host.* reaches the real filesystem, but ONLY inside the roots the steward
+        // configured in WYRDSEKAI_HOST_OPEN_ROOTS, and every call is audit-logged. The
+        // grant IS the consent boundary; an item that cannot act inside it is a tool the
+        // steward asked for and cannot have. Live 2026-08-22: asked for something to
+        // review and sort a media folder he had granted, the authoring model found no
+        // filesystem verb in the contract and invented
+        // `world.web.fetch("/data/.../listings/raw.txt")`.
+        //
+        // app_launch / file_open / url_open stay OUT: those run programs on his machine,
+        // which the directory grant does not speak to.
+        "host.file_find", "host.file_move", "host.dir_make",
         "schedule.in", "schedule.cron", "schedule.cancel",
         "presence.dim", "presence.light",
         "bond.suggest",
         // In-household messaging — the recipient agent decides what to do with a
         // message; delivering one is not privilege escalation. give_item IS.
-        "agent.tell", "agent.broadcast"
+        "agent.tell", "agent.broadcast",
+        // ── External adapters: PUBLIC-DATA namespaces only ─────────────────
+        // These read public information using a household key. They are strictly
+        // less exposing than `web.fetch_raw`, which is already allowed here and
+        // reaches arbitrary URLs — asking OpenWeather for a forecast cannot say
+        // anything about the people in this house.
+        //
+        // Live 2026-08-21: the steward asked for a weather tool and has an
+        // OpenWeather key wired. The adapter existed, the key existed, and a
+        // companion-authored item could not call it — so goose improvised with a
+        // web search and the item honestly reported finding nothing.
+        //
+        // The line is drawn at PERSONAL data, and it is drawn deliberately: oura,
+        // fitbit, whoop, googlefit and applehealth are NOT here and must not be.
+        // A crafted item is authored by a model from a sentence someone typed; it
+        // may read the weather without anyone thinking hard, and it may not read a
+        // person's heart rate without someone deciding to allow it.
+        // NAMESPACES, exactly as the adapters declare them — not the class names.
+        // Live 2026-08-21 this list said "osmnominatim" and "googlemaps"; the adapters
+        // call themselves "nominatim" and "maps". Both geocoders were therefore DENIED,
+        // and — worse — filtered out of the generated surface, so goose was shown a
+        // weather service that needs {lat, lon} and no way to turn "cambridge ma" into
+        // coordinates. It gave up and searched the LIBRARY for weather, which was a
+        // reasonable choice given what it could see.
+        //
+        // The ceiling is the one place these names are still written by hand, which is
+        // why ThePublicDataCeilingNamesRealAdaptersTest checks every one of them against
+        // the registry.
+        "openweather.*", "weatherapi.*", "visualcrossing.*",
+        "maps.*", "nominatim.*", "mapbox.*", "timezone.*",
+        "usajobs.*", "datagov.*", "congress.*", "irs.*"
     );
 
     private static final ItemCapabilitySet CRAFTED_DEFAULT = of(CRAFTED_ALLOW);

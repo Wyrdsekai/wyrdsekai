@@ -58,6 +58,29 @@ public final class ScriptedItemLoader {
         ".wyrdsekai", "items");
 
     /**
+     * Where items the household ITSELF made are kept, under the runtime data root.
+     *
+     * <p>An item a backend authored and the bridge accepted was registered in memory only:
+     * the {@code .js} stayed in the task's scratch workspace, which nothing scans at boot.
+     * So it worked until the next restart and then quietly stopped existing — the
+     * RoomObject and the inventory row survived, the script behind them did not. Live
+     * 2026-08-20: {@code library_storyteller} registered, and after the next upgrade the
+     * loader was back to 57 items from 1 dir.
+     *
+     * <p>Deliberately under the DATA root, not {@code scripts/items} in the install root:
+     * a package upgrade replaces the install, and a thing she made must not be collateral
+     * of a deploy.
+     */
+    public static Path householdItemsDir() {
+        // Same override convention as wyrdsekai.jdbc.url / wyrdsekai.scripts — an
+        // operator knob, and what lets this be exercised without a configured data root.
+        var override = System.getProperty("wyrdsekai.items.dir");
+        if (override != null && !override.isBlank()) return Path.of(override);
+        var data = WyrdConfig.get().dataDir();
+        return data == null || data.isBlank() ? null : Path.of(data, "items");
+    }
+
+    /**
      * Resolve the bundled {@code scripts/items} dir. Same search discipline as
      * Main's room-script lookup (whose comment already warned: without it,
      * ".deb-installed deployments silently disable all room scripts") — a
@@ -122,6 +145,18 @@ public final class ScriptedItemLoader {
                 + "(cwd, WYRDSEKAI_HOME, /opt, /usr/local) — only user items will load");
         }
         if (Files.isDirectory(USER_DIR)) searchDirs.add(USER_DIR);
+        // Items this household made. Created eagerly so a first accepted item has
+        // somewhere to land and is picked up on the next boot like any other.
+        var made = householdItemsDir();
+        if (made != null) {
+            try {
+                Files.createDirectories(made);
+                searchDirs.add(made);
+            } catch (Exception e) {
+                log.warn("ScriptedItemLoader: could not prepare {} — items the household "
+                    + "makes will not survive a restart: {}", made, e.toString());
+            }
+        }
     }
 
     public static ScriptedItemLoader get() { return INSTANCE; }

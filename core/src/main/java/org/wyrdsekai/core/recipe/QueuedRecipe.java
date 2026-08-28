@@ -64,7 +64,14 @@ public record QueuedRecipe(
     /**
      * Status lifecycle: PENDING → IN_PROGRESS → SUCCEEDED|FAILED.
      */
-    public enum Status { PENDING, IN_PROGRESS, SUCCEEDED, FAILED }
+    /**
+     * {@code SKIPPED} is terminal but is NOT an outcome: the row left the queue without
+     * the recipe ever running, because it could not run as configured. It is deliberately
+     * excluded from the SUCCEEDED/FAILED queries behind the cadence ladder and the
+     * deploy-failure ceiling — a configuration gap must neither break a success streak
+     * nor consume a welfare mechanism meant for work that actually executed.
+     */
+    public enum Status { PENDING, IN_PROGRESS, SUCCEEDED, FAILED, SKIPPED }
 
     /**
      * Who put this in the queue — used both for audit and for prioritising

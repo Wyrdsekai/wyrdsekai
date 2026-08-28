@@ -5,6 +5,7 @@ export type C2SMessage =
   | C2SGo
   | C2STake
   | C2SDrop
+  | C2SRetire
   | C2SUse
   | C2SExamine
   | C2SLook
@@ -40,6 +41,17 @@ export interface C2STake {
 
 export interface C2SDrop {
   type: 'drop';
+  id: string;
+  roomId: string;
+  objectName: string;
+}
+
+/**
+ * Take an object out of the world for good — the counterpart `drop` never had.
+ * Dropping leaves it in the room, so nothing could ever be removed.
+ */
+export interface C2SRetire {
+  type: 'retire';
   id: string;
   roomId: string;
   objectName: string;

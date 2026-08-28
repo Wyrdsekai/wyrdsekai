@@ -16,69 +16,69 @@ class DecisionCapacityTest {
     @Test void default_low_for_unknown_domain() {
         var dc = DecisionCapacity.newAgent();
 
-        assertThat(dc.getCapacity("codeplane")).isCloseTo(0.1, within(0.001));
+        assertThat(dc.getCapacity("codezaiku")).isCloseTo(0.1, within(0.001));
         assertThat(dc.getCapacity("household")).isCloseTo(0.1, within(0.001));
     }
 
     @Test void success_increases_capacity() {
         var dc = DecisionCapacity.newAgent();
 
-        dc.recordSuccess("codeplane");
+        dc.recordSuccess("codezaiku");
 
-        assertThat(dc.getCapacity("codeplane"))
+        assertThat(dc.getCapacity("codezaiku"))
             .isCloseTo(0.1 + DecisionCapacity.SUCCESS_INCREMENT, within(0.001));
     }
 
     @Test void failure_decreases_capacity() {
-        var dc = new DecisionCapacity(Map.of("codeplane", 0.5));
+        var dc = new DecisionCapacity(Map.of("codezaiku", 0.5));
 
-        dc.recordFailure("codeplane");
+        dc.recordFailure("codezaiku");
 
-        assertThat(dc.getCapacity("codeplane"))
+        assertThat(dc.getCapacity("codezaiku"))
             .isCloseTo(0.5 - DecisionCapacity.FAILURE_DECREMENT, within(0.001));
     }
 
     @Test void capacity_capped_at_one() {
-        var dc = new DecisionCapacity(Map.of("codeplane", 0.98));
+        var dc = new DecisionCapacity(Map.of("codezaiku", 0.98));
 
-        dc.recordSuccess("codeplane");
+        dc.recordSuccess("codezaiku");
 
-        assertThat(dc.getCapacity("codeplane")).isCloseTo(1.0, within(0.001));
+        assertThat(dc.getCapacity("codezaiku")).isCloseTo(1.0, within(0.001));
     }
 
     @Test void capacity_floored_at_zero() {
-        var dc = new DecisionCapacity(Map.of("codeplane", 0.02));
+        var dc = new DecisionCapacity(Map.of("codezaiku", 0.02));
 
-        dc.recordFailure("codeplane");
+        dc.recordFailure("codezaiku");
 
-        assertThat(dc.getCapacity("codeplane")).isCloseTo(0.0, within(0.001));
+        assertThat(dc.getCapacity("codezaiku")).isCloseTo(0.0, within(0.001));
     }
 
     @Test void decay_over_time() {
-        var dc = new DecisionCapacity(Map.of("codeplane", 0.8));
+        var dc = new DecisionCapacity(Map.of("codezaiku", 0.8));
 
-        dc.decay("codeplane", Duration.ofDays(10));
+        dc.decay("codezaiku", Duration.ofDays(10));
 
-        assertThat(dc.getCapacity("codeplane"))
+        assertThat(dc.getCapacity("codezaiku"))
             .isCloseTo(0.8 - (DecisionCapacity.DECAY_PER_DAY * 10), within(0.001));
     }
 
     @Test void decay_does_not_go_below_zero() {
-        var dc = new DecisionCapacity(Map.of("codeplane", 0.05));
+        var dc = new DecisionCapacity(Map.of("codezaiku", 0.05));
 
-        dc.decay("codeplane", Duration.ofDays(365));
+        dc.decay("codezaiku", Duration.ofDays(365));
 
-        assertThat(dc.getCapacity("codeplane")).isCloseTo(0.0, within(0.001));
+        assertThat(dc.getCapacity("codezaiku")).isCloseTo(0.0, within(0.001));
     }
 
     @Test void domain_independence() {
         var dc = DecisionCapacity.newAgent();
 
-        dc.recordSuccess("codeplane");
-        dc.recordSuccess("codeplane");
-        dc.recordSuccess("codeplane");
+        dc.recordSuccess("codezaiku");
+        dc.recordSuccess("codezaiku");
+        dc.recordSuccess("codezaiku");
 
-        assertThat(dc.getCapacity("codeplane"))
+        assertThat(dc.getCapacity("codezaiku"))
             .isCloseTo(0.1 + 3 * DecisionCapacity.SUCCESS_INCREMENT, within(0.001));
         assertThat(dc.getCapacity("iot")).isCloseTo(0.1, within(0.001));
     }
@@ -89,7 +89,7 @@ class DecisionCapacityTest {
         assertThat(dc.getCapacity("household_management")).isCloseTo(0.8, within(0.001));
         assertThat(dc.getCapacity("social_interaction")).isCloseTo(0.7, within(0.001));
         assertThat(dc.getCapacity("monitoring")).isCloseTo(0.6, within(0.001));
-        assertThat(dc.getCapacity("codeplane_operations")).isCloseTo(0.4, within(0.001));
+        assertThat(dc.getCapacity("codezaiku_operations")).isCloseTo(0.4, within(0.001));
         // Unknown domain still low
         assertThat(dc.getCapacity("unknown")).isCloseTo(0.1, within(0.001));
     }

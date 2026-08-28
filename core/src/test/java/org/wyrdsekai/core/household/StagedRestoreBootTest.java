@@ -74,7 +74,7 @@ class StagedRestoreBootTest {
         // Stage through the REAL service path (steward-gated marker write).
         var jdbcUrl = TestDb.createInMemory();
         var auth = new AuthService(jdbcUrl);
-        var stewardId = auth.register("operator", "password123", "Masumi")
+        var stewardId = auth.register("operator", "password123", "Operator")
             .orElseThrow().userId();
         var service = new MaintenanceService(jdbcUrl, new SqlDialect.SQLite(), auth,
             backups, dataDir, worldDb, null, null, List.of());

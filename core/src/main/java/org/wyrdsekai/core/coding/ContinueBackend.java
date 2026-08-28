@@ -1,10 +1,12 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -126,7 +128,10 @@ public final class ContinueBackend implements CodingTaskBackend {
 
         Thread.ofVirtual().name("continue-task-" + taskId).start(() -> {
             try {
-                var result = runner.run(args, env, config.maxWallclock());
+                var result = runner.run(args, env, config.maxWallclock(),
+                    CodingWorkspace.forTask(
+                        spec != null ? spec.workspaceHint() : null,
+                        taskId.toString()));
                 long durationMs = System.currentTimeMillis() - started;
 
                 if (result.timedOut()) {
@@ -146,6 +151,25 @@ public final class ContinueBackend implements CodingTaskBackend {
                 }
 
                 var artifacts = parseArtifacts(taskId, spec, result);
+
+                // CONTRACT REPAIR — the turn goose and CodeZaiku get. This lived inside
+                // GooseBackend, so a file the bridge would refuse was silently downgraded
+                // to a plain artifact for every OTHER backend. Same preamble, same
+                // bridge, same defects: the repair belongs to all of them.
+                ItemContractRepair.repairRun(artifacts, null, taskId.toString(),
+                    Instant.ofEpochMilli(started),
+                    ItemContractRepair.rerunWithPrompt(repairArgs -> {
+                        try {
+                            var r = runner.run(repairArgs, env, config.maxWallclock());
+                            return !r.timedOut() && r.exitCode() == 0;
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    }, args),
+                    spec == null ? null : spec.description());
+
+                // Re-parse AFTER the repair so the cache holds the fixed file.
+                artifacts = parseArtifacts(taskId, spec, result);
                 artifactCache.put(taskId.toString(), artifacts);
                 var ids = new ArrayList<UUID>();
                 for (var a : artifacts) ids.add(a.artifactId());
@@ -237,11 +261,11 @@ public final class ContinueBackend implements CodingTaskBackend {
         // preamble (canonical source) so Continue emits the same
         // single-{@code .js}-with-{@code exports.manifest} shape every
         // backend must produce. See OpenHandsBackend's
-        // ITEMS_AS_TOOLS_PREAMBLE for the full rationale.
+        // ITEMS_AS_TOOLS_PREAMBLE_CWD for the full rationale.
         var description = spec != null ? spec.description() : null;
         var promptBody = (description != null && !description.isBlank())
             ? description : "";
-        args.add(OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE
+        args.add(OpenHandsBackend.itemsAsToolsPreambleCwd(ItemCapabilitySet.craftedDefault())
             + "\n\n--- TASK ---\n" + promptBody);
 
         if (config.agent() != null && !config.agent().isBlank()) {
@@ -280,9 +304,12 @@ public final class ContinueBackend implements CodingTaskBackend {
     private List<CodingArtifact> parseArtifacts(
             UUID taskId, TaskSpec spec, ProcessResult result) {
         var files = new ArrayList<String>();
-        var workspace = spec != null && spec.workspaceHint() != null
-            ? spec.workspaceHint()
-            : System.getProperty("user.dir", ".");
+        // The workspace REPORTED on the artifact is what CodingTaskItemBridge scans for
+        // the item's .js. Falling back to the process directory pointed that scan at the
+        // install root on a packaged node — the same defect as running there.
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null,
+            taskId == null ? null : taskId.toString());
 
         var stdout = result.stdout();
         if (stdout != null && !stdout.isBlank()) {
@@ -383,6 +410,20 @@ public final class ContinueBackend implements CodingTaskBackend {
     public interface ProcessRunner {
         ProcessResult run(List<String> args, Map<String, String> env,
                           Duration timeout) throws IOException, InterruptedException;
+
+        /**
+         * Workspace-aware overload. Defaults to discarding the directory so existing
+         * three-arg test lambdas keep compiling; {@link DefaultProcessRunner} overrides
+         * it and actually sets the subprocess CWD.
+         *
+         * <p>Without a directory the subprocess inherits the JVM's — the INSTALL ROOT on
+         * a packaged node. See {@link CodingWorkspace}.
+         */
+        default ProcessResult run(List<String> args, Map<String, String> env,
+                                  Duration timeout, File workdir)
+                throws IOException, InterruptedException {
+            return run(args, env, timeout);
+        }
     }
 
     /** Default {@link ProcessRunner} — spawns the real subprocess. */
@@ -390,9 +431,17 @@ public final class ContinueBackend implements CodingTaskBackend {
         @Override
         public ProcessResult run(List<String> args, Map<String, String> env,
                                   Duration timeout) throws IOException, InterruptedException {
+            return run(args, env, timeout, null);
+        }
+
+        @Override
+        public ProcessResult run(List<String> args, Map<String, String> env,
+                                  Duration timeout, File workdir)
+                throws IOException, InterruptedException {
             // route env through the shared egress gate
             // (scrubs SSH_AUTH_SOCK/ambient keys; enforcing by default).
             var pb = EgressGate.gatedProcessBuilder(args, env);
+            if (workdir != null) pb.directory(workdir);
             pb.redirectErrorStream(false);
             var process = pb.start();
             var stdoutBuf = new StringBuilder();

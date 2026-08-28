@@ -2,6 +2,7 @@ package org.wyrdsekai.core.persistence;
 
 import at.favre.lib.crypto.bcrypt.BCrypt;
 import org.wyrdsekai.core.home.ResidencyStore;
+import org.wyrdsekai.core.identity.PersonIdentityProvisioner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -94,6 +95,12 @@ public final class AuthService {
             // bootstrap and invite redemption land in the Study, not the
             // Docks. No-op when ResidencyStore isn't initialised.
             ResidencyStore.grantLocal(userId, effectiveRole, "account-create");
+            // Mint the PERSON behind this local credential. `users.id` is a
+            // credential id for one machine; it must not become the person's
+            // identity across the world model (that conflation is what left one
+            // human owning content under four different strings). No-op until
+            // PersonIdentityProvisioner.init() has been called.
+            PersonIdentityProvisioner.provision(userId, displayName);
             return Optional.of(createSession(conn, userId));
         } catch (SQLException e) {
             if (e.getMessage() != null && e.getMessage().contains("UNIQUE")) {

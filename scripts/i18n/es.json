@@ -1112,6 +1112,7 @@
   "dispatch.spoken.no_backend": "No hay ningún backend de taller instalado, así que no puedo despachar eso. `wyrd coding install goose` instala uno.",
   "dispatch.spoken.plan": "Llevo eso al taller: {0}. Se lo paso a {1} y aviso cuando termine.",
   "dispatch.spoken.done": "La tarea del taller terminó: {0}",
+  "dispatch.spoken.already_underway": "Esa tarea ya está en marcha: {0}. Aviso cuando vuelva en vez de empezarla dos veces.",
   "dispatch.spoken.not_done": "La tarea del taller acabó {0}: {1}",
   "dispatch.spoken.failed": "El despacho al taller falló — {0}: {1}",
   "dispatch.log.dispatched": "[dispatch_task] enviado a {1}: {0}",

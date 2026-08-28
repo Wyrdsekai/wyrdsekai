@@ -382,9 +382,9 @@ class GooseE2ETest {
         // Negative cases — drift-protection on the namespace + event guards.
         assertNull(adapter.translateEvent(null));
         var wrongNs = new AgentEvent.ZoneBroadcast(
-            "codeplane", "workshop",
+            "codezaiku", "workshop",
             new S2CMessage.ZoneResponse(0L, UUID.randomUUID().toString(),
-                "codeplane", "ok", data, List.of()),
+                "codezaiku", "ok", data, List.of()),
             Instant.now());
         assertNull(adapter.translateEvent(wrongNs),
             "namespace mismatch must skip translation");
@@ -439,7 +439,7 @@ class GooseE2ETest {
     @Test @Order(6)
     void task6_selection_policy_picks_goose() {
         // Drive the GraalJS policy script directly — no inference, no
-        // workshop, just verify that when CodePlane + OpenCode are
+        // workshop, just verify that when CodeZaiku + OpenCode are
         // absent / unhealthy the policy script picks "goose" out of the
         // fallback chain.
         //
@@ -452,17 +452,17 @@ class GooseE2ETest {
             List.of("goose", "openhands"),
             "code", "write a tiny utility function");
         assertEquals("goose", pickedWith,
-            "When CodePlane + OpenCode are unavailable, Goose must win "
+            "When CodeZaiku + OpenCode are unavailable, Goose must win "
                 + "the chain.");
 
-        // Sanity: CodePlane wins when it IS available — pins the
+        // Sanity: CodeZaiku wins when it IS available — pins the
         // "Goose is a tertiary fallback, not the override" intent.
-        var pickedWithCodeplane = pickBackend(
-            List.of("codeplane", "goose"),
-            List.of("codeplane", "goose"),
+        var pickedWithCodeZaiku = pickBackend(
+            List.of("codezaiku", "goose"),
+            List.of("codezaiku", "goose"),
             "code", "write a tiny utility function");
-        assertEquals("codeplane", pickedWithCodeplane,
-            "CodePlane must keep priority when it's in the available chain.");
+        assertEquals("codezaiku", pickedWithCodeZaiku,
+            "CodeZaiku must keep priority when it's in the available chain.");
     }
 
     // ── Task 7 ──────────────────────────────────────────────────────
@@ -545,7 +545,7 @@ class GooseE2ETest {
         //
         // GAP: scripts/rooms/workshop.js does NOT yet narrate Goose
         // availability. The script's onEnter() only checks for OpenCode +
-        // CodePlane. This test is expected to fail until the script is
+        // CodeZaiku. This test is expected to fail until the script is
         // updated. Marked TODO so the gap is visible in CI.
         try (var ws = connect()) {
             ws.sendGo("nexus", "east");

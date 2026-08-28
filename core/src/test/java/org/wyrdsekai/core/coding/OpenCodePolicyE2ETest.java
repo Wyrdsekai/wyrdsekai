@@ -74,42 +74,42 @@ class OpenCodePolicyE2ETest {
         if (jsContext != null) jsContext.close();
     }
 
-    // ─── Scenario 1: opencode wins when codeplane absent ───────────
+    // ─── Scenario 1: opencode wins when codezaiku absent ───────────
 
-    @Test void opencode_picked_when_codeplane_absent() {
+    @Test void opencode_picked_when_codezaiku_absent() {
         // SPEC §2.5: OpenCode is the default-on local backend that makes
-        // "complex items work out of the box". When CodePlane isn't
+        // "complex items work out of the box". When CodeZaiku isn't
         // available, the chain must fall through to OpenCode rather than
         // bouncing all the way to a paid tier.
         var ctx = baseCtx();
         ctx.put("availableBackends", List.of("opencode", "openhands"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode", "openhands"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code", "fix the bug", ctx))
             .isEqualTo("opencode");
     }
 
-    // ─── Scenario 2: codeplane priority preserved ───────────────────
+    // ─── Scenario 2: codezaiku priority preserved ───────────────────
 
-    @Test void codeplane_keeps_priority_when_available() {
-        // OpenCode is the SECONDARY default — CodePlane stays first when
+    @Test void codezaiku_keeps_priority_when_available() {
+        // OpenCode is the SECONDARY default — CodeZaiku stays first when
         // both are available. This pins SPEC §2.6 chain order.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "opencode"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode"));
+        ctx.put("availableBackends", List.of("codezaiku", "opencode"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode"));
 
         assertThat(invoke("did:c", "code", "fix the bug", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Scenario 3: companion preference overrides chain ──────────
 
-    @Test void companion_preferred_opencode_wins_over_codeplane() {
+    @Test void companion_preferred_opencode_wins_over_codezaiku() {
         // A companion with preferred_backend=opencode in their soul
-        // manifest gets opencode even when codeplane is available.
+        // manifest gets opencode even when codezaiku is available.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "opencode"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode"));
+        ctx.put("availableBackends", List.of("codezaiku", "opencode"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode"));
         ctx.put("companionPreferences",
             prefs("opencode", List.of(), Map.of()));
 
@@ -137,11 +137,11 @@ class OpenCodePolicyE2ETest {
 
     @Test void task_type_override_routes_to_opencode() {
         // `code` tasks override to OpenCode via the soul manifest's
-        // task_type_overrides map. Even when codeplane is otherwise
+        // task_type_overrides map. Even when codezaiku is otherwise
         // available + first in the chain, the override should win.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "opencode"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode"));
+        ctx.put("availableBackends", List.of("codezaiku", "opencode"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode"));
         ctx.put("companionPreferences",
             prefs(null, List.of(), Map.of("code", "opencode")));
 
@@ -159,9 +159,9 @@ class OpenCodePolicyE2ETest {
         // accidentally widens the heuristic to also catch OpenCode.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "explore", "the foo subsystem", ctx))
             .isEqualTo("openhands");
@@ -204,9 +204,9 @@ class OpenCodePolicyE2ETest {
 
     // ─── Scenario 9: opencode wins for `test` taskType ─────────────
 
-    @Test void test_task_type_routes_to_opencode_when_codeplane_absent() {
+    @Test void test_task_type_routes_to_opencode_when_codezaiku_absent() {
         // SPEC §4.4 fallback chain applies per task type when no
-        // override is set. For `test` tasks with no codeplane present,
+        // override is set. For `test` tasks with no codezaiku present,
         // OpenCode should win (it's a generic-purpose backend, not
         // type-restricted).
         var ctx = baseCtx();
@@ -250,7 +250,7 @@ class OpenCodePolicyE2ETest {
         // explicitly via a sub-context.
         ctx.put("backendTier", tierProxy(name -> {
             if ("opencode".equals(name)) return "LOCAL_FREE";
-            if ("codeplane".equals(name)) return "LOCAL_HEAVY";
+            if ("codezaiku".equals(name)) return "LOCAL_HEAVY";
             if ("openhands".equals(name)) return "LOCAL_HEAVY";
             return "CLOUD_PAID";
         }));

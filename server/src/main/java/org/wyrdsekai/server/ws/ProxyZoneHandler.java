@@ -17,7 +17,7 @@ import java.util.function.Consumer;
  * Bridges a remote zone service's WebSocket connection to Wyrdsekai's
  * {@link ZoneCommandHandler} interface.
  * <p>
- * When a player sends a namespaced command (e.g. {@code codeplane.approve}),
+ * When a player sends a namespaced command (e.g. {@code codezaiku.approve}),
  * this handler serializes it as a {@link ZoneBridgeMessage.ForwardCommand}
  * and sends it over the zone service's WS connection. When the service responds
  * with a {@link ZoneBridgeMessage.CommandResponse}, the messages are delivered

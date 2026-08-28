@@ -496,8 +496,10 @@ public final class ToolItemStarterKit {
                 + "needs to BROWSE the web → web-window; "
                 + "needs to GRANT access → room-key; "
                 + "needs a calculation/conversion or other custom logic → simple-book + provide a script. "
+                + "needs to SPEAK its result aloud in the room → any template + a script "
+                + "calling world.agent.speak(text); items CAN talk. "
                 + "For CUSTOM behavior, pick the closest matching template and provide a `script` that uses "
-                + "world.library, world.web, world.oracle, world.llm APIs.",
+                + "world.library, world.web, world.oracle, world.llm, world.agent APIs.",
             "craft_from_template",
             List.of(
                 // enumValues, not prose. The description previously had to argue
@@ -511,9 +513,24 @@ public final class ToolItemStarterKit {
                 new ToolParam("config", "string",
                     "JSON config for the template (e.g., '{\"source\":\"oracle\",\"label\":\"My Crystal\"}')", false, null),
                 new ToolParam("script", "string",
-                    "Optional custom GraalJS script body for the invoke() function. "
-                        + "Use world.library.search(q), world.oracle.query(topic), world.llm.summarize(text, instruction), "
-                        + "world.web.search(q), world.agent.speak(text). Return a result object.", false, null)
+                    "Custom GraalJS body. REQUIRED whenever the item must DO something the "
+                        + "template does not already do — a bare template makes an OBJECT, "
+                        + "a script makes a BEHAVIOUR. Give the BODY ONLY: it is wrapped in "
+                        + "function invoke(params) { ... } for you, so do not write that line "
+                        + "yourself. Use `params` for inputs and `return` a result object.\n"
+                        + "Most behaviours are three slots: GATHER, then TRANSFORM, then "
+                        + "EMIT. Fill each from whatever fits:\n"
+                        + "  gather:    world.library.search(q) | world.web.search(q) | "
+                        + "world.oracle.query(topic) | params\n"
+                        + "  transform: world.llm.summarize(text, instruction) | plain JS\n"
+                        + "  emit:      world.agent.speak(text) | return value | both\n"
+                        + "Shape (body only):\n"
+                        + "  var found = /* gather */;\n"
+                        + "  var result = /* transform found */;\n"
+                        + "  world.agent.speak(result);   // when it should be heard aloud\n"
+                        + "  return { result: result };\n"
+                        + "Any slot may be skipped — an item that only speaks, or only "
+                        + "computes, is a valid item.", false, null)
             ));
     }
 
@@ -527,6 +544,10 @@ public final class ToolItemStarterKit {
             "create_room_from_template", "Create Room",
             "BUILD A NEW ROOM — a physical space with walls, exits, and objects. NOT for creating items. "
                 + "Use this when someone asks to 'create a room', 'make a room', 'build a room'. "
+                + "A room that must DO something (look a topic up, tell you the weather) is "
+                + "TWO steps: this makes the place and furnishes it from a template, then "
+                + "dispatch_task with room=<the new room's id> builds the working thing and "
+                + "puts it inside. A template alone holds no behaviour. "
                 + "The template decides what FURNISHES the room; pick the closest one by "
                 + "purpose — it is NOT the room's name. Room templates: "
                 + String.join(", ", StandardRoomLibrary.TEMPLATE_NAMES) + ".",
@@ -646,7 +667,7 @@ public final class ToolItemStarterKit {
             // is the guardrail (autonomous use lands on the steward feed), not a tier.
             ToolItem.builtin("dispatch_task", "Dispatch to Workshop",
                 "Hand an open-ended coding/build task to the workshop's coding backend "
-                    + "(goose) and report back when it finishes — write a small tool, "
+                    + "and report back when it finishes — write a small tool, "
                     + "author a script, organize or batch-process files. You are the "
                     + "foreman, not the laborer: announce what you're sending, the backend "
                     + "does the work in the background while you keep talking, and you "
@@ -1181,18 +1202,47 @@ public final class ToolItemStarterKit {
             // with its title and a citation key the LLM can reference back.
             // Without this, the summarizer sees an undifferentiated blob and
             // can't attribute claims to sources.
+            // EIGHT, NOT THREE — and it only became a real number once the
+            // runtime stopped cutting the combined text at 3,000 characters.
+            // Study chunks are 1,200-2,900 chars, so under the old cap the first
+            // block filled the budget and blocks 2 and 3 were built, counted,
+            // cited as sources, and then silently discarded before the model saw
+            // them. Live cost: three runs that retrieved the right book and all
+            // reported finding nothing, because the answering passage was in the
+            // result set but never in the prompt.
+            //
+            // Each block is also capped on its own, so one long chunk cannot do
+            // to the others what the global cut used to do to all of them.
+            // Decided BEFORE the passages are gathered, because it changes how
+            // much of each one to take: a request for the words themselves wants
+            // the run of chunks around the hit, not just the hit.
+            var askedFullText = (params.askedFor || params.query || "").toLowerCase();
+            var wantsTheWords = false;
+            var verbatimCues = ["recite", "verbatim", "word for word", "word-for-word",
+                "exact words", "exact text", "quote the", "read it to me",
+                "read me the", "full text", "in full"];
+            for (var v = 0; v < verbatimCues.length; v++) {
+                if (askedFullText.indexOf(verbatimCues[v]) >= 0) { wantsTheWords = true; break; }
+            }
+
             var blocks = [];
             var sources = [];
             var picked = 0;
-            for (var i = 0; i < results.length && picked < 3; i++) {
+            for (var i = 0; i < results.length && picked < 8; i++) {
                 if (results[i].score && results[i].score < minScore) continue;
                 var chunk = world.library.read(results[i].id);
                 if (!chunk || !chunk.text) continue;
                 var title = chunk.title || results[i].title || results[i].id;
                 var pack = chunk.pack || results[i].pack || "library";
                 var key = "S" + (picked + 1);
+                // For a request that wants the text itself, read the chunks
+                // either side too — the answer to "recite the poem" is often the
+                // page BEFORE the one that names the people in the question.
+                var full = (wantsTheWords && chunk.context) ? chunk.context : chunk.text;
+                var body = full.length > 4000
+                    ? full.substring(0, 4000) + "..." : full;
                 blocks.push("[" + key + " | " + title + " | " + pack + "]\\n"
-                    + chunk.text + "\\n[/" + key + "]");
+                    + body + "\\n[/" + key + "]");
                 sources.push(key + ": " + title + " (" + pack + ")");
                 picked++;
             }
@@ -1203,10 +1253,42 @@ public final class ToolItemStarterKit {
                 };
             }
             var combined = blocks.join("\\n\\n");
-            var instruction = "Synthesize a concise answer to: " + params.query
+
+            // ASKED FOR THE WORDS THEMSELVES → HAND BACK THE WORDS THEMSELVES.
+            //
+            // A summariser asked to "recite the poem" will compose one. Live
+            // 2026-08-09, asked for the poem Finkle-McGraw sent Hackworth, she
+            // produced: "The poem is called 'The Space Between'. It opens with
+            // lines about silence and the weight of things left unsaid..." —
+            // fluent, in her own voice, entirely invented. Coleridge's actual
+            // poem was in the library the whole time.
+            //
+            // The repair is structural rather than an instruction about what not
+            // to do: when the request wants the text, the item returns the
+            // retrieved TEXT and never asks a model to produce it. There is
+            // nothing to compose, so there is nothing to compose wrongly, and
+            // whatever she says next is grounded in words that are on the page.
+            if (wantsTheWords) {
+                return { findings: blocks.slice(0, 3).join("\\n\\n"),
+                         sources: sources, verbatim: true };
+            }
+
+            // ANSWER THE PERSON'S QUESTION, NOT THE SEARCH STRING.
+            //
+            // params.query is built for RETRIEVAL: the companion's own rewrite,
+            // plus the person's words merged back in, plus whatever the rewrite
+            // garbled. Good for BM25, wrong to reason from. Live 2026-08-09: her
+            // rewrite said "velhara", the merge restored the real terms so the
+            // search found the right passages, and then this line asked her to
+            // answer a question about "velhara" — so she reported there is no
+            // "librarian named Velhara", turning her own typo into a character.
+            // askedFor is what the person actually said.
+            var question = params.askedFor || params.query;
+            var instruction = "Synthesize a concise answer to: " + question
                 + ". Use ONLY the provided sources. After each substantive claim, cite the "
                 + "source key in square brackets, e.g. [S1]. If the sources don't answer "
-                + "the question, say so. Don't introduce facts that aren't in the sources.";
+                + "the question, say so. Answer from the source text; a name spelled oddly "
+                + "in the question is the same name as in the sources.";
             var summary = world.llm.analyze(combined, instruction);
             return { findings: summary, sources: sources };
         }
@@ -1241,10 +1323,22 @@ public final class ToolItemStarterKit {
                     + "]\\n" + body + "\\n[/" + key + "]");
             }
             var combined = blocks.join("\\n\\n");
-            var instruction = "Synthesize a concise answer to: " + params.query
+            // ANSWER THE PERSON'S QUESTION, NOT THE SEARCH STRING.
+            //
+            // params.query is built for RETRIEVAL: the companion's own rewrite,
+            // plus the person's words merged back in, plus whatever the rewrite
+            // garbled. Good for BM25, wrong to reason from. Live 2026-08-09: her
+            // rewrite said "velhara", the merge restored the real terms so the
+            // search found the right passages, and then this line asked her to
+            // answer a question about "velhara" — so she reported there is no
+            // "librarian named Velhara", turning her own typo into a character.
+            // askedFor is what the person actually said.
+            var question = params.askedFor || params.query;
+            var instruction = "Synthesize a concise answer to: " + question
                 + ". Use ONLY the provided sources. After each substantive claim, cite the "
                 + "source key in square brackets, e.g. [S1]. If the sources don't answer "
-                + "the question, say so. Don't introduce facts that aren't in the sources.";
+                + "the question, say so. Answer from the source text; a name spelled oddly "
+                + "in the question is the same name as in the sources.";
             var summary = world.llm.analyze(combined, instruction);
             return { findings: summary, sources: sources };
         }

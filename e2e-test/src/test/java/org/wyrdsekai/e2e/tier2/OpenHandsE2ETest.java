@@ -114,7 +114,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * <ul>
  *   <li>{@code scripts/rooms/workshop.js} does not yet have an
  *       {@code openhands} narration branch — {@code dispatchCoding()}
- *       falls back to CodePlane with a console warning when
+ *       falls back to CodeZaiku with a console warning when
  *       {@code pickBackend()} returns "openhands". Tasks 5 + 9 + 10
  *       (workshop-room narration / dispatch / full pipeline) WILL
  *       therefore fail their workshop-narration assertions until the
@@ -517,9 +517,9 @@ class OpenHandsE2ETest {
         // Negative cases — drift-protection on the namespace + event guards.
         assertNull(adapter.translateEvent(null));
         var wrongNs = new AgentEvent.ZoneBroadcast(
-            "codeplane", "workshop",
+            "codezaiku", "workshop",
             new S2CMessage.ZoneResponse(0L, UUID.randomUUID().toString(),
-                "codeplane", "ok", data, List.of()),
+                "codezaiku", "ok", data, List.of()),
             Instant.now());
         assertNull(adapter.translateEvent(wrongNs),
             "namespace mismatch must skip translation");
@@ -538,7 +538,7 @@ class OpenHandsE2ETest {
         //
         // GAP (2026-05-05): scripts/rooms/workshop.js does NOT yet have
         // an "openhands" branch. dispatchCoding() falls back to
-        // codeplane with a console warning when pickBackend() returns
+        // codezaiku with a console warning when pickBackend() returns
         // "openhands". This test will therefore fail its narration
         // assertion until workshop.js is updated. That update is OUT OF
         // SCOPE for the OpenHands adapter reconciliation — tracked
@@ -594,23 +594,23 @@ class OpenHandsE2ETest {
         // explore-heuristic survives a fresh policy-script load without
         // a regression.
         var pickedExplore = pickBackend(
-            List.of("openhands", "opencode", "codeplane"),
-            List.of("codeplane", "opencode", "openhands"),
+            List.of("openhands", "opencode", "codezaiku"),
+            List.of("codezaiku", "opencode", "openhands"),
             "explore", "survey the unfamiliar repo and report its layout");
         assertEquals("openhands", pickedExplore,
             "Explore-flavored tasks must promote OpenHands over the chain. "
                 + "If this fails, the looksLikeExplore() heuristic in "
                 + "scripts/policy/coding-backend.js drifted.");
 
-        // Sanity: codeplane wins the chain for non-explore work — pins
+        // Sanity: codezaiku wins the chain for non-explore work — pins
         // the "OpenHands is opt-in for explore, not the override" intent.
         var pickedNonExplore = pickBackend(
-            List.of("codeplane", "opencode", "openhands"),
-            List.of("codeplane", "opencode", "openhands"),
+            List.of("codezaiku", "opencode", "openhands"),
+            List.of("codezaiku", "opencode", "openhands"),
             "code", "write a tiny utility function");
-        assertEquals("codeplane", pickedNonExplore,
+        assertEquals("codezaiku", pickedNonExplore,
             "Non-explore tasks must keep the standard fallback order — "
-                + "codeplane wins when present.");
+                + "codezaiku wins when present.");
     }
 
     // ── Task 7 ──────────────────────────────────────────────────────
@@ -707,7 +707,7 @@ class OpenHandsE2ETest {
         //
         // GAP (2026-05-05): scripts/rooms/workshop.js's onEnter() does
         // NOT yet have an OpenHands branch. The current narration only
-        // mentions CodePlane and OpenCode. This test will therefore
+        // mentions CodeZaiku and OpenCode. This test will therefore
         // fail until the script gains an OpenHands enter-narration
         // branch (substring "openhands" / "OpenHands" / "agent-server"
         // / "sandbox"). Tracked as out-of-scope follow-up.

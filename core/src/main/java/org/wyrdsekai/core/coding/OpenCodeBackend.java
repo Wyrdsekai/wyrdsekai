@@ -1,10 +1,12 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -58,7 +60,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
 
     /**
      * Cache of the most recent task → produced artifacts. OpenCode emits
-     * artifacts inline in the JSON output; we don't have a CodePlane-style
+     * artifacts inline in the JSON output; we don't have a CodeZaiku-style
      * persistent store yet, so this in-memory map serves Phase 2b. Phase
      * 5 will replace with a persistent index.
      */
@@ -102,7 +104,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         // without spawning a real process.
         List<String> args;
         try {
-            args = buildArgs(spec);
+            args = buildArgs(spec, taskId.toString());
         } catch (Exception e) {
             future.complete(failed(taskId,
                 "Failed to construct OpenCode invocation: " + e.getMessage(), started));
@@ -124,7 +126,10 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         // Run async on a virtual thread — submitTask() must not block.
         Thread.ofVirtual().name("opencode-task-" + taskId).start(() -> {
             try {
-                var result = runner.run(args, env, config.maxWallclock());
+                var result = runner.run(args, env, config.maxWallclock(),
+                    CodingWorkspace.forTask(
+                        spec != null ? spec.workspaceHint() : null,
+                        taskId.toString()));
                 long durationMs = System.currentTimeMillis() - started;
 
                 if (result.timedOut()) {
@@ -144,6 +149,25 @@ public final class OpenCodeBackend implements CodingTaskBackend {
                 }
 
                 var artifacts = parseArtifacts(taskId, spec, result);
+
+                // CONTRACT REPAIR — the turn goose and CodeZaiku get. This lived inside
+                // GooseBackend, so a file the bridge would refuse was silently downgraded
+                // to a plain artifact for every OTHER backend. Same preamble, same
+                // bridge, same defects: the repair belongs to all of them.
+                ItemContractRepair.repairRun(artifacts, null, taskId.toString(),
+                    Instant.ofEpochMilli(started),
+                    ItemContractRepair.rerunWithPrompt(repairArgs -> {
+                        try {
+                            var r = runner.run(repairArgs, env, config.maxWallclock());
+                            return !r.timedOut() && r.exitCode() == 0;
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    }, args),
+                    spec == null ? null : spec.description());
+
+                // Re-parse AFTER the repair so the cache holds the fixed file.
+                artifacts = parseArtifacts(taskId, spec, result);
                 artifactCache.put(taskId.toString(), artifacts);
                 var ids = new ArrayList<UUID>();
                 for (var a : artifacts) ids.add(a.artifactId());
@@ -198,7 +222,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
 
     @Override
     public long estimatedCu(TaskSpec spec) {
-        // Local model, no per-token billing. Always 0 — same as CodePlane.
+        // Local model, no per-token billing. Always 0 — same as CodeZaiku.
         return 0L;
     }
 
@@ -213,6 +237,15 @@ public final class OpenCodeBackend implements CodingTaskBackend {
      * without spawning a real subprocess.
      */
     public List<String> buildArgs(TaskSpec spec) {
+        return buildArgs(spec, null);
+    }
+
+    /**
+     * @param taskId scopes the per-task scratch directory when no workspace hint is
+     *               given. Null only from the arg-shape unit tests, which do not run a
+     *               subprocess and so cannot write anywhere.
+     */
+    public List<String> buildArgs(TaskSpec spec, String taskId) {
         var args = new ArrayList<String>();
         args.add(config.executablePath());
         args.add("run");
@@ -222,7 +255,11 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         args.add(config.providerName() + "/" + config.model());
         args.add("--dangerously-skip-permissions");
 
-        var workspace = spec != null ? spec.workspaceHint() : null;
+        // --dir was passed ONLY when a hint existed; with none, opencode worked in the
+        // process's own directory — the install root on a packaged node. Always name a
+        // directory, and let CodingWorkspace decide which one.
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null, taskId);
         if (workspace != null && !workspace.isBlank()) {
             args.add("--dir");
             args.add(workspace);
@@ -240,7 +277,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         // preamble (canonical source) so OpenCode emits the same
         // single-{@code .js}-with-{@code exports.manifest} shape every
         // backend must produce. See OpenHandsBackend's
-        // ITEMS_AS_TOOLS_PREAMBLE for the full rationale.
+        // ITEMS_AS_TOOLS_PREAMBLE_CWD for the full rationale.
         var description = spec != null ? spec.description() : null;
         var promptBody = (description != null && !description.isBlank())
             ? description : "";
@@ -252,7 +289,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
                 && "shell-exec".equalsIgnoreCase(spec.taskType());
         args.add(shellExec
             ? promptBody
-            : (OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE
+            : (OpenHandsBackend.itemsAsToolsPreambleCwd(ItemCapabilitySet.craftedDefault())
                 + "\n\n--- TASK ---\n" + promptBody));
         return List.copyOf(args);
     }
@@ -279,7 +316,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         var p = providers.putObject(config.providerName());
         p.put("npm", "@ai-sdk/openai-compatible");
         p.put("name", "Wyrdsekai Local LLM");
-        p.putObject("options").put("baseURL", config.baseUrl());
+        p.putObject("options").put("baseURL", config.effectiveBaseUrl());
         var models = p.putObject("models");
         models.putObject(config.model())
             .put("name", config.model());
@@ -314,9 +351,9 @@ public final class OpenCodeBackend implements CodingTaskBackend {
     private List<CodingArtifact> parseArtifacts(
             UUID taskId, TaskSpec spec, ProcessResult result) {
         var files = new ArrayList<String>();
-        var workspace = spec != null && spec.workspaceHint() != null
-            ? spec.workspaceHint()
-            : System.getProperty("user.dir", ".");
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null,
+            taskId == null ? null : taskId.toString());
 
         var stdout = result.stdout();
         if (stdout != null && !stdout.isBlank()) {
@@ -352,7 +389,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         metadata.put("backend", NAME);
         metadata.put("model", config.model());
         metadata.put("provider", config.providerName());
-        metadata.put("base_url", config.baseUrl());
+        metadata.put("base_url", config.effectiveBaseUrl());
         if (result.stdout() != null && !result.stdout().isBlank()) {
             // Truncate stdout in metadata so a runaway log doesn't blow
             // up the room object.
@@ -436,6 +473,20 @@ public final class OpenCodeBackend implements CodingTaskBackend {
     public interface ProcessRunner {
         ProcessResult run(List<String> args, Map<String, String> env,
                           Duration timeout) throws IOException, InterruptedException;
+
+        /**
+         * Workspace-aware overload. Defaults to discarding the directory so existing
+         * three-arg test lambdas keep compiling; {@link DefaultProcessRunner} overrides
+         * it and actually sets the subprocess CWD.
+         *
+         * <p>Without a directory the subprocess inherits the JVM's — the INSTALL ROOT on
+         * a packaged node. See {@link CodingWorkspace}.
+         */
+        default ProcessResult run(List<String> args, Map<String, String> env,
+                                  Duration timeout, File workdir)
+                throws IOException, InterruptedException {
+            return run(args, env, timeout);
+        }
     }
 
     /**
@@ -446,11 +497,26 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         @Override
         public ProcessResult run(List<String> args, Map<String, String> env,
                                   Duration timeout) throws IOException, InterruptedException {
+            return run(args, env, timeout, null);
+        }
+
+        @Override
+        public ProcessResult run(List<String> args, Map<String, String> env,
+                                  Duration timeout, File workdir)
+                throws IOException, InterruptedException {
             // route env through the shared egress gate
             // (scrubs SSH_AUTH_SOCK/ambient keys; enforcing by default).
             var pb = EgressGate.gatedProcessBuilder(args, env);
+            if (workdir != null) pb.directory(workdir);
             pb.redirectErrorStream(false);
             var process = pb.start();
+            // Close the child's stdin AT ONCE. opencode also reads prompts
+            // from stdin, and an open, empty pipe is not "no input" to it --
+            // it is input that has not arrived yet, so the child sat in
+            // ep_poll forever and every probe read as a 10-minute hang. The
+            // same invocation with stdin at /dev/null (EOF) finished in 60s.
+            // The task travels entirely in argv; there is nothing to write.
+            process.getOutputStream().close();
             // Drain stdout/stderr in parallel so the subprocess can't
             // block on a full pipe. Virtual threads are cheap; one per
             // stream is fine.

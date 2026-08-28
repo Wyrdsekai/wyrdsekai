@@ -136,6 +136,14 @@ public class InputHandler {
                 yield true;
             }
 
+            case ParsedCommand.Retire retire -> {
+                // Every surface carries the verb, or a person learns it works "here but
+                // not there". The compiler enumerating this switch is what caught the CLI.
+                connection.send(new C2SMessage.Retire(
+                    connection.newId(), currentRoomId, retire.objectName()));
+                yield true;
+            }
+
             case ParsedCommand.Drop drop -> {
                 connection.send(new C2SMessage.Drop(
                     connection.newId(), currentRoomId, drop.objectName()));

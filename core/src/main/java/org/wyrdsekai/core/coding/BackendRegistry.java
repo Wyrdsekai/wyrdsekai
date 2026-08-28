@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * this registry on every inbound event; the GraalJS world API consults it
  * for {@code world.codingBackendFor(...)}.</p>
  *
- * <p>Phase 1a wires CodePlane only; the registry is sized for the eventual
+ * <p>Phase 1a wires CodeZaiku only; the registry is sized for the eventual
  * 5–6 backends.</p>
  */
 public class BackendRegistry {

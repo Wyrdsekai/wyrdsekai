@@ -8,6 +8,8 @@ import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Track-C C3 — read-only budget snapshot from
@@ -99,6 +101,57 @@ public final class RecipeBudgetTracker {
      * ROLLBACK_FIRED (step + rollback in outcomes) uniformly because
      * both land as {@code status='FAILED'} in the queue row.
      */
+    /**
+     * Most recent SUCCEEDED completion per distinct value of one run param.
+     *
+     * <p>Lets a caller ask "which of these candidates has gone longest without a
+     * successful run?" in a single query. Used to pick which classifier head the
+     * scheduled path should retrain: staleness is the only sound basis for that
+     * choice, because the recorded per-head accuracies are NOT comparable — two of
+     * the shipped heads report train-set accuracy with {@code validation_examples: 0},
+     * so "retrain the weakest" would rank the unmeasured heads best and starve the
+     * honestly-measured ones.
+     *
+     * @return value → last success instant. Candidates absent from the map have never
+     *         succeeded, and are therefore the stalest of all.
+     */
+    public Map<String, Instant> lastSuccessByParam(String recipeId, String agentDid,
+            String paramName) {
+        var out = new LinkedHashMap<String, Instant>();
+        if (recipeId == null || paramName == null) return out;
+        var sql = "SELECT json_extract(params_json, '$.' || ?) AS pval, "
+            + "       MAX(completed_at) AS last_at "
+            + "FROM recipe_queue "
+            + "WHERE recipe_id = ? AND status = 'SUCCEEDED' "
+            + "  AND completed_at IS NOT NULL "
+            + "  AND ((agent_did = ?) OR (? IS NULL AND agent_did IS NULL)) "
+            + "  AND json_extract(params_json, '$.' || ?) IS NOT NULL "
+            + "GROUP BY pval";
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var st = conn.prepareStatement(sql)) {
+            st.setString(1, paramName);
+            st.setString(2, recipeId);
+            if (agentDid == null) {
+                st.setNull(3, Types.VARCHAR);
+                st.setNull(4, Types.VARCHAR);
+            } else {
+                st.setString(3, agentDid);
+                st.setString(4, agentDid);
+            }
+            st.setString(5, paramName);
+            try (var rs = st.executeQuery()) {
+                while (rs.next()) {
+                    var v = rs.getString("pval");
+                    if (v != null) out.put(v, Instant.ofEpochMilli(rs.getLong("last_at")));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("RecipeBudgetTracker.lastSuccessByParam({},{},{}) failed: {}",
+                recipeId, agentDid, paramName, e.getMessage());
+        }
+        return out;
+    }
+
     public int consecutiveDeployFailures(String recipeId, String agentDid) {
         if (recipeId == null) return 0;
         var sql = "SELECT status FROM recipe_queue "

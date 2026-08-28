@@ -89,9 +89,9 @@ public final class ScriptedCodingBackendProvider implements CodingBackendProvide
             long defaultDailyCuBudget) {
         this.registry = registry != null ? registry : BackendRegistry.get();
         this.policyScriptPath = policyScriptPath;
-        this.defaultBackend = defaultBackend != null ? defaultBackend : CodePlaneBackend.NAME;
+        this.defaultBackend = defaultBackend != null ? defaultBackend : CodeZaikuBackend.NAME;
         this.fallbackChain = fallbackChain != null ? List.copyOf(fallbackChain)
-            : List.of(CodePlaneBackend.NAME);
+            : List.of(CodeZaikuBackend.NAME);
         this.soulStore = soulStore;
         this.householdPolicy = householdPolicy != null ? householdPolicy
             : HouseholdPolicy::defaults;
@@ -183,7 +183,7 @@ public final class ScriptedCodingBackendProvider implements CodingBackendProvide
         // HTTP probes (e.g. OpenHands agent-server) routinely exceed the
         // old 150ms-per-backend serial budget on cold paths, which dropped
         // healthy backends out of the policy ctx and caused selectBackend
-        // to fall back to codeplane. Parallel + 1s aggregate gives every
+        // to fall back to codezaiku. Parallel + 1s aggregate gives every
         // backend a fair shake while keeping the call snappy.
         var futures = new ArrayList<
             CompletableFuture<String>>();

@@ -76,7 +76,11 @@ class UserRequestReachesTheToolTest {
     void theSystemsOwnPromptIsNotTreatedAsAUserRequest() throws IOException {
         var src = Files.readString(ACTOR);
         var start = src.indexOf("private boolean tryDispatchScriptedToolCall");
-        var window = src.substring(start, Math.min(src.length(), start + 8000));
+        // Window sized in METHOD terms, not characters: cut at the next
+        // method boundary so honest growth of the dispatcher (comments,
+        // logging) can't push the gate off the edge of the inspection.
+        var end = src.indexOf("\n    private ", start + 1);
+        var window = src.substring(start, end > start ? end : Math.min(src.length(), start + 12000));
 
         assertTrue(window.contains("isHumanRequest("),
             "the dispatcher must gate the injected query on isHumanRequest() — otherwise an "

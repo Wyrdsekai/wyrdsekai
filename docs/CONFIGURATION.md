@@ -54,6 +54,27 @@ Useful neighbours:
 - `WYRDSEKAI_INFERENCE_CONCURRENCY` (default `1`) — parallel generations
 - `WYRDSEKAI_LLAMA_URL`, `WYRDSEKAI_VOICE_URL` — where the runtimes listen
 
+### Sparse (Mixture-of-Experts) models
+
+Sparse-active models — a large total parameter count of which only a small
+expert subset fires per token (`32B-A9B`, `8B-A1B`, …) — run well on modest
+GPUs **if the placement is right**: attention and KV cache on the accelerator,
+expert tensors in system RAM. Three knobs select that split; each is a no-op
+for dense models:
+
+- `LLAMA_CPU_MOE` (Docker) / `WYRDSEKAI_LLAMA_CPU_MOE` (native) —
+  `all` (or `on`) keeps **all** expert tensors in system RAM (`--cpu-moe`);
+  a number `N` keeps the experts of the first `N` layers in RAM
+  (`--n-cpu-moe N`); unset or `0` means dense placement.
+- `LLAMA_CHAT_TEMPLATE_KWARGS` / `WYRDSEKAI_LLAMA_CHAT_TEMPLATE_KWARGS` —
+  JSON object passed to the chat template (`--chat-template-kwargs`), for
+  models whose templates take switches such as `{"enable_thinking":false}`.
+- `LLAMA_SKILLS_EXTRA_ARGS` / `WYRDSEKAI_LLAMA_EXTRA_ARGS` — extra
+  `llama-server` flags, word-split verbatim. The escape hatch.
+
+These apply to the drive/skills server. The voice server stays a small dense
+model by design.
+
 ### Sharing inference across a household
 
 A GPU box can serve the rest of the house:
@@ -118,8 +139,22 @@ Real money and real compute both have ceilings:
 
 ## Coding backends
 
-Which coding agent a companion can summon — goose, Codex, OpenCode, OpenHands,
-Aider, Gemini CLI, Claude SDK, CodePlane, Devin — is configured through the
-`wyrdsekai.coding` block, one `WYRDSEKAI_CODING_<BACKEND>_*` group each, plus
+Which coding agent a companion can summon — CodeZaiku (the bundled default),
+goose (the recommended alternative if you'd rather not use CodeZaiku), pi,
+Codex, OpenCode, OpenHands, Aider, Gemini CLI, Claude SDK, Devin —
+is configured through the `wyrdsekai.coding` block, one
+`WYRDSEKAI_CODING_<BACKEND>_*` group each, plus
 `WYRDSEKAI_CODING_DEFAULT_BACKEND` and an egress gate. That surface is large
 enough to deserve its own document: see [EXTENDING.md](EXTENDING.md).
+
+Three keys worth knowing here because they answer real topologies:
+
+- `WYRDSEKAI_INFERENCE_URL` — this node's drive lives on ANOTHER machine.
+  Every keyless backend follows it; nothing else needs configuring.
+- `WYRDSEKAI_CODING_OPENHANDS_AGENT_SERVER_URL` — where the OpenHands V1
+  agent-server listens (default `http://localhost:8000`). The old
+  `_MCP_URL` name is still read for compatibility but names a protocol
+  OpenHands no longer speaks.
+- Drive sizing is part of the contract, not a knob: CodeZaiku's loop needs a
+  **12K-token context minimum (16K comfortable)**; OpenHands wants **32K**.
+  An 8K drive passes health checks and still fails real dispatches.

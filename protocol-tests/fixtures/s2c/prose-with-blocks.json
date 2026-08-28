@@ -12,12 +12,12 @@
   "isAiGenerated": true,
   "blocks": [
     {
-      "format": "codeplane.diff",
+      "format": "codezaiku.diff",
       "data": { "filePath": "auth.js", "additions": 12, "deletions": 5 },
       "fallback": "auth.js: +12 -5 lines changed"
     },
     {
-      "format": "codeplane.cost",
+      "format": "codezaiku.cost",
       "data": { "tokensIn": 4200, "tokensOut": 850, "estimatedUSD": 0.03 },
       "fallback": "Cost: $0.03 (4.2K in, 850 out)"
     }

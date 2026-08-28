@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       and bondholder B's familiar IF they share Wyrd-class parent —
  *       though in practice each bondholder has their own parent).</li>
  *   <li>The familiar's autonomyTier is the substrate-side gate, distinct
- *       from CodePlane's PermissionRing (OPEN-3 — bridge, not replace).</li>
+ *       from CodeZaiku's PermissionRing (OPEN-3 — bridge, not replace).</li>
  * </ol>
  *
  * <p>When #906 lands the active-session dispatch path, an integration
@@ -63,14 +63,14 @@ class CodingFamiliarSubstrateRoutingTest {
 
     @Test void autonomyTier_isSubstrateSideGate_notPermissionRing() {
         // §3.4 + OPEN-3: substrate-side autonomy gate is separate from
-        // CodePlane runtime PermissionRing. The identity record carries
-        // autonomyTier; PermissionRing remains a CodePlane-session concern.
+        // CodeZaiku runtime PermissionRing. The identity record carries
+        // autonomyTier; PermissionRing remains a CodeZaiku-session concern.
         var id = CodingFamiliarIdentity.newBorn(BONDHOLDER_A, PARENT, null);
         assertThat(id.autonomyTier()).isEqualTo("ASSISTED");
-        // The bridge is a runtime concern: when CodePlane attempts an
+        // The bridge is a runtime concern: when CodeZaiku attempts an
         // action, BOTH gates must say yes. Substrate gate (this field)
         // says "the familiar feels safe doing this"; PermissionRing says
-        // "the CodePlane session is allowed to run this shell command."
+        // "the CodeZaiku session is allowed to run this shell command."
     }
 
     @Test void didShape_lets_runtime_route_welfare_actions_back_to_parent() {

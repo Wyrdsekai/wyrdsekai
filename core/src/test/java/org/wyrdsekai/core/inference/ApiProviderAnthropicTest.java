@@ -20,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * a header gets dropped) gets caught without burning credits or needing keys.
  *
  * <p>Reference for expected shape: Anthropic Messages API v2023-06-01 +
- * CodePlane's AnthropicProvider.java (commit 3290271). When updating these
- * tests, mirror the canonical CodePlane behavior — both repos must agree on
+ * CodeZaiku's AnthropicProvider.java (commit 3290271). When updating these
+ * tests, mirror the canonical CodeZaiku behavior — both repos must agree on
  * how to talk to Anthropic.</p>
  */
 class ApiProviderAnthropicTest {

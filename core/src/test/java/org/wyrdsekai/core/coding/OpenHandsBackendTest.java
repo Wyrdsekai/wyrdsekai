@@ -46,7 +46,7 @@ class OpenHandsBackendTest {
     @Test void sealed_interface_now_permits_openhands() {
         var permitted = CodingTaskBackend.class.getPermittedSubclasses();
         assertThat(permitted).contains(OpenHandsBackend.class);
-        assertThat(permitted).contains(CodePlaneBackend.class);
+        assertThat(permitted).contains(CodeZaikuBackend.class);
         assertThat(permitted).contains(OpenCodeBackend.class);
     }
 
@@ -369,7 +369,13 @@ class OpenHandsBackendTest {
         AuthResolver missing = name -> new AuthMode.AuthMissing(
             name, "wyrd setup openhands", "no key configured");
 
-        var b = new OpenHandsBackend(enabledDefaults(), missing, neverCalled, () -> true);
+        // No cloud key AND no local drive: the refusal is real. The drive
+        // answer is PINNED false — before this seam existed the test read the
+        // developer machine's actual ports, and a llama-server that happened
+        // to be up flipped this into the keyless-local path and "failed" the
+        // test for the right behaviour.
+        var b = new OpenHandsBackend(enabledDefaults(), missing, neverCalled,
+            () -> true, () -> false);
         var result = b.submitTask(TaskSpec.create("did:c", "code", "x"))
             .get(5, TimeUnit.SECONDS);
 
@@ -377,6 +383,29 @@ class OpenHandsBackendTest {
         assertThat(result.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(result.summary()).contains("LOGIN_REQUIRED");
         assertThat(result.summary()).contains("wyrd setup openhands");
+    }
+
+    @Test void auth_missing_with_a_local_drive_proceeds_keyless() throws Exception {
+        // The other half of the same gate: no cloud key but the household's
+        // own drive is up — OpenHands' agent-server wants an api_key FIELD and
+        // a local endpoint accepts any value, so refusing here conflated "no
+        // cloud key" with "cannot use our own inference". The factory MUST be
+        // called now; reaching it (and failing on this stub) is the proof.
+        var factoryInvoked = new boolean[]{false};
+        OpenHandsBackend.AgentServerClientFactory reached = (url, timeout) -> {
+            factoryInvoked[0] = true;
+            throw new IllegalStateException("stub: reached the agent-server layer");
+        };
+        AuthResolver missing = name -> new AuthMode.AuthMissing(
+            name, "wyrd setup openhands", "no key configured");
+
+        var b = new OpenHandsBackend(enabledDefaults(), missing, reached,
+            () -> true, () -> true);
+        var result = b.submitTask(TaskSpec.create("did:c", "code", "x"))
+            .get(5, TimeUnit.SECONDS);
+
+        assertThat(factoryInvoked[0]).isTrue();
+        assertThat(result.summary()).doesNotContain("LOGIN_REQUIRED");
     }
 
     // ─── submitTask happy path ────────────────────────────────────

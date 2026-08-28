@@ -12,6 +12,8 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The config catalog has ONE source (2026-07-31). {@code scripts/config-catalog.json}
@@ -53,16 +55,16 @@ class ConfigCatalogParityTest {
         int end = src.indexOf("\n];", start);
         var body = src.substring(start, end);
 
-        var fromScroll = new LinkedHashMap<String, java.util.List<String>>();
+        var fromScroll = new LinkedHashMap<String, List<String>>();
         var gm = GROUP.matcher(body);
-        var bounds = new java.util.ArrayList<int[]>();
-        var ids = new java.util.ArrayList<String>();
+        var bounds = new ArrayList<int[]>();
+        var ids = new ArrayList<String>();
         while (gm.find()) { ids.add(gm.group(1)); bounds.add(new int[]{gm.end(), 0}); }
         for (int i = 0; i < bounds.size(); i++) {
             bounds.get(i)[1] = (i + 1 < bounds.size())
                 ? bounds.get(i + 1)[0] - 1 : body.length();
             var slice = body.substring(bounds.get(i)[0], bounds.get(i)[1]);
-            var keys = new java.util.ArrayList<String>();
+            var keys = new ArrayList<String>();
             var km = KEY.matcher(slice);
             while (km.find()) keys.add(km.group(1));
             fromScroll.put(ids.get(i), keys);
@@ -72,7 +74,7 @@ class ConfigCatalogParityTest {
         var json = new ObjectMapper().readValue(
             Files.readString(catalogJson, StandardCharsets.UTF_8), Map.class);
         @SuppressWarnings("unchecked")
-        var groups = (java.util.List<Map<String, Object>>) json.get("groups");
+        var groups = (List<Map<String, Object>>) json.get("groups");
 
         var hint = "\n\nRegenerate with:\n"
             + "  node -e 'const fs=require(\"fs\");const s=fs.readFileSync(\"scripts/rooms/study.js\",\"utf8\");"
@@ -85,7 +87,7 @@ class ConfigCatalogParityTest {
         for (var g : groups) {
             var id = (String) g.get("id");
             @SuppressWarnings("unchecked")
-            var keys = (java.util.List<Map<String, Object>>) g.get("keys");
+            var keys = (List<Map<String, Object>>) g.get("keys");
             var names = keys.stream().map(k -> (String) k.get("key")).toList();
             assertThat(fromScroll).as("group '" + id + "' exists in the scroll" + hint)
                 .containsKey(id);

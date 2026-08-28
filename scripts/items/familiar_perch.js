@@ -1,4 +1,4 @@
-// CodePlane Workshop furnishing — familiar perch ("workshop-familiar-perch"
+// CodeZaiku Workshop furnishing — familiar perch ("workshop-familiar-perch"
 // RoomObject, display name "familiar perch" → normalized linkage
 // "familiar_perch").
 //

@@ -38,7 +38,7 @@ class OpenCodeBackendTest {
     @Test void sealed_interface_now_permits_opencode() {
         var permitted = CodingTaskBackend.class.getPermittedSubclasses();
         assertThat(permitted).contains(OpenCodeBackend.class);
-        assertThat(permitted).contains(CodePlaneBackend.class);
+        assertThat(permitted).contains(CodeZaikuBackend.class);
     }
 
     // ─── Basic contract ─────────────────────────────────────────────

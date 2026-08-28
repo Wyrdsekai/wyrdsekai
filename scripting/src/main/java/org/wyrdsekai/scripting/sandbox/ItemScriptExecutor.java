@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -135,12 +136,8 @@ public class ItemScriptExecutor implements Closeable {
                 // Evaluate the creator's script (may override invoke)
                 context.eval(source);
 
-                // Get the invoke function (or execute for backward-compat with skill scripts)
-                var invoke = context.getBindings("js").getMember("invoke");
-                if (invoke == null || !invoke.canExecute()) {
-                    invoke = context.getBindings("js").getMember("execute");
-                }
-                if (invoke == null || !invoke.canExecute()) {
+                var invoke = resolveEntrypoint(context);
+                if (invoke == null) {
                     return Map.of("error", "Item script " + itemId + " has no invoke() or execute() function");
                 }
 
@@ -184,14 +181,141 @@ public class ItemScriptExecutor implements Closeable {
                 log.warn("Item script {} denied capability: {}", itemId, cap);
                 return Map.of("capability_denied", cap, "error", msg);
             }
-            log.error("Item script {} failed: {}", itemId, e.getMessage());
-            return Map.of("error", "Script error: " + e.getMessage());
+            // A PolyglotException wrapping a host exception often has a NULL message —
+            // live 2026-08-21 an item died with "Script error: null", which tells the
+            // person nothing and tells the log nothing either. Name the cause.
+            var detail = describe(e);
+            log.error("Item script {} failed: {}", itemId, detail, e);
+            return Map.of("error", "Script error: " + detail);
         } catch (CapabilityDeniedError e) {
             log.warn("Item script {} denied capability: {}", itemId, e.capability());
             return Map.of("capability_denied", e.capability(), "error", e.getMessage());
         } catch (Exception e) {
             log.error("Item script {} execution error: {}", itemId, e.getMessage());
             return Map.of("error", "Execution error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * The callable {@code invoke}/{@code execute} of an evaluated item script, or null.
+     *
+     * <h2>Why {@code exports.invoke} is in this ladder</h2>
+     * The items-as-tools contract already speaks the module idiom — every item declares
+     * itself with {@code exports.manifest = &#123;...&#125;}, and {@link #createContext}
+     * polyfills {@code exports}/{@code module} precisely so that line evaluates. A backend
+     * that carries that idiom one line further and writes {@code exports.invoke = ...} is
+     * following the shape it was taught. {@link
+     * org.wyrdsekai.core.item.ScriptedItemLoader#hasEntrypoint} accepts exactly that
+     * spelling, so such a file passed every gate and REGISTERED — and then answered
+     * "has no invoke() or execute() function" the first time a person used it, because
+     * this resolution only ever read the global bindings.
+     *
+     * <p>An entrypoint the contract accepts and the runtime cannot call is the same defect
+     * in two places disagreeing. Read both.
+     *
+     * <p>What this deliberately does NOT rescue: a {@code function invoke} sealed inside an
+     * IIFE and never exported. That function is unreachable by any spelling, and pretending
+     * otherwise would hand a person an item that cannot run. Live 2026-08-21 that is
+     * exactly what arrived — see {@code ItemContractCheck}, which now refuses it BEFORE the
+     * item is offered to anyone.
+     */
+    /**
+     * A message worth reading, even when the exception has none.
+     *
+     * <p>Walks to the host cause and names its type, because "null" is what a
+     * host-side {@code NullPointerException} looks like from inside GraalJS — and an
+     * error a person can act on is the difference between a bug report and a shrug.
+     */
+    static String describe(Throwable e) {
+        var msg = e.getMessage();
+        if (msg != null && !msg.isBlank()) return msg;
+        Throwable cause = e;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+            var m = cause.getMessage();
+            if (m != null && !m.isBlank()) {
+                return cause.getClass().getSimpleName() + ": " + m;
+            }
+        }
+        var where = "";
+        var trace = cause.getStackTrace();
+        if (trace != null && trace.length > 0) {
+            where = " at " + trace[0].getClassName().replaceAll(".*\\.", "")
+                + "." + trace[0].getMethodName() + ":" + trace[0].getLineNumber();
+        }
+        return cause.getClass().getSimpleName() + " (no message)" + where;
+    }
+
+    private static Value resolveEntrypoint(Context context) {
+        var bindings = context.getBindings("js");
+        for (var name : ENTRYPOINT_NAMES) {
+            var direct = bindings.getMember(name);
+            if (direct != null && direct.canExecute()) return direct;
+        }
+        for (var holder : new String[] {"exports", "module"}) {
+            var obj = bindings.getMember(holder);
+            if (obj == null || !obj.hasMembers()) continue;
+            if ("module".equals(holder)) {
+                obj = obj.getMember("exports");
+                if (obj == null || !obj.hasMembers()) continue;
+            }
+            for (var name : ENTRYPOINT_NAMES) {
+                var fn = obj.getMember(name);
+                if (fn != null && fn.canExecute()) return fn;
+            }
+        }
+        return null;
+    }
+
+    /** Every spelling of the entrypoint this runtime will actually call. */
+    private static final String[] ENTRYPOINT_NAMES = {"invoke", "execute"};
+
+    /**
+     * Can this script's entrypoint actually be CALLED? Empty when yes.
+     *
+     * <p>Evaluates the script in a real sandbox and asks for the function — it does not
+     * call it. This is the only honest way to answer the question: a textual
+     * {@code contains("function invoke(")} says yes for a function sealed inside a
+     * closure, which is how an unusable item reached a person's hands on 2026-08-21. The
+     * file declared {@code function invoke(params)} inside
+     * {@code (function (exports) &#123; ... &#125;)(exports)} and exported only its
+     * manifest, so every textual gate passed and the runtime found nothing to call.
+     *
+     * <p>Callers that want a repairable complaint (the coding backends) use this; callers
+     * that want the cheap pre-filter keep the textual check. They must agree, and the way
+     * to make them agree is for the strict one to be the runtime itself.
+     *
+     * @return the problem, phrased for whoever has to fix it, or empty
+     */
+    public Optional<String> entrypointProblem(String itemId, String script,
+                                              ItemWorldApiProvider provider) {
+        if (script == null || script.isBlank()) {
+            return Optional.of("the file is empty — there is nothing to call.");
+        }
+        var worldApi = new ItemWorldApi(provider, ItemCapabilitySet.UNRESTRICTED);
+        try (var context = createContext(worldApi)) {
+            var timeoutThread = scheduleTimeout(context, itemId);
+            try {
+                evaluateInheritChain(context, script);
+                context.eval(Source.newBuilder("js", script, itemId + ".probe.js")
+                    .cached(false).buildLiteral());
+                if (resolveEntrypoint(context) != null) return Optional.empty();
+                return Optional.of(
+                    "the script has no CALLABLE invoke() — `use` would find nothing to run."
+                    + " A `function invoke` declared inside a wrapper such as"
+                    + " `(function (exports) { ... })(exports)` is not visible to the"
+                    + " runtime. Declare `function invoke(params) { ... }` at the TOP LEVEL"
+                    + " of the file (or assign `exports.invoke = function (params) { ... }`)"
+                    + " and have it return an object.");
+            } finally {
+                timeoutThread.interrupt();
+            }
+        } catch (Exception e) {
+            // A script that will not even evaluate is a real defect, and naming it is more
+            // use to a coder than silence. Anything stranger than that we decline to judge
+            // here — the invoke-once smoke runs later and is allowed to be INCONCLUSIVE.
+            return Optional.of("the file does not evaluate: " + e.getMessage()
+                + " — fix the syntax/top-level error before anything else.");
         }
     }
 

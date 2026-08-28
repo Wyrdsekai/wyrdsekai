@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -253,7 +254,12 @@ public final class DevinBackend implements CodingTaskBackend {
                 // the same single-.js-with-exports.manifest shape every
                 // backend must produce. See OpenHandsBackend's
                 // ITEMS_AS_TOOLS_PREAMBLE for the full rationale.
-                body.put("prompt", OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE
+                // 2026-08-16 CWD sweep: Devin deliberately KEEPS the
+                // /workspace variant — its session runs in a REMOTE cloud
+                // sandbox with its own filesystem layout, so "current
+                // working directory" wording (written for local subprocess
+                // backends) would be the misleading one here.
+                body.put("prompt", OpenHandsBackend.itemsAsToolsPreamble(ItemCapabilitySet.craftedDefault())
                     + "\n\n--- TASK ---\n" + spec.description());
             }
             if (spec.taskType() != null) body.put("task_type", spec.taskType());
@@ -382,9 +388,12 @@ public final class DevinBackend implements CodingTaskBackend {
      */
     private List<CodingArtifact> parseArtifacts(
             UUID taskId, TaskSpec spec, JsonNode terminal, String sessionId) {
-        var workspace = spec != null && spec.workspaceHint() != null
-            ? spec.workspaceHint()
-            : System.getProperty("user.dir", ".");
+        // The workspace REPORTED on the artifact is what CodingTaskItemBridge scans for
+        // the item's .js. Falling back to the process directory pointed that scan at the
+        // install root on a packaged node — the same defect as running there.
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null,
+            taskId == null ? null : taskId.toString());
 
         var files = new ArrayList<String>();
         if (terminal != null) {

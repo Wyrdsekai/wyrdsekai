@@ -10,6 +10,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * capability enforcement, without spawning ssh. A
@@ -113,7 +114,7 @@ final class NetworkCapabilityTest {
 
     @Test
     void household_copy_uses_bus_not_gate() {
-        var transport = new java.util.concurrent.atomic.AtomicReference<String>();
+        var transport = new AtomicReference<String>();
         NetworkCapability.HouseholdTransport bus = (node, lp, rp) -> {
             transport.set(node);
             return NetworkCapability.HouseholdTransport.Result.success(rp);

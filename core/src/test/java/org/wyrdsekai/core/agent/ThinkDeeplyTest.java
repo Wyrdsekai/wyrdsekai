@@ -103,7 +103,7 @@ class ThinkDeeplyTest {
     @Test void parse_think_deeply_does_not_override_earlier_action() {
         var input = """
             ```json
-            {"action": "zone_command", "command": "codeplane.status", "payload": {}}
+            {"action": "zone_command", "command": "codezaiku.status", "payload": {}}
             ```
             ```json
             {"action": "think_deeply", "capability": "reasoning", "prompt": "Analyze this."}

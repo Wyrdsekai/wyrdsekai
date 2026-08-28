@@ -50,9 +50,88 @@ public final class ZoneTopology {
 
     public static ZoneTopology getShared() { return INSTANCE; }
 
-    public static void setShared(ZoneTopology topology) { INSTANCE = topology; }
+    /**
+     * Rooms that announced themselves before the topology existed.
+     *
+     * <p>Boot order is: ZoneGuardian starts and every persisted room actor recovers, and
+     * only later does {@code Main} build and publish the topology. So the rooms teaching
+     * the map about themselves were all talking to a null INSTANCE and being dropped —
+     * which is why, after the fix that was supposed to make a companion-made room appear,
+     * the map still rendered it {@code ->[?]} across a restart. Held here and merged in.
+     */
+    private static final Map<String, RoomNode> PENDING = new LinkedHashMap<>();
 
-    public static void resetForTests() { INSTANCE = null; }
+    public static synchronized void setShared(ZoneTopology topology) {
+        if (topology != null && !PENDING.isEmpty()) {
+            var map = new HashMap<>(topology.rooms);
+            // The seeds win on conflict — a foundation room's canonical exits are better
+            // than whatever a mid-recovery snapshot happened to hold.
+            PENDING.forEach(map::putIfAbsent);
+            PENDING.clear();
+            INSTANCE = new ZoneTopology(map);
+            return;
+        }
+        INSTANCE = topology;
+    }
+
+    /**
+     * Teach the shared topology about a room that did not exist at boot.
+     *
+     * <h2>Why the map showed a question mark</h2>
+     * {@code Main} builds this once, from the hardcoded foundation seeds, and the class
+     * comment has always said it is "rebuilt on topology mutations by whoever holds the
+     * ref" — nobody ever did. So a room the companion made was walkable, had furnishings
+     * and had a way back, and the map still rendered it
+     * {@code ├── to-venture-briefing-room-1931->[?]}: an unnamed destination reached by a
+     * one-way arrow, because the topology had never heard of it. Live 2026-08-22, after
+     * the steward asked whether the map updates.
+     *
+     * <p>Also registers the inbound exit on the source room, so the connection reads as
+     * two-way ({@code --}) rather than one-way ({@code ->}).
+     *
+     * <p>No-op before {@link #setShared} — during boot the seeds carry everything.
+     */
+    public static synchronized void learnRoom(String roomId, String name, String zone,
+            List<Exit> exits, String connectedFrom, String inboundDirection) {
+        if (roomId == null || roomId.isBlank()) return;
+        var current = INSTANCE;
+        if (current == null) {
+            PENDING.put(roomId, new RoomNode(roomId, name == null ? roomId : name,
+                zone == null ? "foundation" : zone,
+                exits == null ? List.of() : List.copyOf(exits)));
+            return;
+        }
+        var map = new HashMap<>(current.rooms);
+        map.put(roomId, new RoomNode(roomId, name == null ? roomId : name,
+            zone == null ? "foundation" : zone, exits == null ? List.of() : List.copyOf(exits)));
+        var source = connectedFrom == null ? null : map.get(connectedFrom);
+        if (source != null && inboundDirection != null && !inboundDirection.isBlank()
+                && source.exits().stream().noneMatch(e -> roomId.equals(e.targetRoom()))) {
+            var widened = new ArrayList<>(source.exits());
+            widened.add(new Exit(inboundDirection, roomId, name));
+            map.put(connectedFrom, new RoomNode(source.roomId(), source.name(),
+                source.zone(), List.copyOf(widened)));
+        }
+        INSTANCE = new ZoneTopology(map);
+    }
+
+    /** Teach the shared topology about an exit added after boot. */
+    public static synchronized void learnExit(String sourceRoomId, String direction,
+            String targetRoom, String label) {
+        var current = INSTANCE;
+        if (current == null || sourceRoomId == null || targetRoom == null) return;
+        var source = current.rooms.get(sourceRoomId);
+        if (source == null) return;
+        if (source.exits().stream().anyMatch(e -> targetRoom.equals(e.targetRoom()))) return;
+        var map = new HashMap<>(current.rooms);
+        var widened = new ArrayList<>(source.exits());
+        widened.add(new Exit(direction, targetRoom, label));
+        map.put(sourceRoomId, new RoomNode(source.roomId(), source.name(),
+            source.zone(), List.copyOf(widened)));
+        INSTANCE = new ZoneTopology(map);
+    }
+
+    public static synchronized void resetForTests() { INSTANCE = null; PENDING.clear(); }
 
     /** Build from room ID, name, zone, and exit lists. */
     public static ZoneTopology build(List<RoomSeed> seeds) {

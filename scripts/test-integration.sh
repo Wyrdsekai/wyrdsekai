@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
 #
-# Cross-project integration tests: Wyrdsekai ↔ CodePlane zone bridge.
+# Cross-project integration tests: Wyrdsekai ↔ CodeZaiku zone bridge.
 #
-# Tests the full round-trip: player command → Wyrdsekai → zone bridge → CodePlane → response.
+# Tests the full round-trip: player command → Wyrdsekai → zone bridge → CodeZaiku → response.
 # Supports local (same machine) and cross-machine (home-server→gpu-host) topologies.
 #
 # Usage:
 #   ./scripts/test-integration.sh --protocol-only
 #       Zone bridge protocol tests only (no external services needed)
 #
-#   ./scripts/test-integration.sh --codeplane-url=http://gpu-host:8080
-#       Full integration against a running CodePlane instance
+#   ./scripts/test-integration.sh --codezaiku-url=http://gpu-host:8080
+#       Full integration against a running CodeZaiku instance
 #
-#   ./scripts/test-integration.sh --wyrdsekai-url=http://home-server:7070 --codeplane-url=http://gpu-host:8080
-#       Cross-machine: test runs here, Wyrdsekai on home-server, CodePlane on gpu-host
+#   ./scripts/test-integration.sh --wyrdsekai-url=http://home-server:7070 --codezaiku-url=http://gpu-host:8080
+#       Cross-machine: test runs here, Wyrdsekai on home-server, CodeZaiku on gpu-host
 #
 #   ./scripts/test-integration.sh
-#       Auto-detect: local Wyrdsekai (TestServerBootstrap), CodePlane at ../codeplane or ~/src/codeplane
+#       Auto-detect: local Wyrdsekai (TestServerBootstrap), CodeZaiku at ../codezaiku or ~/src/codezaiku
 #
 # Environment variables (override flags):
 #   WYRDSEKAI_URL       — base URL of running Wyrdsekai server
-#   CODEPLANE_URL       — base URL of running CodePlane server
-#   CODEPLANE_DIR       — path to CodePlane repo (for auto-start)
-#   INTEGRATION_WORKSPACE — workspace path for codeplane.create tests (default: temp dir)
+#   CODEZAIKU_URL       — base URL of running CodeZaiku server
+#   CODEZAIKU_DIR       — path to CodeZaiku repo (for auto-start)
+#   INTEGRATION_WORKSPACE — workspace path for codezaiku.create tests (default: temp dir)
 #
 # Requirements:
 #   - Java 21+ (for Gradle)
 #   - Wyrdsekai built (./gradlew :server:jar) — unless WYRDSEKAI_URL set
-#   - CodePlane running — unless --protocol-only
+#   - CodeZaiku running — unless --protocol-only
 #
 
 set -euo pipefail
@@ -38,18 +38,18 @@ cd "$PROJECT_DIR"
 
 # --- Configuration (env vars as defaults, flags override) ---
 WYRDSEKAI_URL="${WYRDSEKAI_URL:-}"
-CODEPLANE_URL="${CODEPLANE_URL:-}"
-CODEPLANE_DIR="${CODEPLANE_DIR:-}"
+CODEZAIKU_URL="${CODEZAIKU_URL:-}"
+CODEZAIKU_DIR="${CODEZAIKU_DIR:-}"
 INTEGRATION_WORKSPACE="${INTEGRATION_WORKSPACE:-}"
 PROTOCOL_ONLY=false
-CODEPLANE_PID=""
+CODEZAIKU_PID=""
 
 # --- Parse args ---
 for arg in "$@"; do
     case "$arg" in
         --wyrdsekai-url=*) WYRDSEKAI_URL="${arg#*=}" ;;
-        --codeplane-dir=*) CODEPLANE_DIR="${arg#*=}" ;;
-        --codeplane-url=*) CODEPLANE_URL="${arg#*=}" ;;
+        --codezaiku-dir=*) CODEZAIKU_DIR="${arg#*=}" ;;
+        --codezaiku-url=*) CODEZAIKU_URL="${arg#*=}" ;;
         --workspace=*)     INTEGRATION_WORKSPACE="${arg#*=}" ;;
         --protocol-only)   PROTOCOL_ONLY=true ;;
         --help|-h)
@@ -73,11 +73,11 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*"; }
 
 cleanup() {
-    if [ -n "$CODEPLANE_PID" ] && kill -0 "$CODEPLANE_PID" 2>/dev/null; then
-        info "Stopping CodePlane (PID $CODEPLANE_PID)..."
-        kill "$CODEPLANE_PID" 2>/dev/null || true
-        wait "$CODEPLANE_PID" 2>/dev/null || true
-        ok "CodePlane stopped"
+    if [ -n "$CODEZAIKU_PID" ] && kill -0 "$CODEZAIKU_PID" 2>/dev/null; then
+        info "Stopping CodeZaiku (PID $CODEZAIKU_PID)..."
+        kill "$CODEZAIKU_PID" 2>/dev/null || true
+        wait "$CODEZAIKU_PID" 2>/dev/null || true
+        ok "CodeZaiku stopped"
     fi
     # Clean up temp workspace if we created one
     if [ -n "$_TEMP_WORKSPACE" ] && [ -d "$_TEMP_WORKSPACE" ]; then
@@ -86,7 +86,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Workspace for codeplane.create tests ---
+# --- Workspace for codezaiku.create tests ---
 if [ -z "$INTEGRATION_WORKSPACE" ]; then
     _TEMP_WORKSPACE="$(mktemp -d)"
     INTEGRATION_WORKSPACE="$_TEMP_WORKSPACE"
@@ -117,97 +117,97 @@ fi
 
 if [ "$PROTOCOL_ONLY" = true ]; then
     echo ""
-    ok "Protocol-only mode — skipping CodePlane integration"
+    ok "Protocol-only mode — skipping CodeZaiku integration"
     exit 0
 fi
 
-# --- Step 2: Ensure CodePlane is available ---
-if [ -z "$CODEPLANE_URL" ]; then
-    # Auto-detect CodePlane repo
-    if [ -z "$CODEPLANE_DIR" ]; then
-        for candidate in "$PROJECT_DIR/../codeplane" "$HOME/src/codeplane"; do
+# --- Step 2: Ensure CodeZaiku is available ---
+if [ -z "$CODEZAIKU_URL" ]; then
+    # Auto-detect CodeZaiku repo
+    if [ -z "$CODEZAIKU_DIR" ]; then
+        for candidate in "$PROJECT_DIR/../codezaiku" "$HOME/src/codezaiku"; do
             if [ -d "$candidate" ] && [ -f "$candidate/gradlew" ]; then
-                CODEPLANE_DIR="$(cd "$candidate" && pwd)"
+                CODEZAIKU_DIR="$(cd "$candidate" && pwd)"
                 break
             fi
         done
     fi
 
-    if [ -z "$CODEPLANE_DIR" ]; then
-        warn "CodePlane not found. Tried ../codeplane and ~/src/codeplane"
-        warn "Use --codeplane-url=URL or --codeplane-dir=PATH"
-        warn "Skipping CodePlane integration tests"
+    if [ -z "$CODEZAIKU_DIR" ]; then
+        warn "CodeZaiku not found. Tried ../codezaiku and ~/src/codezaiku"
+        warn "Use --codezaiku-url=URL or --codezaiku-dir=PATH"
+        warn "Skipping CodeZaiku integration tests"
         exit 0
     fi
 
-    info "Found CodePlane at: $CODEPLANE_DIR"
+    info "Found CodeZaiku at: $CODEZAIKU_DIR"
 
     # Build if needed
-    if ! ls "$CODEPLANE_DIR"/core/build/libs/*.jar >/dev/null 2>&1; then
-        info "Building CodePlane..."
-        (cd "$CODEPLANE_DIR" && ./gradlew :core:jar -q 2>&1) || {
-            fail "CodePlane build failed"
+    if ! ls "$CODEZAIKU_DIR"/core/build/libs/*.jar >/dev/null 2>&1; then
+        info "Building CodeZaiku..."
+        (cd "$CODEZAIKU_DIR" && ./gradlew :core:jar -q 2>&1) || {
+            fail "CodeZaiku build failed"
             exit 1
         }
     fi
 
-    # Determine which Wyrdsekai URL CodePlane should connect to
+    # Determine which Wyrdsekai URL CodeZaiku should connect to
     CP_WYRDSEKAI_TARGET="${WYRDSEKAI_URL:-http://localhost:7070}"
 
-    # Start CodePlane
-    CODEPLANE_PORT="${CODEPLANE_PORT:-9090}"
-    info "Starting CodePlane on port $CODEPLANE_PORT, zone bridge → $CP_WYRDSEKAI_TARGET..."
-    (cd "$CODEPLANE_DIR" && \
+    # Start CodeZaiku
+    CODEZAIKU_PORT="${CODEZAIKU_PORT:-9090}"
+    info "Starting CodeZaiku on port $CODEZAIKU_PORT, zone bridge → $CP_WYRDSEKAI_TARGET..."
+    (cd "$CODEZAIKU_DIR" && \
         WYRDSEKAI_URL="$CP_WYRDSEKAI_TARGET" \
-        CODEPLANE_PORT="$CODEPLANE_PORT" \
+        CODEZAIKU_PORT="$CODEZAIKU_PORT" \
         ./gradlew :core:run -q 2>&1 &)
-    CODEPLANE_PID=$!
+    CODEZAIKU_PID=$!
 
-    CODEPLANE_URL="http://localhost:$CODEPLANE_PORT"
-    info "Waiting for CodePlane health at $CODEPLANE_URL..."
+    CODEZAIKU_URL="http://localhost:$CODEZAIKU_PORT"
+    info "Waiting for CodeZaiku health at $CODEZAIKU_URL..."
     for i in $(seq 1 60); do
-        if curl -sf "$CODEPLANE_URL/health" > /dev/null 2>&1; then
-            ok "CodePlane ready after ${i}s"
+        if curl -sf "$CODEZAIKU_URL/health" > /dev/null 2>&1; then
+            ok "CodeZaiku ready after ${i}s"
             break
         fi
         if [ "$i" -eq 60 ]; then
-            fail "CodePlane failed to start within 60s"
+            fail "CodeZaiku failed to start within 60s"
             exit 1
         fi
         sleep 1
     done
 else
-    info "Using running CodePlane at: $CODEPLANE_URL"
-    if ! curl -sf "$CODEPLANE_URL/health" > /dev/null 2>&1; then
-        fail "CodePlane at $CODEPLANE_URL is not responding"
+    info "Using running CodeZaiku at: $CODEZAIKU_URL"
+    if ! curl -sf "$CODEZAIKU_URL/health" > /dev/null 2>&1; then
+        fail "CodeZaiku at $CODEZAIKU_URL is not responding"
         exit 1
     fi
-    ok "CodePlane healthy"
+    ok "CodeZaiku healthy"
 fi
 
 # --- Step 3: Run full integration tests ---
 echo ""
 echo "============================================"
-echo "  Integration Tests: CodePlane Round-Trip"
+echo "  Integration Tests: CodeZaiku Round-Trip"
 echo "============================================"
 echo ""
 
 info "Topology:"
 info "  Wyrdsekai:  ${WYRDSEKAI_URL:-local (TestServerBootstrap)}"
-info "  CodePlane:  $CODEPLANE_URL"
+info "  CodeZaiku:  $CODEZAIKU_URL"
 info "  Workspace:  $INTEGRATION_WORKSPACE"
 echo ""
 
-info "Running CodePlane integration tests..."
-export CODEPLANE_URL
+info "Running CodeZaiku integration tests..."
+export CODEZAIKU_URL
 export INTEGRATION_WORKSPACE
 [ -n "$WYRDSEKAI_URL" ] && export WYRDSEKAI_URL
 
 if ./gradlew :e2e-test:test --tests "*ZoneBridgeExternalTest" \
     -PincludeTags=integration-external --rerun -q 2>&1 | tail -15; then
-    ok "CodePlane integration tests passed"
+    ok "CodeZaiku integration tests passed"
 else
-    fail "CodePlane integration tests failed"
+    fail "CodeZaiku integration tests failed"
     exit 1
 fi
 
@@ -218,6 +218,6 @@ echo "  All Integration Tests Passed"
 echo "============================================"
 echo ""
 ok "Zone bridge protocol: PASS"
-ok "CodePlane round-trip: PASS"
-info "Topology: ${WYRDSEKAI_URL:-local} ↔ $CODEPLANE_URL"
+ok "CodeZaiku round-trip: PASS"
+info "Topology: ${WYRDSEKAI_URL:-local} ↔ $CODEZAIKU_URL"
 echo ""

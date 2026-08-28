@@ -1112,6 +1112,7 @@
   "dispatch.spoken.no_backend": "工房のバックエンドが入っていないので、それは依頼できない。`wyrd coding install goose` で導入できる。",
   "dispatch.spoken.plan": "それを工房に持っていく：{0}。{1} に任せて、終わったら報告する。",
   "dispatch.spoken.done": "工房の作業が完了した：{0}",
+  "dispatch.spoken.already_underway": "その作業はもう進めている：{0}。二度始めずに、戻ってきたら報告する。",
   "dispatch.spoken.not_done": "工房の作業は {0} で終わった：{1}",
   "dispatch.spoken.failed": "工房への依頼が失敗した——{0}：{1}",
   "dispatch.log.dispatched": "[dispatch_task] {1} に送信：{0}",

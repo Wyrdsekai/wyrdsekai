@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.wyrdsekai.core.agent.ActionToolBuilder;
 
 /**
  * The tools path — which no test covered, which is why a prose-only bunshin
@@ -38,7 +39,7 @@ class BunshinToolExecutionTest {
     private static final String PROMPT = "You are Wyrd.";
 
     private static final List<InferenceClient.ToolDefinition> TOOLS =
-        org.wyrdsekai.core.agent.ActionToolBuilder.buildFromNames(List.of("create_room"));
+        ActionToolBuilder.buildFromNames(List.of("create_room"));
 
     private static Behavior<InferenceRouter.Command> scripted(List<String> turns) {
         return Behaviors.setup(ctx -> {

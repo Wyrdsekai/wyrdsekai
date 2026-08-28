@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.core.inference.LocalInferenceEndpoint;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigException;
 
@@ -54,8 +55,43 @@ public record OpenCodeRuntimeConfig(
     String apiKey,
     int maxFilesPerTask,
     Duration maxWallclock,
-    List<String> extraFlags
+    List<String> extraFlags,
+    boolean baseUrlFromConfig,
+    boolean modelFromConfig
 ) {
+    /**
+     * Back-compat shape. A value that equals the compiled-in default is NOT a choice —
+     * it is what every caller passed before this distinction existed, including
+     * {@code defaults()} — so it stays free to follow the node's real inference.
+     * Anything else passed explicitly is a deliberate act and is honoured as one.
+     */
+    public OpenCodeRuntimeConfig(boolean enabled, String executablePath, String baseUrl, String model, String providerName, String apiKey, int maxFilesPerTask, Duration maxWallclock, List<String> extraFlags) {
+        this(enabled, executablePath, baseUrl, model, providerName, apiKey, maxFilesPerTask, maxWallclock, extraFlags,
+            baseUrl != null && !baseUrl.isBlank() && !DEFAULT_BASE_URL.equals(baseUrl),
+            model != null && !model.isBlank() && !DEFAULT_MODEL.equals(model));
+    }
+
+    /**
+     * The endpoint to actually use: what the operator configured, else what this node
+     * serves right now, else the compiled-in default.
+     *
+     * <p>The compiled-in default is one machine's port layout. Staged fresh on
+     * 2026-08-21 it sent the backend to a port with nothing on it while the install had
+     * already found the real model one port over — see {@code LocalInferenceEndpoint}.
+     */
+    public String effectiveBaseUrl() {
+        if (baseUrlFromConfig) return baseUrl;
+        return LocalInferenceEndpoint.resolve().map(e -> e.url() + "/v1")
+            .orElse(baseUrl);
+    }
+
+    /** The model id to send: configured, else what the live server reports. */
+    public String effectiveModel() {
+        if (modelFromConfig) return model;
+        return LocalInferenceEndpoint.resolve().map(LocalInferenceEndpoint.Endpoint::modelId)
+            .orElse(model);
+    }
+
 
     /** Stable name of the typesafe-config root for this backend. */
     public static final String CONFIG_ROOT = "wyrdsekai.coding.backends.opencode";
@@ -145,7 +181,31 @@ public record OpenCodeRuntimeConfig(
 
         return new OpenCodeRuntimeConfig(
             enabled, exec, url, model, provider, apiKey,
-            maxFiles, Duration.ofMinutes(maxMin), flags);
+            maxFiles, Duration.ofMinutes(maxMin), flags,
+            chosen(url, DEFAULT_BASE_URL),
+            chosenModel(model));
+    }
+
+
+    /**
+     * Was this value CHOSEN, or merely present? reference.conf ships inside the jar and
+     * is merged into every load, so hasPath() is true for packaged defaults on every
+     * node — staged 2026-08-21, that pinned a fresh install to one machine's port
+     * layout ("http://localhost:8200/v1") while the node's only model sat one port
+     * over. A value that equals the compiled default (ignoring a /v1 suffix and
+     * trailing slash) is a default wherever it was written.
+     */
+    private static boolean chosen(String value, String compiledDefault) {
+        if (value == null || value.isBlank()) return false;
+        return !normalise(value).equals(normalise(compiledDefault));
+    }
+
+    private static boolean chosenModel(String value) {
+        return value != null && !value.isBlank() && !DEFAULT_MODEL.equals(value);
+    }
+
+    private static String normalise(String url) {
+        return url == null ? "" : url.replaceAll("/v1/?$", "").replaceAll("/$", "");
     }
 
     private static String readString(Config c, String key, String fallback) {

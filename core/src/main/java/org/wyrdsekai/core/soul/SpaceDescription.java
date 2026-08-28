@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * Describes the dimensionality and bounds of a search space.
- * Local copy compatible with CodePlane's SpaceDescription.
+ * Local copy compatible with CodeZaiku's SpaceDescription.
  *
  * @param name           Space name
  * @param dimensions     Parameter dimensions

@@ -164,27 +164,53 @@ class VitalitySpikeRulesTest {
     }
 
     @Nested
-    class CombinatorialClamping {
+    class CombinatorialFloors {
         @Test
-        void simultaneousLonelinessAmaeSaudadeAffiliationStaysClamped() {
-            // Three tanks all spike AFFILIATION: lonely(+0.3) + amae(+0.2) + saudade(+0.3) = +0.8.
-            // Starting from 0.5, sum = 1.3 — must clamp to 1.0.
+        void simultaneousTanksSumIntoOneFloorAndNeverExceedOne() {
+            // Three tanks all spike AFFILIATION: lonely(+0.3) + amae(+0.2) + saudade(+0.3).
+            // They sum into a single 0.8 FLOOR (not three additions), and the result is
+            // bounded by 1.0 however many tanks pile on.
             var v = VitalityState.initial()
                 .withLoneliness(0.8).withAmae(0.8).withSaudade(0.8);
-            var d0 = DriveState.initial().spikeAffiliation(0.5);
-            var d1 = VitalitySpikeRules.apply(v, d0);
+            var d1 = VitalitySpikeRules.apply(v, DriveState.initial().spikeAffiliation(0.5));
+            assertThat(d1.affiliation()).isCloseTo(0.8, within(1e-6));
             assertThat(d1.affiliation()).isLessThanOrEqualTo(1.0);
-            assertThat(d1.affiliation()).isCloseTo(1.0, within(1e-6));
         }
 
         @Test
-        void highCareSpikesPlusObligationAndHarmonySumAndClamp() {
-            // Starting CARE 0.6, obligation(+0.3), harmony(+0.2) = 1.1, clamp to 1.0.
+        void aDriveAlreadyAboveItsFloorIsLeftAlone() {
+            // CARE at 0.6 with obligation(+0.3) + harmony(+0.2) = a 0.5 floor: already
+            // satisfied, so the drive is untouched. Before 2026-08-17 the contributions
+            // were ADDED every tick, which walked any drive under a standing tank to 1.0
+            // and re-pinned it there — no relief could hold and the drive lost its
+            // gradient (the pathology the 2026-06 grief/affiliation arcs also fought).
             var v = VitalityState.initial().withObligation(0.7).withHarmony(0.7);
-            var d0 = DriveState.initial().spikeCare(0.6);
-            var d1 = VitalitySpikeRules.apply(v, d0);
-            assertThat(d1.care()).isLessThanOrEqualTo(1.0);
-            assertThat(d1.care()).isCloseTo(1.0, within(1e-6));
+            var d1 = VitalitySpikeRules.apply(v, DriveState.initial().spikeCare(0.6));
+            assertThat(d1.care()).isCloseTo(0.6, within(1e-6));
+        }
+
+        @Test
+        void repeatedApplicationIsIdempotent() {
+            // The rules run on EVERY vitality tick while a tank sits above threshold, so
+            // applying them 600 times (ten minutes of ticks) must land exactly where one
+            // application does.
+            var v = VitalityState.initial().withRestlessness(0.8).withStagnation(0.8);
+            var once = VitalitySpikeRules.apply(v, DriveState.initial());
+            var many = DriveState.initial();
+            for (int i = 0; i < 600; i++) many = VitalitySpikeRules.apply(v, many);
+            assertThat(many.toArray()).containsExactly(once.toArray());
+            assertThat(many.seeking()).isCloseTo(0.5, within(1e-6));   // 0.3 + 0.2, not 1.0
+        }
+
+        @Test
+        void reliefHoldsAtTheFloorWhileTheTankStaysHigh() {
+            // Relief drops SEEKING to its 0.05 relief floor; the standing tank lifts it
+            // back only to the spike floor, not to the ceiling — so the next tick has a
+            // gradient to act on instead of a pin.
+            var v = VitalityState.initial().withRestlessness(0.8);
+            var relieved = DriveState.initial().spikeSeeking(1.0).relieve(DriveConfig.SEEKING, 0.05);
+            var after = VitalitySpikeRules.apply(v, relieved);
+            assertThat(after.seeking()).isCloseTo(0.3, within(1e-6));
         }
 
         @Test

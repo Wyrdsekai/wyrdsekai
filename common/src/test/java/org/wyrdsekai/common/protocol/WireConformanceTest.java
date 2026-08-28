@@ -146,13 +146,13 @@ class WireConformanceTest {
             assertThat(p.blocks()).hasSize(2);
 
             var diffBlock = p.blocks().getFirst();
-            assertThat(diffBlock.format()).isEqualTo("codeplane.diff");
+            assertThat(diffBlock.format()).isEqualTo("codezaiku.diff");
             assertThat(diffBlock.fallback()).isEqualTo("auth.js: +12 -5 lines changed");
             assertThat(diffBlock.data().get("filePath").asText()).isEqualTo("auth.js");
             assertThat(diffBlock.data().get("additions").asInt()).isEqualTo(12);
 
             var costBlock = p.blocks().get(1);
-            assertThat(costBlock.format()).isEqualTo("codeplane.cost");
+            assertThat(costBlock.format()).isEqualTo("codezaiku.cost");
             assertThat(costBlock.data().get("tokensIn").asInt()).isEqualTo(4200);
         }
 
@@ -194,7 +194,7 @@ class WireConformanceTest {
             assertThat(msg).isInstanceOf(S2CMessage.StateChange.class);
             var sc = (S2CMessage.StateChange) msg;
             assertThat(sc.blocks()).hasSize(1);
-            assertThat(sc.blocks().getFirst().format()).isEqualTo("codeplane.board_card");
+            assertThat(sc.blocks().getFirst().format()).isEqualTo("codezaiku.board_card");
         }
 
         @Test void replayDone() throws Exception {
@@ -380,7 +380,7 @@ class WireConformanceTest {
 
             assertThat(msg).isInstanceOf(C2SMessage.Command.class);
             var cmd = (C2SMessage.Command) msg;
-            assertThat(cmd.command()).isEqualTo("codeplane.approve");
+            assertThat(cmd.command()).isEqualTo("codezaiku.approve");
             assertThat(cmd.payload()).containsEntry("eventId", "evt-42");
             assertThat(cmd.payload()).containsEntry("decision", "approve");
         }
@@ -430,7 +430,7 @@ class WireConformanceTest {
             var data = mapper.createObjectNode()
                 .put("filePath", "auth.js")
                 .put("additions", 12);
-            var block = new ContentBlock("codeplane.diff", data, "auth.js: +12 lines");
+            var block = new ContentBlock("codezaiku.diff", data, "auth.js: +12 lines");
             var msg = new S2CMessage.Prose(1, "Agent", "Review done",
                 List.of(), null, "normal", "en", true, List.of(block));
 
@@ -438,31 +438,31 @@ class WireConformanceTest {
             var result = (S2CMessage.Prose) mapper.readValue(json, S2CMessage.class);
 
             assertThat(result.blocks()).hasSize(1);
-            assertThat(result.blocks().getFirst().format()).isEqualTo("codeplane.diff");
+            assertThat(result.blocks().getFirst().format()).isEqualTo("codezaiku.diff");
             assertThat(result.blocks().getFirst().data().get("filePath").asText()).isEqualTo("auth.js");
         }
 
         @Test void commandWithPayloadRoundtrip() throws Exception {
-            var msg = new C2SMessage.Command("cmd-1", "codeplane.approve",
+            var msg = new C2SMessage.Command("cmd-1", "codezaiku.approve",
                 List.of(), Map.of("eventId", "evt-42", "decision", "approve"));
 
             var json = mapper.writeValueAsString(msg);
             var result = (C2SMessage.Command) mapper.readValue(json, C2SMessage.class);
 
-            assertThat(result.command()).isEqualTo("codeplane.approve");
+            assertThat(result.command()).isEqualTo("codezaiku.approve");
             assertThat(result.payload()).containsEntry("eventId", "evt-42");
         }
 
         @Test void stateChangeWithBlocksRoundtrip() throws Exception {
             var data = mapper.createObjectNode().put("status", "done");
-            var block = new ContentBlock("codeplane.board_card", data, "Card done");
+            var block = new ContentBlock("codezaiku.board_card", data, "Card done");
             var msg = new S2CMessage.StateChange(5, "Board updated", null, List.of(block));
 
             var json = mapper.writeValueAsString(msg);
             var result = (S2CMessage.StateChange) mapper.readValue(json, S2CMessage.class);
 
             assertThat(result.blocks()).hasSize(1);
-            assertThat(result.blocks().getFirst().format()).isEqualTo("codeplane.board_card");
+            assertThat(result.blocks().getFirst().format()).isEqualTo("codezaiku.board_card");
         }
 
         @Test void allC2STypesRoundtrip() throws Exception {

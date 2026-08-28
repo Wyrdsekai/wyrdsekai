@@ -5,11 +5,11 @@ import java.util.Random;
 
 /**
  * Generic search space interface for evolutionary exploration.
- * Local copy compatible with CodePlane's org.codeplane.core.evolution.SearchSpace.
+ * Local copy compatible with CodeZaiku's org.codezaiku.core.evolution.SearchSpace.
  *
- * Wyrdsekai and CodePlane are sibling projects that cannot directly depend
- * on each other. This local interface mirrors CodePlane's contract so that
- * SoulSearchSpace can be used with CodePlane's SearchRunner when both
+ * Wyrdsekai and CodeZaiku are sibling projects that cannot directly depend
+ * on each other. This local interface mirrors CodeZaiku's contract so that
+ * SoulSearchSpace can be used with CodeZaiku's SearchRunner when both
  * projects are present. The type signatures are identical.
  *
  * @param <P> Parameter type (the "genome" -- what gets evolved)

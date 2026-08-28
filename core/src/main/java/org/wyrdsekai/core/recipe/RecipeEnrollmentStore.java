@@ -40,10 +40,21 @@ public final class RecipeEnrollmentStore {
 
     /** Upsert by (recipe_id, agent_did). */
     public void upsert(RecipeEnrollment e) {
+        // agent_did_key is written EXPLICITLY, not left to its '' default plus the
+        // sync trigger. With the default, the INSERT never conflicts — '' is unique —
+        // so the row lands and the AFTER INSERT trigger then rewrites the key to the
+        // DID, colliding with the row already there. The conflict is manufactured after
+        // the insert succeeds, which is too late for ON CONFLICT to see it, so the whole
+        // statement aborts with SQLITE_CONSTRAINT_PRIMARYKEY and the upsert silently
+        // does nothing. Live on a household node every boot since the table was created
+        // (found 2026-08-18): four warnings a start, and no enrollment could ever be
+        // updated in place — gap keys added by a later release would never reach an
+        // existing install. Setting the key up front makes the conflict happen at insert
+        // time, where the ON CONFLICT clause can handle it.
         var sql = "INSERT INTO recipe_enrollments ("
-            + " recipe_id, agent_did, cadence_tier, consecutive_successes,"
-            + " enrolled_at, enabled, gap_keys)"
-            + " VALUES (?,?,?,?,?,?,?)"
+            + " recipe_id, agent_did, agent_did_key, cadence_tier,"
+            + " consecutive_successes, enrolled_at, enabled, gap_keys)"
+            + " VALUES (?,?,?,?,?,?,?,?)"
             + " ON CONFLICT(recipe_id, agent_did_key) DO UPDATE SET"
             + "   cadence_tier          = excluded.cadence_tier,"
             + "   consecutive_successes = excluded.consecutive_successes,"
@@ -55,11 +66,12 @@ public final class RecipeEnrollmentStore {
                 st.setString(1, e.recipeId());
                 if (e.agentDid() == null) st.setNull(2, Types.VARCHAR);
                 else st.setString(2, e.agentDid());
-                st.setString(3, e.cadenceTier().name());
-                st.setInt(4, e.consecutiveSuccesses());
-                st.setLong(5, e.enrolledAt().toEpochMilli());
-                st.setInt(6, e.enabled() ? 1 : 0);
-                st.setString(7, String.join(",", e.gapKeys()));
+                st.setString(3, e.agentDid() == null ? "" : e.agentDid());
+                st.setString(4, e.cadenceTier().name());
+                st.setInt(5, e.consecutiveSuccesses());
+                st.setLong(6, e.enrolledAt().toEpochMilli());
+                st.setInt(7, e.enabled() ? 1 : 0);
+                st.setString(8, String.join(",", e.gapKeys()));
                 st.executeUpdate();
             }
         } catch (SQLException ex) {

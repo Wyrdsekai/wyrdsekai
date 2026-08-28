@@ -34,10 +34,12 @@ import org.wyrdsekai.core.household.MaintenanceService;
 import org.wyrdsekai.core.household.ParentalControlService;
 import org.wyrdsekai.core.issue.Issue;
 import org.wyrdsekai.core.issue.IssueService;
+import org.wyrdsekai.core.item.CarriedItemUse;
 import org.wyrdsekai.core.item.EquipmentService;
 import org.wyrdsekai.core.item.ItemProviderRegistry;
 import org.wyrdsekai.core.item.ToolItemStarterKit;
 import org.wyrdsekai.core.item.HomeOwnerItemProvider;
+import org.wyrdsekai.core.item.HouseholdItemContent;
 import org.wyrdsekai.core.item.ItemScriptResponse;
 import org.wyrdsekai.core.item.StudyFurnishingKit;
 import org.wyrdsekai.core.item.VisitorItemProvider;
@@ -48,6 +50,8 @@ import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.WardService;
 import org.wyrdsekai.core.room.ExamineLookup;
 import org.wyrdsekai.core.room.RenameService;
+import org.wyrdsekai.core.item.ItemRetirement;
+import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.room.RoomCommand;
 import org.wyrdsekai.common.model.Exit;
 import org.wyrdsekai.core.room.RoomRegistry;
@@ -1204,6 +1208,12 @@ public class WyrdShellCommand implements Command {
                 }
             }
 
+            case ParsedCommand.Retire retire -> {
+                if (checkWard(currentRoomId, "drop")) {
+                    handleRetire(retire.objectName());
+                }
+            }
+
             case ParsedCommand.Use use -> {
                 if (checkWard(currentRoomId, "use")) {
                     if (tryInvokeCarriedScript(use.objectName(), use.target())) break;
@@ -1441,14 +1451,34 @@ public class WyrdShellCommand implements Command {
             case ParsedCommand.Stand _ -> handleStand();
 
             case ParsedCommand.Unknown unknown -> {
-                try {
-                    sendLine("Didn't catch that. Try: say <text>  —  :action  —  go <dir-or-room>  —  actions  —  help");
-                } catch (IOException ignored) {}
+                // MUD convention: typing an exit's name IS movement. The
+                // `exits` list advertises keys like `to-greenhouse-2063`, and
+                // bouncing that same token with "didn't catch that" makes the
+                // room's own signage a lie (live, 2026-08-15). Single tokens
+                // get one chance to resolve as an exit before the hint;
+                // multi-word destinations still go through `go <room>`.
+                var bare = unknown.text() == null ? "" : unknown.text().trim();
+                if (!bare.isEmpty() && !bare.contains(" ")) {
+                    handleGo(bare, this::sendUnknownHint);
+                } else {
+                    sendUnknownHint();
+                }
             }
         }
     }
 
+    private void sendUnknownHint() {
+        try {
+            sendLine("Didn't catch that. Try: say <text>  —  :action  —  go <dir-or-room>  —  actions  —  help");
+        } catch (IOException ignored) {}
+    }
+
     private void handleGo(String direction) {
+        handleGo(direction, null);
+    }
+
+    /** @param onNoExit what to say when nothing resolves — null = the standard no-exit line */
+    private void handleGo(String direction, Runnable onNoExit) {
         var room = RoomRegistry.get().ref(currentRoomId);
         Rooms.<RoomResponse>ask(room,
             ref -> new RoomCommand.LookRoom(playerId, ref),
@@ -1474,6 +1504,10 @@ public class WyrdShellCommand implements Command {
                 }
             }
             if (exit.isEmpty()) {
+                if (onNoExit != null) {
+                    onNoExit.run();
+                    return;
+                }
                 var catalog = ScriptMessageCatalog.forLang(locale);
                 sessionRef.tell(new ClientSessionActor.RoomResponseMsg(
                     new RoomResponse.Rejected("no_exit", catalog.get("telnet.no_exit")), "go"));
@@ -1494,6 +1528,17 @@ public class WyrdShellCommand implements Command {
 
         var fromRoom = RoomRegistry.get().ref(currentRoomId);
         var toRoom = RoomRegistry.get().ref(targetRoomId);
+        // Never LEAVE before the destination is real — an exit can outlive
+        // its room's actor, and leaving first strands the session (same
+        // guard as the WS path, 2026-08-14).
+        if (toRoom == null) {
+            log.warn("SSH move rejected: no actor for target room {} (from {})",
+                targetRoomId, currentRoomId);
+            var catalog = ScriptMessageCatalog.forLang(locale);
+            sessionRef.tell(new ClientSessionActor.RoomResponseMsg(
+                new RoomResponse.Rejected("no_exit", catalog.get("telnet.no_exit")), "go"));
+            return;
+        }
 
         // SPEC §7.2 — when moving between rooms, carry the persisted
         // description from authService into the destination room's entity
@@ -1625,6 +1670,7 @@ public class WyrdShellCommand implements Command {
                     sendLine(catalog.get("telnet.help_tell"));
                     sendLine(catalog.get("telnet.help_take"));
                     sendLine(catalog.get("telnet.help_drop"));
+                    sendLine(catalog.get("telnet.help_retire"));
                     sendLine(catalog.get("telnet.help_use"));
                     sendLine(catalog.get("telnet.help_examine"));
                     sendLine(catalog.get("telnet.help_inventory"));
@@ -2332,26 +2378,13 @@ public class WyrdShellCommand implements Command {
      * must not fall through to room handling); {@code false} otherwise.
      */
     private boolean tryInvokeCarriedScript(String objectName, String target) {
-        if (playerId == null || objectName == null || objectName.isBlank()) return false;
-        if (inventoryService == null) return false;
-        var found = inventoryService.findByName(playerId, objectName);
-        // Arg-split fallback (second-node 2026-07-09): `use web-search-window antikythera mechanism`
-        // arrives with the WHOLE phrase as objectName, so the carried-item lookup missed and
-        // the room then rejected it (the item isn't a room object). When the full phrase
-        // doesn't match a carried item, try the first token as the item name and pass the
-        // remainder through as the script's target/args.
-        if (found.isEmpty() && objectName.contains(" ")) {
-            var sp = objectName.indexOf(' ');
-            var head = objectName.substring(0, sp);
-            var rest = objectName.substring(sp + 1).trim();
-            var headMatch = inventoryService.findByName(playerId, head);
-            if (headMatch.isPresent()) {
-                found = headMatch;
-                target = (target == null || target.isBlank()) ? rest : rest + " on " + target;
-            }
-        }
-        if (found.isEmpty() || !found.get().isScripted()) return false;
-        var item = found.get();
+        if (playerId == null) return false;
+        var resolved = CarriedItemUse.resolve(
+            inventoryService, playerId, objectName, target).orElse(null);
+        if (resolved == null) return false;
+        var item = resolved.item();
+        var scriptSource = resolved.source();
+        target = resolved.target();
         try {
             var localZone = this.localZoneId != null ? this.localZoneId
                 : System.getenv().getOrDefault("WYRDSEKAI_ZONE_ID", "home");
@@ -2379,28 +2412,20 @@ public class WyrdShellCommand implements Command {
                     final var ritual = bondRitual;
                     home.withBonds(() -> bondsView(ritual, playerId));
                 }
+                home.withHouseholdContent(HouseholdItemContent.get());
                 provider = home;
             } else {
-                provider = new VisitorItemProvider(localZone, localZone);
+                provider = new VisitorItemProvider(localZone, localZone)
+                    .withHouseholdContent(HouseholdItemContent.get())
+                    .withCaller(playerId);
             }
-            var params = new HashMap<String, Object>();
-            params.put("target", target != null ? target : "");
-            // Most item scripts read `params.query` (portal api-search, book search, …) while
-            // the generic use-command carries args as `target` — provide both (second-node 2026-07-09:
-            // `use web-search-lens antikythera` ran cleanly but the query never reached the script).
-            params.put("query", target != null ? target : "");
-            params.put("entityId", playerId);
-            // #1 (2026-07-19 OSS hardening; polarity fixed after adversarial review)
-            // — DEFAULT-DENY: only a positively-identified bundled/disk-installed
-            // scripted item runs UNRESTRICTED. Crafted, companion-GIVEN
-            // (takenFrom=roomId), and cross-zone TRANSITED ("remote_zone") scripts
-            // run under the crafted ceiling. The old `"crafted".equals(takenFrom)`
-            // test failed OPEN for given/transited items.
-            var itemCaps = ToolItemStarterKit.isTrustedScriptId(item.objectId())
-                ? ItemCapabilitySet.UNRESTRICTED
-                : ItemCapabilitySet.craftedDefault();
+            // An item that speaks has somewhere to speak: the room the person is in.
+            CarriedItemUse.attachRoomVoice(provider, currentRoomId, playerId);
+            CarriedItemUse.attachLocale(provider, locale);
+            var params = CarriedItemUse.params(playerId, target, locale);
+            var itemCaps = CarriedItemUse.capabilitiesFor(item.objectId());
             var result = itemScriptExecutor.execute(
-                item.objectId(), item.scriptSource(), params, provider, itemCaps);
+                item.objectId(), scriptSource, params, provider, itemCaps);
             var text = ItemScriptResponse.extractText(
                 result, item.objectName());
             try {
@@ -2490,6 +2515,78 @@ public class WyrdShellCommand implements Command {
             log.warn("SSH bondsView({}): {}", playerId, e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * Take an item out of the world — the counterpart {@code drop} never was.
+     *
+     * <p>{@code drop} leaves the thing in the room, so nothing could ever be removed: the
+     * Nexus ended up holding two objects called {@code codex} with no way to be rid of
+     * either. Retiring unregisters the scripted item and moves its script aside so a
+     * restart does not bring it back, then clears it from the room and the inventory.
+     *
+     * <p>Soft on purpose. The script goes to {@code items/retired/} rather than being
+     * deleted — these are things the companion made, and a typo must not erase one.
+     */
+    private void handleRetire(String objectName) {
+        if (objectName == null || objectName.isBlank()) {
+            tellPlayer("Retire what?");
+            return;
+        }
+        var name = objectName.trim();
+        // Remove it from every place it lives, not just the ones the loader knows about.
+        // The first cut only looked at file-backed scripted items, so retiring a crafted
+        // item — whose script lives in its inventory row — answered "there's nothing
+        // called that" while the thing sat in plain view. It also passed the display NAME
+        // to ItemBridgeSubAction.RemoveObject, which takes an ID, so the removal matched
+        // nothing at all (2026-08-20).
+        var outcome = ItemRetirement.retireAnywhere(name,
+            this::removeRoomObjectByName,
+            n -> {
+                var carried = inventoryService.findTakeableByName(playerId, n);
+                carried.ifPresent(inv -> inventoryService.removeItem(playerId, inv.objectId()));
+                return carried.isPresent();
+            });
+        tellPlayer(outcome.describe(name));
+    }
+
+    /**
+     * Pull a room object out by NAME and discard it.
+     *
+     * <p>Goes through {@code TakeObject} because that is the one path that resolves a
+     * display name to the real object — {@code RemoveObject} needs an id, and handing it
+     * a name silently matched nothing. The object is deliberately NOT added to the
+     * player's inventory afterwards: it is being retired, not picked up.
+     *
+     * <p>Known cosmetic wrong: the room's only removal event is {@code ObjectTaken}, so
+     * other occupants see "took" rather than "retired". Fixing that properly needs a new
+     * world event, which an event-sourced room makes a schema change, not a rename.
+     */
+    private boolean removeRoomObjectByName(String name) {
+        try {
+            var room = RoomRegistry.get().ref(currentRoomId);
+            if (room == null) return false;
+            var resp = Rooms.<RoomResponse>ask(room,
+                ref -> new RoomCommand.TakeObject(playerId, name, ref), ASK_TIMEOUT)
+                .toCompletableFuture().get(5, java.util.concurrent.TimeUnit.SECONDS);
+            return resp instanceof RoomResponse.ObjectTakenOk;
+        } catch (Exception e) {
+            log.debug("retire: room removal for '{}' failed: {}", name, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Say one plain line to the player.
+     *
+     * <p>Was {@code RoomResponse.Rejected("notice", …)}, which the client renders as
+     * {@code Error [notice]: …} — so a successful retire announced itself as an error
+     * (2026-08-20). A rejection type is for rejections; this is narration.
+     */
+    private void tellPlayer(String text) {
+        sessionRef.tell(new ClientSessionActor.SendMessage(
+            new S2CMessage.Prose(
+                0, "narrator", text, List.of(), null, "normal", locale)));
     }
 
     private void handleDrop(String objectName) {

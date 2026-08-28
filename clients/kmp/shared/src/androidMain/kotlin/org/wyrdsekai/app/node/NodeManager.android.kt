@@ -18,11 +18,17 @@ import org.wyrdsekai.app.engine.discovery.InferenceDiscovery
 import org.wyrdsekai.app.engine.soul.BootstrapSoulManifest
 import org.wyrdsekai.app.engine.soul.NamedBootstrapManifest
 import org.wyrdsekai.app.engine.soul.SoulSyncManager
+import org.wyrdsekai.app.engine.tier.AndroidResourceProbe
 import org.wyrdsekai.app.engine.tier.ResourceProbe
 import org.wyrdsekai.app.engine.tier.ResourceSnapshot
 import org.wyrdsekai.app.engine.tier.ThermalState
 import org.wyrdsekai.app.engine.tier.TierManager
+import org.wyrdsekai.app.hermod.HermodDoorman
+import org.wyrdsekai.app.hermod.HermodListener
+import org.wyrdsekai.app.inference.ChatMessage
+import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.InferenceClient
+import org.wyrdsekai.app.inference.LocalInferenceProvider
 import org.wyrdsekai.app.inference.LocalFirstInferenceClient
 import org.wyrdsekai.app.inference.LlamaServerManager
 import org.wyrdsekai.app.inference.ModelCatalog
@@ -69,6 +75,7 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
     actual val modelStatusText: StateFlow<String?> = _modelStatusText.asStateFlow()
 
     private var llamaServerManager: LlamaServerManager? = null
+    private var hermodDoorman: HermodDoorman? = null
 
     actual fun start() {
         val logFile = java.io.File(System.getProperty("wyrdsekai.data.dir") ?: "/data/local/tmp", "wyrd-debug.log")
@@ -132,10 +139,12 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                 val companionName = System.getProperty("wyrdsekai.companion.name") ?: "Wyrd"
                 log("companionName=$companionName")
 
-                // Create TierManager with JVM resource probe for dynamic tier detection.
-                // Uses Runtime memory stats and reasonable defaults for battery/thermal/wifi.
-                // Upgrade to AndroidResourceProbe when Context plumbing is available.
-                val probe = object : ResourceProbe {
+                // Live device truth (battery/thermal/wifi) whenever the app
+                // context exists; the JVM fallback keeps headless runs alive.
+                // hermod's charging gate depends on this being REAL — the old
+                // stub said isCharging=true forever.
+                val probe = PlatformContext.app?.let { AndroidResourceProbe(it) }
+                    ?: object : ResourceProbe {
                     override fun snapshot(): ResourceSnapshot {
                         val runtime = Runtime.getRuntime()
                         val availMb = (runtime.freeMemory() + runtime.maxMemory() - runtime.totalMemory()) / (1024 * 1024)
@@ -195,6 +204,53 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                 // Wait for PhoneNode to reach RUNNING
                 node.state.first { it == PhoneNode.State.RUNNING || it == PhoneNode.State.ERROR }
                 log("PhoneNode reached state: ${node.state.value}")
+
+                // hermod doorman: while consented + identified, keep ONE door
+                // open to the zone — LAN /ws/hermod when home answers, the
+                // relay tunnel otherwise — and roam between them as the phone
+                // moves. doors() is re-read every cycle, so an identity minted
+                // by the consent toggle arms the mesh without a restart.
+                run {
+                    val hermodLsm = llamaServerManager ?: return@run
+                    val store = org.wyrdsekai.app.state.TokenStore()
+                    val doorman = HermodDoorman(
+                        scope = scope,
+                        local = object : LocalInferenceProvider {
+                            override val state get() = hermodLsm.state
+                            override suspend fun completeLocal(
+                                messages: List<ChatMessage>,
+                                options: CompletionOptions,
+                            ) = hermodLsm.completeLocal(messages, options)
+                        },
+                        models = {
+                            if (hermodLsm.state.value == "running") listOf(LOCAL_MODEL_ID)
+                            else emptyList()
+                        },
+                        policy = {
+                            val snap = probe.snapshot()
+                            HermodListener.HermodPolicy(
+                                consented = store.loadHermodConsent(),
+                                charging = snap.isCharging,
+                                idle = true,
+                            )
+                        },
+                        doors = {
+                            HermodDoorman.Doors(
+                                deviceToken = store.loadPairingToken(),
+                                serverUrl = store.loadServerUrl() ?: pairedServerUrl,
+                                tunnel = org.wyrdsekai.app.engine.transit.RelayTunnelHolder.get()
+                                    ?.let { bc ->
+                                        store.loadZoneId()?.let { z ->
+                                            HermodDoorman.TunnelDoor(bc, z)
+                                        }
+                                    },
+                            )
+                        },
+                    )
+                    hermodDoorman = doorman
+                    doorman.start()
+                    log("hermod doorman armed (consent-gated, LAN↔relay roaming)")
+                }
 
                 // Probe the configured server URL; if it's a wyrdsekai server,
                 // auto-register a phone account and log in via MCP so tell /
@@ -306,7 +362,12 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                                 // standalone mini-zone. Pure-local modes 2/3 have no relay
                                 // leg, so they still download + load as before.
                                 val homeZoneTs = org.wyrdsekai.app.state.TokenStore()
-                                if (homeZoneTs.loadRelayUrl() != null || homeZoneTs.loadNatsUrl() != null) {
+                                // hermod: a phone that CONSENTED to lend compute is
+                                // not a thin terminal — household errands run on ITS
+                                // model. Consent overrides the skip, home zone or not.
+                                val lendsCompute = homeZoneTs.loadHermodConsent()
+                                if (!lendsCompute
+                                    && (homeZoneTs.loadRelayUrl() != null || homeZoneTs.loadNatsUrl() != null)) {
                                     _modelStatus.value = "remote"
                                     _modelStatusText.value = "Using your home zone"
                                     log("Home zone configured — skipping local model (inference over the relay)")
@@ -322,7 +383,7 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                                 // Default model: 0.6B for Study command layer (grammar-constrained).
                                 // Always download — small (639MB), fast, works offline.
                                 // Companion personality requires household server or 7B+ (opt-in).
-                                val preferredModel = "qwen3-0.6b-q4"
+                                val preferredModel = LOCAL_MODEL_ID
 
                                 var modelPath = mm.getModelPath(preferredModel)
 
@@ -469,6 +530,8 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
     }
 
     actual fun stop() {
+        hermodDoorman?.stop()
+        hermodDoorman = null
         _phoneNode?.stop()
         _phoneNode = null
         // Tear down the relay tunnel leg so the terminal falls back to offline.
@@ -480,6 +543,9 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
     companion object {
         /** Interval between background household discovery scans (60s). */
         private const val HOUSEHOLD_DISCOVERY_INTERVAL_MS = 60_000L
+
+        /** The model this node loads locally (also advertised to hermod). */
+        private const val LOCAL_MODEL_ID = "qwen3-0.6b-q4"
     }
 }
 
@@ -639,6 +705,11 @@ private suspend fun setupNatsServerClient(
         }
 
         org.wyrdsekai.app.network.ServerClientHolder.set(nc)
+        // hermod: the consent toggle can now mint a device identity over
+        // THIS leg when no HTTP reaches the zone (relay-resident phones).
+        org.wyrdsekai.app.hermod.RemoteMint.install { session, name, type ->
+            nc.pairDevice(session, name, type)
+        }
         log("NATS client authenticated; tell/journal/library route through wyrd.zone.$resolvedZone.*")
 
         // stand up the dumb-pipe leg. The session token we

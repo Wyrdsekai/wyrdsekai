@@ -14,6 +14,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.ArrayList;
 
 /**
  * Soul language reconciliation (2026-07-31). Root cause of the live drift
@@ -76,7 +77,7 @@ class SoulLanguageReconcileTest {
         var superseded = new SoulFragment("old", "episodic", "l", ES, null, null,
             false, 0.5f, 0, Instant.now(), null, null,
             Instant.now(), "old-lang-restored", FragmentKind.EPISODIC, "s");
-        var frags = new java.util.ArrayList<SoulFragment>();
+        var frags = new ArrayList<SoulFragment>();
         frags.add(superseded);
         frags.add(frag("blank", FragmentKind.EPISODIC, "  "));
         for (int i = 0; i < 8; i++) frags.add(frag("es" + i, FragmentKind.EPISODIC, ES));

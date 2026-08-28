@@ -36,6 +36,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import java.util.function.BooleanSupplier;
+import org.wyrdsekai.core.room.RoomRegistry;
 
 /**
  * LIVE e2e for the promise in {@code docs/public/AUTHORING.md} §1 and
@@ -131,7 +133,7 @@ class AuthoringPromiseLiveE2ETest {
                        TestProbe<RoomCommand> roomProbe) {}
 
     /** Poll persisted state until the predicate holds, or give up. */
-    private static boolean awaitState(java.util.function.BooleanSupplier check, Duration limit) {
+    private static boolean awaitState(BooleanSupplier check, Duration limit) {
         var deadline = Instant.now().plus(limit);
         while (Instant.now().isBefore(deadline)) {
             try {
@@ -180,7 +182,7 @@ class AuthoringPromiseLiveE2ETest {
             .hasSize(1);
 
         var roomId = made.get(0).roomId();
-        assertThat(org.wyrdsekai.core.room.RoomRegistry.get().resolveRoomId("greenhouse"))
+        assertThat(RoomRegistry.get().resolveRoomId("greenhouse"))
             .as("the room must be reachable BY NAME. Only seeded rooms used to get "
                 + "aliases, so a room she built could not be referenced — 'go to the "
                 + "greenhouse' could not resolve a greenhouse she had just made.")

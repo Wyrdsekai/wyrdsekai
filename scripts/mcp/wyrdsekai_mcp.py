@@ -442,7 +442,7 @@ class WyrdSession:
 
         # Parse structured commands
 
-        # Namespaced zone commands (e.g., "hello.greet", "codeplane.status")
+        # Namespaced zone commands (e.g., "hello.greet", "codezaiku.status")
         if "." in lower.split(" ")[0] and not lower.startswith("look at "):
             parts = text.strip().split(" ", 1)
             ns_action = parts[0]  # e.g., "hello.greet"

@@ -5,6 +5,10 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
+import java.util.Map;
+import org.wyrdsekai.scripting.api.ItemWorldApiProvider;
 
 /**
  * The two item-provider hierarchies — {@link HomeOwnerItemProvider} (player route)
@@ -85,17 +89,17 @@ class ProviderSurfaceParityTest {
         // and a bare {error} default read as success and silently discarded the entry.
         // The interface has abstract methods, so drive the DEFAULT via a proxy that
         // invokes default methods and throws on anything abstract (we only call one).
-        var iface = org.wyrdsekai.scripting.api.ItemWorldApiProvider.class;
-        var proxy = java.lang.reflect.Proxy.newProxyInstance(
+        var iface = ItemWorldApiProvider.class;
+        var proxy = Proxy.newProxyInstance(
             iface.getClassLoader(), new Class<?>[]{iface},
             (p, method, args) -> {
                 if (method.isDefault()) {
-                    return java.lang.reflect.InvocationHandler.invokeDefault(p, method, args);
+                    return InvocationHandler.invokeDefault(p, method, args);
                 }
                 throw new UnsupportedOperationException(method.getName());
             });
-        var result = (java.util.Map<String, Object>)
-            ((org.wyrdsekai.scripting.api.ItemWorldApiProvider) proxy).journalWrite("x", null);
+        var result = (Map<String, Object>)
+            ((ItemWorldApiProvider) proxy).journalWrite("x", null);
         assertTrue(Boolean.FALSE.equals(result.get("ok")),
             "journalWrite default must return ok:false, was: " + result);
     }

@@ -39,7 +39,7 @@ class ParentalControlPanelApiTest {
         var jdbcUrl = TestDb.createInMemory();
         auth = new AuthService(jdbcUrl);
         // First registered user auto-becomes steward; second is a member.
-        stewardId = auth.register("operator", "password123", "Masumi").orElseThrow().userId();
+        stewardId = auth.register("operator", "password123", "Operator").orElseThrow().userId();
         memberId = auth.register("kaz", "password123", "Kaz").orElseThrow().userId();
         parental = new ParentalControlService(jdbcUrl, new SqlDialect.SQLite(), auth);
         parental.initSchema();

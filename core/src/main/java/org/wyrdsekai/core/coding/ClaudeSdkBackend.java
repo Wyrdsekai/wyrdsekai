@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -11,6 +12,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -148,16 +150,20 @@ public final class ClaudeSdkBackend implements CodingTaskBackend {
                 // description with the OpenHands preamble (canonical
                 // source) so Claude SDK emits the single-.js-with-
                 // exports.manifest shape every backend must produce.
-                // See OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE.
+                // See OpenHandsBackend.itemsAsToolsPreambleCwd(ItemCapabilitySet.craftedDefault()).
                 var rawDescription = spec != null ? spec.description() : null;
                 var promptBody = (rawDescription != null && !rawDescription.isBlank())
                     ? rawDescription : "";
-                var description = OpenHandsBackend.ITEMS_AS_TOOLS_PREAMBLE
+                var description = OpenHandsBackend.itemsAsToolsPreambleCwd(ItemCapabilitySet.craftedDefault())
                     + "\n\n--- TASK ---\n" + promptBody;
                 // Honor spec.workspaceHint() as subprocess CWD so claude's
                 // Write/Edit/Bash tools land artifacts where the caller
                 // can scan them — matches the contract pi already follows.
-                var workspaceHint = spec != null ? spec.workspaceHint() : null;
+                // Never the process's own directory: on a packaged node the JVM cwd is
+                // the INSTALL ROOT. CodingWorkspace gives each task a private scratch dir
+                // and still honours an explicit hint.
+                var workspaceHint = CodingWorkspace.pathFor(
+                    spec != null ? spec.workspaceHint() : null, taskId.toString());
                 var result = runner.run(args, env, description, workspaceHint,
                     config.maxWallclock());
                 long durationMs = System.currentTimeMillis() - started;
@@ -179,6 +185,24 @@ public final class ClaudeSdkBackend implements CodingTaskBackend {
                 }
 
                 var parsed = parseClaudeResponse(taskId, spec, result);
+
+                // CONTRACT REPAIR. The prompt is the `description` argument here, so the
+                // Reprompt is supplied directly (see PiCodingBackend for the same shape).
+                ItemContractRepair.repairRun(parsed.artifacts,
+                    workspaceHint == null || workspaceHint.isBlank()
+                        ? null : Path.of(workspaceHint),
+                    taskId.toString(), Instant.ofEpochMilli(started),
+                    repairPrompt -> {
+                        try {
+                            var r = runner.run(args, env, repairPrompt, workspaceHint,
+                                config.maxWallclock());
+                            return !r.timedOut() && r.exitCode() == 0;
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    },
+                    spec == null ? null : spec.description());
+                parsed = parseClaudeResponse(taskId, spec, result);
                 artifactCache.put(taskId.toString(), parsed.artifacts);
                 var ids = new ArrayList<UUID>();
                 for (var a : parsed.artifacts) ids.add(a.artifactId());
@@ -335,9 +359,9 @@ public final class ClaudeSdkBackend implements CodingTaskBackend {
      */
     private ClaudeResponse parseClaudeResponse(
             UUID taskId, TaskSpec spec, ProcessResult result) {
-        var workspace = spec != null && spec.workspaceHint() != null
-            ? spec.workspaceHint()
-            : System.getProperty("user.dir", ".");
+        var workspace = CodingWorkspace.pathFor(
+            spec != null ? spec.workspaceHint() : null,
+            taskId == null ? null : taskId.toString());
         var files = new ArrayList<String>();
         long cuConsumed = 0L;
         String resultText = "";

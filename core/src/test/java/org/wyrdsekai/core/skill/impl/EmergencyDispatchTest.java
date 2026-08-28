@@ -110,7 +110,7 @@ final class EmergencyDispatchTest {
     @Test
     void contact_flow_dials_the_configured_contact() {
         var exec = stubbedExecutor(List.of(
-            new EmergencyCallSkillExecutor.EmergencyContact("Masumi", "+15550199", "steward")));
+            new EmergencyCallSkillExecutor.EmergencyContact("Operator", "+15550199", "steward")));
         var result = exec.execute("herald.call.emergency", Map.of("message", "help"),
             ctxWithCreds());
         assertTrue(result.success(), result.output());

@@ -64,7 +64,7 @@ public class TelnetRenderer {
         }
         TelnetCodec.sendLine(out, "");
 
-        // Dedupe entities by name — prevents "Masumi is here" twice when
+        // Dedupe entities by name — prevents "Operator is here" twice when
         // the same player has two concurrent sessions mid-takeover.
         // append "(<posture descriptor>)" when the entity
         // has a posture set, so observers see body state on look. Keep one

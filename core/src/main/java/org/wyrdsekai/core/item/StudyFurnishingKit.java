@@ -771,7 +771,7 @@ public final class StudyFurnishingKit {
             "coding-slate",
             "Coding Slate",
             "A dark slate mounted next to the workbench. Each row is a coding "
-            + "backend you've made available — CodePlane, Aider, OpenHands, "
+            + "backend you've made available — CodeZaiku, Aider, OpenHands, "
             + "Claude Code, Codex CLI — with its tier, health glyph, last task, "
             + "and 30-day success rate. Read it to see what's working and what isn't.",
             CODING_SLATE_SCRIPT,
@@ -790,7 +790,7 @@ public final class StudyFurnishingKit {
             if (!rows || rows.length === 0) {
                 return {
                     text: "The slate is blank. No coding backends are configured.\\n"
-+ " ( — edit "
+                        + "  ( — edit "
                         + "wyrdsekai.coding.backends in your Scroll of Settings.)",
                     backends: []
                 };
@@ -979,7 +979,7 @@ public final class StudyFurnishingKit {
             var info = world.relay.info();
             if (!info || info.configured !== true) {
                 return { text: "The key-ring holds no tags. This zone does not administer any relay.\\n"
-+ " (Deploy or claim one: 4b / `wyrd relay claim`.)"
+                    + "  (Deploy or claim one: 4b / `wyrd relay claim`.)",
                     configured: false };
             }
             var scope = info.scope; // owner|full|moderation|invite-only|null
@@ -1022,7 +1022,7 @@ public final class StudyFurnishingKit {
             }
             lines.push("");
 
-// Reports queue — moderation+ only.
+            // Reports queue — moderation+ only.
             if (canModerate) {
                 var rq = world.relay.reportQueue(false);
                 var reps = (rq && rq.reports) ? rq.reports : [];

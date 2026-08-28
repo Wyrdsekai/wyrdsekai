@@ -16,7 +16,7 @@ import java.util.Map;
  * persistent identity record.
  *
  * <p>This is the on-disk shape persisted at {@code
- * souls/familiars/codeplane-<bondholder-did>.json} (§3.1, §3.2). It carries
+ * souls/familiars/codezaiku-<bondholder-did>.json} (§3.1, §3.2). It carries
  * everything the familiar needs to come back to itself across summonings:
  * its DID, its bondholder-chosen name, soul-fragment links, accumulated
  * coding DNA, and surface vitality.</p>
@@ -39,9 +39,9 @@ import java.util.Map;
  *       org.wyrdsekai.core.soul.SoulFragmentStore} once the Forge
  *       fragment-kind taxonomy (§17.6, #902) lands.</li>
  *   <li><b>PermissionRing bridge</b>: OPEN-3 in the spec — pending
- *       CodePlane-side ratification. {@link #autonomyTier} is the
+ *       CodeZaiku-side ratification. {@link #autonomyTier} is the
  *       substrate-side gate; the runtime ring continues to live on the
- *       CodePlane CLI session.</li>
+ *       CodeZaiku CLI session.</li>
  * </ul>
  *
  * <p>Equality + hashing follow the record default (full structural
@@ -49,7 +49,7 @@ import java.util.Map;
  * identically.</p>
  *
  * @param did                    canonical familiar DID, format
- *                               {@code did:wyrd:familiar:codeplane:<bondholder-did>}
+ *                               {@code did:wyrd:familiar:codezaiku:<bondholder-did>}
  * @param name                   bondholder-chosen short name (default
  *                               "Coder")
  * @param kindSubtype            always {@code "coding-familiar"} —
@@ -82,7 +82,7 @@ import java.util.Map;
  *                               vitality per §3.3
  * @param autonomyTier autonomyTier in
  *                               effect for this familiar; substrate-side
- *                               gate. Bridges with CodePlane PermissionRing
+ *                               gate. Bridges with CodeZaiku PermissionRing
  *                               are OPEN-3.
  * @param modeLock               OPEN-15 incident-mode persistence per
  *                               §6.1 / §15.5 — {@code null} when no
@@ -111,7 +111,25 @@ public record CodingFamiliarIdentity(
     public static final String KIND_SUBTYPE = "coding-familiar";
 
     /** DID prefix for Coding Familiars. */
-    public static final String DID_PREFIX = "did:wyrd:familiar:codeplane:";
+    public static final String DID_PREFIX = "did:wyrd:familiar:codezaiku:";
+
+    /**
+     * The pre-rename prefix, still ACCEPTED on read.
+     *
+     * <p>A DID is identity, not branding. Nothing is re-keyed by a rename: a
+     * familiar minted before this carries the old prefix forever, and the
+     * constructor below REJECTS a DID that does not match, so dropping the old
+     * spelling would not degrade such a familiar -- it would make it
+     * unloadable. New familiars mint {@link #DID_PREFIX}; old ones still
+     * open.</p>
+     */
+    public static final String LEGACY_DID_PREFIX = "did:wyrd:familiar:codeplane:";
+
+    /** True if {@code did} carries either the current or the pre-rename prefix. */
+    public static boolean hasFamiliarPrefix(String did) {
+        return did != null
+            && (did.startsWith(DID_PREFIX) || did.startsWith(LEGACY_DID_PREFIX));
+    }
 
     /** Default name used when the bondholder does not pick one at first summon. */
     public static final String DEFAULT_NAME = "Coder";
@@ -129,7 +147,7 @@ public record CodingFamiliarIdentity(
         if (did == null || did.isBlank()) {
             throw new IllegalArgumentException("did required");
         }
-        if (!did.startsWith(DID_PREFIX)) {
+        if (!hasFamiliarPrefix(did)) {
             throw new IllegalArgumentException(
                 "did must start with " + DID_PREFIX + ", got: " + did);
         }
@@ -224,8 +242,10 @@ public record CodingFamiliarIdentity(
 
     /** Extract bondholder DID from a Coding Familiar DID. */
     public static String bondholderDidFromFamiliarDid(String familiarDid) {
-        if (familiarDid == null || !familiarDid.startsWith(DID_PREFIX)) return null;
-        return familiarDid.substring(DID_PREFIX.length());
+        if (!hasFamiliarPrefix(familiarDid)) return null;
+        return familiarDid.startsWith(DID_PREFIX)
+            ? familiarDid.substring(DID_PREFIX.length())
+            : familiarDid.substring(LEGACY_DID_PREFIX.length());
     }
 
     /** Return a new identity with the {@code name} replaced. */

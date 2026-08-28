@@ -216,7 +216,7 @@ public final class ConfigValidator {
      *       a typo in the chain is a common config mistake)</li>
      * </ul>
      * Missing entire {@code coding.*} block is fine — Phase 1b backends fall
-     * back to "codeplane" via the GraalJS policy script's defaults.
+     * back to "codezaiku" via the GraalJS policy script's defaults.
      */
     private static void validateCoding(Config config, List<ValidationError> errors) {
         if (!config.hasPath("wyrdsekai.coding")) {

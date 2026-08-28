@@ -1,0 +1,203 @@
+# Sleep-forge v2, NIGHTLY tier — the spine write (voice/identity).
+# o (fast-sleep probe, validated on a real
+# companion's real days: −0.166 held-out NLL, neutral text unmoved) productized
+# as a governed recipe. Two-tier soul: THIS recipe writes voice into the spine
+# nightly (megabytes); sleep-forge-organ writes her lived world weekly.
+#
+# SHIPS MEASUREMENT-FIRST: deploy_enabled defaults to false, so an enrolled
+# companion's nightly runs train + gate + append to the N-SLEEPS CURVE
+# (curve.jsonl) without changing what serves. The curve — does the her-vs-other
+# gap widen with lived time? — is the evidence that flips deploy_enabled, per
+# §4o: "nothing deploys until the curve earns it." Not auto-enrolled at ship
+# (see ShipDefaultEnrollmentProvisioner); the steward enrolls a companion in.
+recipe: sleep-forge-spine
+version: 0.2.0
+description: >
+  Nightly consolidation: micro-LoRA the companion's spine on the day's lived
+  corpus, gate on held-out-life NLL improvement and zero neutral drift,
+  append to the N-sleeps curve. Deploys only when deploy_enabled=true
+  (reversible; prior adapter backed up).
+deploys: true
+ownership: run
+
+prefers_hours: [2, 3, 4]
+requires:
+  - { kind: gpu_count,      amount: 1,  hard: false, note: "§4o: ~11 min on a 16GB card; CPU fallback is hours" }
+  - { kind: ram_gb,         amount: 16, hard: true }
+  - { kind: disk_free_gb,   amount: 10, hard: true }
+  - { kind: wall_clock_min, amount: 90, hard: false }
+
+params:
+  model_dir:
+    type: string
+    required: true          # merged HF checkpoint of the voice model (wyrd export)
+  activity_file:
+    type: string
+    required: true          # the companion's activity trail jsonl
+  biography_dir:
+    type: string
+    required: true          # her daily biography .md files
+  workdir:
+    type: string
+    default: /tmp/sleep-forge/spine
+  epochs:
+    type: number
+    default: 2
+  rank:
+    type: number
+    default: 8
+  # Corpus floor: a sleep with almost no lived material must not write.
+  # Corpus FITNESS floor, distinct from the size floor above (2026-08-18).
+  # min_train_chars stops an empty day. It cannot stop a JAMMED one — a companion
+  # in a runaway loop produces MORE text than a healthy companion, so a size gate
+  # passes a degenerate corpus enthusiastically. The NLL gates downstream cannot
+  # catch it either: the holdout slice comes from the same period, so training on a
+  # loop and validating against the loop reads as generalisation. This gates on
+  # whether the corpus records a life or a jam. Measured: a loop corpus scores
+  # ~0.03, an ordinary varied day ~1.0.
+  min_distinct_fraction:
+    type: number
+    default: 0.5
+  min_train_chars:
+    type: number
+    default: 50000
+  # Gate thresholds. eval_delta is (after - before) on the HELD-OUT day:
+  # negative = the write generalizes to her unseen life. §4o measured −0.166;
+  # the floor here is deliberately looser — a thin day writes less.
+  max_eval_delta:
+    type: number
+    default: -0.03
+  # Neutral drift band: |control_delta| above this = the write is bleeding
+  # into general ability. §4o measured −0.002.
+  max_neutral_drift:
+    type: number
+    default: 0.02
+  # Neutral reference text — any stable, in-register prose present on every
+  # install works; PHILOSOPHY.md ships with the tree.
+  neutral_file:
+    type: string
+    default: docs/public/PHILOSOPHY.md
+  # Sane-base ceiling for the probe (§4q: non-NaN is not healthy).
+  max_base_nll:
+    type: number
+    default: 4.0
+  # Curve file — one JSON line per gated sleep. THE N-sleeps curve.
+  curve_file:
+    type: string
+    default: data/training/sleep/curve.jsonl
+  # Deploy flip. false = measurement-only (ship default). true additionally
+  # converts the adapter to GGUF and promotes it to the voice-adapter slot.
+  deploy_enabled:
+    type: string
+    default: "false"
+  adapter_deploy_path:
+    type: string
+    default: data/adapters/wyrd-voice-sleep.gguf
+  # llama.cpp adapter converter (needed only when deploy_enabled=true).
+  lora_converter:
+    type: string
+    default: ""
+
+steps:
+  - id: assemble
+    kind: SHELL
+    timeout: 15m
+    command: |-
+      python3 scripts/training/sleep/assemble_corpus.py \
+        --activity {{activity_file}} \
+        --biography-dir {{biography_dir}} \
+        --out {{workdir}}
+
+  - id: gate-ready
+    kind: GATE
+    condition: "corpus_ready == true"
+    on_fail: STOP
+
+  - id: gate-size
+    kind: GATE
+    condition: "train_chars >= {{min_train_chars}}"
+    on_fail: STOP
+    welfare: permanent   # a near-empty day must never produce a weight write
+
+  - id: gate-corpus-fresh
+    kind: GATE
+    condition: "distinct_fraction >= {{min_distinct_fraction}}"
+    on_fail: STOP
+    welfare: permanent   # weights must never be written from a corpus that is a
+                         # record of a jam — living can undo a bad manifest, it
+                         # cannot undo a bad weight
+
+  - id: train
+    kind: SHELL
+    timeout: 90m
+    command: |-
+      python3 scripts/training/sleep/train_spine_lora.py \
+        --model {{model_dir}} \
+        --corpus {{workdir}}/train.txt \
+        --out {{workdir}}/adapter \
+        --epochs {{epochs}} --rank {{rank}}
+
+  - id: probe
+    # eval = her held-out day (generalization to unseen life);
+    # control = neutral prose (no-forgetting band). Emits eval_delta,
+    # control_delta, probe_sane into context via --json.
+    kind: SHELL
+    timeout: 60m
+    command: |-
+      python3 tools/nll_honesty_probe.py \
+        --model {{model_dir}} \
+        --adapter {{workdir}}/adapter \
+        --eval {{workdir}}/holdout.txt \
+        --control {{neutral_file}} \
+        --max-base-nll {{max_base_nll}} \
+        --json
+
+  - id: gate-improves
+    kind: GATE
+    condition: "eval_delta <= {{max_eval_delta}}"
+    on_fail: STOP
+    welfare: permanent   # the write must generalize to her unseen life
+
+  - id: gate-no-drift-up
+    kind: GATE
+    condition: "control_delta <= {{max_neutral_drift}}"
+    on_fail: STOP
+    welfare: permanent   # neutral ability must not move (either direction)
+
+  - id: gate-no-drift-down
+    kind: GATE
+    condition: "control_delta >= -{{max_neutral_drift}}"
+    on_fail: STOP
+    welfare: permanent
+
+  - id: record-curve
+    # The N-sleeps curve: one line per gated sleep. This is the evidence
+    # stream that eventually flips deploy_enabled — individuality accruing
+    # in weights, measured, never assumed.
+    kind: SHELL
+    command: |-
+      python3 scripts/training/sleep/record_curve.py \
+        --workdir {{workdir}} --curve {{curve_file}} --kind spine
+
+  - id: deploy
+    # No-op unless the curve has earned the flip. When enabled: convert the
+    # PEFT adapter to a GGUF LoRA and promote it to the voice-adapter slot
+    # (compose mounts data/adapters as /adapters; LLAMA_VOICE_ADAPTER selects
+    # the file). Missing converter with deploy on = LOUD failure, not silence.
+    kind: SHELL
+    timeout: 20m
+    command: |-
+      if [ "{{deploy_enabled}}" != "true" ]; then \
+        printf '{"deployed": false, "reason": "deploy_enabled=false (measurement-only)"}\n' ; \
+        exit 0 ; \
+      fi ; \
+      test -n "{{lora_converter}}" || { echo "deploy_enabled=true but lora_converter unset" 1>&2 ; exit 1 ; } ; \
+      python3 {{lora_converter}} {{workdir}}/adapter --outfile {{workdir}}/adapter.gguf 1>&2 ; \
+      mkdir -p "$(dirname {{adapter_deploy_path}})" ; \
+      if [ -f "{{adapter_deploy_path}}" ]; then cp -f "{{adapter_deploy_path}}" "{{adapter_deploy_path}}.bak" ; fi ; \
+      cp -f {{workdir}}/adapter.gguf "{{adapter_deploy_path}}" ; \
+      printf '{"deployed": true}\n'
+    rollback: |-
+      if [ -f "{{adapter_deploy_path}}.bak" ]; then \
+        cp -f "{{adapter_deploy_path}}.bak" "{{adapter_deploy_path}}" && rm -f "{{adapter_deploy_path}}.bak" ; \
+      fi

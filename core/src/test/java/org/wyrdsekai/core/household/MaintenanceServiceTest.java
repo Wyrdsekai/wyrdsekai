@@ -44,7 +44,7 @@ class MaintenanceServiceTest {
         jdbcUrl = TestDb.createInMemory();
         auth = new AuthService(jdbcUrl);
         // First registered user auto-becomes steward; second is a member.
-        stewardId = auth.register("operator", "password123", "Masumi").orElseThrow().userId();
+        stewardId = auth.register("operator", "password123", "Operator").orElseThrow().userId();
         memberId = auth.register("kaz", "password123", "Kaz").orElseThrow().userId();
 
         dataDir = tmp.resolve("data");

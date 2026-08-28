@@ -20,6 +20,7 @@ import org.wyrdsekai.core.library.StudyService;
 import org.wyrdsekai.core.naming.ZoneDirectoryService;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.InviteService;
+import org.wyrdsekai.core.persistence.PairingService;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
 import java.nio.charset.StandardCharsets;
@@ -124,6 +125,10 @@ public final class McpNatsHandler {
         trackedSubjects.add(subject("tell"));
         trackedSubjects.add(authSubject("status"));
         trackedSubjects.add(authSubject("register"));
+        // hermod consent mint for relay-resident phones (no HTTP reaches the
+        // zone from there). Mirrors POST /api/pair/device — many doors, one
+        // identity; session token in the body, same as every auth.* subject.
+        trackedSubjects.add("wyrd.zone." + zoneId + ".pair.device");
         // Zone-agnostic discovery: a fresh phone doesn't know which zone it's
         // talking to. It publishes to `wyrd.discover.zone` and we reply with
         // our zone label so the phone can scope subsequent subjects correctly.
@@ -250,6 +255,8 @@ public final class McpNatsHandler {
                 handleLibrarySearch(msg);
             } else if (subject.endsWith(".study.journal")) {
                 handleStudyJournal(msg);
+            } else if (subject.endsWith(".pair.device")) {
+                handlePairDevice(msg);
             } else if (subject.endsWith(".auth.status")) {
                 handleAuthStatus(msg);
             } else if (subject.endsWith(".auth.register")) {
@@ -561,6 +568,57 @@ public final class McpNatsHandler {
      * household allows open registration or needs an invite. Mirrors
      * GET /api/auth/status.
      */
+    // ── pair.device ──
+
+    /**
+     * Request:  { "token": "<session>", "deviceName": "...", "deviceType"?: "phone" }
+     * Reply:    { "ok": true, "deviceToken": "wyrd_dev_...", "householdId": "...",
+     *             "householdName": "...", "serverDid": "...", "natsUrl": "...",
+     *             "serverUrl": "..." }
+     *      or:  { "ok": false, "error": "...", "message": "..." }
+     *
+     * Mirrors POST /api/pair/device — the hermod consent mint for phones
+     * whose only leg is the relay. The session is the proof; the registry
+     * row is the identity (idempotent per user+name, PairingService).
+     */
+    private void handlePairDevice(Message msg) {
+        JsonNode body;
+        try {
+            body = Json.mapper().readTree(msg.getData());
+        } catch (Exception e) {
+            respond(msg, error("bad_request", "unreadable body"));
+            return;
+        }
+        var token = optString(body, "token");
+        if (token == null || token.isBlank()) {
+            respond(msg, error("invalid_session", "session token required"));
+            return;
+        }
+        var user = auth.validateSession(token);
+        if (user.isEmpty()) {
+            respond(msg, error("invalid_session", "invalid or expired session"));
+            return;
+        }
+        var pairing = PairingService.get();
+        if (pairing == null) {
+            respond(msg, error("pairing_unavailable", "pairing service not initialised"));
+            return;
+        }
+        var r = pairing.pairForUser(user.get().id(),
+            optString(body, "deviceName"), optString(body, "deviceType"));
+        var reply = new LinkedHashMap<String, Object>();
+        reply.put("ok", true);
+        reply.put("deviceToken", r.token());
+        reply.put("householdId", r.householdId());
+        reply.put("householdName", r.householdName());
+        reply.put("serverDid", r.serverDid());
+        reply.put("natsUrl", r.natsUrl());
+        reply.put("serverUrl", r.serverUrl());
+        respond(msg, reply);
+        log.info("pair.device: device identity minted via relay session for {}",
+            user.get().username());
+    }
+
     private void handleAuthStatus(Message msg) {
         boolean hasUsers = !auth.isFirstUser();
         boolean openReg = auth.isOpenRegistrationAllowed();

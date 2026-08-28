@@ -208,6 +208,96 @@ public final class HostActionService {
             "ok", true, "matches", matches, "truncated", truncated));
     }
 
+    /**
+     * Move or rename a file inside the steward's open-roots.
+     *
+     * <h2>Why this exists</h2>
+     * {@link #findFiles} let an item SEE what is in a granted directory and nothing let it
+     * act. Asked on 2026-08-22 for a tool that reviews a media folder and sorts it, the
+     * authoring model had no write verb, so it improvised
+     * {@code world.web.fetch("/data/…/listings/raw.txt")} — a fabricated path through a
+     * web call. Half a capability invites that.
+     *
+     * <p>Both ends are checked against the roots: a source outside them, or a destination
+     * that would land outside them, is refused. Never overwrites — a move onto an existing
+     * path fails rather than destroying it. Every call is audit-logged, same as the rest.
+     */
+    public static Map<String, Object> moveFile(String from, String to, String actorId) {
+        return moveFile(configuredOpenRoots(), from, to, actorId);
+    }
+
+    /** Roots injected — the seam {@link #findFiles} already uses, so a test needs no config. */
+    static Map<String, Object> moveFile(List<Path> roots, String from, String to, String actorId) {
+        if (roots.isEmpty()) {
+            return audit(actorId, "file_move", from, Map.of("ok", false, "error", "no_roots"));
+        }
+        if (from == null || from.isBlank() || to == null || to.isBlank()) {
+            return audit(actorId, "file_move", from, Map.of("ok", false, "error", "missing"));
+        }
+        Path src;
+        try {
+            src = Path.of(from.trim()).toRealPath();
+        } catch (IOException e) {
+            return audit(actorId, "file_move", from,
+                Map.of("ok", false, "error", "missing", "path", from.trim()));
+        }
+        // The destination need not exist yet, so it is normalised rather than realpath'd —
+        // and its PARENT must already be inside a root, which is what stops `../` escapes.
+        var dst = Path.of(to.trim()).toAbsolutePath().normalize();
+        var dstParent = dst.getParent();
+        if (dstParent == null || !inside(roots, src) || !inside(roots, dstParent)) {
+            return audit(actorId, "file_move", from, Map.of(
+                "ok", false, "error", "outside_roots", "path", src.toString()));
+        }
+        if (Files.exists(dst)) {
+            return audit(actorId, "file_move", from, Map.of(
+                "ok", false, "error", "destination_exists", "path", dst.toString()));
+        }
+        try {
+            Files.createDirectories(dstParent);
+            Files.move(src, dst);
+            return audit(actorId, "file_move", from, Map.of(
+                "ok", true, "from", src.toString(), "to", dst.toString()));
+        } catch (IOException e) {
+            return audit(actorId, "file_move", from, Map.of(
+                "ok", false, "error", "move_failed", "detail", String.valueOf(e.getMessage())));
+        }
+    }
+
+    /** Create a directory inside the open-roots — the other half of sorting things. */
+    public static Map<String, Object> makeDirectory(String path, String actorId) {
+        return makeDirectory(configuredOpenRoots(), path, actorId);
+    }
+
+    static Map<String, Object> makeDirectory(List<Path> roots, String path, String actorId) {
+        if (roots.isEmpty()) {
+            return audit(actorId, "dir_make", path, Map.of("ok", false, "error", "no_roots"));
+        }
+        if (path == null || path.isBlank()) {
+            return audit(actorId, "dir_make", path, Map.of("ok", false, "error", "missing"));
+        }
+        var dir = Path.of(path.trim()).toAbsolutePath().normalize();
+        if (!inside(roots, dir)) {
+            return audit(actorId, "dir_make", path, Map.of(
+                "ok", false, "error", "outside_roots", "path", dir.toString()));
+        }
+        try {
+            Files.createDirectories(dir);
+            return audit(actorId, "dir_make", path, Map.of("ok", true, "path", dir.toString()));
+        } catch (IOException e) {
+            return audit(actorId, "dir_make", path, Map.of(
+                "ok", false, "error", "mkdir_failed", "detail", String.valueOf(e.getMessage())));
+        }
+    }
+
+    /** Is this path inside one of the granted roots? */
+    private static boolean inside(List<Path> roots, Path candidate) {
+        for (var root : roots) {
+            if (candidate.startsWith(root)) return true;
+        }
+        return false;
+    }
+
     /** Aliases the steward has allowlisted (introspection; no secrets — commands stay private). */
     public static List<String> allowedApps() {
         return List.copyOf(configuredApps().keySet());

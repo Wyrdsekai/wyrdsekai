@@ -278,6 +278,35 @@ Triggers, all in `CompanionActor`:
 Recovery is `recoveryFillFactor(consecutiveSleeps)` = 0.90 / 0.60 / 0.35 / 0.15 —
 diminishing, so sleeping repeatedly to farm recovery does not work.
 
+### The weight tier (sleep-forge v2, opt-in)
+
+Everything above consolidates into the soul *document*. Two bundled recipes
+extend consolidation into the model's *weights* — the same sleep metaphor,
+one level down. Both are governed recipes (welfare-gated, steward-enrolled,
+never auto-enrolled at install):
+
+- **`sleep-forge-spine`** (nightly): a micro-LoRA over the day's lived corpus
+  — the companion's own biographies and moments, nothing synthetic — gated on
+  two numbers: the write must *improve* next-token prediction on a held-out
+  day of her actual life, and must *not move* a neutral reference text in
+  either direction. It ships **measurement-first**: by default nothing
+  deploys; each gated sleep appends a line to the N-sleeps curve
+  (`data/training/sleep/curve.jsonl`), and only that accumulated evidence
+  justifies flipping `deploy_enabled`.
+- **`sleep-forge-organ`** (weekly, sparse substrates only): grows a
+  zero-initialized "personal expert" beside a frozen MoE's expert pool and
+  trains only it. Gated on beating the spine-only baseline AND on a positive
+  **memory-honesty gap** — the organ must know *her* days better than a
+  same-register life that never happened. It never deploys from the recipe;
+  artifacts are provenance-stamped (sha256 + the companion's own Ed25519
+  signature, applied in-runtime so subprocesses never touch key material)
+  and served only via an explicit evaluation shim that refuses integrity
+  mismatches.
+
+Trainers and the corpus assembler live in `scripts/training/sleep/`; the
+gate instrument is `tools/nll_honesty_probe.py`. Both recipe names are
+reserved — a household-authored recipe cannot shadow their welfare gates.
+
 ---
 
 ## Behavioral extraction

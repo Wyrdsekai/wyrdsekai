@@ -487,7 +487,7 @@ class ObservabilityWaveTest {
         }
     }
 
-    // ── ErBridge (CodePlane integration) ──
+    // ── ErBridge (CodeZaiku integration) ──
 
     @Nested
     class ErBridgeTests {
@@ -501,9 +501,9 @@ class ObservabilityWaveTest {
         @Test
         void link_and_unlink() {
             var bridge = new ErBridge();
-            bridge.link("codeplane.local", List.of("crash-detection", "gpu-monitoring"));
+            bridge.link("codezaiku.local", List.of("crash-detection", "gpu-monitoring"));
             assertTrue(bridge.isLinked());
-            assertEquals("codeplane.local", bridge.status().codeplaneFqdn());
+            assertEquals("codezaiku.local", bridge.status().codezaikuFqdn());
             assertEquals(2, bridge.status().availableCapabilities().size());
 
             bridge.unlink();

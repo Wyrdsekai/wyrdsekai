@@ -27,6 +27,15 @@ public final class CommandParser {
         record Look() implements ParsedCommand {}
         record Take(String objectName) implements ParsedCommand {}
         record Drop(String objectName) implements ParsedCommand {}
+        /**
+         * Take an item out of the world for good — the counterpart {@code drop} never was.
+         *
+         * <p>Dropping leaves the thing in the room, so a world accumulates: two objects
+         * called {@code codex} in a Nexus and no way to be rid of either (household node,
+         * 2026-08-20). Retiring is soft — the backing script moves aside and can be put
+         * back — because these are things the companion made.
+         */
+        record Retire(String objectName) implements ParsedCommand {}
         record Use(String objectName, String target) implements ParsedCommand {}
         record HintSelect(int index) implements ParsedCommand {}
         record Emote(String text) implements ParsedCommand {}
@@ -411,6 +420,15 @@ public final class CommandParser {
         // "drop <object>"
         if (firstWord.equals("drop") && words.length > 1) {
             return new ParsedCommand.Drop(trimmed.substring(5).trim());
+        }
+
+        // "retire <object>" — the counterpart to drop. Also accepts "destroy"/"discard",
+        // because a person reaching to get rid of something will type whichever comes to
+        // hand, and a command they cannot find is a command that does not exist.
+        if ((firstWord.equals("retire") || firstWord.equals("destroy")
+                || firstWord.equals("discard")) && words.length > 1) {
+            return new ParsedCommand.Retire(
+                trimmed.substring(firstWord.length()).trim());
         }
 
         // "use <object> [on <target>]"

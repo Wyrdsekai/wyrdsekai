@@ -1,0 +1,96 @@
+{
+  "messages": [
+    {
+      "id": null,
+      "role": "user",
+      "created": 1787362278,
+      "content": [
+        {
+          "type": "text",
+          "text": "Write a file hello.js containing: exports.x = 1;"
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "chatcmpl-CVVy697ZF2Dve279Ew80mwrqatokXfFq",
+      "role": "assistant",
+      "created": 1787362280,
+      "content": [
+        {
+          "type": "toolRequest",
+          "id": "mw0EOBUheJyY1f1I9Qx6Ux0j8AoewEF9",
+          "toolCall": {
+            "status": "success",
+            "value": {
+              "name": "write",
+              "arguments": {
+                "path": "/tmp/goose-probe-b/hello.js",
+                "content": "exports.x = 1;\n"
+              }
+            }
+          },
+          "_meta": {
+            "goose_extension": "developer"
+          }
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "msg_c5d4ea51-ede8-4431-812f-d65924e42409",
+      "role": "user",
+      "created": 1787362280,
+      "content": [
+        {
+          "type": "toolResponse",
+          "id": "mw0EOBUheJyY1f1I9Qx6Ux0j8AoewEF9",
+          "toolResult": {
+            "status": "success",
+            "value": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Created /tmp/goose-probe-b/hello.js (1 lines)",
+                  "annotations": {
+                    "priority": 0.0
+                  }
+                }
+              ],
+              "isError": false
+            }
+          }
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "chatcmpl-5FaByRNEirYPmLuLbboBn8imkPaUE8Bj",
+      "role": "assistant",
+      "created": 1787362281,
+      "content": [
+        {
+          "type": "text",
+          "text": "Done - `hello.js` created with `exports.x = 1;`."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    }
+  ],
+  "metadata": {
+    "total_tokens": 4184,
+    "status": "completed"
+  }
+}

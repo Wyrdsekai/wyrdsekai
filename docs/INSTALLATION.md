@@ -36,8 +36,8 @@ never needs the full ~1.8 GB tree:
 
 ```
 # on the relay host
-tar xzf wyrdsekai-relay-0.1.0.tar.gz
-cd wyrdsekai-relay-0.1.0
+tar xzf wyrdsekai-relay-0.1.5.tar.gz
+cd wyrdsekai-relay-0.1.5
 sudo sh relay.sh relay.example.com          # docker if present, else native systemd
 sudo sh relay.sh --native relay.example.com # force the no-docker path
 ```
@@ -104,47 +104,65 @@ them on first run. Those weights are open (Apache-2.0) and published at
 [huggingface.co/wyrdsekai](https://huggingface.co/wyrdsekai) — see
 [MODELS.md](MODELS.md) for the full repo map.
 
+### The recommended way: one line
+
+```bash
+# Linux and macOS
+curl -fsSL https://wyrdsekai.org/install | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://wyrdsekai.org/install.ps1 | iex
+```
+
+That picks the right artifact for your platform, downloads it, **verifies it
+against the release's `SHA256SUMS`, and refuses to install on a mismatch**. It
+is the same file you would have downloaded by hand and the same checksum you
+would have run — with fewer chances to skip the checking step.
+
+Only the script itself is served from `wyrdsekai.org`. The installer and the
+checksums both come from the same GitHub release, so the script cannot hand you
+a payload the published checksums do not match. Both scripts are in the
+repository under [`site/install`](../site/install) and
+[`site/install.ps1`](../site/install.ps1) if you would like to read them first —
+and reading a script before piping it to a shell is a reasonable instinct that
+this project will not try to talk you out of. The by-hand route below stays
+fully supported and always will.
+
+### If you would rather do it by hand
+
 ```
 # Linux
-curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/wyrdsekai_0.1.0_amd64.deb
+curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.5/wyrdsekai_0.1.5_amd64.deb
 
 # macOS (Apple Silicon; see the Intel note below)
-curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/Wyrdsekai-0.1.0.pkg
+curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.5/Wyrdsekai-0.1.5.pkg
 
 # Windows (PowerShell)
-curl.exe -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/Wyrdsekai-0.1.0.msi
+curl.exe -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.5/Wyrdsekai-0.1.5.msi
 
 # Relay host — 115 KB, no JVM and no models
-curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/wyrdsekai-relay-0.1.0.tar.gz
+curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.5/wyrdsekai-relay-0.1.5.tar.gz
 ```
 
 **Verify what you downloaded before running it.** Checksums sit beside the
 artifacts:
 
 ```
-curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.0/SHA256SUMS
+curl -fLO https://github.com/Wyrdsekai/wyrdsekai/releases/download/v0.1.5/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing     # Linux
 shasum -a 256 -c SHA256SUMS --ignore-missing # macOS
 ```
 
-A one-line path exists that fetches and installs in a single step:
-
-```
-curl -fsSL https://wyrdsekai.org/install | bash
-```
-
-Prefer the explicit download and checksum if you would rather read a script
-before piping it to a shell. That is a reasonable instinct and this project will
-not try to talk you out of it.
-
 ## Linux — `.deb`
 
 ```bash
-sudo dpkg -i wyrdsekai_0.1.0_amd64.deb
+sudo dpkg -i wyrdsekai_0.1.5_amd64.deb
 sudo apt-get install -f          # if dependencies are missing
 ```
 
-`arm64` builds use `wyrdsekai_0.1.0_arm64.deb`. The package installs to `/opt/wyrdsekai` with symlinks in `/usr/local/bin`
+`arm64` builds use `wyrdsekai_0.1.5_arm64.deb`. The package installs to `/opt/wyrdsekai` with symlinks in `/usr/local/bin`
 (so `wyrd` is on your `PATH`), systemd units under
 `/usr/lib/systemd/system/`, and state under `/var/lib/wyrdsekai`.
 
@@ -205,9 +223,9 @@ it for emergency builds. Override the version with `WYRDSEKAI_VERSION=0.2.0`.
 ## macOS — `.pkg` (Apple Silicon; Intel needs one extra step)
 
 ```bash
-open Wyrdsekai-0.1.0.pkg
+open Wyrdsekai-0.1.5.pkg
 # or:
-sudo installer -pkg Wyrdsekai-0.1.0.pkg -target /
+sudo installer -pkg Wyrdsekai-0.1.5.pkg -target /
 ```
 
 The package installs to `/usr/local/wyrdsekai` with symlinks in
@@ -263,7 +281,7 @@ keep running and your data stays.
 
 ## Windows — `.msi`
 
-Double-click `Wyrdsekai-0.1.0.msi`, or run `msiexec /i Wyrdsekai-0.1.0.msi`.
+Double-click `Wyrdsekai-0.1.5.msi`, or run `msiexec /i Wyrdsekai-0.1.5.msi`.
 
 The MSI is per-machine and installs to `C:\Program Files\Wyrdsekai`, with a
 Start Menu and Desktop shortcut pointing at the tray app
@@ -281,7 +299,7 @@ use a remote household node or a cloud backend instead, set
 Key Chest). `wyrd inference install` re-runs the local flow any time.
 
 Uninstall from **Settings → Apps**, or with
-`msiexec /x Wyrdsekai-0.1.0.msi`. This removes `C:\Program Files\Wyrdsekai`
+`msiexec /x Wyrdsekai-0.1.5.msi`. This removes `C:\Program Files\Wyrdsekai`
 entirely.
 
 **Your companion is not removed.** The world database, souls, journals and
@@ -310,7 +328,7 @@ scriptblocks, so run the script's text rather than the file:
 $env:JAVA_HOME = 'C:\path\to\jdk25'
 $env:PATH = "$env:JAVA_HOME\bin;C:\path\to\wix;$env:PATH"
 $sb = [scriptblock]::Create((Get-Content '.\packaging\windows\build-msi.ps1' -Raw))
-& $sb -Version "0.1.0"
+& $sb -Version "0.1.5"
 ```
 
 The build fetches its own model assets first — the embedding and classifier ONNX
@@ -503,3 +521,21 @@ and clears state; `wyrd reset-zone <recovery-key>` is a factory reset;
 **Backups.** `wyrd backup` snapshots, `wyrd restore` lists available snapshots
 when given no argument, and `wyrd state dump --summary` prints a state
 overview.
+
+## Your coding backend works out of the box
+
+Every installer bundles **CodeZaiku**, the default coding backend — one
+platform-independent artifact, verified against its published checksum at
+build time. Nothing to download, nothing to configure: it drives the node's
+own inference endpoint.
+
+To prove it on your machine — a real task, judged by what lands on disk:
+
+```bash
+wyrd coding probe codezaiku
+```
+
+`probe: OK — the backend did real work on this machine` is the sentence that
+matters. Other backends are one `wyrd coding install <name>` away; `wyrd
+coding list` shows what's available, and anything that needs credentials
+says exactly what and how when it declines to run.

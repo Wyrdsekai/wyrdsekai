@@ -10,12 +10,12 @@ import com.fasterxml.jackson.databind.node.NullNode;
  * <p>Format names are namespaced to prevent collisions:
  * <ul>
  *   <li>{@code wyrdsekai.room} — room state (built into all clients)</li>
- *   <li>{@code codeplane.diff} — side-by-side diff viewer</li>
- *   <li>{@code codeplane.cost} — cost panel</li>
+ *   <li>{@code codezaiku.diff} — side-by-side diff viewer</li>
+ *   <li>{@code codezaiku.cost} — cost panel</li>
  *   <li>{@code homekit.device} — device toggle/slider (future)</li>
  * </ul>
  *
- * @param format   Namespaced type identifier (e.g. "codeplane.diff", "wyrdsekai.room")
+ * @param format   Namespaced type identifier (e.g. "codezaiku.diff", "wyrdsekai.room")
  * @param data     Structured payload — arbitrary JSON specific to the format
  * @param fallback Prose text for clients that don't understand this format. Always present.
  */

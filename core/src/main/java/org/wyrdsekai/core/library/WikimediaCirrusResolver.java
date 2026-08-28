@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
+import org.wyrdsekai.common.model.AppVersion;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -92,8 +93,20 @@ public final class WikimediaCirrusResolver {
         return urls;
     }
 
+    /**
+     * Wikimedia enforces a User-Agent policy: requests with an absent or generic
+     * UA (including the JDK default) are refused with <b>403</b>, which is what
+     * broke the simple-wikipedia pack install on every boot — the listing fetch
+     * sent no UA at all. Verified 2026-08-05: no UA → 403, {@code Java/25} → 403,
+     * a descriptive UA → 200. Must identify the tool and give a contact URL.
+     * See {@code WikipediaTrendingFeed}, which sets one and has always worked.
+     */
+    private static final String USER_AGENT =
+        "wyrdsekai/" + AppVersion.get().version() + " (https://wyrdsekai.org; library pack fetch)";
+
     private static String fetch(String url) throws IOException {
         var request = HttpRequest.newBuilder().uri(URI.create(url))
+            .header("User-Agent", USER_AGENT)
             .timeout(Duration.ofSeconds(30)).GET().build();
         try {
             HttpResponse<String> resp = HTTP.send(request, HttpResponse.BodyHandlers.ofString());

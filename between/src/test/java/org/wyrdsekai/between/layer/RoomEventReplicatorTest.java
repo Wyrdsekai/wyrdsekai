@@ -28,7 +28,7 @@ class RoomEventReplicatorTest {
     }
 
     private static WorldEvent sampleEvent(String roomId) {
-        return new WorldEvent.Said(roomId, Instant.now(), "player-1", "Masumi", "Hello");
+        return new WorldEvent.Said(roomId, Instant.now(), "player-1", "Operator", "Hello");
     }
 
     @Nested

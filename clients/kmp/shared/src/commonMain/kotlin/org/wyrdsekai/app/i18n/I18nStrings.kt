@@ -101,6 +101,7 @@ data class UiStrings(
     val stopNode: String,
     val inferenceUrlOverride: String,
     val debugMode: String,
+    val hermodConsent: String,
 
     // --- FirstRunScreen ---
     val firstRunWelcome: String,
@@ -222,6 +223,7 @@ private val EN = UiStrings(
     stopNode = "Stop Node",
     inferenceUrlOverride = "Inference URL Override",
     debugMode = "Debug Mode",
+    hermodConsent = "Lend compute to the household while charging",
 
     // FirstRunScreen
     firstRunWelcome = "How would you like to begin?",
@@ -333,6 +335,7 @@ private val JA = UiStrings(
     stopNode = "\u30ce\u30fc\u30c9\u3092\u505c\u6b62",
     inferenceUrlOverride = "\u63a8\u8ad6URL\u30aa\u30fc\u30d0\u30fc\u30e9\u30a4\u30c9",
     debugMode = "\u30c7\u30d0\u30c3\u30b0\u30e2\u30fc\u30c9",
+    hermodConsent = "\u5145\u96fb\u4e2d\u306b\u4e16\u5e2f\u3078\u8a08\u7b97\u3092\u8cb8\u3059",
 
     // FirstRunScreen
     firstRunWelcome = "\u3069\u306e\u3088\u3046\u306b\u59cb\u3081\u307e\u3059\u304b\uff1f",
@@ -444,6 +447,7 @@ private val ES = UiStrings(
     stopNode = "Detener nodo",
     inferenceUrlOverride = "URL de inferencia personalizada",
     debugMode = "Modo depuraci\u00f3n",
+    hermodConsent = "Prestar c\u00f3mputo al hogar mientras carga",
 
     // FirstRunScreen
     firstRunWelcome = "\u00bfC\u00f3mo deseas comenzar?",

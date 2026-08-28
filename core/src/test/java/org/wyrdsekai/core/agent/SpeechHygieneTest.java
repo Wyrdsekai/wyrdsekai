@@ -3,6 +3,8 @@ package org.wyrdsekai.core.agent;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.time.Instant;
+import org.wyrdsekai.common.event.WorldEvent;
 
 /** Speech-boundary hygiene (second-node 2026-07-10): internal bracketed status markers must never
  *  reach user-facing speech — the 9B parrots synthetic-trigger prefixes into replies. */
@@ -228,21 +230,21 @@ class SpeechHygieneTest {
 
     @Test
     void tool_result_triggers_are_recognized() {
-        var completed = new org.wyrdsekai.common.event.WorldEvent.Said(
-            "room-1", java.time.Instant.now(), "agent-mia", "mia",
+        var completed = new WorldEvent.Said(
+            "room-1", Instant.now(), "agent-mia", "mia",
             "[Tool completed] Morning briefing for SF: overcast.\n[Share the substance "
             + "with the user in your own words — never repeat this bracketed status text aloud.]");
         assertThat(CompanionActor.isToolResultFollowUp(completed)).isTrue();
-        var failed = new org.wyrdsekai.common.event.WorldEvent.Said(
-            "room-1", java.time.Instant.now(), "agent-mia", "mia",
+        var failed = new WorldEvent.Said(
+            "room-1", Instant.now(), "agent-mia", "mia",
             "[Tool failed] morning_briefing: address is required");
         assertThat(CompanionActor.isToolResultFollowUp(failed)).isTrue();
     }
 
     @Test
     void ordinary_triggers_are_not_tool_result_follow_ups() {
-        var say = new org.wyrdsekai.common.event.WorldEvent.Said(
-            "room-1", java.time.Instant.now(), "player-1", "operator",
+        var say = new WorldEvent.Said(
+            "room-1", Instant.now(), "player-1", "operator",
             "mia - what's the weather tomorrow?");
         assertThat(CompanionActor.isToolResultFollowUp(say)).isFalse();
         assertThat(CompanionActor.isToolResultFollowUp(null)).isFalse();
@@ -291,9 +293,9 @@ class SpeechHygieneTest {
         // Matches the last tell sender.
         assertThat(CompanionActor.tellTargetIsRequester("operator", "operator", null, null)).isTrue();
         // Matches the active plan's requester.
-        assertThat(CompanionActor.tellTargetIsRequester("Mythos", null, "operator", null)).isTrue();
+        assertThat(CompanionActor.tellTargetIsRequester("Operator", null, "operator", null)).isTrue();
         // Matches the trigger's entity name — case-insensitive.
-        assertThat(CompanionActor.tellTargetIsRequester("MYTHOS", null, null, "operator")).isTrue();
+        assertThat(CompanionActor.tellTargetIsRequester("OPERATOR", null, null, "operator")).isTrue();
     }
 
     @Test

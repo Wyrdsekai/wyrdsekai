@@ -72,11 +72,11 @@ class CodingPolicyOpenHandsTest {
     @Test void explore_task_type_picks_openhands_when_available() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
-        // codeplane would normally win (first in chain). The new
+        // codezaiku would normally win (first in chain). The new
         // heuristic promotes openhands above the chain when the task
         // type screams "explore".
         assertThat(invoke("did:c", "explore", "anything", ctx))
@@ -86,9 +86,9 @@ class CodingPolicyOpenHandsTest {
     @Test void explore_unknown_repo_task_type_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "explore_unknown_repo", "anything", ctx))
             .isEqualTo("openhands");
@@ -97,9 +97,9 @@ class CodingPolicyOpenHandsTest {
     @Test void survey_task_type_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "survey", "anything", ctx))
             .isEqualTo("openhands");
@@ -108,9 +108,9 @@ class CodingPolicyOpenHandsTest {
     @Test void research_task_type_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "research", "anything", ctx))
             .isEqualTo("openhands");
@@ -121,9 +121,9 @@ class CodingPolicyOpenHandsTest {
     @Test void description_starting_with_explore_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code", "explore the foo subsystem", ctx))
             .isEqualTo("openhands");
@@ -132,9 +132,9 @@ class CodingPolicyOpenHandsTest {
     @Test void description_starting_with_survey_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code", "survey the dependency graph", ctx))
             .isEqualTo("openhands");
@@ -143,9 +143,9 @@ class CodingPolicyOpenHandsTest {
     @Test void description_research_the_codebase_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code", "research the codebase before we change things", ctx))
             .isEqualTo("openhands");
@@ -154,9 +154,9 @@ class CodingPolicyOpenHandsTest {
     @Test void description_explore_the_codebase_picks_openhands() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code", "explore the codebase first", ctx))
             .isEqualTo("openhands");
@@ -168,12 +168,12 @@ class CodingPolicyOpenHandsTest {
         // OpenHands not installed — heuristic shouldn't override the
         // fallback chain to a backend that isn't there.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "opencode"));
+        ctx.put("availableBackends", List.of("codezaiku", "opencode"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "explore", "anything", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void normal_code_task_does_not_pick_openhands() {
@@ -181,12 +181,12 @@ class CodingPolicyOpenHandsTest {
         // heuristic. They follow the normal fallback chain.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code", "fix the bug", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void mid_sentence_explore_does_not_match() {
@@ -195,13 +195,13 @@ class CodingPolicyOpenHandsTest {
         // accidentally widen the regex into a false-positive trap.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
 
         assertThat(invoke("did:c", "code",
             "we should explore some refactoring options", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Companion preferences override the heuristic ──────────────
@@ -212,9 +212,9 @@ class CodingPolicyOpenHandsTest {
         // when no companion preference applies.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("companionPreferences",
             prefs("opencode", List.of(), Map.of()));
 
@@ -224,28 +224,28 @@ class CodingPolicyOpenHandsTest {
 
     @Test void avoid_openhands_overrides_explore_heuristic() {
         // Steward pinned avoid_backends=["openhands"] — the heuristic
-        // must respect that. Falls through to codeplane.
+        // must respect that. Falls through to codezaiku.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "opencode", "openhands"));
+            List.of("codezaiku", "opencode", "openhands"));
         ctx.put("companionPreferences",
             prefs(null, List.of("openhands"), Map.of()));
 
         assertThat(invoke("did:c", "explore", "the foo subsystem", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
 
     private static Map<String, Object> baseCtx() {
         var ctx = new LinkedHashMap<String, Object>();
-        ctx.put("availableBackends", List.of("codeplane"));
+        ctx.put("availableBackends", List.of("codezaiku"));
         ctx.put("companionPreferences", null);
         ctx.put("householdPolicy", policy());
-        ctx.put("fallbackChain", List.of("codeplane"));
-        ctx.put("defaultBackend", "codeplane");
+        ctx.put("fallbackChain", List.of("codezaiku"));
+        ctx.put("defaultBackend", "codezaiku");
         ctx.put("backendTier", tierProxy(name -> "LOCAL_HEAVY"));
         ctx.put("cuRemainingToday", longProxy(eid -> 1_000_000L));
         ctx.put("cuEstimate", (ProxyExecutable) (Value... args) -> 0L);

@@ -83,7 +83,7 @@ class CodingFamiliarSummonIntegrationTest {
         var registry = new CodingFamiliarRegistry(workspace.resolve("souls"));
 
         var summoner = new CodingFamiliarSummoner(registry, bondStore, guardian);
-        var outcome = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
+        var outcome = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
 
         // Outcome shape — workshop request fired, bond recorded, identity new.
         assertThat(outcome.alreadyExisted()).isFalse();
@@ -103,7 +103,7 @@ class CodingFamiliarSummonIntegrationTest {
         var probe = testKit.createTestProbe(RoomSnapshot.class);
         roomRef.tell(new RoomCommand.GetSnapshot(probe.getRef()));
         var snap = probe.receiveMessage(Duration.ofSeconds(5));
-        assertThat(snap.name()).isEqualTo("Masumi's CodePlane Workshop");
+        assertThat(snap.name()).isEqualTo("Operator's CodeZaiku Workshop");
 
         // 2) Identity file persisted to disk — fresh registry sees it.
         var freshRegistry = new CodingFamiliarRegistry(workspace.resolve("souls"));
@@ -133,9 +133,9 @@ class CodingFamiliarSummonIntegrationTest {
         var registry = new CodingFamiliarRegistry(workspace.resolve("souls"));
         var summoner = new CodingFamiliarSummoner(registry, bondStore, guardian);
 
-        var first = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
+        var first = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
         Thread.sleep(400);
-        var second = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
+        var second = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
         Thread.sleep(400);
 
         assertThat(first.alreadyExisted()).isFalse();

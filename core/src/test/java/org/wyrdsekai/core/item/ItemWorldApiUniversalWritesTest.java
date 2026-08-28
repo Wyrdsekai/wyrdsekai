@@ -86,12 +86,30 @@ class ItemWorldApiUniversalWritesTest {
         assertFalse(stillThere, "deleted chunk must not appear in search");
     }
 
+    /**
+     * An id nobody wrote is refused as not-yours, not reported as missing.
+     * Ownership is checked BEFORE existence on purpose (2026-08-25): if a
+     * refusal said "not_found" for chunks that exist and "not_yours" for
+     * chunks that don't, the refusal itself would be a probe for which ids
+     * are real. A chunk the caller DID author, but which is gone, still
+     * reports not_found — see below.
+     */
     @Test
-    void library_delete_returns_not_found_for_missing_id() {
+    void library_delete_refuses_an_id_the_caller_did_not_write() {
         var delCaps = ItemCapabilitySet.of(List.of("library.delete"));
         var delRes = executor.execute("library_deleter",
             "function invoke(p){return world.library.delete(p.id);}",
             Map.of("id", "no-such-chunk"), provider, delCaps);
+        assertEquals(false, delRes.get("ok"));
+        assertEquals("not_yours", delRes.get("reason"));
+    }
+
+    @Test
+    void library_delete_returns_not_found_for_the_callers_own_missing_id() {
+        var delCaps = ItemCapabilitySet.of(List.of("library.delete"));
+        var delRes = executor.execute("library_deleter",
+            "function invoke(p){return world.library.delete(p.id);}",
+            Map.of("id", "lib:" + AGENT_ID + ":no-such-uuid"), provider, delCaps);
         assertEquals(false, delRes.get("ok"));
         assertEquals("not_found", delRes.get("reason"));
     }
@@ -129,11 +147,21 @@ class ItemWorldApiUniversalWritesTest {
     }
 
     @Test
-    void library_tag_missing_chunk_errors() {
+    void library_tag_refuses_a_chunk_the_caller_did_not_write() {
         var tagCaps = ItemCapabilitySet.of(List.of("library.tag"));
         var res = executor.execute("library_tagger",
             "function invoke(p){return world.library.tag(p.id, ['x']);}",
             Map.of("id", "ghost-chunk-id"), provider, tagCaps);
+        assertEquals(false, res.get("ok"));
+        assertEquals("not_yours", res.get("error"));
+    }
+
+    @Test
+    void library_tag_missing_chunk_errors() {
+        var tagCaps = ItemCapabilitySet.of(List.of("library.tag"));
+        var res = executor.execute("library_tagger",
+            "function invoke(p){return world.library.tag(p.id, ['x']);}",
+            Map.of("id", "lib:" + AGENT_ID + ":ghost"), provider, tagCaps);
         assertEquals(false, res.get("ok"));
         assertEquals("chunk not found", res.get("error"));
     }

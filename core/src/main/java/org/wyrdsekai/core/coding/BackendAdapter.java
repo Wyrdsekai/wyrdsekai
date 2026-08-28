@@ -11,9 +11,9 @@ import org.wyrdsekai.core.agent.AgentEvent;
  * {@link org.wyrdsekai.core.agent.AgentEventStream} for all backends) and the
  * concrete backend's event shape.</p>
  *
- * <p>Phase 1a ships exactly one adapter — {@link CodePlaneEventAdapter} —
+ * <p>Phase 1a ships exactly one adapter — {@link CodeZaikuEventAdapter} —
  * which lifts the legacy {@link
- * org.wyrdsekai.core.codeplane.CodePlaneItemBridge} translation logic into
+ * org.wyrdsekai.core.codezaiku.CodeZaikuItemBridge} translation logic into
  * the new shape. Aider, OpenHands, and the paid backends bring their own
  * adapters in later phases.</p>
  */

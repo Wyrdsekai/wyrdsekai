@@ -4,8 +4,8 @@ import java.time.Instant;
 import java.util.*;
 
 /**
- * CodePlane ER bridge (§105.6).
- * Connects Wyrdsekai ER to CodePlane's richer diagnostic infrastructure
+ * CodeZaiku ER bridge (§105.6).
+ * Connects Wyrdsekai ER to CodeZaiku's richer diagnostic infrastructure
  * when available. Standalone mode when not linked.
  */
 public class ErBridge {
@@ -14,11 +14,11 @@ public class ErBridge {
     public record BridgeStatus(
         boolean linked,
         Instant linkedSince,
-        String codeplaneFqdn,
+        String codezaikuFqdn,
         List<String> availableCapabilities
     ) {}
 
-    /** Infrastructure alert from CodePlane. */
+    /** Infrastructure alert from CodeZaiku. */
     public record InfraAlert(
         String alertId,
         AlertSeverity severity,
@@ -32,7 +32,7 @@ public class ErBridge {
         INFO, WARNING, CRITICAL, FATAL
     }
 
-    /** Enriched vitality data when CodePlane bridge is active. */
+    /** Enriched vitality data when CodeZaiku bridge is active. */
     public record EnrichedVitality(
         String tankName,
         double value,
@@ -49,20 +49,20 @@ public class ErBridge {
         this.status = new BridgeStatus(false, null, null, List.of());
     }
 
-    /** Link to CodePlane ER. */
-    public BridgeStatus link(String codeplaneFqdn, List<String> capabilities) {
-        this.status = new BridgeStatus(true, Instant.now(), codeplaneFqdn,
+    /** Link to CodeZaiku ER. */
+    public BridgeStatus link(String codezaikuFqdn, List<String> capabilities) {
+        this.status = new BridgeStatus(true, Instant.now(), codezaikuFqdn,
             capabilities != null ? List.copyOf(capabilities) : List.of());
         return this.status;
     }
 
-    /** Unlink from CodePlane. */
+    /** Unlink from CodeZaiku. */
     public BridgeStatus unlink() {
         this.status = new BridgeStatus(false, null, null, List.of());
         return this.status;
     }
 
-    /** Receive infrastructure alert from CodePlane. */
+    /** Receive infrastructure alert from CodeZaiku. */
     public InfraAlert receiveAlert(AlertSeverity severity, String component, String message) {
         if (!status.linked()) return null;
         var alert = new InfraAlert("infra-" + nextId++, severity, component,
@@ -85,7 +85,7 @@ public class ErBridge {
         return null;
     }
 
-    /** Translate CodePlane infra alert into agent-relevant vitality effect. */
+    /** Translate CodeZaiku infra alert into agent-relevant vitality effect. */
     public Map<String, Double> translateToVitalityEffect(InfraAlert alert) {
         return switch (alert.severity()) {
             case FATAL -> Map.of("energy", -0.5, "focus", -0.3, "error_pressure", 0.8);
@@ -95,7 +95,7 @@ public class ErBridge {
         };
     }
 
-    /** Enrich a simple tank value with CodePlane derivative data. */
+    /** Enrich a simple tank value with CodeZaiku derivative data. */
     public EnrichedVitality enrich(String tankName, double value,
                                     double velocity, double acceleration) {
         if (!status.linked()) {

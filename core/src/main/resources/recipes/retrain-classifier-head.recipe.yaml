@@ -33,6 +33,30 @@ params:
   head:
     type: string
     required: true          # e.g. "task_present"
+  # Which heads the SCHEDULED (cron) path may retrain, most-stale first.
+  #
+  # The gap path names its own head — the gap key IS "<head>.misroute". Cron has no
+  # such signal, so without this the recipe could never fire on cadence at all
+  # (found live 2026-08-18: every scheduled run died on "missing required params").
+  #
+  # This is a DECLARED set, not "whichever head scores worst", for two reasons:
+  #   * the recorded per-head accuracies are not comparable — task_present and
+  #     request_type report train-set accuracy with validation_examples: 0, so
+  #     weakest-first would rank the unmeasured heads best;
+  #   * two heads must never be picked automatically (evidence from the 2026-07-21
+  #     release-bake study, packaging/build-evolved-artifact.sh):
+  #       substrate_present — baseline is already optimal (0/90); BOTH LR and MLP
+  #         retrains REGRESS it. Retraining can only lose.
+  #       request_type — 8-way head at its capability ceiling (~0.58 < the 0.60
+  #         gate); it can only fail the accuracy gate until the affect/dispatch
+  #         label split lands, and a genuine gate failure DOES count toward the
+  #         deploy ceiling.
+  # Selection among these is by staleness (longest since a successful retrain), which
+  # is what "cron when stale" means and needs no cross-head metric comparison.
+  # Retune per-install with `wyrd recipes set-param`; empty disables scheduled runs.
+  cron_heads:
+    type: string
+    default: "task_present,cleanliness"
   min_accuracy:
     type: number
     default: 0.80
@@ -122,21 +146,27 @@ steps:
     command: "rm -f core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl ; printf '{\"corpus_cleaned\": true}\\n'"
 
   - id: expand-corpus
-    kind: BACKEND
-    # A2-style explicit prompt: the items-as-tools preamble that wraps every
-    # backend prompt biases the model toward writing scripted-item .js files.
-    # An A2-style "Use the shell tool. Run this exact command: …" overrides
-    # that bias (proven on 2026-05-24 in RetrainClassifierHeadLiveE2ETest).
-    prompt: >
-      Use the shell tool. Run this exact command:
+    # SHELL, not BACKEND (2026-08-24). This step names ONE exact command and a
+    # file contract — there is no decision in it for a model to make, and the
+    # A2-era BACKEND wrapping ("Use the shell tool. Run this exact command…",
+    # proven 2026-05-24) existed only to make a model type that command
+    # reliably. Live against CodeZaiku the wrapping failed three DIFFERENT
+    # ways in one day on the cleanliness head alone: a mid-run file read blew
+    # the context window; two attempts ground to the step timeout without the
+    # command ever completing; and a third run hit the coding tool's ~5-minute
+    # per-command cap (this expansion legitimately runs 10-30 min at 852
+    # paraphrase calls), retried with `timeout 120`, got exit 124, and
+    # wandered. The sibling head passed only because its shorter seeds fit
+    # under that cap. An exact command runs EXACTLY — the agentic backends
+    # stay for steps that need judgment.
+    kind: SHELL
+    timeout: 30m
+    command: >-
       python3 scripts/classifier/expand_corpus.py
       --seeds core/src/main/resources/classifier/bootstrap/{{head}}/seeds.jsonl
       --output core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl
       --backend local
       --variants-per-seed {{variants_per_seed}}
-      Then stop. No other commands.
-    tools: [shell]
-    success_contract: "file:core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl exists"
 
   - id: count-corpus
     kind: SHELL

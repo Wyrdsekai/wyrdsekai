@@ -17,7 +17,7 @@ import java.util.function.Consumer;
  * Javalin WebSocket handler for zone service connections ({@code /ws/zone}).
  * <p>
  * External services connect here to register as zone command handlers.
- * Each connection claims a namespace (e.g. "codeplane") and receives
+ * Each connection claims a namespace (e.g. "codezaiku") and receives
  * forwarded player commands for that namespace.
  * <p>
  * Protocol:

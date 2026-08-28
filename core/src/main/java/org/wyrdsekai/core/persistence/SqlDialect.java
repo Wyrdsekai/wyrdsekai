@@ -36,7 +36,18 @@ public sealed interface SqlDialect {
         @Override
         public String upsert(String table, String columns, String values,
                               String conflictColumns, String updateSet) {
-            return "INSERT OR REPLACE INTO " + table + " (" + columns + ") VALUES (" + values + ")";
+            // INSERT OR REPLACE is not an upsert: SQLite implements it as
+            // DELETE + INSERT, so every column absent from the INSERT list
+            // snaps back to its schema default. Live 2026-08-11: the sleep
+            // backlog persisted beside the vitality snapshot was zeroed by
+            // the very next vitality save — the companion's adenosine erased
+            // thirty seconds after every deposit, and at PostStop (no chaser
+            // write follows) the zero stuck. Callers hand this method an
+            // explicit column-scoped update set; honor it. ON CONFLICT DO
+            // UPDATE (SQLite ≥3.24) accepts the same EXCLUDED syntax the
+            // PostgreSQL dialect uses.
+            return "INSERT INTO " + table + " (" + columns + ") VALUES (" + values + ") "
+                + "ON CONFLICT(" + conflictColumns + ") DO UPDATE SET " + updateSet;
         }
 
         @Override

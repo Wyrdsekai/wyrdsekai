@@ -50,7 +50,7 @@
 //   1. companion.preferred_backend / task_type override (handled here)
 //   2. Pi                  — Phase 2f default-on local backend (LOCAL_FREE,
 //                            pipeline-proven, ~12MB npm, MIT)
-//   3. CodePlane           — in-world spatial workflow when available
+//   3. CodeZaiku           — in-world spatial workflow when available
 //   4. OpenHands           — heavier autonomous tier, pipeline-proven
 //   5. Claude SDK          — pipeline-proven (OAuth + ApiKey both verified)
 //   6. OpenCode / Goose / Cline / Continue — wired, EXPERIMENTAL
@@ -58,7 +58,7 @@
 //   8. Devin               — async cloud, last (Phase 2e), EXPERIMENTAL
 // Position 2 (pi) is what makes "complex items work out of the box" — the
 // script never needs to special-case it; the host's fallback chain places
-// it before CodePlane and the heavier tiers.
+// it before CodeZaiku and the heavier tiers.
 //
 // The "explore-flavored" bump below still promotes OpenHands above the
 // chain for survey-style tasks (richer agentic tooling than pi/CLI).

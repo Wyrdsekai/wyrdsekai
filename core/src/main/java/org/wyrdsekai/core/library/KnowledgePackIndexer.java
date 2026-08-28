@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.library;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.lucene.store.AlreadyClosedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
@@ -29,7 +30,15 @@ public final class KnowledgePackIndexer {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgePackIndexer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int COMMIT_BATCH_SIZE = 500;
+    /**
+     * Inserts per commit. Inserts use the store's BULK path (no per-document
+     * searcher refresh, no interleaved commit) — through the normal path every
+     * chunk forces an NRT segment flush, which held the household node's
+     * 13.7M-chunk shelf publish to ~170 chunks/s. Each batch boundary commits
+     * AND refreshes ({@code commitAll}), so search visibility lags a running
+     * index by at most one batch.
+     */
+    private static final int COMMIT_BATCH_SIZE = 5000;
     /**
      * Pause after each commit batch. A fresh-boot index of 400k+ bundled chunks (jmdict ~217k)
      * otherwise saturates the CPU and holds the Lucene write lock for minutes, leaving the node
@@ -89,6 +98,7 @@ public final class KnowledgePackIndexer {
         long start = System.currentTimeMillis();
         var indexed = new AtomicInteger(0);
         var errors = new AtomicInteger(0);
+        boolean aborted = false;
 
         // Process all JSONL files in chunks/
         try (var chunkFiles = Files.list(chunksDir)) {
@@ -103,9 +113,16 @@ public final class KnowledgePackIndexer {
                         errors.incrementAndGet();
                     }
                 });
+        } catch (AlreadyClosedException e) {
+            // The node is shutting down under us. Stop — do not narrate the
+            // remaining millions of chunks one WARN at a time. What committed
+            // stays committed; a re-run replaces the pack from the top.
+            aborted = true;
+            log.warn("[Library] Pack '{}' indexing ABORTED at {} chunks — index closed (shutting down). "
+                + "Re-run the share/install to finish.", pack.name(), indexed.get());
         }
 
-        luceneStore.commitAll();
+        if (!aborted) luceneStore.commitAll();
 
         long elapsed = System.currentTimeMillis() - start;
         log.info("[Library] Pack '{}' indexed: {} chunks, {} errors, {}s",
@@ -159,7 +176,7 @@ public final class KnowledgePackIndexer {
                             null, null, "bundled-pack-default", null);
                     }
 
-                    luceneStore.insertKnowledge(
+                    luceneStore.insertKnowledgeBulk(
                         id, packName,
                         chunk.title() != null ? chunk.title() : "",
                         chunk.content(),
@@ -171,10 +188,10 @@ public final class KnowledgePackIndexer {
                         luceneStore.commitAll();
                         throttle();
                         if (progress != null) progress.accept(count);
-                        if (count % 5000 == 0) {
-                            log.info("[Library] Pack '{}': indexed {} chunks...", packName, count);
-                        }
+                        log.info("[Library] Pack '{}': indexed {} chunks...", packName, count);
                     }
+                } catch (AlreadyClosedException e) {
+                    throw e;   // shutdown — not a bad chunk; let indexPack stop the run
                 } catch (Exception e) {
                     errors.incrementAndGet();
                     if (errors.get() <= 10) {
@@ -215,7 +232,7 @@ public final class KnowledgePackIndexer {
                         null, null, "bundled-pack-default", null);
                 }
 
-                luceneStore.insertKnowledge(id, packName,
+                luceneStore.insertKnowledgeBulk(id, packName,
                     chunk.title() != null ? chunk.title() : "",
                     chunk.content(),
                     chunk.source() != null ? chunk.source() : "",
@@ -227,6 +244,11 @@ public final class KnowledgePackIndexer {
                     throttle();
                     if (progress != null) progress.accept(count);
                 }
+            } catch (AlreadyClosedException e) {
+                log.warn("[Library] Pack '{}' indexing ABORTED at {} chunks — index closed (shutting down).",
+                    packName, indexed.get());
+                return new IndexResult(packName, indexed.get(), errors.get(),
+                    System.currentTimeMillis() - start);
             } catch (Exception e) {
                 errors.incrementAndGet();
             }

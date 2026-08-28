@@ -538,8 +538,8 @@
           "default": "true"
         },
         {
-          "key": "WYRDSEKAI_CODING_CODEPLANE_ENABLED",
-          "description": "CodePlane in-world workflow",
+          "key": "WYRDSEKAI_CODING_CODEZAIKU_ENABLED",
+          "description": "CodeZaiku in-world workflow",
           "default": "true"
         },
         {

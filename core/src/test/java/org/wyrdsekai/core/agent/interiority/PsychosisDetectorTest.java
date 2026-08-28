@@ -25,7 +25,7 @@ class PsychosisDetectorTest {
 
     @Test void bondholder_present_does_not_fire() {
         var testimony = "I spent the day with operator. We walked in the garden, then I read. " +
-            "Masumi laughed at my joke about the chapel. " +
+            "Operator laughed at my joke about the chapel. " +
             "I thought about the library and what to do next. ";
         var findings = PsychosisDetector.detect(testimony, "", "operator", Set.of());
         assertThat(findings).noneSatisfy(f -> assertThat(f.key()).isEqualTo("bondholder_absent"));

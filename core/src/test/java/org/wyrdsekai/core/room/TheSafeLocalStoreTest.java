@@ -12,6 +12,8 @@ import java.nio.file.attribute.PosixFilePermissions;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import java.util.Base64;
+import java.util.List;
 
 /**
  * W13 — TheSafe local single-node persistence:
@@ -48,7 +50,7 @@ class TheSafeLocalStoreTest {
 
         // K=N=1 secret is visible through the generic Safe API too.
         assertTrue(safe.hasSecret("github.token"));
-        assertEquals(java.util.List.of("github.token"), safe.listSlots());
+        assertEquals(List.of("github.token"), safe.listSlots());
     }
 
     @Test
@@ -92,7 +94,7 @@ class TheSafeLocalStoreTest {
         assertTrue(onDisk.contains("\"mode\" : \"aes-gcm\"") || onDisk.contains("\"mode\":\"aes-gcm\""),
             "keyed safe must persist encrypted, got: " + onDisk);
         assertFalse(onDisk.contains("hunter2-value"), "plaintext secret must not be on disk");
-        assertFalse(onDisk.contains(java.util.Base64.getEncoder()
+        assertFalse(onDisk.contains(Base64.getEncoder()
                 .encodeToString("hunter2-value".getBytes(StandardCharsets.UTF_8))),
             "base64 of the secret must not be on disk either");
     }

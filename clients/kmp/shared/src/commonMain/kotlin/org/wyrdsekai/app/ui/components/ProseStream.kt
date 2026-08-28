@@ -2,6 +2,7 @@ package org.wyrdsekai.app.ui.components
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,12 @@ fun ProseStream(
         }
     }
 
+    // Long-press to select and copy. A transcript you cannot copy out of is one you
+    // cannot quote, paste into a bug report, or keep — and this is the main place a
+    // person reads anything on the phone. LocalRoomScreen already wrapped its own
+    // transcript this way; the networked one did not, which is the same verb-on-one-
+    // surface gap that keeps costing us.
+    SelectionContainer {
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
@@ -57,6 +64,7 @@ fun ProseStream(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             )
         }
+    }
     }
 }
 

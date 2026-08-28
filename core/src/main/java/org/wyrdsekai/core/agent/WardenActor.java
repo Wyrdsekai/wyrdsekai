@@ -21,7 +21,9 @@ import org.wyrdsekai.scripting.i18n.ScriptMessageCatalog;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -90,7 +92,10 @@ public class WardenActor extends AbstractBehavior<WardenActor.Command> {
     private RoomSnapshot currentSnapshot;
     private final List<WorldEvent.Said> conversationHistory = new ArrayList<>();
     private WorldEvent.Said pendingTrigger;
-    private WorldEvent.Said deferredTrigger;
+    // Arrival-order queue, not a single slot — two messages landing in one busy
+    // window must both survive (companion cpB2 loss, 2026-08-23). Bounded; overflow
+    // drops the oldest.
+    private final Deque<WorldEvent.Said> deferredTriggers = new ArrayDeque<>();
     private Instant lastFailure = Instant.MIN;
     private String locale = "en";
     private VitalityState vitality = VitalityState.initial()
@@ -207,7 +212,8 @@ public class WardenActor extends AbstractBehavior<WardenActor.Command> {
                     timers.startSingleTimer(DEBOUNCE_TIMER_KEY,
                         new ProcessEvents(), modulation.debounceDelay());
                 } else {
-                    deferredTrigger = said;
+                    if (deferredTriggers.size() >= 16) deferredTriggers.pollFirst();
+                    deferredTriggers.addLast(said);
                 }
             }
 
@@ -415,9 +421,8 @@ public class WardenActor extends AbstractBehavior<WardenActor.Command> {
             }
         }
 
-        if (deferredTrigger != null) {
-            pendingTrigger = deferredTrigger;
-            deferredTrigger = null;
+        if (!deferredTriggers.isEmpty() && pendingTrigger == null) {
+            pendingTrigger = deferredTriggers.pollFirst();
             var modulation = VitalityModulation.compute(vitality, profile);
             timers.startSingleTimer(DEBOUNCE_TIMER_KEY,
                 new ProcessEvents(), modulation.debounceDelay());

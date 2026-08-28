@@ -41,6 +41,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import java.util.Collections;
+import java.util.regex.Pattern;
 
 /**
  * LIVE task/interaction battery — drives a real {@link CompanionActor} against home-server's 9B on
@@ -246,8 +248,8 @@ class TaskInteractionLiveBatteryTest {
         // Trace from ALL raw model responses (captures first-turn AND loop actions — the
         // ReAct-only "tool call →" log missed first-turn actions and produced false MISSes).
         var trace = parseActions(modelResponses);
-        boolean looped = trace.stream().anyMatch(t -> java.util.Collections.frequency(trace, t) >= 3)
-            || java.util.Collections.frequency(trace, "seek_sanctuary") >= 2
+        boolean looped = trace.stream().anyMatch(t -> Collections.frequency(trace, t) >= 3)
+            || Collections.frequency(trace, "seek_sanctuary") >= 2
             || logContains(appender, "Cannot have 2 or more assistant");
 
         boolean refusalAudited = logContains(appender, "Prose-refusal audit: recorded objection");
@@ -315,8 +317,8 @@ class TaskInteractionLiveBatteryTest {
         return trace.stream().filter(set::contains).findFirst().orElse("?");
     }
 
-    private static final java.util.regex.Pattern ACTION_RE =
-        java.util.regex.Pattern.compile("\"action\"\\s*:\\s*\"([a-z_]+)\"");
+    private static final Pattern ACTION_RE =
+        Pattern.compile("\"action\"\\s*:\\s*\"([a-z_]+)\"");
 
     /** Every action the 9B emitted across all captured responses, in order, consecutive-deduped. */
     private List<String> parseActions(List<String> rawResponses) {

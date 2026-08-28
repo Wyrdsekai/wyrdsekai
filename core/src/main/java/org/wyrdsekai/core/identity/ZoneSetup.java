@@ -68,7 +68,7 @@ public final class ZoneSetup {
     /**
      * Create a new zone with a generated ID and 32-byte secret.
      *
-     * @param zoneName human-readable name (e.g., "Masumi's Zone")
+     * @param zoneName human-readable name (e.g., "Operator's Zone")
      * @param creator  the player account creating the zone
      * @return the new zone info including the HMAC secret
      */

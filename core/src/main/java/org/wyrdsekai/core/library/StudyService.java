@@ -9,6 +9,8 @@ import org.wyrdsekai.common.home.ResourceUri;
 import org.wyrdsekai.core.crypto.PrivateJournalCipher;
 import org.wyrdsekai.core.home.HomeClient;
 import org.wyrdsekai.core.search.SearchCollections;
+import org.wyrdsekai.core.search.EmbeddingService;
+import org.wyrdsekai.core.identity.StudyOwnerGuard;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,6 +20,7 @@ import java.io.BufferedWriter;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +29,8 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.List;
+import java.util.Locale;
 
 /**
  * Service for managing a user's private Study content:
@@ -181,6 +186,11 @@ public final class StudyService {
      * Write a shared journal entry (companion can read).
      */
     public String writeJournalEntry(String userDid, String content) {
+        // Refuse content whose owner cannot be resolved to a person. Writing it
+        // anyway is how one human ended up owning content under four different
+        // strings. No-op until provisioning
+        // is enabled, so un-migrated installs are unaffected.
+        userDid = StudyOwnerGuard.require(userDid);
         var id = "journal:" + userDid + ":" + System.currentTimeMillis();
         var title = content.length() > 60 ? content.substring(0, 60) + "..." : content;
         luceneStore.insertStudyItem(id, userDid, "journal", title, content,
@@ -202,6 +212,11 @@ public final class StudyService {
      * decrypt on the owner's own read paths.
      */
     public String writePrivateJournalEntry(String userDid, String content) {
+        // Refuse content whose owner cannot be resolved to a person. Writing it
+        // anyway is how one human ended up owning content under four different
+        // strings. No-op until provisioning
+        // is enabled, so un-migrated installs are unaffected.
+        userDid = StudyOwnerGuard.require(userDid);
         var id = "journal_private:" + userDid + ":" + System.currentTimeMillis();
         var title = "(private entry)";  // Don't reveal content in title
         var sealed = PrivateJournalCipher.encrypt(userDid, content);
@@ -304,6 +319,11 @@ public final class StudyService {
 
     private void insertChunk(String userDid, String collection, String title,
                               String content, String discriminator) {
+        // Refuse content whose owner cannot be resolved to a person. Writing it
+        // anyway is how one human ended up owning content under four different
+        // strings. No-op until provisioning
+        // is enabled, so un-migrated installs are unaffected.
+        userDid = StudyOwnerGuard.require(userDid);
         var id = documentChunkId(userDid, collection, discriminator);
         luceneStore.insertStudyItem(id, userDid, "document", title, content,
             collection, Instant.now().toEpochMilli(), 1, null);
@@ -333,7 +353,8 @@ public final class StudyService {
      */
     public List<WyrdLuceneStore.SearchResult> searchDocuments(String userDid, String collection,
                                                                 String query, int limit) {
-        return luceneStore.searchStudyByCollection(userDid, collection, query, limit);
+        return luceneStore.searchStudyByCollection(userDid, collection, query,
+            queryVector(query), limit);
     }
 
     /**
@@ -349,6 +370,11 @@ public final class StudyService {
      * Pin a reference from the public Library.
      */
     public String pin(String userDid, String title, String knowledgeChunkId, String snippet) {
+        // Refuse content whose owner cannot be resolved to a person. Writing it
+        // anyway is how one human ended up owning content under four different
+        // strings. No-op until provisioning
+        // is enabled, so un-migrated installs are unaffected.
+        userDid = StudyOwnerGuard.require(userDid);
         var id = "pin:" + userDid + ":" + System.currentTimeMillis();
         var content = "PIN: " + title + "\nRef: " + knowledgeChunkId + "\n" + snippet;
         luceneStore.insertStudyItem(id, userDid, "pinboard", title, content,
@@ -372,6 +398,11 @@ public final class StudyService {
      * Add a quick note (from phone or in-world).
      */
     public String addNote(String userDid, String content) {
+        // Refuse content whose owner cannot be resolved to a person. Writing it
+        // anyway is how one human ended up owning content under four different
+        // strings. No-op until provisioning
+        // is enabled, so un-migrated installs are unaffected.
+        userDid = StudyOwnerGuard.require(userDid);
         var id = "note:" + userDid + ":" + System.currentTimeMillis();
         var title = content.length() > 60 ? content.substring(0, 60) + "..." : content;
         luceneStore.insertStudyItem(id, userDid, "note", title, content,
@@ -444,6 +475,11 @@ public final class StudyService {
      * Add a voice memo transcript.
      */
     public String addVoiceMemo(String userDid, String transcript, String audioFile) {
+        // Refuse content whose owner cannot be resolved to a person. Writing it
+        // anyway is how one human ended up owning content under four different
+        // strings. No-op until provisioning
+        // is enabled, so un-migrated installs are unaffected.
+        userDid = StudyOwnerGuard.require(userDid);
         var id = "voice:" + userDid + ":" + System.currentTimeMillis();
         var title = "Voice memo" + (audioFile != null ? " (" + audioFile + ")" : "");
         luceneStore.insertStudyItem(id, userDid, "voice_memo", title, transcript,
@@ -459,7 +495,28 @@ public final class StudyService {
      * Search everything in the user's Study.
      */
     public List<WyrdLuceneStore.SearchResult> searchAll(String userDid, String query, int limit) {
-        return luceneStore.searchStudy(userDid, query, limit);
+        return luceneStore.searchStudy(userDid, query, queryVector(query), limit);
+    }
+
+    /**
+     * Embed a query for the two-stage rerank (2026-08-05), or null to keep the
+     * old keyword-only path.
+     *
+     * <p>Study holds full-text ingests whose chunks carry no stored vectors — a
+     * Calibre run puts millions here — so without a query vector the only
+     * available ordering is BM25. Embedding the query costs one short encode and
+     * turns the keyword hits into a semantically ranked list. Any failure returns
+     * null, which degrades to exactly the previous behaviour.
+     */
+    private static List<Float> queryVector(String query) {
+        if (query == null || query.isBlank()) return null;
+        try {
+            var svc = EmbeddingService.get();
+            return svc == null ? null : svc.embed(query);
+        } catch (RuntimeException e) {
+            log.debug("query embed failed, falling back to keyword search: {}", e.getMessage());
+            return null;
+        }
     }
 
     // --- Shared Shelves ---
@@ -625,6 +682,134 @@ public final class StudyService {
      * @param outputDir  Target directory
      * @return Number of items exported
      */
+    /**
+     * Share a Study collection with the whole zone: stream-export it as a local
+     * knowledge pack and index it into KNOWLEDGE in the same pass — after this,
+     * every companion, item, and visitor in the zone can search it, the same
+     * way they search any installed pack.
+     *
+     * <p>Why this exists (2026-08-25): the steward asked how to make his epub
+     * shelf zone-wide. The pieces were all here — {@link #exportCollection}
+     * (but capped at 10,000 items by its search-based fetch: the 74,697-volume
+     * shelf would silently truncate), the pack indexer, the pack.json shape —
+     * and no join. This is the join: streamed off the index (no cap), license
+     * stamped {@code private} so the pack can never leave the household even
+     * if the zone later federates (the {@code noFederate} rule keys off
+     * exactly that), and indexed immediately so the share is live before the
+     * call returns.
+     *
+     * <p>The Study copy remains the source of truth; the pack is a projection.
+     * Re-running the share replaces the projection (delete-then-reindex), so
+     * new books arrive on the next share rather than by magic.
+     *
+     * @return chunks shared into the zone
+     */
+    /** What {@link #pruneSidecars} removed. */
+    public record PruneResult(int scanned, int studyRemoved, long knowledgeRemoved) {}
+
+    /**
+     * Remove documents that are sidecars rather than writing — Calibre's
+     * {@code metadata.opf} and friends — from a Study collection, and from a
+     * published pack derived from it.
+     *
+     * <p>A full-text ingest used to walk every regular file, so the household
+     * shelf took in 74,694 {@code .opf} files beside its 74,681 epubs. An .opf
+     * is nothing but title/author/description, so it OUT-RANKS the book it
+     * describes: "Takeshi Kovacs" answered with raw XML. {@link DocumentIndexer}
+     * now skips sidecars at ingest; this cleans what earlier runs already
+     * wrote.</p>
+     *
+     * <p>The source path is not stored on a Study document, but the TITLE is
+     * the file name — that is what identifies a sidecar here. Knowledge chunks
+     * carry a derived id ({@code pack:studyId}), so the published copy is
+     * removed in the same pass and NO republish is needed.</p>
+     *
+     * @param packName published pack to clean alongside, or {@code null}
+     */
+    public PruneResult pruneSidecars(String userDid, String collection, String packName) {
+        userDid = StudyOwnerGuard.require(userDid);
+        var doomed = new ArrayList<String>();
+        var scanned = new int[1];
+        luceneStore.scanStudyCollection(userDid, collection, item -> {
+            scanned[0]++;
+            var meta = item.metadata();
+            var title = meta != null ? String.valueOf(meta.getOrDefault("title", "")) : "";
+            if (isSidecarTitle(title)) doomed.add(item.id());
+        });
+
+        long knowledgeRemoved = 0;
+        if (packName != null && !packName.isBlank() && !doomed.isEmpty()) {
+            var knowledgeIds = new ArrayList<String>(doomed.size());
+            for (var id : doomed) knowledgeIds.add(packName + ":" + id);
+            knowledgeRemoved = luceneStore.deleteByIdsBulk(
+                SearchCollections.KNOWLEDGE, knowledgeIds);
+        }
+        long studyRemoved = luceneStore.deleteByIdsBulk(SearchCollections.STUDY, doomed);
+
+        log.info("[Study] Pruned sidecars from '{}' for {}: {} scanned, {} study, {} knowledge",
+            collection, userDid, scanned[0], studyRemoved, knowledgeRemoved);
+        return new PruneResult(scanned[0], (int) studyRemoved, knowledgeRemoved);
+    }
+
+    /**
+     * A document title is the file name it came from. Chunked files carry a
+     * {@code " (part 2/7)"} tail, so strip that before asking.
+     */
+    static boolean isSidecarTitle(String title) {
+        if (title == null || title.isBlank()) return false;
+        var name = title.replaceAll("\\s*\\(part \\d+/\\d+\\)\\s*$", "").trim();
+        if (name.isEmpty()) return false;
+        return DocumentIndexer.isSidecar(Path.of(name));
+    }
+
+    public int shareCollection(String userDid, String collection, Path packsDir,
+                               KnowledgePackIndexer indexer) throws IOException {
+        userDid = StudyOwnerGuard.require(userDid);
+        var packName = "study-share-" + collection.toLowerCase(Locale.ROOT)
+            .replaceAll("[^a-z0-9_-]", "-");
+        var packDir = packsDir.resolve(packName);
+        Files.createDirectories(packDir.resolve("chunks"));
+
+        var mapper = new ObjectMapper();
+        var pack = new KnowledgePack(
+            packName, collection + " (household shelf)",
+            userDid, List.of("Household library"),
+            "Shared from the owner's Study — private to this household.",
+            null, null, "en", "private", "private", "general",
+            Map.of(), null, Map.of(),
+            null, null, List.of("knowledge"), List.of(), "study-share");
+        mapper.writerWithDefaultPrettyPrinter()
+            .writeValue(packDir.resolve("pack.json").toFile(), pack);
+
+        int written;
+        try (var writer = Files.newBufferedWriter(
+                packDir.resolve("chunks/data.jsonl"))) {
+            var count = new int[1];
+            luceneStore.scanStudyCollection(userDid, collection, item -> {
+                try {
+                    var meta = item.metadata();
+                    var title = meta != null
+                        ? String.valueOf(meta.getOrDefault("title", "")) : "";
+                    var chunk = new KnowledgeChunk(
+                        packName + ":" + item.id(), packName, title,
+                        item.content(), "study-share", null,
+                        "private", null, null, null);
+                    writer.write(mapper.writeValueAsString(chunk));
+                    writer.newLine();
+                    count[0]++;
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+            written = count[0];
+        }
+
+        // Replace, don't accrete: a re-share carries the shelf as it is now.
+        luceneStore.deleteKnowledgeByPack(packName);
+        var result = indexer.indexPack(packDir);
+        return result.chunksIndexed();
+    }
+
     public int exportCollection(String userDid, String collection, Path outputDir) throws IOException {
         // Search with a broad query to get all items in this collection
         var items = searchDocuments(userDid, collection, "content", 10000);

@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.agent;
 
+import java.util.Locale;
+
 /**
  * System prompts for translation tasks (§15.1).
  * Each template is tuned for a different content type.
@@ -93,6 +95,27 @@ public final class TranslationPrompts {
     }
 
     /** BCP 47 → human-readable language name. Used to fill prompt templates. */
+    /**
+     * Does this prompt already name an output language? Shallow, like every
+     * sibling detector, over the household languages by English and native
+     * name. Exists so the language-default injectors can be CONDITIONAL IN
+     * CODE and BLUNT IN INSTRUCTION: the first version shipped the
+     * conditionality inside the instruction ("If the request does not name a
+     * language, write in…") and a 9B drowning in Spanish source material
+     * reasoned its way past it twice on the home node (2026-08-24 evening).
+     * A model obeys "Write your answer in English."; it negotiates with an if.
+     */
+    public static boolean namesALanguage(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.toLowerCase(Locale.ROOT);
+        return t.contains("english") || t.contains("spanish") || t.contains("japanese")
+            || t.contains("español") || t.contains("espanol")
+            || t.contains("inglés") || t.contains("ingles")
+            || t.contains("japonés") || t.contains("japones")
+            || t.contains("日本語") || t.contains("英語")
+            || t.contains("スペイン語");
+    }
+
     public static String languageName(String code) {
         if (code == null) return "Unknown";
         return switch (code.toLowerCase()) {

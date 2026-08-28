@@ -252,6 +252,11 @@ tasks.withType<Test> {
     // 5s probe and flakes AutonomyIntegrationTest. Offline = fail fast, so the
     // LinkageError/degrade path in EmbeddingService runs immediately instead.
     systemProperty("ai.djl.offline", "true")
+    // Opt-in path to a COPY of a real world.db, for rehearsing an identity
+    // rebind against production-shaped data. Absent by default, and the tests
+    // that use it skip rather than fail — CI must stay green on a machine that
+    // has never seen a household node. Never point this at a live database.
+    System.getProperty("rehearsalDb")?.let { systemProperty("rehearsalDb", it) }
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")

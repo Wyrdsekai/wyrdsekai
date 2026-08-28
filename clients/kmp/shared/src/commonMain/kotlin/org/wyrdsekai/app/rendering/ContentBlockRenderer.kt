@@ -5,7 +5,7 @@ import org.wyrdsekai.app.protocol.ContentBlock
 
 /**
  * Interface for rendering zone-type-specific content blocks.
- * Implement this for each zone type (e.g., CodePlane, Homekit).
+ * Implement this for each zone type (e.g., CodeZaiku, Homekit).
  */
 interface ContentBlockRenderer {
     /** Returns true if this renderer can handle the given format. */

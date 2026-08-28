@@ -41,7 +41,7 @@ class ActionHookRunnerDenialTest {
         var json = "{\"deny\":true,"
             + "\"code\":\"fabricated_credential\","
             + "\"reason\":\"That endpoint mints credentials; the steward must do it.\","
-            + "\"remediation\":\"Ask Masumi.\","
+            + "\"remediation\":\"Ask Operator.\","
             + "\"cliHint\":{\"command\":\"wyrd relay register <url>\"},"
             + "\"inWorldResolution\":{\"action\":\"request_access\","
             + "\"source\":\"wyrd:relay/relay-node\",\"scope\":\"use\","
@@ -56,7 +56,7 @@ class ActionHookRunnerDenialTest {
         var d = result.denial();
         assertNotNull(d);
         assertEquals("fabricated_credential", d.code());
-        assertEquals("Ask Masumi.", d.remediation());
+        assertEquals("Ask Operator.", d.remediation());
         assertNotNull(d.cliHint());
         assertEquals("wyrd relay register <url>", d.cliHint().get("command"));
         assertNotNull(d.inWorldResolution());

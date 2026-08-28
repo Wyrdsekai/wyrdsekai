@@ -734,7 +734,7 @@ public final class FormatConverters {
     /**
      * Chunk every .txt/.md file under {@code rootDir} (excluding the chunks dir itself) into a
      * single JSONL. Used as the fallback when an extracted pack produced no chunks — e.g. the
-     * python-docs-text tarball, repackaged codeplane pattern packs, or any markdown corpus.
+     * python-docs-text tarball, repackaged codezaiku pattern packs, or any markdown corpus.
      *
      * @return total chunks written (0 when no text files exist — caller decides what that means)
      */

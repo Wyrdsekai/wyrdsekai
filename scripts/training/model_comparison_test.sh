@@ -54,17 +54,17 @@ Exits (use the direction to navigate):
   north → terminal (A corridor leads north to The Terminal)
   in → oracle (The Oracle)
   east → docks (An archway opens east to The Docks)
-Present: Masumi (player), Wyrd (agent)
+Present: Operator (player), Wyrd (agent)
 Objects: crystal — A pulsing crystal embedded in a pedestal'
 
 # ── Test prompts ──
 declare -a PROMPTS=(
-    "[from Masumi] Go to the library"
-    "[from Masumi] Remember that my favorite color is blue"
-    "[from Masumi] Search the web for Apache Pekko typed actors"
-    "[from Masumi] How are you feeling today?"
-    "[from Masumi] Go to the boiler room and ask Chief about the pressure"
-    "[from Masumi] Look at the crystal"
+    "[from Operator] Go to the library"
+    "[from Operator] Remember that my favorite color is blue"
+    "[from Operator] Search the web for Apache Pekko typed actors"
+    "[from Operator] How are you feeling today?"
+    "[from Operator] Go to the boiler room and ask Chief about the pressure"
+    "[from Operator] Look at the crystal"
 )
 
 declare -a PROMPT_NAMES=(

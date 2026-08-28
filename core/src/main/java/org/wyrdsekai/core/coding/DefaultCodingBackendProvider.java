@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Phase 1a default implementation of {@link CodingBackendProvider}.
  *
- * <p>Returns {@code "codeplane"} when the CodePlane backend is registered
+ * <p>Returns {@code "codezaiku"} when the CodeZaiku backend is registered
  * and healthy, else {@code null}.
  * step 17 — Phase 1b replaces this with a GraalJS policy script.</p>
  */
@@ -69,8 +69,8 @@ public final class DefaultCodingBackendProvider implements CodingBackendProvider
 
     @Override
     public String backendFor(String entityId, String taskType, String taskDescription) {
-        // Phase 1a is intentionally minimal: prefer codeplane if healthy.
-        return probeHealthy(CodePlaneBackend.NAME) ? CodePlaneBackend.NAME : null;
+        // Phase 1a is intentionally minimal: prefer codezaiku if healthy.
+        return probeHealthy(CodeZaikuBackend.NAME) ? CodeZaikuBackend.NAME : null;
     }
 
     @Override

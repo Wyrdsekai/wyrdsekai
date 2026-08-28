@@ -42,7 +42,7 @@ class AgentNarrationE2ETest {
             "I found something unexpected in the library today",
             null, null, false, 0.6f, 1, Instant.now(), null, null, null, null);
 
-        var rel = new Relationship("did:key:operator", "Masumi", 0.9f, 0.8f, 2, 15,
+        var rel = new Relationship("did:key:operator", "Operator", 0.9f, 0.8f, 2, 15,
             Instant.now(), "My steward");
 
         var manifest = new SoulManifest(

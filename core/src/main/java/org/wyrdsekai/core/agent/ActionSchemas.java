@@ -231,7 +231,8 @@ public final class ActionSchemas {
         Map.entry("dispatch_task", List.of(
             new FieldDef("description", false, "string"),
             new FieldDef("task", false, "string"),
-            new FieldDef("workspace", false, "string")
+            new FieldDef("workspace", false, "string"),
+            new FieldDef("room", false, "string")
         )),
         Map.entry("create_imprint", List.of(
             new FieldDef("label", true, "string"),

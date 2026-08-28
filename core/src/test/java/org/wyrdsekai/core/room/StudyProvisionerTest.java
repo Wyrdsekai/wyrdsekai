@@ -43,9 +43,9 @@ class StudyProvisionerTest {
     }
 
     @Test void stewardStudy_hasAdditionalObjects() {
-        var seed = StudyProvisioner.createStudySeed("steward-1", "Masumi", true);
+        var seed = StudyProvisioner.createStudySeed("steward-1", "Operator", true);
         assertThat(seed.roomId()).isEqualTo("study-steward-1");
-        assertThat(seed.name()).isEqualTo("Masumi's Study");
+        assertThat(seed.name()).isEqualTo("Operator's Study");
 
         var objectIds = seed.objects().stream().map(o -> o.id()).toList();
         // Base member objects still present

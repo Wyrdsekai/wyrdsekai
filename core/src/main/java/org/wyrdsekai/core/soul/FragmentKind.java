@@ -34,7 +34,7 @@ package org.wyrdsekai.core.soul;
  *           doesn't crowd NARRATIVE.</td></tr>
  * </table>
  *
- * <p><b>DEXTERITY vs CONVENTION disambiguation</b> (spec CodePlane pass-2
+ * <p><b>DEXTERITY vs CONVENTION disambiguation</b> (spec CodeZaiku pass-2
  * clarification): ask "would another developer on this project be expected
  * to follow this?" Yes → CONVENTION (project-truth); No → DEXTERITY
  * (familiar's procedural taste). Single ambiguous events default to

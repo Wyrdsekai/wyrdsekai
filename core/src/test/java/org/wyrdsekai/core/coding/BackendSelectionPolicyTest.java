@@ -81,18 +81,18 @@ class BackendSelectionPolicyTest {
     @Test void default_chain_picks_first_when_no_preferences() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "aider", "openhands"));
+            List.of("codezaiku", "aider", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "aider", "openhands", "claude-sdk", "codex"));
+            List.of("codezaiku", "aider", "openhands", "claude-sdk", "codex"));
         ctx.put("companionPreferences", null);
 
         assertThat(invoke("did:companion:nia", "code", "write a test", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void companion_preferred_backend_wins_when_healthy() {
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "aider"));
+        ctx.put("availableBackends", List.of("codezaiku", "aider"));
         ctx.put("companionPreferences",
             prefs("aider", List.of(), Map.of()));
 
@@ -105,19 +105,19 @@ class BackendSelectionPolicyTest {
         // preferred="aider" AND avoid=["aider"] should fall through past
         // "aider" entirely. The avoid list takes precedence.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "aider"));
+        ctx.put("availableBackends", List.of("codezaiku", "aider"));
         ctx.put("companionPreferences",
             prefs("aider", List.of("aider"), Map.of()));
 
-        // Falls through to fallbackChain → codeplane.
+        // Falls through to fallbackChain → codezaiku.
         assertThat(invoke("did:companion:nia", "code", "tweak file", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void task_type_override_beats_preferred() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "aider", "openhands"));
+            List.of("codezaiku", "aider", "openhands"));
         ctx.put("companionPreferences",
             prefs("aider", List.of(), Map.of("explore", "openhands")));
 
@@ -129,7 +129,7 @@ class BackendSelectionPolicyTest {
     @Test void task_type_override_falls_through_when_type_does_not_match() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "aider", "openhands"));
+            List.of("codezaiku", "aider", "openhands"));
         ctx.put("companionPreferences",
             prefs("aider", List.of(), Map.of("explore", "openhands")));
 
@@ -142,14 +142,14 @@ class BackendSelectionPolicyTest {
     @Test void fallback_when_preferred_unavailable() {
         var ctx = baseCtx();
         // aider not in available list — preferred is unhealthy.
-        ctx.put("availableBackends", List.of("codeplane", "openhands"));
+        ctx.put("availableBackends", List.of("codezaiku", "openhands"));
         ctx.put("fallbackChain",
-            List.of("codeplane", "aider", "openhands"));
+            List.of("codezaiku", "aider", "openhands"));
         ctx.put("companionPreferences",
             prefs("aider", List.of(), Map.of()));
 
         assertThat(invoke("did:companion:nia", "code", "anything", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Approval gate (require_approval_for + auto_approve_under_cu) ─
@@ -157,39 +157,39 @@ class BackendSelectionPolicyTest {
     @Test void approval_gated_backend_is_skipped_when_estimate_above_threshold() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "claude-sdk"));
+            List.of("codezaiku", "claude-sdk"));
         ctx.put("fallbackChain",
-            List.of("claude-sdk", "codeplane"));
+            List.of("claude-sdk", "codezaiku"));
         ctx.put("householdPolicy", policy(0L, 0L,
             List.of("claude-sdk"),
             /*autoApproveUnderCu*/ 100L,
             /*weekdayOnly*/ false));
         ctx.put("backendTier", proxy((BackendTierFn) name ->
             "claude-sdk".equals(name) ? "CLOUD_PAID"
-                : "codeplane".equals(name) ? "LOCAL_HEAVY" : null));
+                : "codezaiku".equals(name) ? "LOCAL_HEAVY" : null));
         ctx.put("cuEstimate", proxy((CuEstimateFn) (name, desc) ->
             "claude-sdk".equals(name) ? 500L : 0L));
         ctx.put("cuRemainingToday", proxy((CuRemainingFn) eid -> 100_000L));
 
         // claude-sdk's estimate (500) exceeds threshold (100) → skipped,
-        // chain falls through to codeplane.
+        // chain falls through to codezaiku.
         assertThat(invoke("did:c", "code", "big task", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void approval_gated_backend_passes_when_estimate_below_threshold() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "claude-sdk"));
+            List.of("codezaiku", "claude-sdk"));
         ctx.put("fallbackChain",
-            List.of("claude-sdk", "codeplane"));
+            List.of("claude-sdk", "codezaiku"));
         ctx.put("householdPolicy", policy(0L, 0L,
             List.of("claude-sdk"),
             /*autoApproveUnderCu*/ 100L,
             /*weekdayOnly*/ false));
         ctx.put("backendTier", proxy((BackendTierFn) name ->
             "claude-sdk".equals(name) ? "CLOUD_PAID"
-                : "codeplane".equals(name) ? "LOCAL_HEAVY" : null));
+                : "codezaiku".equals(name) ? "LOCAL_HEAVY" : null));
         ctx.put("cuEstimate", proxy((CuEstimateFn) (name, desc) ->
             "claude-sdk".equals(name) ? 50L : 0L));
         ctx.put("cuRemainingToday", proxy((CuRemainingFn) eid -> 100_000L));
@@ -211,22 +211,22 @@ class BackendSelectionPolicyTest {
         // without any human acknowledgement, which is the wrong default.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "claude-sdk"));
+            List.of("codezaiku", "claude-sdk"));
         ctx.put("fallbackChain",
-            List.of("claude-sdk", "codeplane"));
+            List.of("claude-sdk", "codezaiku"));
         ctx.put("householdPolicy", policy(0L, 0L,
             List.of("claude-sdk"),
             /*autoApproveUnderCu*/ 0L,
             /*weekdayOnly*/ false));
         ctx.put("backendTier", proxy((BackendTierFn) name ->
             "claude-sdk".equals(name) ? "CLOUD_PAID"
-                : "codeplane".equals(name) ? "LOCAL_HEAVY" : null));
+                : "codezaiku".equals(name) ? "LOCAL_HEAVY" : null));
         ctx.put("cuEstimate", proxy((CuEstimateFn) (name, desc) -> 0L));
         ctx.put("cuRemainingToday", proxy((CuRemainingFn) eid -> 100_000L));
 
-        // claude-sdk skipped; chain falls through to codeplane.
+        // claude-sdk skipped; chain falls through to codezaiku.
         assertThat(invoke("did:c", "code", "free task", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Drive-state autonomy_pressure gate ─────────────────────────
@@ -234,31 +234,31 @@ class BackendSelectionPolicyTest {
     @Test void high_autonomy_pressure_skips_cloud_paid_backends() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "claude-sdk"));
+            List.of("codezaiku", "claude-sdk"));
         ctx.put("fallbackChain",
-            List.of("claude-sdk", "codeplane"));
+            List.of("claude-sdk", "codezaiku"));
         ctx.put("backendTier", proxy((BackendTierFn) name ->
             "claude-sdk".equals(name) ? "CLOUD_PAID"
-                : "codeplane".equals(name) ? "LOCAL_HEAVY" : null));
+                : "codezaiku".equals(name) ? "LOCAL_HEAVY" : null));
         var drive = new LinkedHashMap<String, Object>();
         drive.put("autonomy_pressure", 0.8);
         ctx.put("driveState", drive);
 
         // autonomy_pressure 0.8 > 0.7 threshold → claude-sdk skipped,
-        // falls through to local codeplane.
+        // falls through to local codezaiku.
         assertThat(invoke("did:c", "code", "anything", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void low_autonomy_pressure_allows_cloud_paid_backends() {
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "claude-sdk"));
+            List.of("codezaiku", "claude-sdk"));
         ctx.put("fallbackChain",
-            List.of("claude-sdk", "codeplane"));
+            List.of("claude-sdk", "codezaiku"));
         ctx.put("backendTier", proxy((BackendTierFn) name ->
             "claude-sdk".equals(name) ? "CLOUD_PAID"
-                : "codeplane".equals(name) ? "LOCAL_HEAVY" : null));
+                : "codezaiku".equals(name) ? "LOCAL_HEAVY" : null));
         var drive = new LinkedHashMap<String, Object>();
         drive.put("autonomy_pressure", 0.3);
         ctx.put("driveState", drive);
@@ -275,19 +275,19 @@ class BackendSelectionPolicyTest {
         // and remaining are positive AND estimate > remaining.
         var ctx = baseCtx();
         ctx.put("availableBackends",
-            List.of("codeplane", "claude-sdk", "codex"));
+            List.of("codezaiku", "claude-sdk", "codex"));
         ctx.put("fallbackChain",
-            List.of("claude-sdk", "codex", "codeplane"));
+            List.of("claude-sdk", "codex", "codezaiku"));
         ctx.put("backendTier", proxy((BackendTierFn) name -> switch (name) {
             case "claude-sdk", "codex" -> "CLOUD_PAID";
-            case "codeplane" -> "LOCAL_HEAVY";
+            case "codezaiku" -> "LOCAL_HEAVY";
             default -> null;
         }));
         ctx.put("cuRemainingToday", proxy((CuRemainingFn) eid -> 10L));
         ctx.put("cuEstimate", proxy((CuEstimateFn) (name, desc) -> 100L));
 
         assertThat(invoke("did:c", "code", "big task", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Empty + malformed cases ────────────────────────────────────
@@ -301,47 +301,47 @@ class BackendSelectionPolicyTest {
 
     @Test void preferred_not_in_available_falls_through_chain() {
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane"));
-        ctx.put("fallbackChain", List.of("aider", "codeplane"));
+        ctx.put("availableBackends", List.of("codezaiku"));
+        ctx.put("fallbackChain", List.of("aider", "codezaiku"));
         ctx.put("companionPreferences",
             prefs("aider", List.of(), Map.of()));
 
         assertThat(invoke("did:c", "code", "anything", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     // ─── Phase 2b: opencode position 4 in fallback chain ───────────
 
-    @Test void opencode_picked_when_codeplane_unhealthy() {
+    @Test void opencode_picked_when_codezaiku_unhealthy() {
         // Default chain shape per SPEC §2.6 + application.conf
-        // ["codeplane", "opencode", ...]. With codeplane absent from
+        // ["codezaiku", "opencode", ...]. With codezaiku absent from
         // availableBackends, the chain falls through to opencode.
         var ctx = baseCtx();
         ctx.put("availableBackends", List.of("opencode"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode"));
 
         assertThat(invoke("did:c", "code", "build a thing", ctx))
             .isEqualTo("opencode");
     }
 
-    @Test void codeplane_still_wins_when_both_healthy() {
-        // Phase 2b doesn't reorder the chain — CodePlane stays the
+    @Test void codezaiku_still_wins_when_both_healthy() {
+        // Phase 2b doesn't reorder the chain — CodeZaiku stays the
         // in-house default when available; OpenCode is the fallback.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "opencode"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode"));
+        ctx.put("availableBackends", List.of("codezaiku", "opencode"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode"));
 
         assertThat(invoke("did:c", "code", "build a thing", ctx))
-            .isEqualTo("codeplane");
+            .isEqualTo("codezaiku");
     }
 
     @Test void companion_can_prefer_opencode() {
         // A companion with `preferred_backend = "opencode"` honors the
-        // preference even when codeplane is healthy and earlier in the
+        // preference even when codezaiku is healthy and earlier in the
         // chain — same shape as the existing aider test.
         var ctx = baseCtx();
-        ctx.put("availableBackends", List.of("codeplane", "opencode"));
-        ctx.put("fallbackChain", List.of("codeplane", "opencode"));
+        ctx.put("availableBackends", List.of("codezaiku", "opencode"));
+        ctx.put("fallbackChain", List.of("codezaiku", "opencode"));
         ctx.put("companionPreferences",
             prefs("opencode", List.of(), Map.of()));
         ctx.put("backendTier", proxy((BackendTierFn) name ->
@@ -381,36 +381,30 @@ class BackendSelectionPolicyTest {
 
     // ─── End-to-end: ScriptedCodingBackendProvider drives the script ──
 
-    @Test void provider_end_to_end_returns_codeplane_when_only_codeplane_registered()
+    @Test void provider_end_to_end_returns_codezaiku_when_only_codezaiku_registered()
             throws Exception {
         // Drives the live ScriptedCodingBackendProvider against a real
-        // BackendRegistry holding a healthy CodePlane backend, with the
+        // BackendRegistry holding a healthy CodeZaiku backend, with the
         // on-disk policy script. Confirms that
         //   (a) the GraalJS host-callable bindings invoke correctly
         //       (BackendTierLookup / CuEstimateLookup / CuRemainingLookup
         //        all need to be JS-callable via Function/BiFunction so the
         //        script's gates fire — this would have silently no-op'd
         //        in pre-fix code);
-        //   (b) the script's default chain returns "codeplane" when no
-        //       prefs are set and codeplane is the only healthy backend.
+        //   (b) the script's default chain returns "codezaiku" when no
+        //       prefs are set and codezaiku is the only healthy backend.
         var registry = new BackendRegistry();
-        var router = new CommandRouter() {
-            @Override public boolean execute(String entityId, String command,
-                    List<String> args, Map<String, String> payload,
-                    Consumer<S2CMessage> respond) {
-                return true;
-            }
-            @Override public Set<String> availableNamespaces() {
-                return Set.of(CodePlaneBackend.NAME);
-            }
-        };
-        registry.register(new CodePlaneBackend(null, router, "test"));
+        // CLI edition (2026-08-15): healthy = `codezaiku --version` exits 0.
+        GooseBackend.ProcessRunner healthyRunner = (args, env, workdir, timeout) ->
+            new GooseBackend.ProcessResult(0, "codezaiku 0.3.0", "", false);
+        registry.register(new CodeZaikuBackend(
+            CodeZaikuRuntimeConfig.defaults(), null, healthyRunner));
 
         var scriptPath = locateScriptOnDisk();
         var provider = new ScriptedCodingBackendProvider(
             registry, scriptPath,
-            CodePlaneBackend.NAME,
-            List.of(CodePlaneBackend.NAME),
+            CodeZaikuBackend.NAME,
+            List.of(CodeZaikuBackend.NAME),
             null,                         // no soul store
             HouseholdPolicySupplier.DEFAULTS,
             null,                         // no cost tracker
@@ -418,7 +412,7 @@ class BackendSelectionPolicyTest {
             10_000L);
 
         var picked = provider.backendFor("did:test", "code", "anything");
-        assertThat(picked).isEqualTo(CodePlaneBackend.NAME);
+        assertThat(picked).isEqualTo(CodeZaikuBackend.NAME);
 
         registry.clear();
     }
@@ -465,11 +459,11 @@ class BackendSelectionPolicyTest {
     /** Build a baseline ctx with everything the script reads, defaulted. */
     private static Map<String, Object> baseCtx() {
         var ctx = new LinkedHashMap<String, Object>();
-        ctx.put("availableBackends", List.of("codeplane"));
+        ctx.put("availableBackends", List.of("codezaiku"));
         ctx.put("companionPreferences", null);
         ctx.put("householdPolicy", policy(0L, 0L, List.of(), 0L, false));
-        ctx.put("fallbackChain", List.of("codeplane"));
-        ctx.put("defaultBackend", "codeplane");
+        ctx.put("fallbackChain", List.of("codezaiku"));
+        ctx.put("defaultBackend", "codezaiku");
         ctx.put("backendTier", proxy((BackendTierFn) name -> "LOCAL_HEAVY"));
         ctx.put("cuRemainingToday", proxy((CuRemainingFn) eid -> 1_000_000L));
         ctx.put("cuEstimate", proxy((CuEstimateFn) (name, desc) -> 0L));

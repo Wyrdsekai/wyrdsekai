@@ -121,6 +121,16 @@ public record AccumulationContext(
             bondholderAbsenceDurations, obligationDebts, amaeAnticipationDeficit);
     }
 
+    /** Per-bondholder absence, keyed by their id. The LONGEST one sets saudade's depth. */
+    public AccumulationContext withBondholderAbsenceDurations(Map<String, Duration> m) {
+        return new AccumulationContext(timeSinceLastInteraction, timeSinceLastGoalDone,
+            timeSinceLastToolOutput, timeSinceLastInferenceActivity,
+            consecutiveBondholderInitiatedActions,
+            inEmotionalContext, isWithBondholder, isOnOwnTime, inConflictedRoom,
+            unreadArtifactCount, hostileEnvironment, peakDriveActivity,
+            m, obligationDebts, amaeAnticipationDeficit);
+    }
+
     public AccumulationContext withUnreadArtifactCount(int n) {
         return new AccumulationContext(timeSinceLastInteraction, timeSinceLastGoalDone,
             timeSinceLastToolOutput, timeSinceLastInferenceActivity,
@@ -130,11 +140,45 @@ public record AccumulationContext(
             bondholderAbsenceDurations, obligationDebts, amaeAnticipationDeficit);
     }
 
+    /**
+     * Hostility aimed at HER, as distinct from discord merely present in the room.
+     * Production passed a hardcoded {@code false} here until 2026-08-19, which made the
+     * Standing tank unreachable — the rule was fine, nothing ever set its input.
+     */
+    public AccumulationContext withHostileEnvironment(boolean v) {
+        return new AccumulationContext(timeSinceLastInteraction, timeSinceLastGoalDone,
+            timeSinceLastToolOutput, timeSinceLastInferenceActivity,
+            consecutiveBondholderInitiatedActions,
+            inEmotionalContext, isWithBondholder, isOnOwnTime, inConflictedRoom,
+            unreadArtifactCount, v, peakDriveActivity,
+            bondholderAbsenceDurations, obligationDebts, amaeAnticipationDeficit);
+    }
+
+    /** Explicit asks as a fraction of asks + anticipations. 1.0 = she had to ask every time. */
+    public AccumulationContext withAmaeAnticipationDeficit(double v) {
+        return new AccumulationContext(timeSinceLastInteraction, timeSinceLastGoalDone,
+            timeSinceLastToolOutput, timeSinceLastInferenceActivity,
+            consecutiveBondholderInitiatedActions,
+            inEmotionalContext, isWithBondholder, isOnOwnTime, inConflictedRoom,
+            unreadArtifactCount, hostileEnvironment, peakDriveActivity,
+            bondholderAbsenceDurations, obligationDebts, v);
+    }
+
     public AccumulationContext withInConflictedRoom(boolean v) {
         return new AccumulationContext(timeSinceLastInteraction, timeSinceLastGoalDone,
             timeSinceLastToolOutput, timeSinceLastInferenceActivity,
             consecutiveBondholderInitiatedActions,
             inEmotionalContext, isWithBondholder, isOnOwnTime, v,
+            unreadArtifactCount, hostileEnvironment, peakDriveActivity,
+            bondholderAbsenceDurations, obligationDebts, amaeAnticipationDeficit);
+    }
+
+    /** Time since any inference activity — over five seconds counts as stillness. */
+    public AccumulationContext withTimeSinceLastInferenceActivity(Duration d) {
+        return new AccumulationContext(timeSinceLastInteraction, timeSinceLastGoalDone,
+            timeSinceLastToolOutput, d,
+            consecutiveBondholderInitiatedActions,
+            inEmotionalContext, isWithBondholder, isOnOwnTime, inConflictedRoom,
             unreadArtifactCount, hostileEnvironment, peakDriveActivity,
             bondholderAbsenceDurations, obligationDebts, amaeAnticipationDeficit);
     }

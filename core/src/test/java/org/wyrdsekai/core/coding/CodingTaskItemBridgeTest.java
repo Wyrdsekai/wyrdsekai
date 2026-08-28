@@ -9,8 +9,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.common.protocol.S2CMessage;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.agent.AgentEvent;
-import org.wyrdsekai.core.codeplane.CodeItemGenerator;
-import org.wyrdsekai.core.codeplane.CodeItemStore;
+import org.wyrdsekai.core.codezaiku.CodeItemGenerator;
+import org.wyrdsekai.core.codezaiku.CodeItemStore;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Phase 1c — verifies the generic event bridge {@link CodingTaskItemBridge}
  * routes ZoneBroadcast events to the right adapter, and that
- * {@link CodePlaneEventAdapter} produces a {@link SourceArtifact} (with a
+ * {@link CodeZaikuEventAdapter} produces a {@link SourceArtifact} (with a
  * sibling {@link BuildArtifact} stashed under the {@code __sibling_build}
  * magic key) on a real {@code board_completed} event. Per
  * step 19.
@@ -44,7 +44,7 @@ class CodingTaskItemBridgeTest {
         store = new CodeItemStore("jdbc:sqlite:" + dbPath.toAbsolutePath());
         generator = new CodeItemGenerator(store);
         registry = new BackendRegistry();
-        registry.register(new CodePlaneEventAdapter(generator));
+        registry.register(new CodeZaikuEventAdapter(generator));
         placements = new CopyOnWriteArrayList<>();
         bridge = new CodingTaskItemBridge(registry, placements::add);
     }
@@ -53,7 +53,7 @@ class CodingTaskItemBridgeTest {
         BackendRegistry.get().clear();
     }
 
-    // ─── CodePlane translateEvent: SourceArtifact + sibling BuildArtifact ──
+    // ─── CodeZaiku translateEvent: SourceArtifact + sibling BuildArtifact ──
 
     @Test void board_completed_event_produces_source_and_build_artifacts() {
         bridge.accept(boardCompletedEvent("board-1",
@@ -77,7 +77,7 @@ class CodingTaskItemBridgeTest {
     @Test void adapter_translate_event_returns_source_with_sibling_build() {
         // Direct adapter call (bypassing the bridge) — confirms the
         // __sibling_build magic key is exactly where the bridge expects it.
-        var adapter = new CodePlaneEventAdapter(generator);
+        var adapter = new CodeZaikuEventAdapter(generator);
         var artifact = adapter.translateEvent(boardCompletedEvent(
             "board-2", "/ws2", "node-b", "Python",
             List.of("a.py", "b.py"), "did:key:bob",
@@ -85,7 +85,7 @@ class CodingTaskItemBridgeTest {
 
         assertThat(artifact).isInstanceOf(SourceArtifact.class);
         var src = (SourceArtifact) artifact;
-        assertThat(src.backend()).isEqualTo(CodePlaneBackend.NAME);
+        assertThat(src.backend()).isEqualTo(CodeZaikuBackend.NAME);
         assertThat(src.taskId()).isEqualTo("board-2");
         assertThat(src.workspacePath()).isEqualTo("/ws2");
         assertThat(src.files()).containsExactly("a.py", "b.py");
@@ -94,14 +94,14 @@ class CodingTaskItemBridgeTest {
         var sibling = src.backendMetadata().get("__sibling_build");
         assertThat(sibling).isInstanceOf(BuildArtifact.class);
         var build = (BuildArtifact) sibling;
-        assertThat(build.backend()).isEqualTo(CodePlaneBackend.NAME);
+        assertThat(build.backend()).isEqualTo(CodeZaikuBackend.NAME);
         assertThat(build.testsPassed()).isEqualTo(3);
         assertThat(build.testsFailed()).isEqualTo(0);
         assertThat(build.status()).isEqualTo("success");
     }
 
     @Test void adapter_translate_without_build_status_omits_sibling_build() {
-        var adapter = new CodePlaneEventAdapter(generator);
+        var adapter = new CodeZaikuEventAdapter(generator);
         var artifact = adapter.translateEvent(boardCompletedEvent(
             "board-3", "/ws3", "node-c", "JavaScript",
             List.of("index.js"), "did:key:carol",
@@ -168,7 +168,7 @@ class CodingTaskItemBridgeTest {
                     String command, String args) { return null; }
         });
 
-        // One event for codeplane, one for custom — sequential.
+        // One event for codezaiku, one for custom — sequential.
         bridge.accept(boardCompletedEvent("board-routing-1", "/ws-cp",
             "n", "Java", List.of("X.java"), null, 0, 0, "untested"));
         bridge.accept(new AgentEvent.ZoneBroadcast(
@@ -222,9 +222,9 @@ class CodingTaskItemBridgeTest {
         for (var f : files) filesArray.add(f);
 
         var zoneResponse = new S2CMessage.ZoneResponse(
-            1L, "req-1", CodePlaneBackend.NAME, "Board completed",
+            1L, "req-1", CodeZaikuBackend.NAME, "Board completed",
             data, List.of());
         return new AgentEvent.ZoneBroadcast(
-            CodePlaneBackend.NAME, "workshop", zoneResponse, Instant.now());
+            CodeZaikuBackend.NAME, "workshop", zoneResponse, Instant.now());
     }
 }

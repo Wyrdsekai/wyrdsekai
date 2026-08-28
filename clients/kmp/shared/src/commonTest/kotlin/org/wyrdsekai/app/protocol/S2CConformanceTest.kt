@@ -223,12 +223,12 @@ class S2CConformanceTest {
           "isAiGenerated": true,
           "blocks": [
             {
-              "format": "codeplane.diff",
+              "format": "codezaiku.diff",
               "data": { "filePath": "auth.js", "additions": 12, "deletions": 5 },
               "fallback": "auth.js: +12 -5 lines changed"
             },
             {
-              "format": "codeplane.cost",
+              "format": "codezaiku.cost",
               "data": { "tokensIn": 4200, "tokensOut": 850, "estimatedUSD": 0.03 },
               "fallback": "Cost: $0.03 (4.2K in, 850 out)"
             }
@@ -240,9 +240,9 @@ class S2CConformanceTest {
         assertIs<S2CMessage.Prose>(msg)
         assertEquals(42L, msg.seq)
         assertEquals(2, msg.blocks.size)
-        assertEquals("codeplane.diff", msg.blocks[0].format)
+        assertEquals("codezaiku.diff", msg.blocks[0].format)
         assertEquals("auth.js: +12 -5 lines changed", msg.blocks[0].fallback)
-        assertEquals("codeplane.cost", msg.blocks[1].format)
+        assertEquals("codezaiku.cost", msg.blocks[1].format)
         assertEquals("Cost: \$0.03 (4.2K in, 850 out)", msg.blocks[1].fallback)
     }
 
@@ -333,7 +333,7 @@ class S2CConformanceTest {
           "structured": null,
           "blocks": [
             {
-              "format": "codeplane.board_card",
+              "format": "codezaiku.board_card",
               "data": { "boardId": "board-7", "name": "Auth refactor", "status": "in_progress" },
               "fallback": "Card: Auth refactor → in_progress"
             }
@@ -344,7 +344,7 @@ class S2CConformanceTest {
         val msg = parseS2CMessage(json)
         assertIs<S2CMessage.StateChange>(msg)
         assertEquals(1, msg.blocks.size)
-        assertEquals("codeplane.board_card", msg.blocks[0].format)
+        assertEquals("codezaiku.board_card", msg.blocks[0].format)
     }
 
     // --- ReplayDone ---

@@ -142,7 +142,11 @@ class SqlRecipeQueueTest {
             // unreachable
             assertThat(true).as("expected IllegalArgumentException").isFalse();
         } catch (IllegalArgumentException expected) {
-            assertThat(expected.getMessage()).contains("SUCCEEDED or FAILED");
+            // Assert on the status that was REJECTED rather than the list of accepted
+            // ones: the accepted set grew when SKIPPED arrived (a run that never
+            // started still has to leave the queue), and pinning the prose meant this
+            // test failed for a wording change while the behaviour was correct.
+            assertThat(expected.getMessage()).contains("IN_PROGRESS");
         }
     }
 

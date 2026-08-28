@@ -127,7 +127,7 @@ public final class DecisionCapacity {
             "household_management", 0.8,
             "social_interaction", 0.7,
             "monitoring", 0.6,
-            "codeplane_operations", 0.4
+            "codezaiku_operations", 0.4
         ));
     }
 }

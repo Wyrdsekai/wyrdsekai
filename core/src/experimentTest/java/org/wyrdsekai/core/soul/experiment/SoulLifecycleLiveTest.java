@@ -18,6 +18,8 @@ import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.wyrdsekai.core.soul.EmotionalCharge;
+import org.wyrdsekai.core.soul.GenomeProfile;
 
 /**
  * Live end-to-end soul lifecycle — Birth → Interact → Sleep → Forge →
@@ -52,18 +54,18 @@ class SoulLifecycleLiveTest {
             // GenomeProfile has no defaults() — resilient() is the closest
             // "neutral baseline" factory and is what prior experiments used.
             identity.keyLog(), profile,
-            org.wyrdsekai.core.soul.GenomeProfile.defaults());
+            GenomeProfile.defaults());
 
         var events = new ArrayList<WorldEvent>();
         var saidEvents = new ArrayList<WorldEvent.Said>();
-        var charges = new ArrayList<org.wyrdsekai.core.soul.EmotionalCharge>();
+        var charges = new ArrayList<EmotionalCharge>();
 
         for (int i = 0; i < 10; i++) {
             var said = new WorldEvent.Said("test-room", Instant.now(),
-                "player-1", "Masumi", "Tell me about architecture " + i);
+                "player-1", "Operator", "Tell me about architecture " + i);
             events.add(said);
             saidEvents.add(said);
-            charges.add(new org.wyrdsekai.core.soul.EmotionalCharge(0.4f,
+            charges.add(new EmotionalCharge(0.4f,
                 "curiosity", "genuine", 0.8f, Map.of(), "test"));
         }
 

@@ -33,7 +33,7 @@ class CulturalRegisterPersistenceTest {
     @Test void preferred_language_round_trips_through_close_and_reopen() {
         // Open store, save an account with preferred_language, close.
         var store1 = new AccountStore(jdbcUrl);
-        var account = PlayerAccount.create("Masumi")
+        var account = PlayerAccount.create("Operator")
             .withPreferredLanguage("ja-JP");
         store1.save(account);
 

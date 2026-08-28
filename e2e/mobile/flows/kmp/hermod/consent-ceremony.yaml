@@ -1,0 +1,50 @@
+appId: org.wyrdsekai.kmp
+env:
+  SERVER_URL: "http://10.0.2.2:7070"
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: "welcome-title"
+    timeout: 30000
+- tapOn:
+    id: "welcome-standalone-mode"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-server-inference-toggle"
+    timeout: 10000
+- tapOn:
+    id: "welcome-server-inference-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-server-url"
+    timeout: 10000
+- tapOn:
+    id: "welcome-server-url"
+- inputText: ${SERVER_URL}
+- hideKeyboard
+- tapOn:
+    id: "welcome-use-server"
+- extendedWaitUntil:
+    visible:
+      id: "standalone-room-name"
+    timeout: 60000
+- tapOn:
+    id: "standalone-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "switch-mode-button"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "hermod-consent-toggle"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "hermod-consent-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "hermod-code-input"
+    timeout: 15000
+- takeScreenshot: kmp_hermod_ceremony_offered

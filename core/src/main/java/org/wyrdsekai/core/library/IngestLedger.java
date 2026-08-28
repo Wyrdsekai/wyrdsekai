@@ -69,8 +69,15 @@ public final class IngestLedger implements AutoCloseable {
             StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
+    // Methods below are synchronized: the indexer went parallel (2026-08-10),
+    // and this class is exactly the shared state the workers contend on. A
+    // HashMap written from N threads corrupts; interleaved BufferedWriter
+    // appends garble lines (a garbled line reads as not-done next run —
+    // harmless but wasteful). One lock, held for microseconds per file,
+    // against extraction work measured in hundreds of milliseconds.
+
     /** True when this file was already indexed with the same mtime. */
-    public boolean isDone(Path path) {
+    public synchronized boolean isDone(Path path) {
         var recorded = done.get(path.toAbsolutePath().toString());
         if (recorded == null) return false;
         try {
@@ -81,7 +88,7 @@ public final class IngestLedger implements AutoCloseable {
     }
 
     /** Record a file as fully indexed. */
-    public void markDone(Path path) {
+    public synchronized void markDone(Path path) {
         try {
             var mtime = Files.getLastModifiedTime(path).toMillis();
             var key = path.toAbsolutePath().toString();
@@ -94,7 +101,7 @@ public final class IngestLedger implements AutoCloseable {
     }
 
     /** Flush pending entries to disk (call alongside index commits). */
-    public void flush() {
+    public synchronized void flush() {
         try {
             writer.flush();
         } catch (IOException e) {

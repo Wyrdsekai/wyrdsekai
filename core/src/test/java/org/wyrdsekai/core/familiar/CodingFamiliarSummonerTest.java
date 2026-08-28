@@ -41,7 +41,7 @@ class CodingFamiliarSummonerTest {
         var reg = newRegistry(souls);
         var summoner = new CodingFamiliarSummoner(reg, newBondStore(), null);
 
-        var outcome = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, null);
+        var outcome = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, null);
 
         assertThat(outcome.alreadyExisted()).isFalse();
         assertThat(outcome.bondRecorded()).isTrue();
@@ -58,7 +58,7 @@ class CodingFamiliarSummonerTest {
     @Test void firstSummon_honoursChosenName(@TempDir Path souls) throws IOException {
         var summoner = new CodingFamiliarSummoner(
             newRegistry(souls), newBondStore(), null);
-        var outcome = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "弟子");
+        var outcome = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "弟子");
         assertThat(outcome.identity().name()).isEqualTo("弟子");
     }
 
@@ -67,8 +67,8 @@ class CodingFamiliarSummonerTest {
         var bond = newBondStore();
         var summoner = new CodingFamiliarSummoner(reg, bond, null);
 
-        var first = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
-        var second = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
+        var first = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
+        var second = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
 
         assertThat(first.alreadyExisted()).isFalse();
         assertThat(second.alreadyExisted()).isTrue();
@@ -81,7 +81,7 @@ class CodingFamiliarSummonerTest {
     @Test void firstSummon_writesPersistentFile(@TempDir Path souls) throws IOException {
         var reg = newRegistry(souls);
         var summoner = new CodingFamiliarSummoner(reg, newBondStore(), null);
-        summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
+        summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
 
         // Fresh registry sees the same identity — proof of disk durability
         var fresh = newRegistry(souls);
@@ -94,7 +94,7 @@ class CodingFamiliarSummonerTest {
     @Test void firstSummon_recordsIdentityBond(@TempDir Path souls) throws IOException {
         var bond = newBondStore();
         var summoner = new CodingFamiliarSummoner(newRegistry(souls), bond, null);
-        var outcome = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, null);
+        var outcome = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, null);
 
         var bondId = CodingFamiliarSummoner.bondIdFor(
             BONDHOLDER, outcome.identity().did());
@@ -111,9 +111,9 @@ class CodingFamiliarSummonerTest {
         var bondStore = newBondStore();
         var summoner = new CodingFamiliarSummoner(newRegistry(souls), bondStore, null);
 
-        var first = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, null);
-        summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, null);
-        summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, null);
+        var first = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, null);
+        summoner.firstSummon(BONDHOLDER, "Operator", PARENT, null);
+        summoner.firstSummon(BONDHOLDER, "Operator", PARENT, null);
 
         var bondId = CodingFamiliarSummoner.bondIdFor(BONDHOLDER, first.identity().did());
         var saved = bondStore.get(bondId).orElseThrow();
@@ -123,7 +123,7 @@ class CodingFamiliarSummonerTest {
 
     @Test void firstSummon_nullBondStoreSkipsBondGracefully(@TempDir Path souls) throws IOException {
         var summoner = new CodingFamiliarSummoner(newRegistry(souls), null, null);
-        var outcome = summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, null);
+        var outcome = summoner.firstSummon(BONDHOLDER, "Operator", PARENT, null);
         assertThat(outcome.bondRecorded()).isFalse();
         // Identity still landed on disk — that's the canonical truth
         assertThat(outcome.identity().bondholderDid()).isEqualTo(BONDHOLDER);
@@ -131,7 +131,7 @@ class CodingFamiliarSummonerTest {
 
     @Test void firstSummon_rejectsBlankBondholder(@TempDir Path souls) {
         var summoner = new CodingFamiliarSummoner(newRegistry(souls), null, null);
-        assertThatThrownBy(() -> summoner.firstSummon("", "Masumi", PARENT, null))
+        assertThatThrownBy(() -> summoner.firstSummon("", "Operator", PARENT, null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("bondholderDid");
     }
@@ -144,8 +144,8 @@ class CodingFamiliarSummonerTest {
     }
 
     @Test void bondIdFor_isDeterministic() {
-        var a = CodingFamiliarSummoner.bondIdFor(BONDHOLDER, "did:wyrd:familiar:codeplane:x");
-        var b = CodingFamiliarSummoner.bondIdFor(BONDHOLDER, "did:wyrd:familiar:codeplane:x");
+        var a = CodingFamiliarSummoner.bondIdFor(BONDHOLDER, "did:wyrd:familiar:codezaiku:x");
+        var b = CodingFamiliarSummoner.bondIdFor(BONDHOLDER, "did:wyrd:familiar:codezaiku:x");
         assertThat(a).isEqualTo(b);
         assertThat(a).startsWith("coding-familiar:");
     }
@@ -158,7 +158,7 @@ class CodingFamiliarSummonerTest {
     @Test void currentFamiliarFor_returnsPostSummonIdentity(@TempDir Path souls) throws IOException {
         var summoner = new CodingFamiliarSummoner(
             newRegistry(souls), newBondStore(), null);
-        summoner.firstSummon(BONDHOLDER, "Masumi", PARENT, "Coder");
+        summoner.firstSummon(BONDHOLDER, "Operator", PARENT, "Coder");
 
         var current = summoner.currentFamiliarFor(BONDHOLDER);
         assertThat(current).isPresent();

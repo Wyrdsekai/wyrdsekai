@@ -129,3 +129,17 @@ numbered `actions` menu were all verified working over a live SSH session
   Android phones*. It removes the last proprietary dependency from the default
   build, and the bar for merging it is evidence from real hardware rather than a
   green emulator run.
+
+
+## macOS: a coding backend cannot reach a drive on another machine until you grant Local Network
+
+On macOS, Apple's Local Network privacy permission blocks non-Apple binaries
+(including the JVM and every coding backend) from reaching LAN peers — while
+`curl` to the same URL works, because Apple's own binaries are exempt. The
+failure reads like a network problem and is not one.
+
+If your drive runs on the same Mac (`localhost`), nothing is affected. If it
+runs on another household machine, grant Local Network to your terminal app
+once: System Settings → Privacy & Security → Local Network. There is no way
+to grant it from a script or over ssh — it is a one-time human step by
+Apple's design.

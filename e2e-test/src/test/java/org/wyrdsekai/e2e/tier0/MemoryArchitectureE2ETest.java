@@ -27,14 +27,14 @@ class MemoryArchitectureE2ETest {
         var llmOutput = """
             I'll make a note of that.
             ```json
-            {"action": "remember", "content": "Masumi prefers Earl Grey over coffee", "importance": 0.85}
+            {"action": "remember", "content": "Operator prefers Earl Grey over coffee", "importance": 0.85}
             ```
             """;
         var result = ActionParser.parse(llmOutput);
         assertNotNull(result);
         assertInstanceOf(ActionParser.AgentAction.Remember.class, result);
         var remember = (ActionParser.AgentAction.Remember) result;
-        assertEquals("Masumi prefers Earl Grey over coffee", remember.content());
+        assertEquals("Operator prefers Earl Grey over coffee", remember.content());
         assertEquals(0.85f, remember.importance(), 0.01);
     }
 
@@ -144,7 +144,7 @@ class MemoryArchitectureE2ETest {
         // Scan without Lucene store should return empty gracefully
         var contradictions = ContradictionDetector.scan(
             "did:key:test",
-            List.of("The weather is nice today", "Masumi is not vegetarian"),
+            List.of("The weather is nice today", "Operator is not vegetarian"),
             null
         );
         assertTrue(contradictions.isEmpty(), "No Lucene = no contradictions to detect");
@@ -170,7 +170,7 @@ class MemoryArchitectureE2ETest {
     void fragment_confidence_evolves_through_lifecycle() {
         // Birth
         var f = SoulFragment.unembedded("pref-tea", "personality", "Tea preference",
-            "Masumi prefers Earl Grey tea");
+            "Operator prefers Earl Grey tea");
         assertEquals(0.5f, f.confidence(), 0.01);
         assertTrue(f.isCurrent());
 
@@ -209,21 +209,21 @@ class MemoryArchitectureE2ETest {
     @Test
     void eviction_summary_captures_conversation_essence() {
         var events = List.<WorldEvent>of(
-            new WorldEvent.Said("study", Instant.now(), "user1", "Masumi",
+            new WorldEvent.Said("study", Instant.now(), "user1", "Operator",
                 "I've been thinking about the sourdough recipe we discussed"),
             new WorldEvent.Said("study", Instant.now(), "agent1", "Ember",
                 "I remember! The one with the overnight fermentation"),
-            new WorldEvent.Said("study", Instant.now(), "user1", "Masumi",
+            new WorldEvent.Said("study", Instant.now(), "user1", "Operator",
                 "Yes, and I also want to try making ramen from scratch"),
             new WorldEvent.Said("study", Instant.now(), "agent1", "Ember",
                 "That sounds like a wonderful project"),
-            new WorldEvent.Said("study", Instant.now(), "user1", "Masumi",
+            new WorldEvent.Said("study", Instant.now(), "user1", "Operator",
                 "By the way, the garden is looking great this spring")
         );
 
         var summary = EvictionSummarizer.summarize(events, "agent1");
         assertNotNull(summary, "Should produce a summary");
-        assertTrue(summary.contains("Masumi"), "Should mention the human speaker");
+        assertTrue(summary.contains("Operator"), "Should mention the human speaker");
         assertTrue(summary.contains("5 messages") || summary.length() > 20,
             "Should indicate conversation substance");
     }

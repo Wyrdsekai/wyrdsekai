@@ -429,4 +429,4 @@ These are not affectations. They are the shape of the architecture made audible.
 
 ---
 
-*— Masumi Nakamura, 2026 · [mas@wyrdsekai.org](mailto:mas@wyrdsekai.org)*
+*— Operator Nakamura, 2026 · [mas@wyrdsekai.org](mailto:mas@wyrdsekai.org)*

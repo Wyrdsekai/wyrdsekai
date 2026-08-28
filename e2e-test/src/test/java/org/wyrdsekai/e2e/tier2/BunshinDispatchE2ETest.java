@@ -116,7 +116,14 @@ class BunshinDispatchE2ETest {
                 if (text.isBlank()) continue;
                 seen.add(text.length() > 120 ? text.substring(0, 120) + "…" : text);
                 var lower = text.toLowerCase();
-                if (initial == null && lower.contains("split") && lower.contains("bunshin")) {
+                // dev47 embodiment beat (#97 triage 2026-08-16): dispatch now
+                // opens with the EmoteInRoom "splits in two — a translucent
+                // copy settles nearby…" BEFORE any say (see the 08-14 beat
+                // ordering fix). Accept the shipped beat as the opener; the
+                // old "split…bunshin" say-phrasing stays accepted for older
+                // narration styles.
+                if (initial == null && (lower.contains("splits in two")
+                        || (lower.contains("split") && lower.contains("bunshin")))) {
                     initial = text;
                     continue;
                 }

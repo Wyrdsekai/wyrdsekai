@@ -1,4 +1,4 @@
-// CodePlane Workshop furnishing — forge link ("workshop-forge-link"
+// CodeZaiku Workshop furnishing — forge link ("workshop-forge-link"
 // RoomObject, display name "forge link" → normalized linkage "forge_link").
 //
 // The archway by which the day's coding experience becomes soul fragments

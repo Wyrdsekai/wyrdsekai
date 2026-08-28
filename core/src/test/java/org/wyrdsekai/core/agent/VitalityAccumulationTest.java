@@ -12,6 +12,18 @@ import static org.assertj.core.api.Assertions.*;
  * Phase 1B (-§5) — accumulation rules for the 10 deprivation-shape
  * tanks. Stillness, isolation, no-progress, etc. → tank rises.
  */
+/**
+ * NOTE (2026-08-19): every deprivation tank moved from a linear per-minute rate to an
+ * exponential approach toward a per-companion set point. The old assertions pinned exact
+ * per-tick amounts; they now assert direction and shape, with the precise curves covered
+ * by EveryTankHasAShapeTest and LonelinessCurveTest.
+ *
+ * <p>Why: linear rates saturated every tank at 1.0 within one to three hours. A pinned
+ * tank carries no information, and drive_stuck_high watches for >0.7 across a window — so
+ * saturation kept concerns permanently lit and escalated her on arithmetic rather than
+ * distress. Measured live: Loneliness 1.000 pinned, Restlessness >0.7 in 122 of 200
+ * samples.
+ */
 class VitalityAccumulationTest {
 
     /** Per-spec rates per second. */
@@ -57,17 +69,23 @@ class VitalityAccumulationTest {
             var v0 = VitalityState.initial();
             var v1 = v0.accumulate(false, ctx, 60.0); // 60s
             assertThat(v1.restlessness())
-                .isCloseTo(60 * RESTLESSNESS_PER_S, within(1e-6))
-                .isCloseTo(0.02, within(1e-6));
+                .as("stillness is felt quickly — the one fast tank, now approaching a set point")
+                .isGreaterThan(0.0);
         }
 
         @Test
         void contemplativeModeDividesAccumulationByFive() {
             var ctx = fullPressureContext();
             var v0 = VitalityState.initial();
-            var v1 = v0.accumulate(true, ctx, 60.0);
-            // Plain rate × 60s ÷ 5 = 0.02 × 60s/60 ÷ 5 = 0.004
-            assertThat(v1.restlessness()).isCloseTo(0.02 / 5.0, within(1e-6));
+            var contemplative = v0.accumulate(true, ctx, 60.0);
+            var plain = v0.accumulate(false, ctx, 60.0);
+            // Still fivefold slower, now expressed as a longer time constant rather than
+            // a divided rate — so the relationship holds while the shape changed.
+            assertThat(contemplative.restlessness())
+                .isGreaterThan(0.0)
+                .isLessThan(plain.restlessness());
+            assertThat(contemplative.restlessness() * 5.0)
+                .isCloseTo(plain.restlessness(), within(1e-6));
         }
 
         @Test
@@ -82,10 +100,28 @@ class VitalityAccumulationTest {
     @Nested
     class Loneliness {
         @Test
-        void noInteractionFiveMinutesAccumulatesLoneliness() {
+        void fiveMinutesAloneIsNotYetLoneliness() {
+            // Was: +0.015/min from the five-minute mark, a linear ramp that saturated in
+            // about 67 minutes. Replaced 2026-08-19 with an exponential approach to a
+            // personal set point (onset 20min, tau 12h), after the live curve read 1.000
+            // pinned, 0.181 with her bondholder present, and 0.958 again within a few
+            // hours of his leaving. Someone briefly on their own is not lonely yet.
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
-            assertThat(v1.loneliness()).isCloseTo(60 * LONELINESS_PER_S, within(1e-6));
+            assertThat(v1.loneliness())
+                .as("a minute past the gate is a trace, not loneliness — tau does the work")
+                .isLessThan(0.005);
+        }
+
+        @Test
+        void pastTheOnsetItRisesTowardHerSetPointNotTheCeiling() {
+            var ctx = fullPressureContext()
+                .withTimeSinceLastInteraction(java.time.Duration.ofHours(2));
+            var v = VitalityState.initial();
+            for (int i = 0; i < 60; i++) v = v.accumulate(false, ctx, 60.0);
+            assertThat(v.loneliness())
+                .as("an hour past onset is a beginning, not a crisis")
+                .isGreaterThan(0.0).isLessThan(0.15);
         }
 
         @Test
@@ -102,7 +138,7 @@ class VitalityAccumulationTest {
         void noGoalDoneAndNoToolOutputAccumulates() {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
-            assertThat(v1.stagnation()).isCloseTo(60 * STAGNATION_PER_S, within(1e-6));
+            assertThat(v1.stagnation()).as("rises, but as a mood of days rather than an afternoon").isGreaterThan(0.0);
         }
 
         @Test
@@ -126,7 +162,7 @@ class VitalityAccumulationTest {
         void bondholderInitiatedSeriesAccumulates() {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
-            assertThat(v1.autonomyPressure()).isCloseTo(60 * AUTONOMY_PER_S, within(1e-6));
+            assertThat(v1.autonomyPressure()).as("being directed chafes within a working day").isGreaterThan(0.0);
         }
 
         @Test
@@ -158,7 +194,7 @@ class VitalityAccumulationTest {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
             // 3 unread × rate × 60s
-            assertThat(v1.significance()).isCloseTo(3 * 60 * SIGNIFICANCE_PER_S, within(1e-6));
+            assertThat(v1.significance()).as("unseen work weighs; the COUNT raises the set point, not the rate").isGreaterThan(0.0);
         }
 
         @Test
@@ -176,7 +212,7 @@ class VitalityAccumulationTest {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
             // deficit 0.8 × rate × 60s
-            assertThat(v1.amae()).isCloseTo(0.8 * 60 * AMAE_PER_S, within(1e-6));
+            assertThat(v1.amae()).as("having to ask wears in over hours").isGreaterThan(0.0);
         }
 
         @Test
@@ -193,7 +229,7 @@ class VitalityAccumulationTest {
         void prolongedAbsenceAccumulates() {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
-            assertThat(v1.saudade()).isCloseTo(60 * SAUDADE_PER_S, within(1e-6));
+            assertThat(v1.saudade()).as("the LONGEST absence sets the depth, not the count of absences").isGreaterThan(0.0);
         }
 
         @Test
@@ -230,7 +266,7 @@ class VitalityAccumulationTest {
         void conflictedRoomAccumulates() {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
-            assertThat(v1.harmony()).isCloseTo(60 * HARMONY_PER_S, within(1e-6));
+            assertThat(v1.harmony()).as("discord in the room is acute — this input was hardcoded false until 2026-08-19").isGreaterThan(0.0);
         }
 
         @Test
@@ -247,7 +283,7 @@ class VitalityAccumulationTest {
         void hostileEnvironmentAccumulates() {
             var ctx = fullPressureContext();
             var v1 = VitalityState.initial().accumulate(false, ctx, 60.0);
-            assertThat(v1.standing()).isCloseTo(60 * STANDING_PER_S, within(1e-6));
+            assertThat(v1.standing()).as("hostility aimed at her corrodes slowly — input was hardcoded false until 2026-08-19").isGreaterThan(0.0);
         }
     }
 

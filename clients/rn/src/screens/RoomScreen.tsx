@@ -160,6 +160,15 @@ export function RoomScreen({ navigation }: Props) {
       return;
     }
 
+    // retire <object> — the counterpart to drop. Without this the phone would send the
+    // line as speech, so a person trying to get rid of something says it out loud instead.
+    const retireMatch = lower.match(/^(?:retire|destroy|discard)\s+(.+)$/);
+    if (retireMatch) {
+      ws.send({ type: 'retire', id: newId(), roomId, objectName: retireMatch[1].trim() });
+      setInputText('');
+      return;
+    }
+
     // use <object>
     const useMatch = lower.match(/^use\s+(.+)$/);
     if (useMatch) {
@@ -242,7 +251,11 @@ export function RoomScreen({ navigation }: Props) {
 
     return (
       <View style={styles.proseEntry}>
-        <Text style={[styles.proseText, { color }, (item.speaker === 'narrator' || item.speaker === 'emote') && styles.italic]}>
+        {/* selectable: long-press to select and copy. A transcript you cannot copy out
+            of is a transcript you cannot quote, paste into a bug report, or keep. */}
+        <Text
+          selectable
+          style={[styles.proseText, { color }, (item.speaker === 'narrator' || item.speaker === 'emote') && styles.italic]}>
           {item.speaker !== 'narrator' && item.speaker !== 'system' && item.speaker !== 'emote' && (
             <Text style={styles.speaker}>{item.speaker}: </Text>
           )}
@@ -256,7 +269,7 @@ export function RoomScreen({ navigation }: Props) {
             );
           }
           return block.fallback ? (
-            <Text key={i} style={[styles.fallback, { color: c.textMuted }]}>
+            <Text key={i} selectable style={[styles.fallback, { color: c.textMuted }]}>
               {'  '}
               {block.fallback}
             </Text>
@@ -338,7 +351,7 @@ export function RoomScreen({ navigation }: Props) {
           streamingEntries.length > 0 ? (
             <View>
               {streamingEntries.map(([source, text]) => (
-                <Text key={source} style={[styles.streaming, { color: c.proseStreaming }]}>
+                <Text key={source} selectable style={[styles.streaming, { color: c.proseStreaming }]}>
                   <Text style={styles.speaker}>{source}: </Text>
                   {text}
                   {'\u2588'}

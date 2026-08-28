@@ -875,7 +875,7 @@ class PiCodingE2ETest {
             @Override public List<Map<String, Object>> webSearch(String q, String type, int n) {
                 searchCalls.incrementAndGet();
                 return List.of(
-                    Map.of("title", "Mythos Atlas", "url", "https://a.example/1"),
+                    Map.of("title", "Operator Atlas", "url", "https://a.example/1"),
                     Map.of("title", "Soul Compendium", "url", "https://b.example/2"),
                     Map.of("title", "Resonance Codex", "url", "https://c.example/3"),
                     Map.of("title", "Echo Catalogue", "url", "https://d.example/4"),

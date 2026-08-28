@@ -211,7 +211,7 @@ public sealed interface WorldEvent {
     /**
      * an entity's body changed posture.
      * Broadcast on set, change, or clear. Carries both previous and current so observers
-     * can render the transition ("Masumi stood from the chair and walked to the window"
+     * can render the transition ("Operator stood from the chair and walked to the window"
      * derives from previous.verb=sit, current.verb=stand). Either side may be null:
      * {@code previous=null} = posture set from default; {@code current=null} = posture cleared.
      * Transient (not state-mutating beyond the entity's posture field).

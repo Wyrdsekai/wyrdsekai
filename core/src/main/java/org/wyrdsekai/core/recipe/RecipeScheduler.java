@@ -70,8 +70,17 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
     record CompletionInternal(
             String queueId, String recipeId, String agentDid,
             CadenceTier priorTier, int priorConsecutive,
-            CadenceLadder.Outcome outcome, String runId, String message)
-        implements Command {}
+            CadenceLadder.Outcome outcome, String runId, String message,
+            boolean neverRan)
+        implements Command {
+
+        CompletionInternal(String queueId, String recipeId, String agentDid,
+                CadenceTier priorTier, int priorConsecutive,
+                CadenceLadder.Outcome outcome, String runId, String message) {
+            this(queueId, recipeId, agentDid, priorTier, priorConsecutive,
+                outcome, runId, message, false);
+        }
+    }
 
     // Internal — periodic timer fire.
     record TickInternal() implements Command {}
@@ -170,6 +179,33 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
     /** Sentinel ticker — no-op. Used in tests and when scheduler runs with cron disabled. */
     private static final CronTicker NO_CRON = now -> List.of();
 
+    /**
+     * Reports which of a recipe's REQUIRED parameters have no value — no default in
+     * the manifest, and no stored override for this agent.
+     *
+     * <p>Exists because the scheduler cannot see manifests by design (it holds only a
+     * {@link Dispatcher}), so it had no way to tell "this recipe just failed" from
+     * "this recipe can never run as configured". It fired
+     * {@code retrain-classifier-head} — {@code head} required, no default, nothing on
+     * the scheduled path supplying it — every cadence tick, and three ERROR runs tripped
+     * the consecutive-deploy-failure ceiling. The welfare mechanism that exists to stop
+     * a recipe grinding an agent down was spent on a missing string, and the recipe sat
+     * paused needing a steward to clear it (found live 2026-08-18, 14 failed runs).
+     *
+     * <p>Implementations must FAIL OPEN: a manifest that cannot be loaded returns empty,
+     * so an unreadable recipe still gets dispatched and reports a real outcome rather
+     * than being silently skipped forever.
+     */
+    @FunctionalInterface
+    public interface RequiredParamCheck {
+        /** Required param names with no value available; empty when the recipe can run. */
+        List<String> unsatisfied(String agentDid, String recipeName,
+                Map<String, Object> params);
+    }
+
+    /** Default check — assumes everything is satisfiable (pre-existing behaviour). */
+    private static final RequiredParamCheck ALL_SATISFIED = (did, name, params) -> List.of();
+
     // ── factory ────────────────────────────────────────────────────────
 
     /**
@@ -211,11 +247,24 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
     public static Behavior<Command> create(SqlRecipeQueue queue,
             Dispatcher dispatcher, Config config, WelfareSupplier welfare,
             CronTicker cron) {
+        return create(queue, dispatcher, config, welfare, cron, ALL_SATISFIED);
+    }
+
+    /**
+     * Construct the scheduler with a required-param precheck.
+     *
+     * @param paramCheck see {@link RequiredParamCheck}. Null treated as
+     *                   {@link #ALL_SATISFIED} (no precheck).
+     */
+    public static Behavior<Command> create(SqlRecipeQueue queue,
+            Dispatcher dispatcher, Config config, WelfareSupplier welfare,
+            CronTicker cron, RequiredParamCheck paramCheck) {
         var sup = welfare == null ? OPEN_GATE : welfare;
         var tick = cron == null ? NO_CRON : cron;
+        var check = paramCheck == null ? ALL_SATISFIED : paramCheck;
         return Behaviors.withTimers(timers -> Behaviors.setup(ctx ->
             new RecipeScheduler(ctx, timers, queue, dispatcher,
-                config == null ? Config.defaults() : config, sup, tick)));
+                config == null ? Config.defaults() : config, sup, tick, check)));
     }
 
     // ── state ──────────────────────────────────────────────────────────
@@ -226,6 +275,7 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
     private final Config config;
     private final WelfareSupplier welfare;
     private final CronTicker cron;
+    private final RequiredParamCheck paramCheck;
     /** Recipe IDs paused by deploy-ceiling — skipped until cleared by steward. */
     private final Set<String> pausedRecipes =
         ConcurrentHashMap.newKeySet();
@@ -236,8 +286,9 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
     private RecipeScheduler(ActorContext<Command> context,
             TimerScheduler<Command> timers, SqlRecipeQueue queue,
             Dispatcher dispatcher, Config config, WelfareSupplier welfare,
-            CronTicker cron) {
+            CronTicker cron, RequiredParamCheck paramCheck) {
         super(context);
+        this.paramCheck = paramCheck;
         this.timers = timers;
         this.queue = queue;
         this.dispatcher = dispatcher;
@@ -382,11 +433,12 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
         var ffKey = forceFireKey(peeked.recipeId(), peeked.agentDid());
         boolean forced = forceFire.remove(ffKey);
         if (!forced) {
-            if (pausedRecipes.contains(peeked.recipeId())) {
-                log.debug("RecipeScheduler: recipe {} paused (deploy-ceiling), "
-                    + "skipping row {}", peeked.recipeId(), peeked.id());
-                return false;
-            }
+            // NOTE: a paused recipe is NOT short-circuited here. It used to be, which
+            // meant the deploy-ceiling pause could never re-evaluate itself — the gate
+            // that decides whether to try again sat behind the flag that said don't.
+            // `pausedRecipes` now records only that the steward has already been told,
+            // so the notification fires once rather than every tick; the circuit breaker
+            // below decides whether this tick actually dispatches.
             var inputs = welfare.inputsFor(peeked);
             var decision = WelfareGate.evaluate(inputs);
             if (!decision.allow()) {
@@ -397,14 +449,73 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
                 // Deploy-ceiling: pause the recipe + notify steward; other
                 // denials just defer to the next tick.
                 if (decision.reason() == WelfareGate.DenyReason.DEPLOY_CEILING_HIT) {
-                    pausedRecipes.add(peeked.recipeId());
-                    notifyStewardDeployCeiling(peeked, decision.detail());
+                    // A breaker, not a latch. Paused-until-a-human-notices makes silence
+                    // the resting state of a self-improvement loop on an unattended node;
+                    // after a cooldown, exactly one attempt goes through. Success closes
+                    // it (the SUCCEEDED row breaks the failure streak); failure re-opens
+                    // it with the cooldown doubled. One run a day at worst cannot grind
+                    // her, and a transient cause heals without anyone going looking.
+                    var breaker = RecipeCircuitBreaker.stateFor(
+                        inputs.consecutiveDeployFailures(), WelfareGate.DEPLOY_CEILING,
+                        inputs.lastTerminalAt(), inputs.now());
+                    if (breaker == RecipeCircuitBreaker.State.HALF_OPEN) {
+                        log.info("RecipeScheduler half-open probe: recipe={} agent={} — "
+                            + "{} consecutive failures, cooldown elapsed, allowing ONE "
+                            + "attempt. Success closes the breaker; failure doubles the "
+                            + "wait (next {}).",
+                            peeked.recipeId(), peeked.agentDid(),
+                            inputs.consecutiveDeployFailures(),
+                            RecipeCircuitBreaker.cooldownFor(
+                                inputs.consecutiveDeployFailures() + 1,
+                                WelfareGate.DEPLOY_CEILING));
+                        pausedRecipes.remove(peeked.recipeId());
+                        // fall through to dispatch this one attempt
+                    } else {
+                        if (pausedRecipes.add(peeked.recipeId())) {
+                            notifyStewardDeployCeiling(peeked, decision.detail());
+                        } else {
+                            log.debug("RecipeScheduler: recipe {} still cooling down "
+                                + "(next attempt after {})", peeked.recipeId(),
+                                RecipeCircuitBreaker.cooldownFor(
+                                    inputs.consecutiveDeployFailures(),
+                                    WelfareGate.DEPLOY_CEILING));
+                        }
+                        return false;
+                    }
+                } else {
+                    return false;
                 }
-                return false;
+            } else if (pausedRecipes.contains(peeked.recipeId())) {
+                // Gate allowed it — a success or a cleared streak closed the breaker.
+                pausedRecipes.remove(peeked.recipeId());
+                log.info("RecipeScheduler breaker closed for recipe={} — resuming",
+                    peeked.recipeId());
             }
         } else {
             log.info("RecipeScheduler force-fire active: recipe={} agent={} "
                 + "(welfare gate bypassed)", peeked.recipeId(), peeked.agentDid());
+        }
+
+        // A recipe whose REQUIRED params cannot be satisfied is misconfigured, not
+        // failing. Firing it anyway spent a welfare mechanism on a config error:
+        // `retrain-classifier-head` declares `head` required with no default, nothing on
+        // the scheduled path supplies it, and three ERROR runs tripped the deploy
+        // ceiling — so the gate that exists to stop a recipe grinding an agent down was
+        // consumed by a missing string, and the recipe sat paused awaiting a steward
+        // (found live 2026-08-18, 14 failed runs). Runs BEFORE the CAS and retires the
+        // row as SKIPPED: leaving it PENDING would block the queue head forever, since a
+        // missing parameter never resolves itself.
+        var unsatisfied = paramCheck.unsatisfied(peeked.agentDid(), peeked.recipeId(),
+            peeked.params() == null ? Map.of() : peeked.params());
+        if (!unsatisfied.isEmpty()) {
+            var detail = "missing required param(s) with no default and no stored "
+                + "override: " + String.join(", ", unsatisfied);
+            queue.markSkipped(peeked.id(), Instant.now(), detail);
+            log.warn("RecipeScheduler skipping recipe={} agent={} — {}. Set them with "
+                + "`wyrd recipes set-param` or give the recipe a default; this is a "
+                + "configuration gap, not a failing run, so it does not count toward "
+                + "the deploy ceiling.", peeked.recipeId(), peeked.agentDid(), detail);
+            return false;
         }
 
         var attempted = queue.markAttempted(peeked.id(), Instant.now());
@@ -443,7 +554,7 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
                 var outcome = mapOutcome(run);
                 self.tell(new CompletionInternal(qid, recipeId, did,
                     priorTier, priorCount, outcome,
-                    started.runId(), run.message()));
+                    started.runId(), run.message(), neverRan(run)));
             } catch (Exception e) {
                 log.warn("RecipeScheduler worker for {} threw: {}", qid, e.toString());
                 self.tell(new CompletionInternal(qid, recipeId, did,
@@ -455,11 +566,18 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
     }
 
     private Behavior<Command> onCompletion(CompletionInternal done) {
-        var nextState = CadenceLadder.advance(
-            done.priorTier(), done.priorConsecutive(), done.outcome());
-        var terminal = done.outcome() == CadenceLadder.Outcome.SUCCESS
-            ? QueuedRecipe.Status.SUCCEEDED
-            : QueuedRecipe.Status.FAILED;
+        // A run that never started leaves the cadence ladder exactly where it was:
+        // it is neither progress nor a setback, and demoting on it would punish a
+        // companion for her node lacking a backend.
+        var nextState = done.neverRan()
+            ? new CadenceLadder.State(done.priorTier(), done.priorConsecutive())
+            : CadenceLadder.advance(
+                done.priorTier(), done.priorConsecutive(), done.outcome());
+        var terminal = done.neverRan()
+            ? QueuedRecipe.Status.SKIPPED
+            : done.outcome() == CadenceLadder.Outcome.SUCCESS
+                ? QueuedRecipe.Status.SUCCEEDED
+                : QueuedRecipe.Status.FAILED;
         var written = queue.markCompleted(done.queueId(), terminal,
             Instant.now(), nextState.tier(), nextState.consecutiveSuccesses(),
             done.runId(), done.message());
@@ -488,6 +606,28 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
      * rollback step name {@code "rollback"} (matches what
      * {@code RecipeForgeIngester.rolledBack} keys off).
      */
+    /**
+     * True when the recipe never actually executed, as opposed to executing and coming
+     * out badly.
+     *
+     * <p>{@code NEEDS_BACKEND} means this node has no familiar to do the work, and
+     * {@code RESOURCE_DENIED} means the box could not satisfy the declared hardware
+     * requirement. Neither is an attempt at self-improvement that went wrong — nothing
+     * ran. Recording them as FAILED fed the consecutive-deploy-failure ceiling, so a
+     * node without a coding backend would pause the recipe after three ticks; the
+     * ship-default provisioner even documents that such a node "will just NEEDS_BACKEND
+     * every run". Same principle as a missing required param: a welfare ceiling must
+     * only count work that actually ran.
+     *
+     * <p>{@code GATE_FAILED} is deliberately NOT here — the work ran and did not clear
+     * the bar, which is exactly what the ceiling exists to notice.
+     */
+    static boolean neverRan(RecipeRunner.RecipeRun run) {
+        if (run == null || run.status() == null) return false;
+        return run.status() == RecipeRunner.Status.NEEDS_BACKEND
+            || run.status() == RecipeRunner.Status.RESOURCE_DENIED;
+    }
+
     static CadenceLadder.Outcome mapOutcome(RecipeRunner.RecipeRun run) {
         if (run == null) return CadenceLadder.Outcome.ERROR;
         var status = run.status();

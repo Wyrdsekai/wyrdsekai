@@ -36,7 +36,12 @@ public final class InferenceClient {
     private final ApiProvider provider;
 
     public InferenceClient(String baseUrl, String apiKey, Duration timeout, ApiProvider provider) {
-        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        // Normalize: strip trailing slash AND a trailing /v1 — providers append
+        // the full /v1/... path themselves, so a /v1 base yields /v1/v1/... and
+        // a companion whose every thought 404s while health reads UP (the
+        // glimmerhouse born-mute trap, 2026-08-11).
+        var b = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.baseUrl = b.endsWith("/v1") ? b.substring(0, b.length() - 3) : b;
         this.apiKey = apiKey;
         this.timeout = timeout;
         this.provider = provider;
@@ -137,7 +142,13 @@ public final class InferenceClient {
         // derived from the companion's TemperamentSeed. NOT serialized raw: the OpenAI
         // ApiProvider translates this into the backend's per-request voice form
         // (llama-server → lora[], MLX → register_mix{}). null on every non-voice-pass call.
-        @JsonIgnore Map<String, Double> registerMix
+        @JsonIgnore Map<String, Double> registerMix,
+        // Seat-config reasoning mode: {"enable_thinking": false} for nothink
+        // seats (Nemotron-class dispatch). Serialized as-is; llama-server and
+        // vLLM both accept it. Null = template default.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @JsonProperty("chat_template_kwargs")
+        Map<String, Object> chatTemplateKwargs
     ) {
         /** Old canonical signature (pre-V2.4 register mix) — delegates with no voice steering. */
         public ChatRequest(String model, List<ChatMessage> messages, Integer maxTokens,
@@ -145,13 +156,31 @@ public final class InferenceClient {
                            Object format, List<ToolDefinition> tools, String toolChoice,
                            Double presencePenalty, Double repeatPenalty) {
             this(model, messages, maxTokens, temperature, topP, stop, grammar, format,
-                 tools, toolChoice, presencePenalty, repeatPenalty, null);
+                 tools, toolChoice, presencePenalty, repeatPenalty, null, null);
         }
 
         /** Same request with a different message list (all other fields preserved). */
+        /** Pre-kwargs signature (through V2.4 register mix) — template default thinking. */
+        public ChatRequest(String model, List<ChatMessage> messages, Integer maxTokens,
+                           Double temperature, Double topP, String stop, String grammar,
+                           Object format, List<ToolDefinition> tools, String toolChoice,
+                           Double presencePenalty, Double repeatPenalty,
+                           Map<String, Double> registerMix) {
+            this(model, messages, maxTokens, temperature, topP, stop, grammar, format,
+                 tools, toolChoice, presencePenalty, repeatPenalty, registerMix, null);
+        }
+
+        /** Same request with reasoning disabled (nothink seats). */
+        public ChatRequest withThinking(boolean enabled) {
+            return new ChatRequest(model, messages, maxTokens, temperature, topP, stop,
+                grammar, format, tools, toolChoice, presencePenalty, repeatPenalty, registerMix,
+                enabled ? null : Map.of("enable_thinking", false));
+        }
+
         public ChatRequest withMessages(List<ChatMessage> newMessages) {
             return new ChatRequest(model, newMessages, maxTokens, temperature, topP, stop,
-                grammar, format, tools, toolChoice, presencePenalty, repeatPenalty, registerMix);
+                grammar, format, tools, toolChoice, presencePenalty, repeatPenalty, registerMix,
+                chatTemplateKwargs);
         }
         public ChatRequest(String model, List<ChatMessage> messages) {
             this(model, messages, null, null, null, null, null, null, null, null, null, null);

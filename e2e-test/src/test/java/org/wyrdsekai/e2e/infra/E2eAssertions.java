@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Quality assertion utilities for E2E tests.
- * Adopts the hard/soft pattern from CodePlane:
+ * Adopts the hard/soft pattern from CodeZaiku:
  *
  * <ul>
  *   <li><b>Hard assertions</b> — Infrastructure must work. Test fails.

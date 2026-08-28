@@ -38,7 +38,7 @@ class MemoryGraphTraverserTest {
             node("B", "Found books on Norse gods", 0.6f),
             node("C", "Thor defends Asgard", 0.5f),
             node("D", "User asked about history", 0.4f),
-            formativeNode("E", "User's name is Masumi")
+            formativeNode("E", "User's name is Operator")
         );
         var links = List.of(
             new CompactedMemory.MemoryLink("A", "B", 0.9f, "thematic"),

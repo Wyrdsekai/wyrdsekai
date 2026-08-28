@@ -13,10 +13,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PlayerAccountTest {
 
     @Test void create_generates_did() {
-        var account = PlayerAccount.create("Masumi");
+        var account = PlayerAccount.create("Operator");
 
         assertThat(account.did()).startsWith("did:key:z");
-        assertThat(account.displayName()).isEqualTo("Masumi");
+        assertThat(account.displayName()).isEqualTo("Operator");
         assertThat(account.createdAt()).isNotNull();
         assertThat(account.lastSeen()).isNotNull();
         assertThat(account.primaryNodeId()).isNull();
@@ -33,7 +33,7 @@ class PlayerAccountTest {
         var mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
 
-        var account = PlayerAccount.create("Masumi")
+        var account = PlayerAccount.create("Operator")
             .withDevice("device-home-server")
             .withPrimaryNode("node-1");
 
@@ -41,7 +41,7 @@ class PlayerAccountTest {
         var deserialized = mapper.readValue(json, PlayerAccount.class);
 
         assertThat(deserialized.did()).isEqualTo(account.did());
-        assertThat(deserialized.displayName()).isEqualTo("Masumi");
+        assertThat(deserialized.displayName()).isEqualTo("Operator");
         assertThat(deserialized.primaryNodeId()).isEqualTo("node-1");
         assertThat(deserialized.deviceIds()).containsExactly("device-home-server");
     }

@@ -13,22 +13,22 @@ class AgentPermissionsTest {
 
     @Test void allow_specific_action() {
         var perms = new AgentPermissions(List.of(
-            new ZonePermission("codeplane", "status", ZonePermission.PermissionLevel.ALLOW)
+            new ZonePermission("codezaiku", "status", ZonePermission.PermissionLevel.ALLOW)
         ));
 
-        assertThat(perms.isAllowed("codeplane", "status")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "create")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "status")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "create")).isFalse();
     }
 
     @Test void deny_overrides_allow() {
         var perms = new AgentPermissions(List.of(
-            new ZonePermission("codeplane", "*", ZonePermission.PermissionLevel.ALLOW),
-            new ZonePermission("codeplane", "approve", ZonePermission.PermissionLevel.DENY)
+            new ZonePermission("codezaiku", "*", ZonePermission.PermissionLevel.ALLOW),
+            new ZonePermission("codezaiku", "approve", ZonePermission.PermissionLevel.DENY)
         ));
 
-        assertThat(perms.isAllowed("codeplane", "status")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "list")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "approve")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "status")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "list")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "approve")).isFalse();
     }
 
     @Test void wildcard_namespace_allows_all() {
@@ -36,9 +36,9 @@ class AgentPermissionsTest {
             new ZonePermission("*", "status", ZonePermission.PermissionLevel.ALLOW)
         ));
 
-        assertThat(perms.isAllowed("codeplane", "status")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "status")).isTrue();
         assertThat(perms.isAllowed("iot", "status")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "create")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "create")).isFalse();
     }
 
     @Test void wildcard_action_allows_all_actions() {
@@ -48,12 +48,12 @@ class AgentPermissionsTest {
 
         assertThat(perms.isAllowed("iot", "lights")).isTrue();
         assertThat(perms.isAllowed("iot", "temperature")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "status")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "status")).isFalse();
     }
 
     @Test void default_deny_for_unknown_namespace() {
         var perms = new AgentPermissions(List.of(
-            new ZonePermission("codeplane", "status", ZonePermission.PermissionLevel.ALLOW)
+            new ZonePermission("codezaiku", "status", ZonePermission.PermissionLevel.ALLOW)
         ));
 
         assertThat(perms.isAllowed("unknown", "anything")).isFalse();
@@ -63,28 +63,28 @@ class AgentPermissionsTest {
         var perms = AgentPermissions.companion();
 
         // Companion can read status from any namespace
-        assertThat(perms.isAllowed("codeplane", "status")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "status")).isTrue();
         assertThat(perms.isAllowed("iot", "list")).isTrue();
         assertThat(perms.isAllowed("engine", "info")).isTrue();
 
         // But cannot write/approve
-        assertThat(perms.isAllowed("codeplane", "create")).isFalse();
-        assertThat(perms.isAllowed("codeplane", "approve")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "create")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "approve")).isFalse();
     }
 
     @Test void new_agent_role_is_read_only() {
         var perms = AgentPermissions.newAgent();
 
-        assertThat(perms.isAllowed("codeplane", "status")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "list")).isTrue();
-        assertThat(perms.isAllowed("codeplane", "create")).isFalse();
+        assertThat(perms.isAllowed("codezaiku", "status")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "list")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "create")).isFalse();
         assertThat(perms.isAllowed("iot", "lights")).isFalse();
     }
 
     @Test void unrestricted_allows_everything() {
         var perms = AgentPermissions.unrestricted();
 
-        assertThat(perms.isAllowed("codeplane", "approve")).isTrue();
+        assertThat(perms.isAllowed("codezaiku", "approve")).isTrue();
         assertThat(perms.isAllowed("anything", "at_all")).isTrue();
     }
 
@@ -92,20 +92,20 @@ class AgentPermissionsTest {
         var perms = AgentPermissions.unrestricted();
 
         assertThat(perms.isAllowed(null, "status")).isFalse();
-        assertThat(perms.isAllowed("codeplane", null)).isFalse();
+        assertThat(perms.isAllowed("codezaiku", null)).isFalse();
     }
 
     @Test void with_additional_extends_permissions() {
         var base = AgentPermissions.newAgent();
-        assertThat(base.isAllowed("codeplane", "create")).isFalse();
+        assertThat(base.isAllowed("codezaiku", "create")).isFalse();
 
         var extended = base.withAdditional(List.of(
-            new ZonePermission("codeplane", "create", ZonePermission.PermissionLevel.ALLOW)
+            new ZonePermission("codezaiku", "create", ZonePermission.PermissionLevel.ALLOW)
         ));
 
-        assertThat(extended.isAllowed("codeplane", "create")).isTrue();
+        assertThat(extended.isAllowed("codezaiku", "create")).isTrue();
         // Base read permissions still work
-        assertThat(extended.isAllowed("codeplane", "status")).isTrue();
+        assertThat(extended.isAllowed("codezaiku", "status")).isTrue();
     }
 
     @Test void zone_permission_matches_wildcard_both() {
@@ -114,9 +114,9 @@ class AgentPermissionsTest {
     }
 
     @Test void zone_permission_matches_exact() {
-        var perm = new ZonePermission("codeplane", "create", ZonePermission.PermissionLevel.ALLOW);
-        assertThat(perm.matches("codeplane", "create")).isTrue();
-        assertThat(perm.matches("codeplane", "delete")).isFalse();
+        var perm = new ZonePermission("codezaiku", "create", ZonePermission.PermissionLevel.ALLOW);
+        assertThat(perm.matches("codezaiku", "create")).isTrue();
+        assertThat(perm.matches("codezaiku", "delete")).isFalse();
         assertThat(perm.matches("iot", "create")).isFalse();
     }
 }

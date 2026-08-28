@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Wyrdsekai — Universal Installer
+# Wyrdsekai - Universal Installer (BUILDS FROM SOURCE)
 #
-#   curl -fsSL https://wyrdsekai.org/install | bash
-#   — or —
-#   ./install.sh        (from repo root — builds from source)
+#   ./install.sh        (from a repo checkout)
+#
+# NOT the one-liner. `curl -fsSL https://wyrdsekai.org/install | bash` serves
+# site/install, which downloads a PREBUILT release and verifies it against the
+# release's SHA256SUMS. This script is the from-source path: it compiles, so it
+# needs a JDK and a toolchain. They are different installers on purpose; this
+# header used to claim the one-liner ran this file, which it never did.
 #
 # Options:
 #   --version VERSION    Install a specific version (default: latest)
 #   --dir PATH           Install directory (default: ~/.wyrdsekai)
 #   --port PORT          Default port (default: 7070)
-#   --with-codeplane     Also install CodePlane ML infrastructure
+#   --with-codezaiku     Also install CodeZaiku ML infrastructure
 #   --with-rendezvous    Enable zone directory aggregator service (Linux only)
 #   --no-inference       Skip inference backend setup
 #   --no-service         Skip systemd/launchd service setup
@@ -26,7 +30,7 @@ set -euo pipefail
 # --- Constants ---------------------------------------------------------------
 
 REPO="wyrdsekai/wyrdsekai"
-CODEPLANE_REPO="wyrdsekai/codeplane"
+CODEZAIKU_REPO="Wyrdsekai/codezaiku"
 DEFAULT_DIR="$HOME/.wyrdsekai"
 DEFAULT_PORT=7070
 MIN_JAVA=21
@@ -1196,6 +1200,32 @@ MODEL_PATH="${WYRDSEKAI_MODEL_PATH:-${APP_HOME}/models/wyrdsekai-3.5-4b-v10-q4km
 LLAMA_CTX="${WYRDSEKAI_LLAMA_CTX:-16384}"
 LLAMA_GPU_LAYERS="${WYRDSEKAI_GPU_LAYERS:-99}"
 
+# --- how many requests can this seat serve at once? ---
+# Measured on a staging node 2026-08-22: with one slot, two callers are serialized —
+# 3.9s alone became 2.7s + 5.9s concurrent. That is the whole problem. The coding backend
+# and the companion share this seat, and authoring a tool is minutes of generation, so
+# every "hello" she is asked during a build waits for the build to finish.
+#
+# llama-server splits the window across slots (n_ctx_slot = n_ctx / n_parallel), so a
+# second slot is only safe if the TOTAL context rises with it — a tool-authoring turn was
+# measured at ~3.3k tokens before repair rounds, and a halved window truncates it silently.
+# That costs VRAM, so we take a second slot only when the card demonstrably has room:
+# the model itself (GGUF size is a good proxy), both slots, and a gigabyte spare.
+LLAMA_PARALLEL="${WYRDSEKAI_LLAMA_PARALLEL:-}"
+if [ -z "$LLAMA_PARALLEL" ]; then
+    LLAMA_PARALLEL=1
+    free_mib=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
+        | sort -n | tail -1 || echo 0)
+    model_mib=0
+    [ -f "$MODEL_PATH" ] && model_mib=$(du -m "$MODEL_PATH" 2>/dev/null | cut -f1)
+    per_slot_mib=$(( 1536 * LLAMA_CTX / 16384 ))   # matches GpuProbe.suggestParallelSlots
+    if [ "${free_mib:-0}" -gt $(( model_mib + per_slot_mib * 2 + 1024 )) ]; then
+        LLAMA_PARALLEL=2
+    fi
+fi
+LLAMA_TOTAL_CTX=$(( LLAMA_CTX * LLAMA_PARALLEL ))
+echo "llama-server: ${LLAMA_PARALLEL} slot(s) x ${LLAMA_CTX} ctx (total ${LLAMA_TOTAL_CTX})"
+
 if [ -n "$LLAMA_CMD" ] && [ -f "$MODEL_PATH" ]; then
 
     if curl -sf "http://127.0.0.1:${LLAMA_PORT}/health" > /dev/null 2>&1; then
@@ -1216,8 +1246,8 @@ if [ -n "$LLAMA_CMD" ] && [ -f "$MODEL_PATH" ]; then
             -ngl "$LLAMA_GPU_LAYERS" \
             --flash-attn on \
             --jinja \
-            --parallel 1 \
-            -c "$LLAMA_CTX" \
+            --parallel "$LLAMA_PARALLEL" \
+            -c "$LLAMA_TOTAL_CTX" \
             > "${APP_HOME}/logs/llama-server.log" 2>&1 &
         LLAMA_PID=$!
         echo "$LLAMA_PID" > "${APP_HOME}/llama-server.pid"
@@ -1260,8 +1290,8 @@ if [ -n "$LLAMA_CMD" ] && [ -f "$MODEL_PATH" ]; then
                     -ngl "$LLAMA_GPU_LAYERS" \
                     --flash-attn on \
                     --jinja \
-                    --parallel 1 \
-                    -c "$LLAMA_CTX" \
+                    --parallel "$LLAMA_PARALLEL" \
+                    -c "$LLAMA_TOTAL_CTX" \
                     >> "${APP_HOME}/logs/llama-server.log" 2>&1 &
                 NEW_PID=$!
                 echo "$NEW_PID" > "${APP_HOME}/llama-server.pid"
@@ -1514,36 +1544,41 @@ do_uninstall() {
     fi
 }
 
-# --- CodePlane add-on --------------------------------------------------------
+# --- CodeZaiku add-on --------------------------------------------------------
 
-install_codeplane() {
+install_codezaiku() {
     echo ""
-    info "Installing CodePlane..."
+    info "Installing CodeZaiku..."
 
-    local cp_dir="${INSTALL_DIR}/codeplane"
+    local cz_dir="${INSTALL_DIR}/codezaiku"
     local installed=false
 
     # Try release download
     if [ "$MODE" = "release" ] && [ -n "$VERSION" ]; then
-        if download_release "$CODEPLANE_REPO" "$VERSION" "codeplane" "$cp_dir"; then
+        if download_release "$CODEZAIKU_REPO" "$VERSION" "codezaiku" "$cz_dir"; then
             installed=true
         fi
     fi
 
-    # Try build from source (sibling repo)
+    # Try build from source (sibling repo). The marker is build.gradle.kts:
+    # core/build.gradle has not existed for a long time, so the old check for
+    # it meant this branch never ran and the failure was silent -- the script
+    # simply reported CodeZaiku "not found" and moved on.
     if ! $installed; then
-        local cp_sources=("${REPO_DIR:+${REPO_DIR}/../codeplane}" "$HOME/src/codeplane" "../codeplane")
-        for dir in "${cp_sources[@]}"; do
+        local cz_sources=("${REPO_DIR:+${REPO_DIR}/../codezaiku}" "$HOME/src/codezaiku" "../codezaiku")
+        for dir in "${cz_sources[@]}"; do
             [ -z "$dir" ] && continue
-            if [ -f "$dir/gradlew" ] && [ -f "$dir/core/build.gradle" ]; then
-                info "Building CodePlane from source ($dir)..."
+            if [ -f "$dir/gradlew" ] && [ -f "$dir/core/build.gradle.kts" ]; then
+                info "Building CodeZaiku from source ($dir)..."
                 (cd "$dir" && GRADLE_OPTS="${GRADLE_OPTS:-} --enable-native-access=ALL-UNNAMED" \
                     ./gradlew :core:clean :core:installDist -q --no-daemon)
-                local cp_dist="$dir/core/build/install/core"
-                if [ -d "$cp_dist" ]; then
-                    mkdir -p "$cp_dir"
-                    rm -rf "$cp_dir/lib" "$cp_dir/bin"
-                    cp -R "$cp_dist"/* "$cp_dir/"
+                # installDist names the tree after `applicationName`, which is
+                # `codezaiku` -- not the module name.
+                local cz_dist="$dir/core/build/install/codezaiku"
+                if [ -d "$cz_dist" ]; then
+                    mkdir -p "$cz_dir"
+                    rm -rf "$cz_dir/lib" "$cz_dir/bin"
+                    cp -R "$cz_dist"/* "$cz_dir/"
                     installed=true
                     break
                 fi
@@ -1552,27 +1587,26 @@ install_codeplane() {
     fi
 
     if $installed; then
-        ok "CodePlane installed to ${cp_dir}"
-        # Write a launcher
+        ok "CodeZaiku installed to ${cz_dir}"
+        # Delegate to the launcher installDist already wrote. The previous
+        # version hand-rolled one with `-cp lib/* org.codeplane.core.Main`,
+        # naming a class that had already been renamed upstream -- so it would
+        # have died with ClassNotFoundException. Their own launcher tracks
+        # their main class; we should not restate it.
         mkdir -p "${INSTALL_DIR}/bin"
-        cat > "${INSTALL_DIR}/bin/codeplane" << 'CPLAUNCHER'
+        cat > "${INSTALL_DIR}/bin/codezaiku" << 'CZLAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_HOME="$(cd "$SCRIPT_DIR/../codeplane" && pwd)"
+APP_HOME="$(cd "$SCRIPT_DIR/../codezaiku" && pwd)"
 if [ -x "${SCRIPT_DIR}/../jre/bin/java" ]; then
-    JAVA="${SCRIPT_DIR}/../jre/bin/java"
-elif [ -n "${JAVA_HOME:-}" ]; then
-    JAVA="${JAVA_HOME}/bin/java"
-else
-    JAVA="java"
+    export JAVA_HOME="$(cd "${SCRIPT_DIR}/../jre" && pwd)"
 fi
-JAVA_OPTS="${JAVA_OPTS:-} --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED"
-exec "$JAVA" $JAVA_OPTS -cp "${APP_HOME}/lib/*" org.codeplane.core.Main "$@"
-CPLAUNCHER
-        chmod +x "${INSTALL_DIR}/bin/codeplane"
+exec "${APP_HOME}/bin/codezaiku" "$@"
+CZLAUNCHER
+        chmod +x "${INSTALL_DIR}/bin/codezaiku"
     else
-        warn "CodePlane not found. Install separately: curl -fsSL https://codeplane.dev/install | bash"
+        warn "CodeZaiku not found. Install separately: curl -fsSL https://codezaiku.org/install | bash"
     fi
 }
 
@@ -1710,14 +1744,14 @@ RDVZEOF
 }
 
 main() {
-    local version="" with_codeplane=false with_rendezvous=false uninstall=false skip_inference=false skip_service=false port=""
+    local version="" with_codezaiku=false with_rendezvous=false uninstall=false skip_inference=false skip_service=false port=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --version)        version="$2"; shift 2 ;;
             --dir)            DEFAULT_DIR="$2"; shift 2 ;;
             --port)           port="$2"; shift 2 ;;
-            --with-codeplane) with_codeplane=true; shift ;;
+            --with-codezaiku) with_codezaiku=true; shift ;;
             --with-rendezvous) with_rendezvous=true; shift ;;
             --no-inference)   skip_inference=true; shift ;;
             --no-ollama)      skip_inference=true; shift ;;  # compat
@@ -1852,9 +1886,9 @@ main() {
         setup_rendezvous_service
     fi
 
-    # ── 10. CodePlane (optional) ──
-    if $with_codeplane; then
-        install_codeplane
+    # ── 10. CodeZaiku (optional) ──
+    if $with_codezaiku; then
+        install_codezaiku
     fi
 
     # ── Done ──

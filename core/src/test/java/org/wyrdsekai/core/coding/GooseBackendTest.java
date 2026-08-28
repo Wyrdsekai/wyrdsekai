@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.core.inference.LocalInferenceEndpoint;
+import org.junit.jupiter.api.BeforeEach;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import org.junit.jupiter.api.AfterEach;
@@ -27,6 +29,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code --workspace=}) — none of those flags exist upstream.</p>
  */
 class GooseBackendTest {
+    @BeforeEach
+    void pinNothingLive() {
+        // These tests assert the compiled-in FALLBACK endpoint. On a developer box with
+        // a live local model the resolver would (correctly) find it instead.
+        LocalInferenceEndpoint.pinNothingLiveForTests(true);
+    }
+
+    @AfterEach
+    void unpinNothingLive() {
+        LocalInferenceEndpoint.pinNothingLiveForTests(false);
+    }
+
 
     @AfterEach
     void tearDown() {
@@ -82,7 +96,11 @@ class GooseBackendTest {
     @Test void config_falls_back_to_defaults_when_block_missing() {
         var cfg = GooseRuntimeConfig.fromConfig(ConfigFactory.empty());
         assertThat(cfg.enabled()).isFalse();
-        assertThat(cfg.executablePath()).isEqualTo(GooseRuntimeConfig.DEFAULT_EXECUTABLE);
+        // Resolution now searches the machine, so the default is an absolute
+        // path wherever goose is actually installed and the bare name only when
+        // it is not. Assert the intent -- we fell back to the goose executable
+        // rather than some configured other -- not the machine's answer.
+        assertThat(cfg.executablePath()).endsWith(GooseRuntimeConfig.DEFAULT_EXECUTABLE);
         assertThat(cfg.provider()).isEqualTo(GooseRuntimeConfig.DEFAULT_PROVIDER);
         assertThat(cfg.model()).isEqualTo(GooseRuntimeConfig.DEFAULT_MODEL);
         assertThat(cfg.baseUrl()).isEqualTo(GooseRuntimeConfig.DEFAULT_BASE_URL);
@@ -144,7 +162,11 @@ class GooseBackendTest {
         var spec = TaskSpec.create("did:c", "code", "fix bug X");
         var args = b.buildArgs(spec);
 
-        assertThat(args.get(0)).isEqualTo("goose");
+        // The constructor deliberately re-resolves the bare default, so argv[0]
+        // is wherever goose actually lives on this machine. Asserting the literal
+        // "goose" only held while resolution FAILED to find anything -- a green
+        // that meant the opposite of what it looked like.
+        assertThat(args.get(0)).endsWith("goose");
         assertThat(args.get(1)).isEqualTo("run");
 
         // --text <value> (value as separate argv element, NOT --text=value).

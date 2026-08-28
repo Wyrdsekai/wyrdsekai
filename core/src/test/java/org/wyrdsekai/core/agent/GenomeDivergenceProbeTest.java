@@ -37,7 +37,12 @@ class GenomeDivergenceProbeTest {
     private static double[] respond(TemperamentSeed seed) {
         var genome = GenomeProfile.fromTemperament(seed, seed.label());
         var after = VitalityState.initial()
-            .accumulate(false, sameStimulusForEveryone(), 600.0, genome);
+            // Six hours of the same stimulus, not ten minutes. The tanks moved from
+            // linear rates to exponential approaches toward per-temperament set points
+            // (2026-08-19), so a single tick now moves everyone a little and divergence
+            // shows over the window the curve actually lives on. The property under test
+            // is unchanged: identical stimulus, different particulars, different response.
+            .accumulate(false, sameStimulusForEveryone(), 6 * 3600.0, genome);
         return new double[]{ after.loneliness(), after.restlessness(), after.stagnation() };
     }
 

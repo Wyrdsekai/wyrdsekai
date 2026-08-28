@@ -7,7 +7,7 @@ import java.util.stream.Collectors;
 
 /**
  * SearchSpace implementation that bridges Wyrdsekai's soul Crucible
- * with CodePlane's evolutionary search framework ( &sect;5.1).
+ * with CodeZaiku's evolutionary search framework ( &sect;5.1).
  *
  * Explores the space of soul parameters: genome sensitivities, coupling
  * coefficients, baselines, fragment selection, and (at Level 2/3) adapter

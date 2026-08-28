@@ -144,10 +144,10 @@ public class CfCTrainer {
         for (int i = 0; i < Math.min(driveNames.length, driveHighCounts.length); i++) {
             float fraction = driveHighCounts[i] / traceCount;
             if (fraction > DOWNREGULATION_FRACTION) {
-                log.warn("Receptor downregulation: {} was >{} for {:.1%} of traces — " +
+                log.warn("Receptor downregulation: {} was >{} for {} of traces — " +
                     "reducing consolidation impact for this drive",
                     driveNames[i], DOWNREGULATION_THRESHOLD,
-                    fraction);
+                    String.format("%.1f%%", fraction * 100));
                 anyDownregulated = true;
             }
         }

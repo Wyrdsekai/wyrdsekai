@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for §85.16 — The Crucible: Agent Self-Modification & Growth
- * and §85.17 — CodePlane Integration MCP Contracts.
+ * and §85.17 — CodeZaiku Integration MCP Contracts.
  *
  * GrowthEvent, GrowthDiagnostic, BehavioralEvaluator,
  * CrucibleMcpBridge, CrucibleResourceScheduler.

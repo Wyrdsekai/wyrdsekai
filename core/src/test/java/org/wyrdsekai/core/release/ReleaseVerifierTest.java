@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.util.Base64;
 
 /**
  * Phase 1 contract for the structural-checks portion of release verification.
@@ -80,7 +81,7 @@ class ReleaseVerifierTest {
                 "certificate": { "rawBytes": "" }
               }
             }
-            """.formatted(java.util.Base64.getEncoder().encodeToString(
+            """.formatted(Base64.getEncoder().encodeToString(
                 ("""
                 {"subject":[{"name":"foo.deb","digest":{"sha256":"%s"}}]}
                 """.formatted(differentSha)).getBytes()

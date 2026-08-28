@@ -294,7 +294,7 @@ class SerializationTest {
 
     @Test void entity_with_posture_roundtrip() throws Exception {
         var posture = new Posture("sat", "leather-chair", "settles into the worn leather chair, facing the hearth", Instant.now());
-        var entity = new Entity("p1", "Masumi", "player", "", null, List.of(), posture);
+        var entity = new Entity("p1", "Operator", "player", "", null, List.of(), posture);
         var result = roundTrip(entity, Entity.class);
         assertThat(result.posture()).isNotNull();
         assertThat(result.posture().verb()).isEqualTo("sat");
@@ -302,7 +302,7 @@ class SerializationTest {
     }
 
     @Test void entity_without_posture_roundtrip() throws Exception {
-        var entity = new Entity("p1", "Masumi", "player", "");
+        var entity = new Entity("p1", "Operator", "player", "");
         assertThat(entity.posture()).isNull();
         var result = roundTrip(entity, Entity.class);
         assertThat(result.posture()).isNull();
@@ -311,7 +311,7 @@ class SerializationTest {
     @Test void entity_legacy_json_no_posture_field_deserializes_cleanly() throws Exception {
         // Simulates a journal entry / saved snapshot written before shipped.
         // The on-disk JSON has no "posture" field at all.
-        String legacyJson = "{\"id\":\"p1\",\"name\":\"Masumi\",\"type\":\"player\",\"description\":\"\"}";
+        String legacyJson = "{\"id\":\"p1\",\"name\":\"Operator\",\"type\":\"player\",\"description\":\"\"}";
         var result = mapper.readValue(legacyJson, Entity.class);
         assertThat(result.id()).isEqualTo("p1");
         assertThat(result.posture()).isNull();
@@ -319,7 +319,7 @@ class SerializationTest {
     }
 
     @Test void entity_withPosture_helper_returns_copy() {
-        var entity = new Entity("p1", "Masumi", "player", "");
+        var entity = new Entity("p1", "Operator", "player", "");
         var posture = new Posture("sat", "chair-1", "sits", Instant.now());
         var seated = entity.withPosture(posture);
         assertThat(entity.posture()).isNull();              // original untouched
@@ -371,11 +371,11 @@ class SerializationTest {
         var to = new Posture("sat", "study-chair", "settles into the worn leather chair", Instant.parse("2026-05-23T14:32:00Z"));
         var event = new WorldEvent.PostureChanged(
             "study-1", Instant.parse("2026-05-23T14:32:00Z"),
-            "p1", "Masumi", from, to);
+            "p1", "Operator", from, to);
         var result = roundTrip(event, WorldEvent.class);
         assertThat(result).isInstanceOf(WorldEvent.PostureChanged.class);
         var pc = (WorldEvent.PostureChanged) result;
-        assertThat(pc.entityName()).isEqualTo("Masumi");
+        assertThat(pc.entityName()).isEqualTo("Operator");
         assertThat(pc.previous().verb()).isEqualTo("stood");
         assertThat(pc.current().verb()).isEqualTo("sat");
         assertThat(pc.current().descriptor()).contains("worn leather chair");
@@ -384,7 +384,7 @@ class SerializationTest {
     @Test void world_event_posture_changed_set_from_default_roundtrip() throws Exception {
         // previous=null means posture was set from the default (no prior posture).
         var to = new Posture("sat", "study-chair", "sits", Instant.now());
-        var event = new WorldEvent.PostureChanged("study-1", Instant.now(), "p1", "Masumi", null, to);
+        var event = new WorldEvent.PostureChanged("study-1", Instant.now(), "p1", "Operator", null, to);
         var result = roundTrip(event, WorldEvent.class);
         var pc = (WorldEvent.PostureChanged) result;
         assertThat(pc.previous()).isNull();
@@ -394,7 +394,7 @@ class SerializationTest {
     @Test void world_event_posture_cleared_roundtrip() throws Exception {
         // current=null means posture was cleared (back to default).
         var from = new Posture("sat", "study-chair", "sits", Instant.now());
-        var event = new WorldEvent.PostureChanged("study-1", Instant.now(), "p1", "Masumi", from, null);
+        var event = new WorldEvent.PostureChanged("study-1", Instant.now(), "p1", "Operator", from, null);
         var result = roundTrip(event, WorldEvent.class);
         var pc = (WorldEvent.PostureChanged) result;
         assertThat(pc.previous().verb()).isEqualTo("sat");
@@ -404,11 +404,11 @@ class SerializationTest {
     @Test void world_event_looked_at_with_manner_roundtrip() throws Exception {
         var event = new WorldEvent.LookedAt(
             "study-1", Instant.now(),
-            "p1", "Masumi", "p2", "Ember", "studying her face");
+            "p1", "Operator", "p2", "Ember", "studying her face");
         var result = roundTrip(event, WorldEvent.class);
         assertThat(result).isInstanceOf(WorldEvent.LookedAt.class);
         var la = (WorldEvent.LookedAt) result;
-        assertThat(la.actorName()).isEqualTo("Masumi");
+        assertThat(la.actorName()).isEqualTo("Operator");
         assertThat(la.targetName()).isEqualTo("Ember");
         assertThat(la.manner()).isEqualTo("studying her face");
     }
@@ -416,7 +416,7 @@ class SerializationTest {
     @Test void world_event_looked_at_null_manner_roundtrip() throws Exception {
         var event = new WorldEvent.LookedAt(
             "study-1", Instant.now(),
-            "p1", "Masumi", "p2", "Ember", null);
+            "p1", "Operator", "p2", "Ember", null);
         var result = roundTrip(event, WorldEvent.class);
         var la = (WorldEvent.LookedAt) result;
         assertThat(la.manner()).isNull();

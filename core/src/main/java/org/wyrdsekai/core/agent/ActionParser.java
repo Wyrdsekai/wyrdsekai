@@ -3,6 +3,7 @@ package org.wyrdsekai.core.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.coding.ItemRevision;
 import org.wyrdsekai.common.model.Hint;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.familiar.FormEvolutionClassifier;
@@ -295,7 +296,7 @@ public final class ActionParser {
         record Consume(String itemName) implements AgentAction {}
 
         /**
-         * Agent sends a zone command (e.g. codeplane.create, iot.lights).
+         * Agent sends a zone command (e.g. codezaiku.create, iot.lights).
          * Same commands available to players — agents have equal access.
          */
         record ZoneCommand(
@@ -368,7 +369,7 @@ public final class ActionParser {
         /**
          * Agent interacts with a Codex or Artifact item.
          * Operations: examine, commit, push, branch, diff, build, deploy, destroy.
-         * Routes through the zone bridge as a {@code codeplane.codex} command.
+         * Routes through the zone bridge as a {@code codezaiku.codex} command.
          */
         record CodexAction(
             String operation,
@@ -547,7 +548,19 @@ public final class ActionParser {
          * back. Workspace, when given, must lie under the steward's
          * open-roots — enforced in the handler.
          */
-        record DispatchTask(String description, String workspace) implements AgentAction {}
+        /**
+         * @param room where the finished item should be placed. Empty means "where she is
+         *             standing", which is the ordinary case. A build asked for as part of
+         *             a ROOM — "make a room where someone can look up a topic" — needs to
+         *             land in that room rather than wherever she happens to be forty
+         *             seconds later, and she does not reliably walk there to make it so.
+         */
+        record DispatchTask(String description, String workspace, String room)
+                implements AgentAction {
+            public DispatchTask(String description, String workspace) {
+                this(description, workspace, "");
+            }
+        }
 
         /**
          * Arc 2 — agent explicitly enters solitude.
@@ -1841,13 +1854,32 @@ public final class ActionParser {
                     primaryAction = new AgentAction.DeclineWithReason(targetRequest, reason);
                 }
 
+                if ("revise_item".equals(action) && primaryAction == null) {
+                    // A revision IS a dispatch — same backend, same gates, same bridge.
+                    // Only the instruction differs, and it carries the current source so
+                    // the backend edits rather than reinvents. When nothing is registered
+                    // under that name there is nothing to revise, so this falls through
+                    // to an ordinary build rather than producing an item from nothing.
+                    var itemName = node.path("item_name").asText(
+                        node.path("item").asText(node.path("name").asText("")));
+                    var change = node.path("change").asText(
+                        node.path("description").asText(""));
+                    var instruction = ItemRevision.instructionFor(itemName, change)
+                        .orElse(null);
+                    primaryAction = new AgentAction.DispatchTask(
+                        instruction != null ? instruction
+                            : (change.isBlank() ? itemName : change),
+                        node.path("workspace").asText(""));
+                }
+
                 if ("dispatch_task".equals(action) && primaryAction == null) {
                     // Companion-as-foreman: hand an OS-side task to a coding
                     // backend (goose). Workspace scoping enforced in handler.
                     var description = node.path("description").asText(
                         node.path("task").asText(""));
                     var workspace = node.path("workspace").asText("");
-                    primaryAction = new AgentAction.DispatchTask(description, workspace);
+                    primaryAction = new AgentAction.DispatchTask(description, workspace,
+                        node.path("room").asText(node.path("room_id").asText("")));
                 }
 
                 if ("enter_solitude".equals(action) && primaryAction == null) {
@@ -3264,9 +3296,58 @@ public final class ActionParser {
         return cleaned.strip();
     }
 
+    /**
+     * A bracketed instruction-placeholder the model emits when it drafts a shape and
+     * never fills it: {@code [insert actual content]}, {@code [your text here]},
+     * {@code [TODO]}.
+     *
+     * <p>Deliberately narrow — it requires an imperative placeholder word right after the
+     * bracket. Prose legitimately uses brackets ("[laughs]", "[the Nexus]"), and eating
+     * those would be worse than the leak.
+     */
+    private static final Pattern PLACEHOLDER_LEAK =
+        Pattern.compile(
+            "\\s*\\[\\s*(insert|your|placeholder|todo|tbd|fill in|fill-in|add here|"
+            + "actual|example|e\\.g\\.|xxx)\\b[^\\]]{0,80}\\]",
+            Pattern.CASE_INSENSITIVE);
+
+    /** A clause left hanging by removing a placeholder: "...what matters now:" */
+    private static final Pattern DANGLING_LEAD_IN =
+        Pattern.compile("[\\s]*[:,;\\-\u2013\u2014]+\\s*$");
+
+    /** The same, but stranded before a terminator: "...what matters now:." */
+    private static final Pattern DANGLING_BEFORE_END =
+        Pattern.compile("[\\s]*[:,;\\-\u2013\u2014]+\\s*(?=[.!?]+\\s*$)");
+
+    /**
+     * Strip placeholder scaffolding the model leaves in spoken prose.
+     *
+     * <p>Live 2026-08-19: the steward was told
+     * "Something close enough to let me say what matters now: [insert actual content]."
+     * The model had drafted the SHAPE of a sentence and never filled it, and nothing on
+     * the way out looked for that — the tag stripper handles {@code <tags>} and the
+     * action-call stripper handles JSON fragments, but a bracketed placeholder is neither.
+     *
+     * <p>Removing it alone would leave "…what matters now:" dangling, which reads as an
+     * interruption rather than a thought, so the orphaned lead-in punctuation goes too.
+     * If what remains is too thin to be an utterance the caller gets an empty string and
+     * can choose to say nothing — better than handing someone a sentence with a hole in it.
+     */
+    static String stripPlaceholders(String text) {
+        if (text == null || text.isEmpty()) return text;
+        if (text.indexOf('[') < 0) return text;                 // fast path
+        var cleaned = PLACEHOLDER_LEAK.matcher(text).replaceAll("");
+        if (cleaned.equals(text)) return text;                  // nothing matched
+        cleaned = DANGLING_BEFORE_END.matcher(cleaned).replaceFirst("");
+        cleaned = DANGLING_LEAD_IN.matcher(cleaned).replaceFirst("");
+        cleaned = cleaned.strip();
+        // A fragment that is now only a stub is not worth saying.
+        return cleaned.length() < 3 ? "" : cleaned;
+    }
+
     /** Both faces of the scaffolding leak, in one call: {@code <tags>} then action-call/JSON. */
     static String stripScaffolding(String text) {
-        return stripActionCallLeak(stripScaffoldTags(text));
+        return stripPlaceholders(stripActionCallLeak(stripScaffoldTags(text)));
     }
 
     /**

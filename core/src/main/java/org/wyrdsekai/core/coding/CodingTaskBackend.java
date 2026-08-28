@@ -9,7 +9,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 /**
- * Sealed abstraction over a coding-task backend (CodePlane, OpenCode, OpenHands,
+ * Sealed abstraction over a coding-task backend (CodeZaiku, OpenCode, OpenHands,
  * Goose, Cline, Continue, Claude Code SDK, Codex CLI, Gemini CLI, Devin).
  *
  * <p>Mirrors the {@link org.wyrdsekai.core.inference.InferenceBackend} pattern:
@@ -19,13 +19,14 @@ import java.util.stream.Stream;
  * <p>.</p>
  */
 public sealed interface CodingTaskBackend
-        permits CodePlaneBackend, OpenCodeBackend, OpenHandsBackend,
+        permits CodeZaikuBackend, OpenCodeBackend, OpenHandsBackend,
                 GooseBackend, ClineBackend, ContinueBackend,
                 ClaudeSdkBackend, CodexCliBackend, GeminiCliBackend, DevinBackend,
                 PiCodingBackend,
+                AcpBackend,
                 TestCodingTaskBackend {
 
-    /** Stable identifier ({@code "codeplane"}, {@code "opencode"}, …). */
+    /** Stable identifier ({@code "codezaiku"}, {@code "opencode"}, …). */
     String name();
 
     /** Display tier for cost / policy decisions. */

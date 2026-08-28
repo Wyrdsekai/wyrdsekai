@@ -95,12 +95,12 @@ describe('C2S Protocol Conformance', () => {
 
   test('serialize command (namespaced with payload)', () => {
     const msg: C2SMessage = {
-      type: 'command', id: 'msg-009b', command: 'codeplane.approve',
+      type: 'command', id: 'msg-009b', command: 'codezaiku.approve',
       args: [], payload: { eventId: 'evt-42', decision: 'approve' },
     };
     const parsed = JSON.parse(serializeC2S(msg));
 
-    expect(parsed.command).toBe('codeplane.approve');
+    expect(parsed.command).toBe('codezaiku.approve');
     expect(parsed.payload.eventId).toBe('evt-42');
     expect(parsed.payload.decision).toBe('approve');
   });

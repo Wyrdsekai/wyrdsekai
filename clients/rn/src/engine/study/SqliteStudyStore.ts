@@ -12,6 +12,7 @@ import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import type { StudyItem } from './StudyItem';
 import type { StudyStore } from './StudyStore';
 import { tick, type ClockMap } from './VectorClock';
+import { requireOwner } from './StudyOwner';
 
 function generateId(): string {
   return 'si-' + 'xxxx-xxxx-xxxx'.replace(/x/g, () =>
@@ -177,6 +178,10 @@ export class SqliteStudyStore implements StudyStore {
   // ── StudyStore implementation ──────────────────────────────────────
 
   async writeJournal(userDid: string, content: string, isPrivate = false): Promise<StudyItem> {
+    // No placeholder identities. See StudyOwner.ts — this client writes
+    // journal entries, and an owner that refers to nobody makes them
+    // unrecoverable rather than merely misfiled.
+    userDid = requireOwner(userDid);
     const item = this.stampNew({
       id: generateId(),
       userDid,
@@ -233,6 +238,10 @@ export class SqliteStudyStore implements StudyStore {
   }
 
   async addNote(userDid: string, content: string): Promise<StudyItem> {
+    // No placeholder identities. See StudyOwner.ts — this client writes
+    // journal entries, and an owner that refers to nobody makes them
+    // unrecoverable rather than merely misfiled.
+    userDid = requireOwner(userDid);
     const item = this.stampNew({
       id: generateId(),
       userDid,

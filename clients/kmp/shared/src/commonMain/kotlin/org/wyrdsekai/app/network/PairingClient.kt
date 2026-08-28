@@ -61,6 +61,29 @@ object PairingClient {
         } catch (_: Exception) { null }
     }
 
+    /**
+     * Mint this device's identity through an authenticated session — the
+     * hermod consent path (many doors, one identity: same wyrd_dev_ token
+     * and registry row as the code ceremony, no ceremony). Idempotent
+     * server-side. Returns credentials or null.
+     */
+    suspend fun pairSelf(
+        serverUrl: String,
+        sessionToken: String,
+        deviceName: String,
+        deviceType: String = "phone",
+    ): PairingCredentials? {
+        return try {
+            val url = normalizeHttpUrl(serverUrl)
+            val resp = http.post("$url/api/pair/device") {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $sessionToken")
+                setBody(mapOf("deviceName" to deviceName, "deviceType" to deviceType))
+            }
+            if (resp.status.value in 200..299) resp.body() else null
+        } catch (_: Exception) { null }
+    }
+
     /** Check if a device token is still valid. */
     suspend fun checkStatus(serverUrl: String, token: String): Boolean {
         return try {

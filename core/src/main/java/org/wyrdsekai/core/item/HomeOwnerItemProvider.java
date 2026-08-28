@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.home.Grant;
 import org.wyrdsekai.common.home.RelayAdminOp;
 import org.wyrdsekai.core.agent.AgentCostTracker;
+import org.wyrdsekai.core.hermod.HermodGrantStore;
 import org.wyrdsekai.core.home.RelayGovernor;
 import org.wyrdsekai.core.home.RelayGovernance;
 import org.wyrdsekai.core.economy.CountingHouseGateway;
@@ -84,6 +85,7 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
     private AuthService authService;
     private InviteService inviteService;
     private WardService wardService;
+    private HermodGrantStore hermodGrantStore;
     private ParentalControlService parentalService;
     private MaintenanceService maintenanceService;
     private StewardAuditLog securityAuditLog;
@@ -175,6 +177,18 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
     }
 
     /** Wire household-key generator (Threshold key=rotate). */
+    /**
+     * The acting person. A home-owner provider is built FOR someone — its
+     * {@code ownerDid} is that someone — so identity is available even if no
+     * one calls {@link #withCaller}. Belt and braces: the surface that needs a
+     * caller should never depend on a second wiring step remembering to happen.
+     */
+    @Override
+    protected String actingDid() {
+        var explicit = super.actingDid();
+        return explicit != null && !explicit.isBlank() ? explicit : ownerDid;
+    }
+
     public HomeOwnerItemProvider withStudy(StudyService studyService) {
         this.study = studyService;
         return this;
@@ -200,6 +214,12 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
     /** Wire the ward service (world.ward list/grant/revoke). */
     public HomeOwnerItemProvider withWards(WardService s) {
         this.wardService = s;
+        return this;
+    }
+
+    /** Wire hermod data-domain grants (world.hermod grants/revoke). */
+    public HomeOwnerItemProvider withHermodGrants(HermodGrantStore s) {
+        this.hermodGrantStore = s;
         return this;
     }
 
@@ -1391,6 +1411,49 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
             log.warn("safeSnapshots({}): {}", ownerDid, e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * hermod data-domain grants: reading is open to the household;
+     * revocation is the steward's alone. HermodGrantStore carries no
+     * caller check — the gate lives HERE, same discipline as wards.
+     */
+    @Override
+    public List<Map<String, Object>> hermodGrantsList() {
+        if (hermodGrantStore == null) return List.of();
+        var out = new ArrayList<Map<String, Object>>();
+        for (var v : hermodGrantStore.list()) {
+            var row = new LinkedHashMap<String, Object>();
+            if (v.grant() != null) {
+                row.put("grantId", v.grant().grantId());
+                row.put("dataDomain", v.grant().dataDomain());
+                row.put("deviceClass", v.grant().grantedToDeviceClass());
+                row.put("issuedAt", v.grant().issuedAt().toString());
+                row.put("expiresAt", v.grant().expiresAt().toString());
+            }
+            row.put("status", v.status());
+            row.put("file", v.fileName());
+            out.add(row);
+        }
+        return out;
+    }
+
+    @Override
+    public Map<String, Object> hermodGrantRevoke(String grantIdOrStem) {
+        if (hermodGrantStore == null) {
+            return Map.of("ok", false, "error", "hermod grants not available here");
+        }
+        if (!isSteward()) {
+            return Map.of("ok", false, "error", "steward only");
+        }
+        var revoked = hermodGrantStore.revoke(grantIdOrStem);
+        if (revoked == null) return Map.of("ok", false, "error", "no such grant");
+        return Map.of("ok", true,
+            "grantId", revoked.grant() != null ? revoked.grant().grantId() : "",
+            "file", revoked.fileName(),
+            // Signatures cannot be recalled — say so where the steward acts.
+            "note", "household copy tombstoned; a copy already carried by a "
+                + "device stays valid until its own expiry");
     }
 
     /** True when the acting player's account holds the steward role. */

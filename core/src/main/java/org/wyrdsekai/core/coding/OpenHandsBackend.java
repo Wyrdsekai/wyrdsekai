@@ -1,7 +1,9 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.wyrdsekai.core.inference.LocalInferenceEndpoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -200,10 +202,31 @@ public final class OpenHandsBackend implements CodingTaskBackend {
           };
 
           function invoke(params) {
-            // params is whatever the caller passed. Return a JSON-serialisable
-            // result object. Use world.* helpers (see API below) for I/O.
+            // params carries ONLY the caller's arguments:
+            //   params.args    the string after `use <name> ` — always a String,
+            //                  "" when the person typed no arguments
+            //   params.target / params.query   the same string, older spellings
+            //   params.entityId / params.roomId  who used it, and where
+            //   params.locale  the USER's language as a BCP-47 tag ("en", "es", "ja")
+            // Return a JSON-serialisable result object.
             return { ok: true, summary: "..." };
           }
+
+          ⚠️ `world` is a GLOBAL. It is NOT a field of params. Write
+          `world.library.search(...)` directly. Do NOT write
+          `const { world } = params` — world is undefined there, and a guard
+          like `if (!world) return { error: ... }` will then fire on every
+          call. Live 2026-08-21: a file did exactly that, passed every
+          structural check, and was refused because it broke when called.
+
+          ⚠️ invoke MUST be reachable at the TOP LEVEL of the file. Do NOT wrap
+          the file in an IIFE or any other function — a module wrapper such as
+          `(function (exports) { ... })(exports)` HIDES invoke from the runtime,
+          and the item is refused. Live 2026-08-21: a file shaped exactly that
+          way passed every structural check and then had nothing to call.
+          Two legal shapes, and only these two:
+            function invoke(params) { ... }        ← at top level
+            exports.invoke = function (params) { ... };
 
         WORLD API — REAL SURFACE (do NOT redefine; do NOT invent methods).
         ⚠️ EVERY line below shows the EXACT return type. Use it verbatim.
@@ -252,6 +275,21 @@ public final class OpenHandsBackend implements CodingTaskBackend {
             // ⚠️ EXACTLY 2 args. NOT 3. There is NO `depth` parameter.
 
           // ── Tier 4 (compute / inference) ────────────────────────────────
+          // ⚠️ PICK THE RIGHT ONE. llm.summarize CONDENSES text that already
+          // exists — it cannot invent. If the person asked for a story, a tale,
+          // a retelling or anything COMPOSED, use llm.complete with a prompt
+          // that says so; summarize will hand them a précis and call it a
+          // story. Live 2026-08-21: asked for "a story based on what it found",
+          // an item shipped calling summarize("...into two paragraphs") and
+          // returned an accurate summary nobody wanted.
+          //   summarize/extract/classify/analyze → about text you already have
+          //   complete                           → new prose you are writing
+          // ⚠️ SAY WHICH LANGUAGE. Prose you generate for the person is in THEIR
+          // language — params.locale — unless their request names another. Put it
+          // in the prompt: "Write in English." The language of what you FOUND must
+          // not decide the language of what you SAY: live 2026-08-24, an English
+          // speaker asked for a tale about a book, the library hits happened to be
+          // Spanish catalog rows, and the whole story came back in Spanish.
           world.web.search(query, type?, limit?)    cap: "web.search"         → Array<{title,url,snippet}>
             // type: "general" | "news" | "videos"
           world.web.fetch(url, maxChars?)           cap: "web.fetch"          → String (plain text body!)
@@ -269,11 +307,9 @@ public final class OpenHandsBackend implements CodingTaskBackend {
           // ── Tier 5 (steward consent / outbound) ─────────────────────────
           world.web.post(url, body, opts?)          cap: "web.post"           → String (body)
           world.mailbox.send(to, subject, body)     cap: "mailbox.send"       → {id,ok}
-          world.mcp.call(server, tool, args)        cap: "mcp.call"           → object (tool-defined)
 
           // ── Self / introspection (no declaration) ───────────────────────
           world.self.callerDid()                    → String
-          world.self.drives() / inventory()         → Array<...>
           world.zone() / world.timezone()           → String
 
         ⚠️ COMMON MISTAKES TO AVOID — observed in past runs:
@@ -283,6 +319,14 @@ public final class OpenHandsBackend implements CodingTaskBackend {
           ❌  world.inventory.use(id, params, 1)   // 3 args
               // wrong: inventory.use takes EXACTLY 2 args.
               // right: world.inventory.use(id, params)
+          ❌  var w = world.openweather.current({...}); if (w.startsWith("[error]")) ...
+              // wrong: keyed services return a MAP {success, data, error} — only
+              // web.fetch returns a raw string. A string method on that map throws
+              // TypeError: Unknown identifier: startsWith the first time a person
+              // uses it (live 2026-08-25: a weather tool died on its first real
+              // query; the smoke test missed it because the call sat behind an
+              // args branch).
+              // right: if (!w.success) { return { ok: false, summary: w.error.message }; }
           ❌  declaring `var r; for (...) { r = world.llm.analyze(...); }` and using `r` outside
               // wrong: in JS the variable IS hoisted, but if the loop body
               // gets short-circuited (continue), `r` stays undefined. If
@@ -314,6 +358,52 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         Below is the user's task — translate it into the file shape above.
         """;
 
+    /**
+     * The same contract for CWD-workspace backends. The original preamble
+     * says {@code /workspace/<name>.js} — an OpenHands bind-mount path that
+     * only exists inside OpenHands' container. Every subprocess backend uses
+     * the CWD as its workspace, and an obedient agent given the original
+     * wording puts the file in a {@code workspace/} SUBDIRECTORY (live,
+     * CodeZaiku promotion battery case A, 2026-08-15: perfectly-shaped item,
+     * wrong place; the CWD wording in case A2 landed it at the root).
+     * Derived, not duplicated — the contract has one source of truth.
+     * Goose + CodeZaiku switched 2026-08-15; the remaining CLI backends
+     * (Codex, Gemini, Cline, Continue, OpenCode, Pi, ClaudeSdk, Devin)
+     * still send the /workspace wording — sweep them when each is next
+     * live-tested.
+     */
+    /**
+     * The contract as an authoring backend should receive it: the hand-written craft
+     * notes, plus the external surface GENERATED from what is registered and keyed.
+     *
+     * <p>Every backend must call this rather than reading the constant. The constant is
+     * the durable half — the shapes and the traps, each bought with a real failure. The
+     * generated half is whatever this house can actually reach today, and it is the half
+     * that used to rot: on 2026-08-21 it was seventeen adapters out of date, including
+     * the OpenWeather key the steward was asking to use.
+     *
+     * @param ceiling the capability set the item will run under; only surfaces it would
+     *                genuinely permit are advertised
+     */
+    public static String itemsAsToolsPreamble(ItemCapabilitySet ceiling) {
+        return ITEMS_AS_TOOLS_PREAMBLE + ItemApiSurface.manifestRulesBlock()
+            + ItemApiSurface.callingConventionBlock()
+            + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling);
+    }
+
+    /** The CWD-workspace variant, with the same generated surface appended. */
+    public static String itemsAsToolsPreambleCwd(ItemCapabilitySet ceiling) {
+        return ITEMS_AS_TOOLS_PREAMBLE_CWD + ItemApiSurface.manifestRulesBlock()
+            + ItemApiSurface.callingConventionBlock()
+            + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling);
+    }
+
+    static final String ITEMS_AS_TOOLS_PREAMBLE_CWD = ITEMS_AS_TOOLS_PREAMBLE
+        .replace("at /workspace/<name>.js",
+            "at <name>.js in the CURRENT WORKING DIRECTORY")
+        .replace("directly under /workspace/ (NOT a subdirectory)",
+            "directly in the current working directory (NOT a subdirectory)");
+
     /** Live-verified health endpoint (returns "OK" 200; <b>not</b> /api/health). */
     static final String REST_PATH_HEALTH = "/health";
 
@@ -321,6 +411,13 @@ public final class OpenHandsBackend implements CodingTaskBackend {
     private final AuthResolver authResolver;
     private final AgentServerClientFactory clientFactory;
     private final DockerProbe dockerProbe;
+    /**
+     * Seam: "does this node have a local drive?" — the question that decides
+     * whether missing cloud auth means REFUSE or means keyless-local. A unit
+     * test must be able to answer it both ways regardless of what happens to
+     * be listening on the developer machine's ports.
+     */
+    private final java.util.function.BooleanSupplier localDriveProbe;
 
     /**
      * Cache of taskId → produced artifacts. Phase 5 will replace with a
@@ -346,6 +443,24 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         this.clientFactory = clientFactory != null ? clientFactory
             : defaultClientFactory();
         this.dockerProbe = dockerProbe != null ? dockerProbe : defaultDockerProbe();
+        this.localDriveProbe = () -> LocalInferenceEndpoint.resolve().isPresent();
+    }
+
+    /** Test constructor — additionally pins the local-drive answer. */
+    public OpenHandsBackend(OpenHandsRuntimeConfig config,
+                            AuthResolver authResolver,
+                            AgentServerClientFactory clientFactory,
+                            DockerProbe dockerProbe,
+                            java.util.function.BooleanSupplier localDriveProbe) {
+        this.config = config != null ? config : OpenHandsRuntimeConfig.defaults();
+        this.authResolver = authResolver != null ? authResolver
+            : (name -> new AuthMode.AuthMissing(name, "wyrd setup openhands",
+                "AuthResolver not wired"));
+        this.clientFactory = clientFactory != null ? clientFactory
+            : defaultClientFactory();
+        this.dockerProbe = dockerProbe != null ? dockerProbe : defaultDockerProbe();
+        this.localDriveProbe = localDriveProbe != null ? localDriveProbe
+            : () -> LocalInferenceEndpoint.resolve().isPresent();
     }
 
     @Override public String name() { return NAME; }
@@ -372,11 +487,22 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         // "is the household configured?" gate.)
         var auth = authResolver.resolveAuth(NAME);
         if (auth instanceof AuthMode.AuthMissing missing) {
-            future.complete(new TaskResult(taskId, NAME, TaskStatus.FAILED,
-                "LOGIN_REQUIRED: " + missing.reason()
-                    + " (recovery: " + missing.recoveryCommand() + ")",
-                List.of(), 0L, System.currentTimeMillis() - started));
-            return future;
+            // The agent-server's LLM config demands an api_key FIELD; a local
+            // OpenAI-compatible drive accepts any value in it. This gate used
+            // to refuse whenever the Key Chest slot was empty, which turned
+            // "no cloud key" into "cannot use the household's own inference" —
+            // the same conflation pi's adapter had. A resolvable local drive
+            // means keyless is a configuration, not an accident.
+            if (localDriveProbe.getAsBoolean()) {
+                auth = new AuthMode.ApiKey("local");
+            } else {
+                future.complete(new TaskResult(taskId, NAME, TaskStatus.FAILED,
+                    "LOGIN_REQUIRED: " + missing.reason()
+                        + " (recovery: " + missing.recoveryCommand()
+                        + " -- or start a local drive; OpenHands runs keyless against it)",
+                    List.of(), 0L, System.currentTimeMillis() - started));
+                return future;
+            }
         }
 
         // Build the create-conversation REST payload.
@@ -733,15 +859,39 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         // for per-call overrides).
         var agentBlock = new LinkedHashMap<String, Object>();
         var llmBlock = new LinkedHashMap<String, Object>();
-        var modelName = (config.llmModel() != null && !config.llmModel().isBlank())
-            ? config.llmModel()
+        // Keyless-local completion: when the steward configured no LLM at all
+        // and this node has a drive, the drive IS the llm config. Without
+        // this, the keyless path got as far as a real conversation and then
+        // died server-side with litellm.AuthenticationError — the body
+        // carried neither base_url nor api_key, so the agent-server aimed its
+        // default model at the real provider with no credentials. Auth is
+        // passed in-body ONLY here: "local" is a sentinel, not a secret.
+        var effectiveLlmModel = config.llmModel();
+        var effectiveLlmBase = config.llmBaseUrl();
+        var effectiveLlmKey = config.llmApiKey();
+        if ((effectiveLlmBase == null || effectiveLlmBase.isBlank())
+                && auth instanceof AuthMode.ApiKey k && "local".equals(k.value())) {
+            var ep = LocalInferenceEndpoint.resolve().orElse(null);
+            if (ep != null) {
+                var base = ep.url().endsWith("/v1") ? ep.url() : ep.url() + "/v1";
+                effectiveLlmBase = base;
+                effectiveLlmKey = "local";
+                if (effectiveLlmModel == null || effectiveLlmModel.isBlank()) {
+                    // litellm reads the provider from the prefix before the
+                    // first slash; "openai/" + anything = openai-compatible.
+                    effectiveLlmModel = "openai/" + ep.modelId();
+                }
+            }
+        }
+        var modelName = (effectiveLlmModel != null && !effectiveLlmModel.isBlank())
+            ? effectiveLlmModel
             : OpenHandsRuntimeConfig.V1_DEFAULT_MODEL;
         llmBlock.put("model", modelName);
-        if (config.llmBaseUrl() != null && !config.llmBaseUrl().isBlank()) {
-            llmBlock.put("base_url", config.llmBaseUrl());
+        if (effectiveLlmBase != null && !effectiveLlmBase.isBlank()) {
+            llmBlock.put("base_url", effectiveLlmBase);
         }
-        if (config.llmApiKey() != null && !config.llmApiKey().isBlank()) {
-            llmBlock.put("api_key", config.llmApiKey());
+        if (effectiveLlmKey != null && !effectiveLlmKey.isBlank()) {
+            llmBlock.put("api_key", effectiveLlmKey);
         }
 
         // Disable native tool calling for small local models. The V1 SDK's

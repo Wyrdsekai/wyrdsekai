@@ -308,9 +308,9 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     public record AnnounceBondholder(String playerId, String playerName) implements Command {}
 
     /**
-     * Provision a per-bondholder CodePlane Workshop room (idempotent — skips if exists).
+     * Provision a per-bondholder CodeZaiku Workshop room (idempotent — skips if exists).
      */
-    public record ProvisionCodePlaneWorkshop(String bondholderId, String bondholderName) implements Command {}
+    public record ProvisionCodeZaikuWorkshop(String bondholderId, String bondholderName) implements Command {}
 
     /**
      * install the cross-zone publisher. Main.java
@@ -603,7 +603,7 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
             })
             .onMessage(ProvisionStudy.class, this::onProvisionStudy)
             .onMessage(AnnounceBondholder.class, this::onAnnounceBondholder)
-            .onMessage(ProvisionCodePlaneWorkshop.class, this::onProvisionCodePlaneWorkshop)
+            .onMessage(ProvisionCodeZaikuWorkshop.class, this::onProvisionCodeZaikuWorkshop)
             .onMessage(RelocateCompanion.class, this::onRelocateCompanion)
             .onMessage(SetCompanionRelocator.class, cmd -> {
                 this.companionRelocator = cmd.relocator();
@@ -658,6 +658,7 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
         seeded = true;
         log.info("ZoneGuardian: deferred seeding with room view — {} seeded, {} skipped (peer-claimed)",
             seededCount, skippedCount);
+        respawnPersistedRooms(peerClaimedRooms);
         spawnWorldClockIfNeeded();
         return this;
     }
@@ -673,8 +674,39 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
         seeded = true;
         log.info("ZoneGuardian: seed timeout — all {} foundation rooms seeded (single-node fallback)",
             seeds.size());
+        respawnPersistedRooms(Set.of());
         spawnWorldClockIfNeeded();
         return this;
+    }
+
+    /**
+     * Rooms the household BUILT (companion- or player-created) are not seeds:
+     * they live only in the journal and the rooms table. Nothing respawned
+     * them at boot, so after a restart the world kept advertising exits into
+     * rooms that had no actor — the WS move path resolves targets with a
+     * plain registry lookup and cannot spawn, so "go greenhouse" died one
+     * restart after the greenhouse was built (home zone, 2026-08-14).
+     * Every persisted room gets its actor back here; getOrSpawnRoom also
+     * re-registers the name alias (the rehydration half of the 2026-07-30
+     * alias fix, which until now only ran for rooms spawned by luck).
+     */
+    private void respawnPersistedRooms(Set<String> peerClaimed) {
+        if (metadataService == null) return;
+        try {
+            int respawned = 0;
+            for (var info : metadataService.listRooms()) {
+                if (peerClaimed.contains(info.roomId())) continue;
+                if (RoomRegistry.get().ref(info.roomId()) != null) continue;
+                getOrSpawnRoom(info.roomId());
+                respawned++;
+            }
+            if (respawned > 0) {
+                log.info("ZoneGuardian: respawned {} persisted room(s) beyond the seed set",
+                    respawned);
+            }
+        } catch (RuntimeException e) {
+            log.warn("ZoneGuardian: persisted-room respawn failed: {}", e.toString());
+        }
     }
 
     /**
@@ -737,7 +769,7 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
         return this;
     }
 
-    private Behavior<Command> onProvisionCodePlaneWorkshop(ProvisionCodePlaneWorkshop cmd) {
+    private Behavior<Command> onProvisionCodeZaikuWorkshop(ProvisionCodeZaikuWorkshop cmd) {
         var seed = WorkshopProvisioner.createWorkshopSeed(cmd.bondholderId(), cmd.bondholderName());
         seedRoom(seed);
         return this;

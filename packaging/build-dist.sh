@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.1.5}"
+VERSION="${WYRDSEKAI_VERSION:-0.2.0}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -406,13 +406,14 @@ cp "$PROJECT_DIR/scripts/com.wyrdsekai.server.plist" "$DIST_DIR/scripts/" 2>/dev
 cp "$PROJECT_DIR/scripts/mac-node-bootstrap-mlx-trainer.sh" "$DIST_DIR/scripts/" 2>/dev/null || true
 
 # scripts/training is ~5MB, most of it research bench (act_model, v7_agency,
-# vitality, substrate) that nothing on an installed system can reach. But two
-# shipped recipes DO live in here — rebake-argot drives scripts/training/argot/
-# and run-emit-rft drives scripts/training/emit_rft/ — and VoiceAligner
-# resolves mlx_adapter_to_peft.py. Ship those, drop the bench.
+# vitality, substrate) that nothing on an installed system can reach. But
+# shipped recipes DO live in here — rebake-argot drives scripts/training/argot/,
+# run-emit-rft drives scripts/training/emit_rft/, the sleep-forge pair
+# (0.2.0) drives scripts/training/sleep/ — and VoiceAligner resolves
+# mlx_adapter_to_peft.py. Ship those, drop the bench.
 mkdir -p "$DIST_DIR/scripts/training"
 cp "$PROJECT_DIR/scripts/training/mlx_adapter_to_peft.py" "$DIST_DIR/scripts/training/" 2>/dev/null || true
-for tsub in argot emit_rft; do
+for tsub in argot emit_rft sleep; do
     if [[ -d "$PROJECT_DIR/scripts/training/$tsub" ]]; then
         mkdir -p "$DIST_DIR/scripts/training/$tsub"
         cp -r "$PROJECT_DIR/scripts/training/$tsub/." "$DIST_DIR/scripts/training/$tsub/"
@@ -576,14 +577,82 @@ ok "recipe-callable script subdirs bundled (dev venvs/__pycache__ pruned)"
 mkdir -p "$DIST_DIR/data"
 
 # Coding-CLI bundle manifest — version pins + per-platform sha256 + download URLs
-# for the optional coding backends (`wyrd coding` / `wyrd download-bundle`). The
-# binaries are fetched on demand (bundled:false); only the manifest ships so
-# bin/wyrd can resolve versions on a fresh install.
+# for the coding backends (`wyrd coding` / `wyrd download-bundle`). Backends
+# marked bundled:true are STAGED INTO THE DIST by the block below and gated;
+# the rest are fetched on demand, so only their manifest rows ship.
 if [[ -f "$PROJECT_DIR/data/coding-cli-bundle/manifest.json" ]]; then
     mkdir -p "$DIST_DIR/data/coding-cli-bundle"
     cp "$PROJECT_DIR/data/coding-cli-bundle/manifest.json" "$DIST_DIR/data/coding-cli-bundle/manifest.json"
     ok "Coding-CLI manifest bundled"
 fi
+
+# ── Stage every bundled coding backend, then PROVE it. ──────────────────────
+#
+# "bundled: true" in the manifest is a claim the installer's `wyrd coding
+# list` repeats to the operator. For months opencode carried that claim for a
+# directory no build ever staged: it listed as "(bundled)", `install` refused
+# it ("no separate download needed"), and a clean machine had nothing.
+# Nothing checked, so nothing failed until a task ran.
+#
+# So this stage does two things and the SECOND is the point:
+#   1. fetch + sha-verify + extract each bundled backend that carries a
+#      download_url (the manifest's own sha — build and manifest cannot
+#      disagree about what a good artifact is);
+#   2. HARD-GATE: after staging, every bundled:true entry must contain a
+#      runnable binary in the dist. A bundled claim without a binary kills
+#      the build here, on the box that made the claim — not on a household
+#      machine at task time.
+python3 - "$PROJECT_DIR" "$DIST_DIR" <<'BUNDLE_PY'
+import hashlib, json, subprocess, sys, tarfile, pathlib
+
+project, dist = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+manifest = json.loads((project / "data/coding-cli-bundle/manifest.json").read_text())
+cache = project / "data/coding-cli-bundle/cache"
+cache.mkdir(parents=True, exist_ok=True)
+failures = []
+
+def runnable(slot: pathlib.Path, name: str) -> bool:
+    # Mirrors BackendExecutableResolver's bundle shapes, .bat included so the
+    # same staged tree satisfies the Windows installer too.
+    for c in (slot / name, slot / "bin" / name, slot / name / "bin" / name):
+        for cand in (c, c.with_suffix(".bat"), c.with_suffix(".exe")):
+            if cand.is_file():
+                return True
+    return False
+
+for name, e in manifest["backends"].items():
+    if not e.get("bundled"):
+        continue
+    slot = dist / "data/coding-cli-bundle" / name
+    url, shas = e.get("download_url_template"), e.get("sha256_per_platform") or {}
+    if url and "{" not in url:
+        # Platform-independent artifact (single URL, one sha repeated per key).
+        sha = next(iter(shas.values()), None)
+        art = cache / url.rsplit("/", 1)[-1]
+        if not (art.exists() and hashlib.sha256(art.read_bytes()).hexdigest() == sha):
+            print(f"[dist] fetching bundled backend {name}: {url}")
+            subprocess.run(["curl", "-fsSL", "-o", str(art), url], check=True)
+        actual = hashlib.sha256(art.read_bytes()).hexdigest()
+        if actual != sha:
+            failures.append(f"{name}: sha mismatch (manifest {sha[:16]}.., got {actual[:16]}..)")
+            continue
+        slot.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(art) as t:
+            t.extractall(slot, filter="data")
+        (slot / ".version").write_text(e.get("version", ""))
+    if not runnable(slot, name):
+        failures.append(f"{name}: bundled:true but no runnable binary staged under {slot}")
+
+if failures:
+    print("[dist] BUNDLED-BACKEND GATE FAILED:", file=sys.stderr)
+    for f in failures:
+        print(f"  {f}", file=sys.stderr)
+    sys.exit(1)
+staged = [n for n, e in manifest["backends"].items() if e.get("bundled")]
+print(f"[dist] bundled-backend gate: {', '.join(staged) or 'none'} staged and runnable")
+BUNDLE_PY
+[[ $? -eq 0 ]] || { err "Bundled-backend gate failed — refusing to ship a manifest that lies"; exit 1; }
+ok "Bundled coding backends staged and verified"
 
 # Track-B B1 — release-evidence dir. Produced at release-bake
 # time by packaging/build-evolved-artifact.sh; first-boot CompanionActor

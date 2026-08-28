@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.bootstrap;
 
+import org.wyrdsekai.core.external.CredentialResolver;
 import org.wyrdsekai.core.agent.ContextAccessManager;
 
 import com.typesafe.config.ConfigFactory;
@@ -352,13 +353,34 @@ public final class CoreServices {
 
         // Coding backends ( / Phase 2b).
         // OpenCode is the default-on backend so complex items work out of
-        // the box; CodePlane stays a Main-side wiring step because it
+        // the box; CodeZaiku stays a Main-side wiring step because it
         // needs the legacy CommandRouter + CodeItemStore. The bootstrap is
         // a no-op when the typesafe-config block is missing, so test
         // harnesses that don't load application.conf still pass cleanly.
         try {
+            // Wire the Key Chest lookup. Without it the bootstrap defaults to
+            // `slot -> null`, so DefaultAuthResolver could never return an ApiKey and
+            // EVERY paid or hosted backend surfaced AuthMissing no matter what the
+            // household had stored — goose included, not just CodeZaiku. The slot was
+            // declared, the resolver was built, the backends asked; nothing was ever on
+            // the other end.
+            //
+            // CredentialResolver is already the canonical chain (TheSafe → env →
+            // system property), which makes `wyrd cred set <SLOT>` the one way to give a
+            // backend its key rather than a second store nobody remembers to fill.
+            // resolve(), not has(): a backend asking for a key it needs IS a real miss,
+            // and the steward should hear about it (rate-limited to one per slot/hour).
             CodingBackendBootstrap.init(
-                ConfigFactory.load());
+                ConfigFactory.load(),
+                slot -> {
+                    try {
+                        var r = CredentialResolver.get();
+                        return r == null ? null : r.resolve(slot).orElse(null);
+                    } catch (RuntimeException e) {
+                        log.debug("Key Chest lookup failed for {}: {}", slot, e.toString());
+                        return null;
+                    }
+                });
         } catch (Throwable t) {
             // Never fail core init on a coding-backend wiring slip; the
             // Workshop room degrades gracefully when no backend is

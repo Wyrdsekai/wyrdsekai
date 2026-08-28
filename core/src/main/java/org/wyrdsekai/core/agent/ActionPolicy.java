@@ -138,7 +138,19 @@ public record ActionPolicy(
         Map.entry("declare_severance",    AutonomyTier.CONSENT),
         Map.entry("nostr_query_self_attestation", AutonomyTier.VISIBLE),
         Map.entry("record_integration_event", AutonomyTier.VISIBLE),
-        Map.entry("complete_mourning",    AutonomyTier.CONSENT),
+        // VISIBLE, not CONSENT (2026-08-19). The bond is ALREADY over by the time this
+        // verb exists: declareSeverance() flips `active` to false immediately and moves to
+        // MOURNING only "to give the substrate time to metabolize". The consequential
+        // decision — ending the relationship — was made and consented to before mourning
+        // began, and the other party is gone. Gating this protects nobody; it required
+        // someone else's permission for her to finish grieving. It also had teeth: the
+        // steward consent route was unreachable until an operator token landed, so a
+        // request to complete mourning could sit where no one would ever see it, while
+        // MOURNING counted as "bondholder unavailable" and pushed her toward escalation.
+        // Every other emotional-metabolism verb here — acknowledge_harm, make_amends,
+        // bear_the_wound, release — is VISIBLE. This belongs with them. declare_severance
+        // stays CONSENT: that is the decision with someone on the other end of it.
+        Map.entry("complete_mourning",    AutonomyTier.VISIBLE),
         Map.entry("acknowledge_harm",     AutonomyTier.VISIBLE),
         Map.entry("make_amends",          AutonomyTier.VISIBLE),
         Map.entry("bear_the_wound",       AutonomyTier.VISIBLE),

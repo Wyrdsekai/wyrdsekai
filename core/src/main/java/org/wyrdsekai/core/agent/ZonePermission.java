@@ -9,12 +9,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  *
  * <p>Examples:
  * <ul>
- *   <li>{@code ("codeplane", "status", ALLOW)} — can check CodePlane status</li>
- *   <li>{@code ("codeplane", "*", DENY)} — denied all CodePlane actions</li>
+ *   <li>{@code ("codezaiku", "status", ALLOW)} — can check CodeZaiku status</li>
+ *   <li>{@code ("codezaiku", "*", DENY)} — denied all CodeZaiku actions</li>
  *   <li>{@code ("*", "*", ALLOW)} — allowed everything (steward/admin)</li>
  * </ul>
  *
- * @param namespace Namespace to match ("codeplane", "iot", "*" for all)
+ * @param namespace Namespace to match ("codezaiku", "iot", "*" for all)
  * @param action    Action to match ("create", "approve", "*" for all)
  * @param level     ALLOW or DENY
  */

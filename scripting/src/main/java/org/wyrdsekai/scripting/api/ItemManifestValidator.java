@@ -59,6 +59,25 @@ public final class ItemManifestValidator {
     }
 
     /** Validate a manifest — never throws; returns the structured result. */
+    /**
+     * The manifest rules, in the words an author needs, rendered FROM the patterns this
+     * class enforces.
+     *
+     * <h2>Why generated rather than written</h2>
+     * The items-as-tools contract never stated any of this. On 2026-08-22 an authoring
+     * model named an item {@code web-sight}; the loader rejected it
+     * ({@code name must match [a-z][a-z0-9_]{2,63}}) and the tool the steward asked for
+     * did not exist. Nothing in what the model was given could have told it. Prose copied
+     * out of here would drift the first time a rule changed, so the contract reads these.
+     */
+    public static List<String> rules() {
+        return List.of(
+            "name: " + NAME_PATTERN.pattern()
+                + " — lowercase letters, digits and UNDERSCORES only. No hyphens, no capitals.",
+            "version: " + SEMVER_PATTERN.pattern() + " — semver, e.g. \"1.0.0\".",
+            "author: " + DID_PATTERN.pattern() + " — a DID, e.g. \"did:wyrd:openhands\".");
+    }
+
     public static ValidationResult validate(ItemManifest manifest) {
         var errors = new ArrayList<String>();
         var warnings = new ArrayList<String>();
@@ -180,7 +199,8 @@ public final class ItemManifestValidator {
             }
             throw new ManifestEmbodimentMissingException(
                 "Item '" + displayName + "' is missing the "
-                + "required `embodiment` block in its manifest. Declare either "
+                + "required `embodiment` block in its manifest. "
+                + "Declare either "
                 + "`embodiment: { silent: true, reason: \"...\" }` or "
                 + "`embodiment: { emits: [...], descriptor_template: \"...\" }`. "
                 + "Silence in the world must be a declared choice.");
@@ -362,7 +382,7 @@ public final class ItemManifestValidator {
             "notes.list",
             "pinboard.list",
             "tags.list", "tags.entries");
-        addAll(m, 2, "library.add", "library.tag",
+        addAll(m, 2, "library.add", "library.tag", "library.ingest",
             "journal.write",
             "notes.add", "notes.delete",
             "pinboard.pin", "pinboard.unpin");
@@ -380,7 +400,7 @@ public final class ItemManifestValidator {
 
         // entity posture (sit/stand/lean/etc.).
         // Tier 3: side-effect on the entity's body, mediated by ItemWorldApi.
-        addAll(m, 3, "entity.set_posture", "entity.clear_posture");
+        addAll(m, 3, "entity.set_posture", "entity.clear_posture", "entity.look_at");
 
         // §4.4 LLM / embed
         addAll(m, 1, "embed.similarity", "llm.budget_remaining");
@@ -407,6 +427,22 @@ public final class ItemManifestValidator {
         // side-effect with credentials). ssh/scp are zone-allowlist gated inside
         // the provider; net.household rides the household bus. All rate-limited.
         addAll(m, 5, "net.ssh", "net.scp", "net.household");
+
+        // The steward's own directories. Nothing here can leave the roots configured in
+        // WYRDSEKAI_HOST_OPEN_ROOTS, and every call is audit-logged — which is why find /
+        // mkdir / move sit at the same tier as a raw web fetch rather than higher.
+        //
+        // 2026-08-22: these were admitted to the crafted ceiling and advertised in the
+        // items-as-tools contract on the same day, and NOT added here. So an item that
+        // declared exactly what the contract told it to declare was refused by the loader
+        // with "unknown capability: 'host.file_find'", the repair loop tried to help and
+        // made it worse, and the tool never reached the steward. Three lists describe one
+        // capability; a capability added to two of them does not exist.
+        addAll(m, 4, "host.file_find", "host.dir_make", "host.file_move");
+        // Found by the same sweep, pre-existing: each of these is inside the crafted
+        // ceiling — an item is ALLOWED to use it — and declaring it failed validation.
+        addAll(m, 3, "oracle.query");
+        addAll(m, 5, "host.app_launch", "host.file_open", "host.url_open");
 
         // §4.8 MCP
         addAll(m, 1, "mcp.budget_remaining", "mcp.available");
@@ -503,6 +539,7 @@ public final class ItemManifestValidator {
         addAll(m, 4, "safe.snapshots");
         addAll(m, 6, "invite.create", "invite.revoke",
             "ward.grant", "ward.revoke",
+            "hermod.grant.revoke",
             "pairing.revoke_device", "treasury.set_budget",
             // W5 (2026-07-11): Counting House write API — credit transfer from
             // the acting player (provider enforces from == acting player).

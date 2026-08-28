@@ -148,13 +148,21 @@ class CompanionActorInnerMonologueWiringTest {
     @Test
     void fireOneShotVoicePrompt_routes_via_pendingOneShotVoice_and_cap_quick() throws Exception {
         var src = sourceText();
+        // The helper grew a delegating overload (the 6-arg form forwards to the
+        // 7-arg form with an explicit backend). The FIRST occurrence is now the
+        // five-line delegator, which contains none of the machinery this test
+        // exists to pin — slicing it made the suite red for days over wiring
+        // that was intact the whole time. Assert over EVERY overload's body:
+        // the machinery must exist in one of them, and cap:quick in the chain.
         int start = src.indexOf(
             "private CompletionStage<String> fireOneShotVoicePrompt(");
         assertThat(start)
             .as("the shared one-shot voice helper must exist")
             .isGreaterThan(0);
-        int end = src.indexOf("\n    /**", start + 100);
-        if (end < 0) end = src.indexOf("\n    private ", start + 100);
+        int last = src.lastIndexOf(
+            "private CompletionStage<String> fireOneShotVoicePrompt(");
+        int end = src.indexOf("\n    /**", last + 100);
+        if (end < 0) end = src.indexOf("\n    private ", last + 100);
         var body = src.substring(start, end > 0 ? end : src.length());
 
         assertThat(body)

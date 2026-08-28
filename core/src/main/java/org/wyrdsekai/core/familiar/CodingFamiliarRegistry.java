@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Familiar identities.
  *
  * <p>Each bondholder's Coding Familiar persists to a single JSON file at
- * {@code <souls-dir>/familiars/codeplane-<sanitized-bondholder-did>.json}.
+ * {@code <souls-dir>/familiars/codezaiku-<sanitized-bondholder-did>.json}.
  * One file per bondholder is right because the familiar's identity is
  * <em>per-bondholder</em>, not per-zone, not per-project — same bondholder
  * across multiple project portals shares the same Coding Familiar.</p>
@@ -43,7 +43,10 @@ public final class CodingFamiliarRegistry {
     public static final String FAMILIARS_SUBDIR = "familiars";
 
     /** Filename prefix — distinguishes Coding Familiar files from other familiar kinds. */
-    public static final String FILE_PREFIX = "codeplane-";
+    public static final String FILE_PREFIX = "codezaiku-";
+
+    /** The pre-rename filename prefix. Still LISTED and still OPENED. */
+    public static final String LEGACY_FILE_PREFIX = "codeplane-";
 
     /** Filename extension. */
     public static final String FILE_EXT = ".json";
@@ -77,7 +80,15 @@ public final class CodingFamiliarRegistry {
         if (bondholderDid == null || bondholderDid.isBlank()) {
             throw new IllegalArgumentException("bondholderDid required");
         }
-        return familiarsDir.resolve(FILE_PREFIX + sanitize(bondholderDid) + FILE_EXT);
+        var current = familiarsDir.resolve(FILE_PREFIX + sanitize(bondholderDid) + FILE_EXT);
+        if (Files.exists(current)) return current;
+        // A familiar summoned before the rename lives under the old prefix.
+        // Nothing migrates the file, so look for it rather than silently
+        // treating that bondholder as having no familiar and summoning a
+        // second one.
+        var legacy = familiarsDir.resolve(
+            LEGACY_FILE_PREFIX + sanitize(bondholderDid) + FILE_EXT);
+        return Files.exists(legacy) ? legacy : current;
     }
 
     /** Replace any character outside {@code [a-zA-Z0-9._-]} with {@code _}. */
@@ -155,13 +166,15 @@ public final class CodingFamiliarRegistry {
             stream
                 .filter(Files::isRegularFile)
                 .map(p -> p.getFileName().toString())
-                .filter(n -> n.startsWith(FILE_PREFIX) && n.endsWith(FILE_EXT))
+                .filter(n -> (n.startsWith(FILE_PREFIX) || n.startsWith(LEGACY_FILE_PREFIX))
+                             && n.endsWith(FILE_EXT))
                 .forEach(n -> {
                     // Recover the sanitized bondholder slug. We don't have a
                     // reverse-sanitizer (lossy by design), so the truth-source
                     // for bondholder DID is inside the JSON file itself.
                     var sanitized = n.substring(
-                        FILE_PREFIX.length(),
+                        n.startsWith(FILE_PREFIX)
+                            ? FILE_PREFIX.length() : LEGACY_FILE_PREFIX.length(),
                         n.length() - FILE_EXT.length());
                     try {
                         var loaded = newMapper().readValue(

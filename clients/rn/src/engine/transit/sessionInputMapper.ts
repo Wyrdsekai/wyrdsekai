@@ -87,6 +87,7 @@ const goRe = /^(?:go|move)\s+(.+)$/i;
 const takeRe = /^(?:take|get)\s+(.+)$/i;
 const pickUpRe = /^pick\s+up\s+(.+)$/i;
 const dropRe = /^(?:drop|put\s+down)\s+(.+)$/i;
+const retireRe = /^(?:retire|destroy|discard)\s+(.+)$/i;
 const useRe = /^use\s+(.+)$/i;
 const sayRe = /^say\s+(.+)$/i;
 const emoteRe = /^emote\s+(.+)$/i;
@@ -152,6 +153,8 @@ export function mapSessionInput(raw: string, hints: Hint[], nextId: () => string
   if (g) return send({ type: 'take', id: nextId(), roomId: '', objectName: g[1].trim() });
   g = trimmed.match(dropRe);
   if (g) return send({ type: 'drop', id: nextId(), roomId: '', objectName: g[1].trim() });
+  g = trimmed.match(retireRe);
+  if (g) return send({ type: 'retire', id: nextId(), roomId: '', objectName: g[1].trim() });
   g = trimmed.match(useRe);
   if (g) return send({ type: 'use', id: nextId(), roomId: '', objectName: g[1].trim(), target: null });
 

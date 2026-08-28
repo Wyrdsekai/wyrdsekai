@@ -2,7 +2,7 @@ package org.wyrdsekai.core.agent;
 
 /**
  * Agent identity and LLM parameters.
- * Simplified from CodePlane's AgentDefinition — no family, tools, permissions, wiring.
+ * Simplified from CodeZaiku's AgentDefinition — no family, tools, permissions, wiring.
  * M1+ will load these from YAML files (AgentProfileLoader).
  *
  * @param name               Display name (visible in room entity list)

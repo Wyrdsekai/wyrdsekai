@@ -113,7 +113,7 @@ class AutonomyIntegrationTest {
     void agent_receives_zone_broadcast_and_includes_in_context() {
         // Publish a zone broadcast — the agent should buffer it
         var eventStream = AgentEventStream.get();
-        eventStream.publishZoneBroadcast("codeplane", "workshop",
+        eventStream.publishZoneBroadcast("codezaiku", "workshop",
             new S2CMessage.Prose(0, "system", "Training pipeline completed successfully",
                 List.of(), null, "normal"));
 
@@ -449,7 +449,7 @@ class AutonomyIntegrationTest {
         companion.tell(new CompanionActor.SystemEventReceived(
             new AgentEvent.SystemEvent(
                 AgentEvent.SystemEventType.ZONE_SERVICE_REGISTERED,
-                "codeplane", "CodePlane service registered", Instant.now())));
+                "codezaiku", "CodeZaiku service registered", Instant.now())));
 
         // Trigger inference
         subscriberRef.tell(new RoomNotification(

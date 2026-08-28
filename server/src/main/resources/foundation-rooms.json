@@ -645,6 +645,12 @@
         "name": "observation crystal",
         "description": "A crystal orb showing a shifting view of the zone's rooms",
         "takeable": false
+      },
+      {
+        "id": "hermod-grant-stone",
+        "name": "grant stone",
+        "description": "A rune-cut stone that remembers which kinds of household data may travel to which kinds of device. Touch it to read the household's standing grants.",
+        "takeable": false
       }
     ],
     "imprint": {

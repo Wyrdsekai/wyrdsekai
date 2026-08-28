@@ -19,7 +19,7 @@ import java.util.UUID;
  *                        (e.g. {@code "codex-abc12345"})
  * @param backend         the backend's stable namespace name
  *                        ({@code "openhands"}, {@code "opencode"},
- *                        {@code "codeplane"}, …)
+ *                        {@code "codezaiku"}, …)
  * @param taskId          UUID-string of the originating task (the
  *                        backend's primary handle)
  * @param artifactId      UUID of this specific artifact

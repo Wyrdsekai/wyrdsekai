@@ -13,6 +13,9 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Base64;
+import java.util.function.Function;
 
 /**
  * Unit-level coverage for {@link RelayNkeyAdminMain} — focuses on the parts
@@ -294,12 +297,12 @@ final class RelayNkeyAdminMainTest {
      */
     @Test
     void stampZoneIntoInviteUrl_stamps_an_unspecified_zone() throws Exception {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var mapper = new ObjectMapper();
         var payload = mapper.createObjectNode();
         payload.put("household_id", "hh-abc");
         payload.put("zone_id", "unspecified");
         payload.put("v", 1);
-        var b64 = java.util.Base64.getUrlEncoder().withoutPadding()
+        var b64 = Base64.getUrlEncoder().withoutPadding()
             .encodeToString(mapper.writeValueAsBytes(payload));
         var url = "wyrdphone://192.0.2.105:4443/" + b64;
 
@@ -308,7 +311,7 @@ final class RelayNkeyAdminMainTest {
         // decode the stamped payload and confirm the zone landed
         var body = stamped.substring(stamped.indexOf('/', "wyrdphone://".length()) + 1);
         var pad = body.length() % 4 == 0 ? body : body + "=".repeat(4 - body.length() % 4);
-        var decoded = mapper.readTree(java.util.Base64.getUrlDecoder().decode(pad));
+        var decoded = mapper.readTree(Base64.getUrlDecoder().decode(pad));
         assertEquals("hearth", decoded.get("zone_id").asText(),
             "zone_id must be stamped to the resolved zone");
         assertEquals("hh-abc", decoded.get("household_id").asText(),
@@ -317,10 +320,10 @@ final class RelayNkeyAdminMainTest {
 
     @Test
     void stampZoneIntoInviteUrl_never_overrides_an_explicit_zone() throws Exception {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var mapper = new ObjectMapper();
         var payload = mapper.createObjectNode();
         payload.put("zone_id", "realzone");
-        var b64 = java.util.Base64.getUrlEncoder().withoutPadding()
+        var b64 = Base64.getUrlEncoder().withoutPadding()
             .encodeToString(mapper.writeValueAsBytes(payload));
         var url = "wyrdphone://h:4443/" + b64;
         assertEquals(url, RelayNkeyAdminMain.stampZoneIntoInviteUrl(url, "hearth", mapper),
@@ -329,7 +332,7 @@ final class RelayNkeyAdminMainTest {
 
     @Test
     void stampZoneIntoInviteUrl_is_a_noop_on_garbage() {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var mapper = new ObjectMapper();
         assertEquals("not a url", RelayNkeyAdminMain.stampZoneIntoInviteUrl("not a url", "z", mapper));
         assertEquals("wyrdphone://h/@@bad@@",
             RelayNkeyAdminMain.stampZoneIntoInviteUrl("wyrdphone://h/@@bad@@", "z", mapper),
@@ -343,13 +346,13 @@ final class RelayNkeyAdminMainTest {
      */
     @Test
     void inviteZoneIsUnspecified_flags_every_unroutable_invite() throws Exception {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        java.util.function.Function<String, String> mk = zone -> {
+        var mapper = new ObjectMapper();
+        Function<String, String> mk = zone -> {
             try {
                 var p = mapper.createObjectNode();
                 p.put("v", 1);
                 if (zone != null) p.put("zone_id", zone);
-                return "wyrdphone://h:4443/" + java.util.Base64.getUrlEncoder().withoutPadding()
+                return "wyrdphone://h:4443/" + Base64.getUrlEncoder().withoutPadding()
                     .encodeToString(mapper.writeValueAsBytes(p));
             } catch (Exception e) { throw new RuntimeException(e); }
         };

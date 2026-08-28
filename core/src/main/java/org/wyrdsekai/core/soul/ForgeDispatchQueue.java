@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>The runtime wire-in (bunshin spawn through BunshinScheduler with
  * portal scope + cp-syntax / sandbox access + return_to callback) is
  * deliberately separate; the queue is the persistence + ordering layer
- * that the runtime stands on. When CodePlane-side integration lands
+ * that the runtime stands on. When CodeZaiku-side integration lands
  * (§17.7.6 five integration points), it consumes from this queue.</p>
  */
 public final class ForgeDispatchQueue {

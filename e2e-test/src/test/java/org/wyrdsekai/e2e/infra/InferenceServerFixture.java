@@ -64,7 +64,7 @@ public interface InferenceServerFixture {
 
     /**
      * Factory: create the right fixture based on env var.
-     * Default is sglang (proven in CodePlane E2E).
+     * Default is sglang (proven in CodeZaiku E2E).
      *
      * @param modelId     HuggingFace model ID (sglang/vllm) or GGUF filename (llama-server)
      * @param port        port to bind

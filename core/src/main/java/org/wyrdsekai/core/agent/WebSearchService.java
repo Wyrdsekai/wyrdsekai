@@ -211,9 +211,22 @@ public class WebSearchService {
                 .timeout(Duration.ofSeconds(15))
                 .GET().build();
             var resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) return List.of();
+            if (resp.statusCode() != 200) {
+                // Silent before: a rate-limited or misconfigured searxng looked exactly
+                // like "the web has nothing about that", and an item built on it simply
+                // answered "no results" forever.
+                log.warn("Searxng answered HTTP {} for '{}' at {} — returning no results",
+                    resp.statusCode(), query, searxngUrl);
+                return List.of();
+            }
 
-            return parseSearxngJson(mapper.readTree(resp.body()), maxResults);
+            var parsed = parseSearxngJson(mapper.readTree(resp.body()), maxResults);
+            if (parsed.isEmpty()) {
+                log.info("Searxng returned 200 but no parseable results for '{}'"
+                    + " (newsOnly={}) — body was {} bytes",
+                    query, newsOnly, resp.body() == null ? 0 : resp.body().length());
+            }
+            return parsed;
         } catch (Exception e) {
             log.warn("Searxng search failed: {}", e.getMessage());
             return List.of();

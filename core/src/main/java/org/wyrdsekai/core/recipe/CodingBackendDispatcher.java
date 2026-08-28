@@ -2,6 +2,8 @@ package org.wyrdsekai.core.recipe;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.coding.BackendRegistry;
 import org.wyrdsekai.core.coding.CodingTaskBackend;
 import org.wyrdsekai.core.coding.TaskResult;
@@ -16,6 +18,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -40,15 +43,32 @@ import java.util.concurrent.TimeoutException;
 public final class CodingBackendDispatcher implements BackendDispatcher {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final Logger log = LoggerFactory.getLogger(CodingBackendDispatcher.class);
 
     private final CodingTaskBackend backend;
     private final String companionDid; // attribution; nullable for system runs
     private final Duration timeout;
+    /** Workspace the backend runs in; null → the backend's own per-task scratch.
+     *  A recipe's BACKEND steps reference project-relative paths ("run
+     *  scripts/classifier/expand_corpus.py …"), exactly like its SHELL steps —
+     *  which already run in the project via ProcessCommandRunner. Without this
+     *  hint the backend gets an EMPTY sandbox, finds neither script nor seeds,
+     *  and a small model then fabricates both (release bake, 2026-08-24: a
+     *  104-line toy expand_corpus.py and three "quick brown fox" seeds). The
+     *  sandbox default is right for companion item builds; it is wrong for
+     *  recipe steps that name files in a tree. */
+    private final String workspaceHint;
 
     public CodingBackendDispatcher(CodingTaskBackend backend, String companionDid, Duration timeout) {
+        this(backend, companionDid, timeout, null);
+    }
+
+    public CodingBackendDispatcher(CodingTaskBackend backend, String companionDid, Duration timeout,
+                                   String workspaceHint) {
         this.backend = Objects.requireNonNull(backend, "backend");
         this.companionDid = companionDid;
         this.timeout = timeout == null ? Duration.ofMinutes(10) : timeout;
+        this.workspaceHint = workspaceHint;
     }
 
     /**
@@ -143,7 +163,10 @@ public final class CodingBackendDispatcher implements BackendDispatcher {
         }
         if (prompt == null || prompt.isBlank()) return DispatchOutcome.logicalFail();
 
-        var spec = TaskSpec.create(companionDid, taskType, prompt);
+        var spec = workspaceHint == null
+            ? TaskSpec.create(companionDid, taskType, prompt)
+            : new TaskSpec(UUID.randomUUID(), companionDid, taskType, prompt,
+                workspaceHint, List.of(), 0L, null);
         TaskResult result;
         try {
             result = backend.submitTask(spec).get(effectiveTimeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -178,7 +201,16 @@ public final class CodingBackendDispatcher implements BackendDispatcher {
         // only when the summary IS a JSON object (prose summaries are left untouched).
         mergeJsonSummary(result.summary(), ctx);
 
-        return contractHolds(successContract, result) ? DispatchOutcome.success() : DispatchOutcome.logicalFail();
+        if (contractHolds(successContract, result)) return DispatchOutcome.success();
+        // Say WHY in the log, not just "backend reported failure" in the evidence.
+        // The 2026-08-24 bake failed here twice and the backend's summary — which
+        // carried the subprocess's stderr tail — was written into ctx and read by
+        // nothing; each diagnosis cost a 7-minute blind rerun.
+        log.warn("BACKEND step '{}' failed its contract '{}': status={} summary={}",
+            step.id(), successContract, result.status(),
+            result.summary() == null ? "(none)"
+                : result.summary().substring(0, Math.min(result.summary().length(), 500)));
+        return DispatchOutcome.logicalFail();
     }
 
     private static boolean contractHolds(String contract, TaskResult r) {

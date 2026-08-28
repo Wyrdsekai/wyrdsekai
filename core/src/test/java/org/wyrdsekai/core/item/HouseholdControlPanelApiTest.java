@@ -49,7 +49,7 @@ class HouseholdControlPanelApiTest {
         invites = new InviteService(jdbcUrl);
         wards = new WardService(jdbcUrl);
         // First registered user auto-becomes steward; second is a member.
-        stewardId = auth.register("operator", "password123", "Masumi").orElseThrow().userId();
+        stewardId = auth.register("operator", "password123", "Operator").orElseThrow().userId();
         memberId = auth.register("kaz", "password123", "Kaz").orElseThrow().userId();
     }
 
@@ -235,7 +235,7 @@ class HouseholdControlPanelApiTest {
     @Test
     void security_audit_maps_steward_actions() {
         var log = new StewardAuditLog();
-        log.log(stewardId, "Masumi", StewardAuditLog.ActionType.MEMBER_PROMOTE,
+        log.log(stewardId, "Operator", StewardAuditLog.ActionType.MEMBER_PROMOTE,
             memberId, "promoted kaz to guest", true);
         var p = providerFor(stewardId).withSecurityAudit(log);
         var events = p.auditSecurity(10);

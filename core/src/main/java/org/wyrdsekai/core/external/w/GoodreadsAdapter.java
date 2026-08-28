@@ -16,6 +16,12 @@ import java.util.Set;
  * lives in §4.46 but is not part of the realtime adapter surface).</p>
  */
 public final class GoodreadsAdapter implements ExternalAdapter {
+    /**
+     * Scaffolding: this adapter declares a surface it does not yet reach. Advertising it
+     * to an item author builds tools on vapor — see {@code ExternalAdapter#wiredCapabilities}.
+     */
+    @Override public Set<String> wiredCapabilities() { return Set.of(); }
+
 
     public static final String NAMESPACE = "goodreads";
 
