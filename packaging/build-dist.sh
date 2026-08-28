@@ -638,7 +638,10 @@ for name, e in manifest["backends"].items():
             continue
         slot.mkdir(parents=True, exist_ok=True)
         with tarfile.open(art) as t:
-            t.extractall(slot, filter="data")
+            try:
+                t.extractall(slot, filter="data")
+            except TypeError:  # filter= needs Python >= 3.12; macOS ships 3.9
+                t.extractall(slot)
         (slot / ".version").write_text(e.get("version", ""))
     if not runnable(slot, name):
         failures.append(f"{name}: bundled:true but no runnable binary staged under {slot}")

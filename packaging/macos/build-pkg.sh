@@ -215,9 +215,34 @@ mkdir -p "$PAYLOAD/usr/local/wyrdsekai/data"
 
 # Coding-CLI bundle manifest (optional backends; binaries fetched on demand).
 # bin/wyrd resolves it from /usr/local/wyrdsekai/data/coding-cli-bundle/manifest.json.
-if [[ -f "$DIST_DIR/data/coding-cli-bundle/manifest.json" ]]; then
+if [[ -d "$DIST_DIR/data/coding-cli-bundle" ]]; then
+    # The WHOLE bundle dir, not just the manifest — same fix as build-deb.sh:
+    # build-dist stages bundled backends (0.2.0: codezaiku is the bundled
+    # default), and a manifest-only copy ships default-backend=codezaiku with
+    # no codezaiku. A gate is only as good as its distance from the artifact
+    # that ships, so the runnable check re-runs against the PAYLOAD tree.
     mkdir -p "$PAYLOAD/usr/local/wyrdsekai/data/coding-cli-bundle"
-    cp "$DIST_DIR/data/coding-cli-bundle/manifest.json" "$PAYLOAD/usr/local/wyrdsekai/data/coding-cli-bundle/manifest.json"
+    cp -R "$DIST_DIR/data/coding-cli-bundle/." "$PAYLOAD/usr/local/wyrdsekai/data/coding-cli-bundle/"
+    python3 - "$PAYLOAD/usr/local/wyrdsekai/data/coding-cli-bundle" <<'PKG_BUNDLE_GATE'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "manifest.json").read_text())
+bad = []
+for name, e in manifest["backends"].items():
+    if not e.get("bundled"):
+        continue
+    slot = root / name
+    ok = any(c.is_file() for base in (slot / name, slot / "bin" / name,
+                                      slot / name / "bin" / name)
+             for c in (base, base.with_suffix(".bat"), base.with_suffix(".exe")))
+    if not ok:
+        bad.append(name)
+if bad:
+    print("PKG bundled-backend gate FAILED: " + ", ".join(bad)
+          + " claimed bundled but absent from the payload tree", file=sys.stderr)
+    sys.exit(1)
+print("[pkg] bundled-backend gate: payload carries every bundled backend")
+PKG_BUNDLE_GATE
 fi
 
 # Track-B B1 — release-evidence dir.

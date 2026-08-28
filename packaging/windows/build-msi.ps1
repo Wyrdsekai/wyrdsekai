@@ -220,6 +220,38 @@ Stage-Tree "scripts\training\emit_rft" "scripts\training\emit_rft"
 Stage-File "server\src\main\resources\application.conf" "etc\application.conf"
 Stage-File "server\src\main\resources\logback.xml"      "etc\logback.xml"
 Stage-File "data\coding-cli-bundle\manifest.json"       "data\coding-cli-bundle\manifest.json"
+# Bundled coding backends. build-dist.sh stages these for the .deb/.pkg but is
+# bash, so the .msi stages its own: fetch per the manifest, verify the sha,
+# extract, and hard-gate on a runnable binary. A manifest that says
+# bundled:true for a dir this build did not stage ships a default backend that
+# does not exist.
+$bundleManifest = Get-Content "data\coding-cli-bundle\manifest.json" -Raw | ConvertFrom-Json
+foreach ($bprop in $bundleManifest.backends.PSObject.Properties) {
+    $bname = $bprop.Name; $bentry = $bprop.Value
+    if (-not $bentry.bundled) { continue }
+    $burl = $bentry.download_url_template
+    $bsha = $bentry.sha256_per_platform.'windows-x64'
+    if ((-not $burl) -or (-not $bsha)) { throw "bundled backend $bname has no windows-x64 artifact in the manifest" }
+    $bslot = Join-Path $Stage "data\coding-cli-bundle\$bname"
+    New-Item -ItemType Directory -Force -Path $bslot | Out-Null
+    $bart = Join-Path $env:TEMP "$bname-bundle.tar.gz"
+    Write-Host "[msi] fetching bundled backend $bname from $burl"
+    Invoke-WebRequest -Uri $burl -OutFile $bart -UseBasicParsing
+    $bgot = (Get-FileHash $bart -Algorithm SHA256).Hash.ToLower()
+    if ($bgot -ne $bsha.ToLower()) { throw "bundled backend $bname sha mismatch: got $bgot want $bsha" }
+    tar -xzf $bart -C $bslot
+    if ($LASTEXITCODE -ne 0) { throw "bundled backend $bname extract failed" }
+    Set-Content -Path (Join-Path $bslot ".version") -Value $bentry.version -NoNewline
+    Remove-Item $bart -Force
+    $brunnable = $false
+    foreach ($bbase in @((Join-Path $bslot $bname), (Join-Path $bslot "bin\$bname"), (Join-Path $bslot "$bname\bin\$bname"))) {
+        foreach ($bcand in @($bbase, "$bbase.bat", "$bbase.exe", "$bbase.cmd")) {
+            if (Test-Path $bcand -PathType Leaf) { $brunnable = $true }
+        }
+    }
+    if (-not $brunnable) { throw "bundled backend $bname staged but no runnable binary found under $bslot" }
+    Write-Host "[msi] bundled-backend gate: $bname staged and runnable"
+}
 Stage-Tree "data\release-evidence"                      "data\release-evidence"
 Stage-File "VERSION" "VERSION"
 # OSS license — every installer must carry it (audit 2026-07-11).
