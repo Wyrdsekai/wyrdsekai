@@ -125,6 +125,22 @@ class SalienceScorerTest {
             assertTrue(score >= 0.8, "INFERENCE_BACKEND_DOWN should score >= 0.8, got " + score);
         }
 
+        /** New reading arriving is worth noticing but is not an alarm —
+         *  it must outscore routine topology, never the health band. */
+        @Test
+        void libraryPackInstalledScoresNoticeable() {
+            var event = systemEvent(AgentEvent.SystemEventType.LIBRARY_PACK_INSTALLED);
+            var score = SalienceScorer.score(event, normalVitality(), defaultGenome());
+            var joined = SalienceScorer.score(
+                systemEvent(AgentEvent.SystemEventType.NODE_JOINED),
+                normalVitality(), defaultGenome());
+            var alert = SalienceScorer.score(
+                systemEvent(AgentEvent.SystemEventType.HEALTH_ALERT),
+                normalVitality(), defaultGenome());
+            assertTrue(score > joined, "a pack arrival should outscore routine topology");
+            assertTrue(score < alert, "a pack arrival must not reach the alarm band");
+        }
+
         @Test
         void healthAlertScoresHighest() {
             var event = systemEvent(AgentEvent.SystemEventType.HEALTH_ALERT);

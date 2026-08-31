@@ -54,6 +54,14 @@ public final class ItemIntentCheck {
         "story", "stories", "tale", "tales", "fairy", "poem", "poetry", "verse",
         "narrate", "narrative", "retell", "compose", "invent", "make up", "fiction");
 
+    /** Words that ask for a PRACTICE — something that challenges, grades and
+     *  remembers (play-loop seam 3; the contract is practiceBlock() in the
+     *  preamble). */
+    private static final List<String> PRACTICE_WORDS = List.of(
+        "practice", "practise", "drill", "quiz", "flashcard", "flash card",
+        "exercise me", "train me", "training tool", "test me", "help me get better",
+        "help me learn", "small practice");
+
     /** How an item reaches the open web. */
     private static final List<String> SCRAPES = List.of(
         "world.web.search", "world.web.fetch");
@@ -118,6 +126,25 @@ public final class ItemIntentCheck {
                 + "the body actually produces.");
         }
 
+        // A practice that forgets is a toy. The preamble's PRACTICE ITEMS block
+        // asks for one notes line per attempt so the next challenge can start
+        // where the last one ended; a practice-shaped request whose body never
+        // writes to any persistent namespace will greet every use as the first.
+        // Mechanical check, no semantics: does the body call a store at all.
+        if (wantsPractice(asked) && !persistsAnything(lower)) {
+            out.add("the request asks for a practice tool (\"" + practiceWordIn(asked)
+                + "\"), but invoke() never writes to any persistent namespace, so "
+                + "every use starts from zero and progress cannot exist. In invoke(), "
+                + "after grading an attempt, add ONE line:\n"
+                + "      world.notes.add(\"attempt: <challenge> -> <result>\", "
+                + "[\"practice-<item name>\"]);\n"
+                + "    and read it back at the start with "
+                + "world.notes.list(\"practice-<item name>\") to pick the next "
+                + "challenge. Declare \"notes.add\" in the manifest capabilities. "
+                + "CHANGE ONLY invoke()'s body and the capabilities array — do not "
+                + "restructure the file.");
+        }
+
         if (wantsComposition(asked) && summarisesOnly(lower)) {
             out.add("the request asks for something WRITTEN (\"" + composeWordIn(asked)
                 + "\"), but this item only calls world.llm.summarize, which condenses "
@@ -166,5 +193,27 @@ public final class ItemIntentCheck {
     /** Summarises and never composes. */
     static boolean summarisesOnly(String lowerScript) {
         return lowerScript.contains("llm.summarize") && !lowerScript.contains("llm.complete");
+    }
+
+    static boolean wantsPractice(String lowerRequest) {
+        return practiceWordIn(lowerRequest) != null;
+    }
+
+    static String practiceWordIn(String lowerRequest) {
+        if (lowerRequest == null) return null;
+        for (var w : PRACTICE_WORDS) {
+            if (lowerRequest.contains(w)) return w;
+        }
+        return null;
+    }
+
+    /** Every persistent namespace a crafted item may write. Any one of them
+     *  counts — the point is that SOMETHING survives between uses, not which
+     *  store the author chose. */
+    static boolean persistsAnything(String lowerScript) {
+        return lowerScript.contains("world.notes.add")
+            || lowerScript.contains("world.journal.write")
+            || lowerScript.contains("world.memory.add")
+            || lowerScript.contains("world.library.add");
     }
 }

@@ -160,6 +160,8 @@ public class SalienceScorer {
             case NODE_LEFT -> 0.7;
             case ZONE_SERVICE_DISCONNECTED -> 0.6;
             case INFERENCE_BACKEND_UP -> 0.5;
+            // New reading on the shelves — worth noticing, not an alarm.
+            case LIBRARY_PACK_INSTALLED -> 0.5;
             case NODE_JOINED -> 0.4;
             case ZONE_SERVICE_REGISTERED -> 0.4;
         };

@@ -1111,6 +1111,7 @@
   "dispatch.spoken.workspace_refused": "No puedo trabajar en {0} — está fuera de los directorios que me han concedido. Un steward puede ampliar host.open_roots (WYRDSEKAI_HOST_OPEN_ROOTS) si hace falta.",
   "dispatch.spoken.no_backend": "No hay ningún backend de taller instalado, así que no puedo despachar eso. `wyrd coding install goose` instala uno.",
   "dispatch.spoken.plan": "Llevo eso al taller: {0}. Se lo paso a {1} y aviso cuando termine.",
+  "dispatch.spoken.needs_repair": "La tarea del taller se ejecutó, pero lo que hizo no pasó sus comprobaciones y aún no se puede usar: {1} — puedo llevarlo de vuelta al taller.",
   "dispatch.spoken.done": "La tarea del taller terminó: {0}",
   "dispatch.spoken.already_underway": "Esa tarea ya está en marcha: {0}. Aviso cuando vuelva en vez de empezarla dos veces.",
   "dispatch.spoken.not_done": "La tarea del taller acabó {0}: {1}",

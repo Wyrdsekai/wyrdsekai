@@ -122,6 +122,16 @@ class EnvironmentalMoodTest {
     }
 
     @Test
+    void system_library_pack_installed_lifts_momentum() {
+        var base = baseline();
+        var se = systemEvent(AgentEvent.SystemEventType.LIBRARY_PACK_INSTALLED);
+
+        var result = EnvironmentalMood.applySystemEvent(base, se);
+
+        assertThat(result.momentum()).isCloseTo(base.momentum() + 0.02, within(DELTA));
+    }
+
+    @Test
     void system_inference_backend_up_lowers_error_pressure_raises_confidence() {
         var base = baseline();
         var se = systemEvent(AgentEvent.SystemEventType.INFERENCE_BACKEND_UP);

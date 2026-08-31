@@ -137,6 +137,57 @@ class DoesItDoWhatWasAskedTest {
             ItemCapabilitySet.craftedDefault())).isEmpty();
     }
 
+    // ── practice that forgets (play-loop seam 3) ──
+
+    private static final String FORGETFUL_PRACTICE = """
+        function invoke(params) {
+          var q = "Count the syllables in: " + params.args;
+          var right = params.args.split("-").length === 3;
+          return { ok: true,
+                   summary: right ? "Correct — 5/7/5 holds." : "Off — the middle line runs long." };
+        }
+        """;
+
+    private static final String REMEMBERING_PRACTICE = """
+        function invoke(params) {
+          var past = world.notes.list("practice-haiku");
+          var right = params.args.split("-").length === 3;
+          world.notes.add("attempt: " + params.args + " -> " + (right ? "hit" : "miss"),
+              ["practice-haiku"]);
+          return { ok: true,
+                   summary: right ? "Correct — 5/7/5 holds." : "Off — the middle line runs long." };
+        }
+        """;
+
+    /** Grades honestly, remembers nothing — every use greets her as a stranger. */
+    @Test
+    void a_practice_item_that_persists_nothing_is_worth_saying() {
+        var gaps = ItemIntentCheck.gaps(
+            "build me a small practice for writing haiku", FORGETFUL_PRACTICE,
+            ItemCapabilitySet.craftedDefault());
+
+        assertThat(gaps).hasSize(1);
+        assertThat(gaps.get(0))
+            .contains("practice")
+            .contains("world.notes.add");
+    }
+
+    @Test
+    void a_practice_item_that_remembers_is_not_flagged() {
+        assertThat(ItemIntentCheck.gaps(
+            "build me a small practice for writing haiku", REMEMBERING_PRACTICE,
+            ItemCapabilitySet.craftedDefault())).isEmpty();
+    }
+
+    /** A non-practice request that persists nothing is fine — the rule is scoped
+     *  to what was asked, exactly like the compose rule. */
+    @Test
+    void persistence_is_only_expected_of_practice_shaped_requests() {
+        assertThat(ItemIntentCheck.gaps(
+            "count the syllables in a line I give you", FORGETFUL_PRACTICE,
+            ItemCapabilitySet.craftedDefault())).isEmpty();
+    }
+
     /** No request to compare against means no opinion — never a manufactured complaint. */
     @Test
     void without_the_request_there_is_nothing_to_say_about_intent() {

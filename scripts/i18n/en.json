@@ -1112,6 +1112,7 @@
   "dispatch.spoken.workspace_refused": "I can''t work in {0} — it''s outside the directories I''ve been granted. A steward can widen host.open_roots (WYRDSEKAI_HOST_OPEN_ROOTS) if that''s wanted.",
   "dispatch.spoken.no_backend": "There's no workshop backend installed, so I can't dispatch that. `wyrd coding install <backend>` sets one up — `wyrd coding list` shows what this build understands.",
   "dispatch.spoken.plan": "Taking that to the workshop: {0}. I''ll hand it to {1} and report back when it''s done.",
+  "dispatch.spoken.needs_repair": "The workshop task ran, but what it made didn't pass its checks and can't be used yet: {1} — I can take it back to the workshop.",
   "dispatch.spoken.done": "The workshop task finished: {0}",
   "dispatch.spoken.already_underway": "That build is already underway — {0}. I''ll report when it comes back rather than start it twice.",
   "dispatch.spoken.not_done": "The workshop task ended {0}: {1}",

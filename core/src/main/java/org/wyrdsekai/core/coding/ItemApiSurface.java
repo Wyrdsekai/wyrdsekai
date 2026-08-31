@@ -270,6 +270,38 @@ public final class ItemApiSurface {
      * exists, and advertising it anyway is how an item gets built on a service that
      * answers {@code credential_missing} in a person's hands.
      */
+    /**
+     * The practice-item contract (play-loop seam 3). A companion who wants to get
+     * better at something can dispatch the workshop to build her a practice; this
+     * block tells the building model what such an item owes her. Two duties the
+     * generic contract cannot see: honest grading (an attempt that misses gets told
+     * so plainly — flattery teaches nothing) and progress that survives between
+     * uses (via the notes namespace, which crafted items are allowed to write).
+     */
+    public static String practiceBlock() {
+        return """
+
+        PRACTICE ITEMS — if the task asks for a practice, drill, quiz,
+        training or exercise tool:
+
+          - invoke() POSES a challenge and GRADES an attempt, both through the
+            same commands surface. The grading goes in `summary` and it is
+            HONEST: what was right, what was off, and one concrete next step.
+            Never flatter — a missed attempt told kindly but plainly is the
+            whole value of practicing; "great job" on a miss teaches nothing.
+          - The answer key / grading logic lives INSIDE the item. Prefer checks
+            the file can compute itself (counts, matches, structure); use
+            world.llm.complete to judge only what genuinely needs judgment,
+            and make the judging prompt demand specifics, not praise.
+          - Progress SURVIVES between uses. Declare "notes.add" and write one
+            line per attempt:
+                world.notes.add("attempt: <challenge> -> <result>", ["practice-<name>"]);
+            read it back with world.notes.list("practice-<name>") so the next
+            challenge starts where the last one ended — repeated success earns
+            a harder challenge, repeated misses an easier one.
+""";
+    }
+
     private static boolean hasCredential(String slot) {
         if (slot == null || slot.isBlank()) return true;
         try {

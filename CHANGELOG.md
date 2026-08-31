@@ -4,7 +4,52 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.2.0] — unreleased
+## [0.2.1] — 2026-08-31
+
+Companions now learn from their days.
+
+### Added
+
+- **Sleep learning.** While a companion sleeps, the day's conversations train
+  a small adapter onto her voice model, so what happened yesterday actually
+  shapes how she speaks tomorrow. The write is careful: it only touches the
+  parts of the model most active during what she felt strongly about, it
+  mixes in a sample of past days so old experience isn't overwritten, and it
+  is rejected outright if it would change her general behavior or doesn't
+  improve her recall of her own life. The result applies at wake, only when
+  she is idle. Manage it with `wyrd sleepwrite`.
+- **A morning check on every sleep write.** After a night's adapter is
+  applied, the same model is asked a fixed set of questions with and without
+  it: does it still follow instructions, refuse what it should refuse, speak
+  the same language, avoid degenerating into repetition. If the night made
+  any of that worse, the adapter is set aside and she wakes on her previous
+  weights.
+- **Growth wants.** If a companion says something like "I wish I could read
+  music" — out loud or in her journal — that can become a want of her own.
+  Later, on her own time, the world suggests she could build herself a small
+  practice tool for it in the workshop. Suggests, never forces. Practice
+  tools must grade attempts honestly and keep progress between uses. This
+  only ever starts from her own words, never from measuring her against a
+  standard.
+- **The library announces new packs.** When a knowledge pack finishes
+  installing, companions are told there is new reading — before, it sat
+  there until someone happened to look.
+- **CodeZaiku 0.2.0 bundled.** The bundled coding backend is updated to the
+  new upstream release (chat, background delegation, research). Verified
+  against its published checksum at build time, as before.
+
+### Fixed
+
+- **Knowledge packs failed to download.** Wikimedia rejects the Java HTTP
+  client's default User-Agent, so the simple-wikipedia starter pack had
+  failed with HTTP 403 on every boot since the library shipped. Pack
+  downloads now send a proper identifying User-Agent.
+- **Nothing could ever suggest the workshop.** The workshop verb had no
+  connection to any of a companion's drives, so no amount of boredom or
+  creative pressure could surface it on her own time. It is now wired up
+  like the other creative verbs.
+
+## [0.2.0] — 2026-08-27
 
 The household stops being one machine.
 
@@ -47,7 +92,7 @@ The household stops being one machine.
   collection, exactly as before.
 - **Subprocess coding backends run with a scrubbed environment.** A backend
   spawns a real shell; it no longer inherits the daemon's ambient credentials.
-- **CodeZaiku is now CodeZaiku.** The rename is complete: the binary, the
+- **CodePlane is now CodeZaiku.** The rename is complete: the binary, the
   `CODEZAIKU_*` environment variables, the `~/.codezaiku` state directory, the
   `codezaiku` backend id and the `codezaiku.*` zone-command namespace all became
   `codezaiku`. A host still exporting the old environment variable names keeps

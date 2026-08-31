@@ -168,6 +168,7 @@ class EbooksConciergeE2ETest {
             "dispatch.spoken.no_backend",
             "dispatch.spoken.plan",
             "dispatch.spoken.done",
+            "dispatch.spoken.needs_repair",
             "dispatch.spoken.not_done",
             "dispatch.spoken.failed",
             "dispatch.log.dispatched",

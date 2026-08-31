@@ -13,6 +13,8 @@ import java.nio.file.Files;
 import java.time.Instant;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -237,6 +239,55 @@ public final class ItemContractRepair {
      */
     private static final ThreadLocal<Set<Path>> REPAIRED = ThreadLocal.withInitial(HashSet::new);
 
+    /**
+     * One extra round through a DIFFERENT backend after a backend's own rounds
+     * exhaust. Measured 2026-08-27 (home-server, the household 4B): goose shipped an
+     * invoke()-crash to a person after two rounds; the codezaiku harness fixed
+     * the same file on the same model in one. The escalation runs under the
+     * same revert-if-worse guard as every other round, so its worst case is
+     * the status quo. Wired by {@code CodingBackendBootstrap} when codezaiku
+     * registers; absent, exhaust behaves exactly as before.
+     */
+    @FunctionalInterface
+    public interface Escalation {
+        /** @return true when the escalation run completed (the file re-read decides the rest) */
+        boolean rerun(Path workspace, String prompt);
+    }
+
+    private static volatile Escalation escalation;
+
+    public static void setEscalation(Escalation e) {
+        escalation = e;
+    }
+
+    /** True while the escalation backend itself is the one being repaired — it must not escalate to itself. */
+    private static final ThreadLocal<Boolean> ESCALATION_IS_SELF = ThreadLocal.withInitial(() -> false);
+
+    /** Run {@code r} with escalation disabled — for the escalation backend's OWN repair pass. */
+    public static void withoutEscalation(Runnable r) {
+        ESCALATION_IS_SELF.set(true);
+        try {
+            r.run();
+        } finally {
+            ESCALATION_IS_SELF.set(false);
+        }
+    }
+
+    /**
+     * Problems that survived every round, by task. The completion narration
+     * consumes this so a companion can say "built, but it does not work yet"
+     * instead of announcing success for a tool that will not register —
+     * the talks-but-doesn't-do bug, in her own mouth.
+     */
+    private static final Map<String, List<String>> UNRESOLVED = new ConcurrentHashMap<>();
+
+    /** The problems left standing for this task, removing the record. Empty when everything registered. */
+    public static List<String> consumeUnresolved(String taskId) {
+        if (taskId == null) return List.of();
+        var left = UNRESOLVED.remove(taskId);
+        return left == null ? List.of() : left;
+    }
+
     private static void repairOne(Path script, String taskId, Reprompt reprompt)
             throws Exception {
         var name = script.getFileName().toString();
@@ -313,8 +364,52 @@ public final class ItemContractRepair {
         // Intent gaps are advisory: an item that scrapes the web on purpose is
         // legitimate. Exhausting the rounds on one is not a reason to complain again.
         if (!left.isEmpty()) {
+            left = tryEscalation(script, name, left);
+        }
+        if (!left.isEmpty()) {
             log.warn("[item-contract] repair exhausted for {} after {} rounds: still {} "
                 + "— shipping it anyway; the bridge decides", name, MAX_ROUNDS, left);
+            // Bounded: a dispatch route that never narrates (a Workshop zone
+            // command) never consumes its entry. These are advisory breadcrumbs,
+            // not records — losing old ones costs one softened sentence.
+            if (UNRESOLVED.size() > 256) UNRESOLVED.clear();
+            UNRESOLVED.merge(taskId, List.copyOf(left), (a, b) -> {
+                var merged = new ArrayList<>(a);
+                merged.addAll(b);
+                return List.copyOf(merged);
+            });
+        }
+    }
+
+    /**
+     * One round through the escalation backend, under the same revert-if-worse
+     * guard as the in-backend rounds. Returns the problems still standing.
+     */
+    private static List<String> tryEscalation(Path script, String name, List<String> left) {
+        var esc = escalation;
+        if (esc == null || ESCALATION_IS_SELF.get()) return left;
+        try {
+            var source = Files.readString(script);
+            log.info("[item-contract] escalating {} to the escalation backend: {}", name, left);
+            if (!esc.rerun(script.getParent(), buildPrompt(name, left))) {
+                log.info("[item-contract] escalation run for {} did not complete — the file "
+                    + "on disk decides", name);
+            }
+            var after = ItemContractCheck.problems(Files.readString(script), name);
+            if (after.size() > left.size()) {
+                Files.writeString(script, source);
+                log.warn("[item-contract] the escalation of {} introduced {} — reverting to "
+                    + "the version before it", name, after);
+                return left;
+            }
+            if (after.isEmpty()) {
+                log.info("[item-contract] escalation SUCCEEDED for {} — it will register", name);
+            }
+            return after;
+        } catch (Exception e) {
+            log.warn("[item-contract] escalation errored for {} ({}) — keeping the "
+                + "pre-escalation file", name, e.toString());
+            return left;
         }
     }
 

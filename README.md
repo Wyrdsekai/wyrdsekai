@@ -75,7 +75,24 @@ After setup completes, `wyrd setup` surfaces [FIRST_ENCOUNTER.md](docs/FIRST_ENC
 
 ## What ships
 
-**New in v0.2.0:**
+**New in v0.2.1:**
+
+- **Sleep learning** — while a companion sleeps, the day's conversations train
+  a small adapter onto her voice model, gated hard: it only lands where her
+  felt experience was strongest, replays past days so nothing is overwritten,
+  and is refused if it would change her general behavior. A morning check
+  probes the applied result with and without the night's weights and rolls
+  back any regression. `wyrd sleepwrite` manages the whole loop.
+- **Growth wants** — a wish a companion voices ("I wish I could read music")
+  can become a want of her own; the world then suggests — never forces — that
+  she build herself a practice tool for it in the workshop. Practice tools
+  must grade honestly and keep progress between uses.
+- **The library announces new packs**, and pack downloads work again
+  (Wikimedia rejects Java's default User-Agent; every starter-pack install
+  had been failing with HTTP 403).
+- **CodeZaiku 0.2.0 bundled** — the upstream chat/delegation/research release.
+
+**v0.2.0:**
 
 - **The Between across machines** — nodes reach each other directly, and a
   phone that leaves the house keeps the same conversation: LAN and relay are
@@ -191,6 +208,13 @@ Souls are portable across substrates. Prompt injection is Layer 1 (works on any 
 ## The companion evolves on its own
 
 The companion isn't a frozen weights snapshot. It runs a small set of **governed recipes** (training runs, classifier retrains, capability evals) on its own — adaptively, with welfare gates.
+
+- **Her nights write into her weights (v0.2.1).** Sleep trains a small LoRA
+  adapter on the voice model from the day's felt-stamped experience, with
+  selection gated by affect, fixed-budget replay of her past, hard NLL gates,
+  and a morning behavioral check that quarantines any adapter that changed how
+  she behaves. What engages her becomes her; what would distort her is
+  refused. See `wyrd sleepwrite`.
 
 - **Every OSS release ships with cryptographic evidence the loop closed at build.** `packaging/build-evolved-artifact.sh` runs `retrain-classifier-head` against the bundled local 9B during release packaging — same code path the household will run in production, no stubs. Three artifacts ship in `data/release-evidence/`: the baseline `.onnx`, the full `RecipeRunLog` (sha256s + every gate outcome), and a DEXTERITY soul fragment ingested into the bondholder's companion on first boot under `did:wyrd:release-bake`. The companion can truthfully say *"I ran this procedure end to end"* before you've run anything yourself.
 

@@ -104,6 +104,13 @@ public final class WikimediaCirrusResolver {
     private static final String USER_AGENT =
         "wyrdsekai/" + AppVersion.get().version() + " (https://wyrdsekai.org; library pack fetch)";
 
+    /** One identifying UA for the whole pack subsystem — the resolver had one
+     *  and the DOWNLOADER didn't, so resolution succeeded and every download
+     *  403'd (second-node, every boot since install; found 2026-08-30). */
+    static String userAgent() {
+        return USER_AGENT;
+    }
+
     private static String fetch(String url) throws IOException {
         var request = HttpRequest.newBuilder().uri(URI.create(url))
             .header("User-Agent", USER_AGENT)

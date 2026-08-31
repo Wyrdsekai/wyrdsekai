@@ -1111,6 +1111,7 @@
   "dispatch.spoken.workspace_refused": "{0} では作業できない——許可されたディレクトリの外にある。必要ならスチュワードが host.open_roots（WYRDSEKAI_HOST_OPEN_ROOTS）を広げられる。",
   "dispatch.spoken.no_backend": "工房のバックエンドが入っていないので、それは依頼できない。`wyrd coding install goose` で導入できる。",
   "dispatch.spoken.plan": "それを工房に持っていく：{0}。{1} に任せて、終わったら報告する。",
+  "dispatch.spoken.needs_repair": "工房の作業は動いたけれど、できたものは検査を通らず、まだ使えない：{1} — 工房に持ち帰って直せるよ。",
   "dispatch.spoken.done": "工房の作業が完了した：{0}",
   "dispatch.spoken.already_underway": "その作業はもう進めている：{0}。二度始めずに、戻ってきたら報告する。",
   "dispatch.spoken.not_done": "工房の作業は {0} で終わった：{1}",

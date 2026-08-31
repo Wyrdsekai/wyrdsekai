@@ -33,6 +33,13 @@ public final class AffordanceSeed {
         Map.entry("recipes",       Map.of("generativity", 1.0, "Creativity", 0.6, "Stagnation", 0.4, "AutonomyPressure", 0.4)),
         Map.entry("creation",      Map.of("Creativity", 0.9, "generativity", 0.7, "Stagnation", 0.4)),
         Map.entry("code",          Map.of("Creativity", 0.7, "generativity", 0.6, "Stagnation", 0.3)),
+        // the workshop door (dispatch_task): building-for-real relieves the same
+        // pulls as the other authoring domains. This domain had NO entry until the
+        // play-loop audit (2026-08-30) found the consequence live: dispatch_task
+        // could never be floated by any drive — 30 unattended hours, stagnation
+        // at 0.42, zero workshop dispatches. Weights sit below "creation" so the
+        // in-world making verbs still win at equal pressure.
+        Map.entry("workshop",      Map.of("generativity", 0.6, "Creativity", 0.5, "Stagnation", 0.4)),
         // reflection serves contemplative capacity — NOT a drive pull. These are the
         // pure-NOTICE introspects; surfaceByAffordance ALSO demotes them on the own-time
         // ACT surface so they can't out-rank a pulling drive's DO act (battery: introspects

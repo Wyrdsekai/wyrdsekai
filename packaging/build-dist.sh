@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.2.0}"
+VERSION="${WYRDSEKAI_VERSION:-0.2.1}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -413,7 +413,7 @@ cp "$PROJECT_DIR/scripts/mac-node-bootstrap-mlx-trainer.sh" "$DIST_DIR/scripts/"
 # mlx_adapter_to_peft.py. Ship those, drop the bench.
 mkdir -p "$DIST_DIR/scripts/training"
 cp "$PROJECT_DIR/scripts/training/mlx_adapter_to_peft.py" "$DIST_DIR/scripts/training/" 2>/dev/null || true
-for tsub in argot emit_rft sleep; do
+for tsub in argot emit_rft sleep sleepwrite; do
     if [[ -d "$PROJECT_DIR/scripts/training/$tsub" ]]; then
         mkdir -p "$DIST_DIR/scripts/training/$tsub"
         cp -r "$PROJECT_DIR/scripts/training/$tsub/." "$DIST_DIR/scripts/training/$tsub/"

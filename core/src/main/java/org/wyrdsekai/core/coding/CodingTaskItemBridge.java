@@ -18,6 +18,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -57,6 +58,39 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
 
     /** Where to place a generated set of room objects. */
     public record RoomItemPlacement(String roomId, List<RoomObject> objects) {}
+
+    /**
+     * What registration decided. {@code registered} means the item is usable;
+     * {@code problems} carries WHY it is not, when known — the honest-placement
+     * input. Both false/empty means there was nothing to judge (no .js, an
+     * unreadable workspace): the legacy router path, not a known-broken item.
+     */
+    public record RegistrationOutcome(boolean registered, List<String> problems) {
+        static final RegistrationOutcome NOTHING_TO_JUDGE =
+            new RegistrationOutcome(false, List.of());
+        static RegistrationOutcome ok() { return new RegistrationOutcome(true, List.of()); }
+        boolean knownBroken() { return !registered && !problems.isEmpty(); }
+    }
+
+    /**
+     * The honest face of an item that did not pass its checks. Until 2026-08-27 a
+     * failed registration placed the object wearing its own manifest description —
+     * "Draft a reading list from saved passages…" on a file that crashes on first
+     * use. The person examining it had no way to tell; the only honesty was a log
+     * line. The description now says what it is, the state map carries a machine-
+     * readable flag, and the maker's intent is kept so the thing is still
+     * recognisably what was asked for.
+     */
+    static RoomObject markUnfinished(RoomObject o, List<String> problems) {
+        var why = problems.isEmpty() ? "it did not pass its checks"
+            : problems.getFirst();
+        if (why.length() > 220) why = why.substring(0, 220) + "…";
+        var desc = "UNFINISHED — built, but it does not work yet and cannot be used. "
+            + "Meant to be: " + o.description() + " What still fails: " + why
+            + " It can be taken back to the workshop for repair.";
+        return new RoomObject(o.id(), o.name(), desc, o.takeable(), o.visible(),
+            o.cloneable(), o.aliases(), Map.of("needs_repair", "true"));
+    }
 
     @Override
     public void accept(AgentEvent event) {
@@ -103,8 +137,11 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         }
         var primary = toRoomObject(artifact);
         if (primary != null) {
+            var outcome = stampRegistry(primary, artifact);
+            if (outcome != null && outcome.knownBroken()) {
+                primary = markUnfinished(primary, outcome.problems());
+            }
             roomObjects.add(primary);
-            stampRegistry(primary, artifact);
         }
 
         // Best-effort: pull any sibling artifacts the adapter knows about
@@ -117,7 +154,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 var rb = toRoomObject(ba);
                 if (rb != null) {
                     roomObjects.add(rb);
-                    stampRegistry(rb, ba);
+                    stampRegistry(rb, ba);   // build artifact: never a scripted item
                 }
             }
         }
@@ -144,8 +181,8 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
      * matching {@code .js} (or didn't follow the manifest contract), we
      * fall through to the legacy router path silently.</p>
      */
-    private static void stampRegistry(RoomObject roomObject, CodingArtifact artifact) {
-        if (roomObject == null || artifact == null) return;
+    private static RegistrationOutcome stampRegistry(RoomObject roomObject, CodingArtifact artifact) {
+        if (roomObject == null || artifact == null) return null;
         var kind = artifact instanceof SourceArtifact ? "codex" : "artifact";
         CodingItemRegistry.get().stamp(new CodingItemMetadata(
             roomObject.id(),
@@ -154,8 +191,9 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             artifact.artifactId(),
             kind));
         if (artifact instanceof SourceArtifact src) {
-            tryRegisterScriptedItem(roomObject, src);
+            return tryRegisterScriptedItem(roomObject, src);
         }
+        return null;
     }
 
     /**
@@ -180,14 +218,14 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
     // GooseLiveInvocationE2ETest (tier3, different package) invokes it with the
     // actual file a real goose run wrote against the local 9B. Production
     // callers reach here via the event-bridge placement flow (stampRegistry).
-    public static void tryRegisterScriptedItem(RoomObject roomObject, SourceArtifact src) {
+    public static RegistrationOutcome tryRegisterScriptedItem(RoomObject roomObject, SourceArtifact src) {
         var workspace = src.workspacePath();
-        if (workspace == null || workspace.isBlank()) return;
+        if (workspace == null || workspace.isBlank()) return RegistrationOutcome.NOTHING_TO_JUDGE;
         var root = Path.of(workspace);
         if (!Files.isDirectory(root)) {
             log.debug("CodingTaskItemBridge: workspace {} not host-readable; "
                 + "skipping ScriptedItemLoader registration", workspace);
-            return;
+            return RegistrationOutcome.NOTHING_TO_JUDGE;
         }
         // Prefer the agent's declared file list. Fall back to scanning
         // the workspace root for any *.js the loader can parse.
@@ -208,9 +246,10 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             } catch (Exception e) {
                 log.debug("CodingTaskItemBridge: workspace {} list failed: {}",
                     workspace, e.getMessage());
-                return;
+                return RegistrationOutcome.NOTHING_TO_JUDGE;
             }
         }
+        if (candidates.isEmpty()) return RegistrationOutcome.NOTHING_TO_JUDGE;
         // COMPLIANT FILES FIRST. The loop below registers the first candidate that
         // passes and stops. Live 2026-08-22 20:44 goose wrote the same weather tool
         // three times — weather-loft-tool.js (hyphenated, no weather calls),
@@ -352,13 +391,30 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 // items-as-tools contract is one file per task — extra
                 // .js files (helpers, tests) shouldn't shadow the
                 // primary item.
-                break;
+                return RegistrationOutcome.ok();
             } else {
                 log.debug("CodingTaskItemBridge: {} did not register "
                     + "(no parseable manifest) — `use` will fall through",
                     p.getFileName());
             }
         }
+        // Nothing registered. Report WHY, from the best (compliance-sorted first)
+        // candidate — that is the file the person's object is named for.
+        var best = candidates.getFirst();
+        List<String> problems;
+        try {
+            problems = ItemContractCheck.problems(
+                Files.readString(best), best.getFileName().toString());
+        } catch (Exception e) {
+            problems = List.of("the item file could not be read: " + e.getMessage());
+        }
+        if (problems.isEmpty()) {
+            // The checker passes it but the loader refused (their agreement has
+            // drifted before — 2026-08-22 web-sight). Honest, not silent.
+            problems = List.of("the item passed its pre-checks but the loader "
+                + "refused it — see the server log");
+        }
+        return new RegistrationOutcome(false, problems);
     }
 
     /** Is there anything here to put in a room? A source artifact with no files is not. */

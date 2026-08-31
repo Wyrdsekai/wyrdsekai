@@ -25,6 +25,8 @@ import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.coding.BackendRegistry;
 import org.wyrdsekai.core.coding.CodingBackendPreference;
 import org.wyrdsekai.core.coding.CodingItemRegistry;
+import org.wyrdsekai.core.coding.ItemContractRepair;
+import org.wyrdsekai.core.forge.SleepWeightWrite;
 import org.wyrdsekai.core.coding.CodingTaskBroadcast;
 import org.wyrdsekai.core.coding.GooseBackend;
 import org.wyrdsekai.core.coding.TaskResult;
@@ -16902,6 +16904,64 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         });
     }
 
+    /** Sleep-pass: project HER OWN expressed reaching — "I wish I could…",
+     *  "I want to learn…", spoken in the day's trail or written in the hearth
+     *  journal — into at most one action-named growth {@link Want}
+     * (, the play loop's aspiration→want seam).
+     *  The only admissible source is language she produced; see the ethics rail
+     *  on {@link AspirationWantSynthesizer}. */
+    private void maybeSynthesizeAspirationWant() {
+        if (wantStore == null) return;
+        var did = profile != null ? profile.did() : null;
+        if (did == null || did.isBlank()) return;
+        var since = Instant.now().minus(Duration.ofHours(36));
+        var utterances = new ArrayList<AspirationWantSynthesizer.Utterance>();
+        try {
+            for (var ev : TickLogReader.defaultLocation().readNonTickEvents(did, since)) {
+                if (!("speak".equals(ev.type()) || "message".equals(ev.type())
+                        || "commitment".equals(ev.type()))) continue;
+                var t = ev.payload().get("text");
+                if (t != null && !t.isNull() && !t.asText().isBlank()) {
+                    utterances.add(new AspirationWantSynthesizer.Utterance(t.asText(), ev.ts()));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Aspiration scan of the trail failed: {}", e.toString());
+        }
+        try {
+            for (var e : getHearthJournal().recent(50)) {
+                if (e.at() != null && e.at().isAfter(since)
+                        && e.text() != null && !e.text().isBlank()) {
+                    utterances.add(new AspirationWantSynthesizer.Utterance(e.text(), e.at()));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Aspiration scan of the hearth journal failed: {}", e.toString());
+        }
+        if (utterances.isEmpty()) return;
+        List<Want> live = List.of();
+        try {
+            live = wantStore.loadLive(did);
+        } catch (Exception ignored) {
+            // unreadable → treat as no existing wants (same posture as the generative pass)
+        }
+        var found = AspirationWantSynthesizer.detect(utterances);
+        // One line every night, found or not — a quiet pass must be
+        // distinguishable from a pass that never ran (2026-08-31: the first
+        // no-wish night could only be verified by grepping her trail by hand).
+        log.info("Aspiration scan for '{}': {} utterances in window, {} reaching(s) found",
+            profile.name(), utterances.size(), found.size());
+        AspirationWantSynthesizer.synthesize(did, found, live).ifPresent(w -> {
+            try {
+                wantStore.upsert(w);
+                log.info("Growth want minted from '{}' own expressed reaching: \"{}\"",
+                    profile.name(), w.text());
+            } catch (Exception e) {
+                log.debug("Growth want upsert failed: {}", e.toString());
+            }
+        });
+    }
+
     private void handleRequestRecipe(ActionParser.AgentAction.RequestRecipe req) {
         if (req == null || req.recipeName() == null || req.recipeName().isBlank()) {
             log.warn("RequestRecipe ignored — empty recipe name");
@@ -19115,6 +19175,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (forced == null && autonomyPromptLower != null) {
             if (autonomyPromptLower.contains("shape_recipe")) forced = "shape_recipe";
             else if (autonomyPromptLower.contains("sending_stone")) forced = "sending_stone";
+            // Play-loop seam 2: a growth-want's own-time prompt offers the workshop
+            // door by name; pin it so the top-K trim can't drop the verb the prompt
+            // just promised her. Pin ≠ force — tool_choice stays auto on this path.
+            else if (autonomyPromptLower.contains("dispatch_task")) forced = "dispatch_task";
         }
         var byName = new LinkedHashMap<String,
             InferenceClient.ToolDefinition>();
@@ -19551,6 +19615,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             verb, want.text(), driveLevels,
             WantActBridge.HEURISTIC, presence);
         var bridgeVerb = bridge.verb();
+        // A growth-want is HER aspiration (play-loop seam 1). Left to the
+        // drive-dominant bridge it would be answered by whatever tank happens to
+        // be highest — Stagnation ≥ 0.7 turns it into a DIRECT library search of
+        // the want text, and the closure hook then marks the aspiration satisfied
+        // by a lookup it never asked for. Growth wants stay offer-shaped: the
+        // prompt names the practice affordance (below), the pin keeps it on the
+        // surface, and nothing narrows or requires — practice is play, not
+        // homework.
+        boolean growthWant = AspirationWantSynthesizer.isGrowth(want);
+        if (growthWant) {
+            bridge = WantActBridge.Decision.defer();
+            bridgeVerb = null;
+        }
         var dominantDrive = WantActBridge.dominantDriveKey(driveLevels);
         var noAffordance = bridge.isDefer()
             && RelationalAffordance.isRelational(dominantDrive)
@@ -19580,6 +19657,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 : RelationalAffordance.absenceReason(dominantDrive, presence);
             if (why != null) prompt += " " + why;
             prompt += " Choose what to do — including doing nothing about it.";
+        } else if (growthWant && verb != null) {
+            // The offer, with the honest fact attached: she is told, in the moment
+            // it matters, that practice is one of the ways she becomes — the wire
+            // consolidates what engaged her, so what she practices is hers to keep.
+            // Told plainly because the becoming should be HERS, not done to her.
+            prompt += " This is something you yourself said you wished for."
+                + " If you want, you could build yourself a small practice for it —"
+                + " describe the practice you'd want to `" + verb + "` and the workshop"
+                + " will make it real, yours to keep and return to. What you practice"
+                + " and return to becomes part of you: your sleep keeps what engaged"
+                + " you. Or answer this a different way, or let it rest — it stays"
+                + " yours either way. Choose what to do.";
         } else if (verb != null) {
             prompt += " A natural action that would address this is `" + verb + "`."
                 + " Choose what to do.";
@@ -21132,6 +21221,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
 
+        // Sleep weight-write (dynamic substrate §9 + the drive-gate wire) —
+        // consolidate the day's felt-stamped moments into a micro-LoRA on the
+        // voice brain, gradient gated by what she FELT at each moment. Same
+        // contract as Classifier Forge above: env-gated, fire-and-forget,
+        // never blocks sleep. The script owns the hard gates; a failed gate
+        // ships nothing and the base weights never change.
+        try {
+            SleepWeightWrite.fireAndForget(profile.name());
+        } catch (Exception e) {
+            log.warn("Sleep weight-write hook failed for '{}': {}",
+                profile.name(), e.getMessage());
+        }
+
         // CfC consolidation — replay day's behavioral traces through the drive engine
         // This is Timescale 3 (day) adaptation: full backprop during sleep (§11.2)
         if (trainingTraces.hasMinimumTraces(50)) {
@@ -21307,6 +21409,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             maybeSynthesizeGenerativeWant();
         } catch (Exception e) {
             log.debug("Generativity sleep-pass failed for '{}': {}",
+                profile.name(), e.getMessage());
+        }
+
+        // Play-loop seam 1 — her own voiced
+        // reaching becomes a growth-want she can answer with a practice she
+        // designs. Source is ONLY what she herself said; never a scan of her
+        // numbers against a standard. Best-effort; never blocks sleep.
+        try {
+            maybeSynthesizeAspirationWant();
+        } catch (Exception e) {
+            log.debug("Aspiration sleep-pass failed for '{}': {}",
                 profile.name(), e.getMessage());
         }
 
@@ -30380,7 +30493,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     profile.name(), reactMessages != null, state);
             }
         }
-        if (result.status() == TaskStatus.SUCCEEDED) {
+        var unresolved = result.taskId() == null ? List.<String>of()
+            : ItemContractRepair.consumeUnresolved(result.taskId().toString());
+        if (result.status() == TaskStatus.SUCCEEDED && !unresolved.isEmpty()) {
+            // The task ran, but the item did not survive its checks — saying "done"
+            // here is the talks-but-doesn't-do bug in her own mouth (live 2026-08-25:
+            // "The workshop task finished" for a reading tool that crashed on first
+            // use). Say what actually happened.
+            speak(catalog.get("dispatch.spoken.needs_repair", summary,
+                    truncate(unresolved.getFirst(), 140)),
+                Map.of("action", "dispatch_task", "outcome", "needs_repair",
+                    "backend", result.backend()));
+        } else if (result.status() == TaskStatus.SUCCEEDED) {
             speak(catalog.get("dispatch.spoken.done", summary),
                 Map.of("action", "dispatch_task", "outcome", "succeeded",
                     "backend", result.backend()));

@@ -221,9 +221,15 @@ public final class CodingBackendBootstrap {
             var codeZaikuConfig = CodeZaikuRuntimeConfig.fromConfig(config);
             if (codeZaikuConfig.enabled()) {
                 if (binaryReachable(CodeZaikuBackend.NAME, codeZaikuConfig.executablePath())) {
-                    registry.register(new CodeZaikuBackend(codeZaikuConfig, null));
+                    var codeZaiku = new CodeZaikuBackend(codeZaikuConfig, null);
+                    registry.register(codeZaiku);
                     registry.register(new CodeZaikuEventAdapter(null));
-                    log.info("CodeZaiku backend wired (executable={}, drive={})",
+                    // Every backend's exhausted repair gets ONE more round through
+                    // codezaiku (measured 2026-08-27: it fixed an invoke()-crash the
+                    // default rounds shipped broken, on the same household model).
+                    ItemContractRepair.setEscalation(codeZaiku.escalationRunner());
+                    log.info("CodeZaiku backend wired (executable={}, drive={}) — and set "
+                        + "as the contract-repair escalation backend",
                         codeZaikuConfig.executablePath(), codeZaikuConfig.effectiveDriveUrl());
                 } else {
                     log.info("CodeZaiku backend enabled in config but binary '{}' not "

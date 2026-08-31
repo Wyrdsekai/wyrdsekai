@@ -1,6 +1,6 @@
 ﻿# Wyrdsekai Windows MSI Installer Builder
 # Requires: Java 25+ (jpackage), WiX Toolset 3.x
-# Usage: .\build-msi.ps1 [-Version "0.2.0"] [-InputDir "server/build/install/server"]
+# Usage: .\build-msi.ps1 [-Version "0.2.1"] [-InputDir "server/build/install/server"]
 #
 # FULL STANDALONE NODE: the .msi ships the complete payload (jars + rooms/ +
 # scripts/ + classifier/embedding resources + data/vectors + nats-server.exe +
@@ -33,7 +33,7 @@ Write-Host ""
 
 # --- Version ---
 if (-not $Version) {
-    $Version = "0.2.0"
+    $Version = "0.2.1"
     Write-Host "[info] No version specified, using default: $Version"
 }
 Write-Host "[info] Building Wyrdsekai v$Version"

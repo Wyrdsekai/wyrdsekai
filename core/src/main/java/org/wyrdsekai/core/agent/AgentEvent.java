@@ -38,7 +38,12 @@ public sealed interface AgentEvent {
         NODE_JOINED, NODE_LEFT,
         INFERENCE_BACKEND_UP, INFERENCE_BACKEND_DOWN,
         HEALTH_ALERT,
-        ZONE_SERVICE_REGISTERED, ZONE_SERVICE_DISCONNECTED
+        ZONE_SERVICE_REGISTERED, ZONE_SERVICE_DISCONNECTED,
+        // The world's novelty announcing itself: a knowledge pack finished
+        // installing. Found live 2026-08-31 — 287k chunks landed overnight
+        // and the companion told her steward "nothing new has landed with me
+        // yet today", because nothing carried the arrival to her.
+        LIBRARY_PACK_INSTALLED
     }
 
     /**

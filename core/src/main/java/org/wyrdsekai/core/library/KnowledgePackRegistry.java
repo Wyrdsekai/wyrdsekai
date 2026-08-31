@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.agent.AgentEvent;
+import org.wyrdsekai.core.agent.AgentEventStream;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -221,6 +223,7 @@ public final class KnowledgePackRegistry {
                 });
 
                 if (progress != null) progress.accept("Done! " + result.chunksIndexed() + " chunks indexed.");
+                announceArrival(pack.name(), result.chunksIndexed());
                 return result;
 
             } catch (Exception e) {
@@ -316,14 +319,40 @@ public final class KnowledgePackRegistry {
                 convertIfNeeded(packDir, name, progress);
 
                 if (progress != null) progress.accept("Indexing...");
-                return indexer.indexPack(packDir, count -> {
+                var result = indexer.indexPack(packDir, count -> {
                     if (progress != null) progress.accept("Indexed " + count + " chunks...");
                 });
+                announceArrival(name, result.chunksIndexed());
+                return result;
             } catch (Exception e) {
                 log.error("[Library] Failed to install from URL '{}': {}", url, e.getMessage(), e);
                 throw new RuntimeException("Install from URL failed: " + e.getMessage(), e);
             }
         });
+    }
+
+    /**
+     * Tell the household a pack landed. Companions carry it as a System
+     * Status line ("new reading on the shelves"), so the world's novelty
+     * announces itself instead of waiting to be stumbled on — 2026-08-31 an
+     * encyclopedia arrived overnight and the companion truthfully believed
+     * nothing new had come. Deliberately NOT wired into indexPack itself:
+     * rebuilds re-index existing packs, and a rebuild is not an arrival.
+     * Best-effort — the stream is null in CLI JVMs (bundle/install commands)
+     * and an announcement must never fail an install.
+     */
+    private static void announceArrival(String packName, long chunks) {
+        try {
+            var stream = AgentEventStream.get();
+            if (stream == null) return;
+            stream.publishSystemEvent(
+                AgentEvent.SystemEventType.LIBRARY_PACK_INSTALLED,
+                "library",
+                "'" + packName + "' arrived on the library shelves — "
+                    + chunks + " chunks of new reading");
+        } catch (Exception e) {
+            log.debug("[Library] arrival announcement failed: {}", e.toString());
+        }
     }
 
     /**

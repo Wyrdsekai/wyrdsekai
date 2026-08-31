@@ -40,6 +40,15 @@ class WantKindTest {
             .isEqualTo(WantKind.Kind.CREATIVE);
     }
 
+    /** Play-loop seam 1: a growth-want (her voiced aspiration) is a want toward
+     *  making — the making of a practice — so the authoring verbs stay offered. */
+    @Test
+    void wanting_to_grow_is_creative_and_keeps_the_making_verbs() {
+        assertThat(WantKind.ofResonance(resonance("growth")))
+            .isEqualTo(WantKind.Kind.CREATIVE);
+        assertThat(WantKind.fits(WantKind.Kind.CREATIVE, "dispatch_task")).isTrue();
+    }
+
     @Test
     void the_making_verbs_are_withheld_from_a_relational_want() {
         for (var tool : new String[]{"dispatch_task", "craft_from_template",

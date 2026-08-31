@@ -79,6 +79,9 @@ public final class EnvironmentalMood {
                 .withMomentum(current.momentum() + 0.02);
             case ZONE_SERVICE_DISCONNECTED -> current
                 .withErrorPressure(current.errorPressure() + 0.02);
+            // Fresh reading arriving is a small lift, the way a new node is.
+            case LIBRARY_PACK_INSTALLED -> current
+                .withMomentum(current.momentum() + 0.02);
         };
     }
 

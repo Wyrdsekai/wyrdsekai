@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/deb/build-deb.sh               # Uses build/dist/wyrdsekai-<version>/
-#   WYRDSEKAI_VERSION=0.2.0 ./packaging/deb/build-deb.sh
+#   WYRDSEKAI_VERSION=0.2.1 ./packaging/deb/build-deb.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.2.0}"
+VERSION="${WYRDSEKAI_VERSION:-0.2.1}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"

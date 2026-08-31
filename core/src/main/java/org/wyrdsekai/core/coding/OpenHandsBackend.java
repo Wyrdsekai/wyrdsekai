@@ -388,6 +388,7 @@ public final class OpenHandsBackend implements CodingTaskBackend {
     public static String itemsAsToolsPreamble(ItemCapabilitySet ceiling) {
         return ITEMS_AS_TOOLS_PREAMBLE + ItemApiSurface.manifestRulesBlock()
             + ItemApiSurface.callingConventionBlock()
+            + ItemApiSurface.practiceBlock()
             + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling);
     }
 
@@ -395,6 +396,7 @@ public final class OpenHandsBackend implements CodingTaskBackend {
     public static String itemsAsToolsPreambleCwd(ItemCapabilitySet ceiling) {
         return ITEMS_AS_TOOLS_PREAMBLE_CWD + ItemApiSurface.manifestRulesBlock()
             + ItemApiSurface.callingConventionBlock()
+            + ItemApiSurface.practiceBlock()
             + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling);
     }
 

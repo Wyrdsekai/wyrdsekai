@@ -1271,6 +1271,12 @@ start_inference() {
                         wyrdsekai-3.5-4b-v10-q4km.gguf; do
                         [[ -f "$_vm_dir/models/$_vn" ]] && { _voice_name="$_vn"; break; }
                     done
+                    # Sleep weight-write: serve last night's staged micro-LoRA
+                    # when present (wyrd sleepwrite rollback removes it).
+                    if [[ -z "${LLAMA_VOICE_ADAPTER:-}" && -f "$DATA_DIR/adapters/sleepwrite/current.gguf" ]]; then
+                        export LLAMA_VOICE_ADAPTER="sleepwrite/current.gguf"
+                        log "voice: sleepwrite adapter staged — serving current.gguf"
+                    fi
                     if docker compose --profile voice ps --format '{{.Name}}' 2>/dev/null | grep -qx wyrdsekai-llama-voice; then
                         log "voice :8201 already running"
                     elif [[ -n "$_voice_name" ]]; then
@@ -11397,6 +11403,167 @@ EOF
 #   4. wyrd voice status  → verify health
 #
 # for the architecture.
+
+# ── Sleep weight-write (dynamic substrate: the felt-gated nightly LoRA) ─────
+# The sleep-forge stages $DATA_DIR/adapters/sleepwrite/current.gguf when the
+# night's write passes its gates; the voice container serves it via the
+# existing LLAMA_VOICE_ADAPTER path. Everything here is detachable: rollback
+# removes one file and the base voice is back.
+do_sleepwrite() {
+    local sw_dir="$DATA_DIR/adapters/sleepwrite"
+    local venv="${WYRDSEKAI_SLEEP_WRITE_VENV:-}"
+    if [[ -z "$venv" && -f "$CONFIG_FILE" ]]; then
+        venv=$(grep -E '^WYRDSEKAI_SLEEP_WRITE_VENV=' "$CONFIG_FILE" | tail -1 | cut -d= -f2- || true)
+    fi
+    case "${1:-status}" in
+        status)
+            if [[ -f "$sw_dir/last-result.json" ]]; then
+                log "last write:"; sed 's/^/    /' "$sw_dir/last-result.json"
+            else
+                log "no write has run yet"
+            fi
+            if [[ -f "$sw_dir/current.gguf" ]]; then
+                log "staged adapter: current.gguf"
+            else
+                log "no adapter staged — voice serves the base weights"
+            fi
+            if docker inspect wyrdsekai-llama-voice --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^LLAMA_VOICE_ADAPTER=..*'; then
+                log "voice container: adapter ACTIVE"
+            else
+                log "voice container: serving base (adapter applies on 'wyrd sleepwrite apply' or next restart)"
+            fi
+            if [[ -f "$sw_dir/guard-last.json" ]]; then
+                log "morning guard:"; sed 's/^/    /' "$sw_dir/guard-last.json"
+            fi
+            ;;
+        run-once)
+            local py="python3"
+            [[ -n "$venv" && -x "$venv/bin/python" ]] && py="$venv/bin/python"
+            log "running the night's write now ($py)..."
+            WYRDSEKAI_DATA_DIR="$DATA_DIR" "$py" \
+                "${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/sleep_write.py"
+            ;;
+        apply)
+            if [[ ! -f "$sw_dir/current.gguf" ]]; then
+                err "nothing staged at $sw_dir/current.gguf"; return 1
+            fi
+            # --if-idle: the auto-apply path the sleep hook takes. She may
+            # already be awake and mid-sentence by the time the write stages;
+            # bouncing the voice under a live reply is not acceptable. Two
+            # samples of the processing gauge, 5s apart — both zero = idle.
+            if [[ "${2:-}" == "--if-idle" ]]; then
+                local busy
+                for _ in 1 2; do
+                    busy=$(curl -sf --max-time 3 "http://127.0.0.1:${LLAMA_VOICE_PORT:-8201}/metrics" 2>/dev/null \
+                        | grep -E '^llamacpp:requests_processing' | awk '{print $2}' || true)
+                    if [[ -n "$busy" && "$busy" != "0" ]]; then
+                        log "voice is mid-reply — leaving the adapter staged; it applies at the next restart"
+                        return 0
+                    fi
+                    sleep 5
+                done
+            fi
+            log "restarting voice with the staged adapter..."
+            ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
+              export WYRDSEKAI_DATA="$DATA_DIR" LLAMA_VOICE_ADAPTER="sleepwrite/current.gguf"
+              docker compose --profile voice up -d --force-recreate llama-voice )
+            log "applied — the night is in her voice now"
+            # Morning-after behavioral guard (§11.3). The training gates are
+            # NLL-only and cannot see a write that changed how she BEHAVES.
+            # Probe the served stack base-vs-night (same server, LoRA scale
+            # 0 vs applied); a regression quarantines the adapter and puts
+            # the voice back on base. Default ON — set WYRDSEKAI_SLEEP_GUARD=
+            # false to skip. Exit 3 (unreachable / unmeasurable) keeps the
+            # adapter: the NLL gates passed, and a probe that could not run
+            # is not evidence of harm.
+            if [[ "${WYRDSEKAI_SLEEP_GUARD:-true}" != "false" ]]; then
+                local probe="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/morning_probe.py"
+                log "morning guard: waiting for the voice to come up..."
+                local healthy=""
+                for _ in $(seq 1 40); do
+                    if curl -sf -o /dev/null --max-time 3 \
+                            "http://127.0.0.1:${LLAMA_VOICE_PORT:-8201}/health" 2>/dev/null; then
+                        healthy=1; break
+                    fi
+                    sleep 3
+                done
+                if [[ -z "$healthy" ]]; then
+                    warn "morning guard: voice did not become healthy in 120s — guard skipped, adapter stays"
+                    return 0
+                fi
+                local grc=0
+                LLAMA_VOICE_PORT="${LLAMA_VOICE_PORT:-8201}" python3 "$probe" \
+                    --out "$sw_dir/guard-last.json" \
+                    --history "$sw_dir/guard-history.jsonl" || grc=$?
+                if [[ "$grc" -eq 2 ]]; then
+                    warn "morning guard: the night's write changed her behavior — holding it back"
+                    mkdir -p "$sw_dir/rejected"
+                    mv "$sw_dir/current.gguf" \
+                        "$sw_dir/rejected/rejected-$(date +%Y%m%d-%H%M%S).gguf"
+                    log "adapter quarantined in $sw_dir/rejected — restarting voice on base weights..."
+                    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
+                      export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
+                      docker compose --profile voice up -d --force-recreate llama-voice )
+                    log "voice is back on base — verdict details in $sw_dir/guard-last.json"
+                    return 0
+                elif [[ "$grc" -eq 0 ]]; then
+                    log "morning guard: PASSED — the night behaves like her"
+                else
+                    warn "morning guard: could not measure (rc=$grc) — adapter stays; see guard-last.json"
+                fi
+            fi
+            ;;
+        guard)
+            # Manual run of the morning-after probe against the live voice.
+            # Reports only — apply is the path that acts on the verdict.
+            local probe="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/morning_probe.py"
+            LLAMA_VOICE_PORT="${LLAMA_VOICE_PORT:-8201}" python3 "$probe" \
+                --out "$sw_dir/guard-last.json" \
+                --history "$sw_dir/guard-history.jsonl"
+            ;;
+        rollback)
+            rm -f "$sw_dir/current.gguf"
+            log "adapter removed — restarting voice on base weights..."
+            ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
+              export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
+              docker compose --profile voice up -d --force-recreate llama-voice )
+            log "rolled back — base voice restored (past adapters kept in $sw_dir)"
+            ;;
+        setup)
+            # Provision the training side: venv (torch + transformers + peft
+            # + bitsandbytes + gguf) and the GGUF converter checkout. The
+            # BASE MODEL (the companion's HF export, ~8GB) is the one piece
+            # this cannot fetch — it says so plainly instead of guessing.
+            local sw_venv="${venv:-$DATA_DIR/sleepwrite-venv}"
+            if [[ ! -x "$sw_venv/bin/python" ]]; then
+                log "creating training venv at $sw_venv (torch is large; this takes a while)..."
+                python3 -m venv "$sw_venv" || { err "python3 -m venv failed"; return 1; }
+                "$sw_venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cu130 \
+                    || "$sw_venv/bin/pip" install -q torch
+                "$sw_venv/bin/pip" install -q "transformers==5.8.1" peft bitsandbytes accelerate gguf sentencepiece
+            else
+                log "venv present: $sw_venv"
+            fi
+            if [[ ! -f "$DATA_DIR/sleepwrite/llama.cpp/convert_lora_to_gguf.py" ]]; then
+                log "fetching GGUF converter (shallow llama.cpp clone)..."
+                mkdir -p "$DATA_DIR/sleepwrite"
+                git clone -q --depth 1 https://github.com/ggml-org/llama.cpp "$DATA_DIR/sleepwrite/llama.cpp" \
+                    || { err "llama.cpp clone failed"; return 1; }
+            else
+                log "converter present"
+            fi
+            if [[ ! -f "$DATA_DIR/models/sleepwrite-base/config.json" ]]; then
+                warn "base model missing: $DATA_DIR/models/sleepwrite-base needs the companion's"
+                warn "HF export (the merged voice-model checkpoint). Copy it there, then set"
+                warn "WYRDSEKAI_SLEEP_WRITE=true and WYRDSEKAI_SLEEP_WRITE_VENV=$sw_venv in the conf."
+            else
+                log "base model present — set WYRDSEKAI_SLEEP_WRITE=true (+_VENV=$sw_venv) in the conf to arm"
+            fi
+            ;;
+        *) err "usage: wyrd sleepwrite [status|run-once|apply [--if-idle]|guard|rollback|setup]"; return 1 ;;
+    esac
+}
+
 do_voice() {
     local adapter_dir="${DATA_DIR}/adapters/wyrd-voice"
     local adapter_file="${adapter_dir}/adapter.gguf"
@@ -11976,6 +12143,7 @@ case "${1:-help}" in
     inference)  do_inference "${2:-help}" "${3:-}" ;;
     coding)     do_coding "${@:2}" ;;
     voice)      do_voice "${@:2}" ;;
+    sleepwrite) do_sleepwrite "${@:2}" ;;
     invite)     do_invite "${@:2}" ;;
     key)        do_key "${@:2}" ;;
     cred)       do_cred "${@:2}" ;;

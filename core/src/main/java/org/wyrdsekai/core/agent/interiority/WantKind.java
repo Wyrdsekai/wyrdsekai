@@ -42,8 +42,11 @@ public final class WantKind {
     // which also owns what each of them can DO about it. A second list here would drift
     // from that one silently, and the two would then disagree about whether a given want
     // is relational: one withholding the making-verbs while the other offers no reach.
+    // "growth" is the aspiration→want projector's drive key (play-loop seam 1,
+    // AspirationWantSynthesizer): a wish to become better AT something is a want
+    // toward making — the making of a practice — so the authoring verbs stay offered.
     private static final Set<String> CREATIVE_DRIVES = Set.of(
-        "creativity", "stagnation", "generativity");
+        "creativity", "stagnation", "generativity", "growth");
     private static final Set<String> EXPLORATORY_DRIVES = Set.of(
         "seeking", "curiosity", "surprise", "startle");
 

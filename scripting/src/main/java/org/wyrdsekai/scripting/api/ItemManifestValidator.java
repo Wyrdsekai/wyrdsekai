@@ -119,7 +119,10 @@ public final class ItemManifestValidator {
             // Tier 4+ recommends rate_limits; Tier 5 mandates for sensitive verbs
             if (RATE_LIMIT_REQUIRED.contains(cap)
                     && manifest.rateLimitFor(cap) == null) {
-                errors.add("capability '" + cap + "' requires a rate_limits entry");
+                errors.add("capability '" + cap + "' requires a rate_limits entry "
+                    + "— a manifest field, not a runtime check in invoke(): add to "
+                    + "exports.manifest e.g. rate_limits: { \"" + cap
+                    + "\": { per_minute: 10, per_hour: 60, per_day: 200 } }");
             }
         }
 
@@ -129,15 +132,22 @@ public final class ItemManifestValidator {
             || manifest.capabilities().contains("web.delete")
             || manifest.capabilities().contains("web.fetch_raw");
         if (wantsRawWeb && manifest.externalDomains().isEmpty()) {
-            errors.add("web.post/put/delete/fetch_raw requires external_domains allowlist");
+            errors.add("web.post/put/delete/fetch_raw requires external_domains allowlist "
+                + "— a manifest field, not a runtime check in invoke(): add to "
+                + "exports.manifest e.g. external_domains: [\"example.com\"] listing "
+                + "every domain the item touches");
         }
         if (manifest.capabilities().contains("mcp.invoke") && manifest.mcpServers().isEmpty()) {
-            errors.add("mcp.invoke requires mcp_servers allowlist");
+            errors.add("mcp.invoke requires mcp_servers allowlist "
+                + "— a manifest field: add to exports.manifest e.g. "
+                + "mcp_servers: [\"server-id\"] naming each MCP server the item calls");
         }
         boolean wantsSafe = manifest.capabilities().stream().anyMatch(
             c -> c.equals("safe.get") || c.equals("safe.set") || c.equals("safe.delete"));
         if (wantsSafe && manifest.safeSlots().isEmpty()) {
-            errors.add("safe.get/set/delete requires safe_slots allowlist");
+            errors.add("safe.get/set/delete requires safe_slots allowlist "
+                + "— a manifest field: add to exports.manifest e.g. "
+                + "safe_slots: [\"slot-name\"] naming each credential slot the item reads");
         }
 
         // Items-as-tools contract — commands structure. Presence is gated

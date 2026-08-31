@@ -175,7 +175,9 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
                 // other; CodeZaiku was already named as the one taking over. A file the
                 // bridge would refuse is handed back with every defect named, bounded to
                 // MAX_ROUNDS, and whatever survives goes on exactly as before.
-                ItemContractRepair.repairRun(artifacts,
+                var repairArtifacts = artifacts;
+                ItemContractRepair.withoutEscalation(() ->
+                    ItemContractRepair.repairRun(repairArtifacts,
                     workdir == null ? null : workdir.toPath(),
                     taskId.toString(), Instant.ofEpochMilli(started),
                     ItemContractRepair.rerunWithPrompt(repairArgs -> {
@@ -197,7 +199,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
                             return false;
                         }
                     }, args),
-                    spec == null ? null : spec.description());
+                    spec == null ? null : spec.description()));
 
                 // Re-derive AFTER the repair so the cache holds the fixed file, not the
                 // version the bridge would have binned.
@@ -346,6 +348,42 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             log.warn("[codezaiku] could not spill task text to workspace: {}", e.toString());
             return args;
         }
+    }
+
+    /**
+     * A repair round any OTHER backend can borrow when its own rounds exhaust —
+     * {@code CodingBackendBootstrap} hands this to {@link ItemContractRepair} when
+     * codezaiku registers. Same argv contract as the in-backend repair (the bare
+     * prompt, no items preamble: a repair prompt is self-contained), same
+     * disk-is-the-verdict rule.
+     */
+    public ItemContractRepair.Escalation escalationRunner() {
+        return (workspace, prompt) -> {
+            var argv = new ArrayList<String>();
+            argv.add(config.executablePath());
+            argv.add("run");
+            argv.add("--text");
+            argv.add(prompt);
+            argv.add("--mode");
+            argv.add("artifact");
+            argv.add("--output-format");
+            argv.add("json");
+            argv.add("--no-session");
+            argv.add("-q");
+            var workdir = workspace == null ? null : workspace.toFile();
+            var args = fitForWindowsCommandLine(List.copyOf(argv), workdir);
+            try {
+                var r = runner.run(args, buildEnv(), workdir, config.maxWallclock());
+                if (r.exitCode() != 0) {
+                    log.info("[codezaiku] escalation run exited {} — the file on disk "
+                        + "decides whether the problems are gone", r.exitCode());
+                }
+                return !r.timedOut();
+            } catch (Exception e) {
+                log.info("[codezaiku] escalation run failed to start: {}", e.toString());
+                return false;
+            }
+        };
     }
 
     public List<String> buildArgs(TaskSpec spec) {

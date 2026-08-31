@@ -66,6 +66,11 @@ public final class PackDownloader {
 
         var request = HttpRequest.newBuilder()
             .uri(URI.create(url))
+            // Wikimedia (and increasingly others) 403 generic client UAs;
+            // their policy asks for an identifying agent with contact.
+            // Measured on second-node 2026-08-30: Java-http-client/25 -> 403,
+            // identified UA -> 200. Every boot since install had failed.
+            .setHeader("User-Agent", WikimediaCirrusResolver.userAgent())
             .timeout(Duration.ofMinutes(10))
             .GET()
             .build();
