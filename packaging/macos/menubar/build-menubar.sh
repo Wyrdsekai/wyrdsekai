@@ -5,12 +5,12 @@
 # Produces build/macos-app/Wyrdsekai.app (AppKit + WebKit, ad-hoc signed).
 # build-pkg.sh calls this and stages the result into /Applications.
 #
-# Usage:  WYRDSEKAI_VERSION=0.2.1 ./packaging/macos/menubar/build-menubar.sh
+# Usage:  WYRDSEKAI_VERSION=0.2.2 ./packaging/macos/menubar/build-menubar.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-VERSION="${WYRDSEKAI_VERSION:-0.2.1}"
+VERSION="${WYRDSEKAI_VERSION:-0.2.2}"
 
 OUT_DIR="$PROJECT_DIR/build/macos-app"
 APP="$OUT_DIR/Wyrdsekai.app"

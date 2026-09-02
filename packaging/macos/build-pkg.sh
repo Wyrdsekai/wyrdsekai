@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/macos/build-pkg.sh
-#   WYRDSEKAI_VERSION=0.2.1 ./packaging/macos/build-pkg.sh
+#   WYRDSEKAI_VERSION=0.2.2 ./packaging/macos/build-pkg.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.2.1}"
+VERSION="${WYRDSEKAI_VERSION:-0.2.2}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 PKG_BUILD="$PROJECT_DIR/build/pkg"

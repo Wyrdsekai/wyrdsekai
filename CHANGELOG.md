@@ -4,6 +4,78 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2] — 2026-09-02
+
+The drive model is back in the driver's seat.
+
+### Fixed
+
+- **The large model was not being used.** Hosts with two models (a 9B for
+  thinking on :8200 and a 4B for speaking on :8201) were sending everything
+  to the 4B. The setup script wrote the 4B's file name into the config as
+  "the model", and a July change that avoids starting a second copy of an
+  already-running model then pointed the thinking route at the 4B's server
+  as well. The 9B was loaded but never asked anything. Fixed three ways: the server will not route thinking to the
+  speaking model when another model is running; it warns at startup if two
+  routes point at the same server; and setup now writes the correct model
+  and address. Existing installs are corrected on their next restart, no
+  config changes needed.
+- **macOS uses both models.** On a Mac, the thinking server could start with
+  the speaking model, and the service could start before any model existed
+  and then send every request to one server. Setup now starts the correct
+  model and restarts the service once both are running. `wyrd start` and
+  `wyrd status` recognise the Mac service instead of starting a second copy,
+  and the Mac thinking server has the same context size as Linux, so coding
+  tasks fit.
+- **Windows: coding tasks fit, the first-run wizard runs once, codezaiku is
+  the default.** The Windows thinking server has the same context size as
+  Linux (`WYRDSEKAI_DRIVE_CTX` / `WYRDSEKAI_VOICE_CTX` override the defaults).
+  The tray wizard reads the config file it writes, so it no longer reappears
+  on every start. The bundled codezaiku is found where the installer
+  puts it and is the default coding backend on Windows as on Linux and macOS.
+- **Setup does not hang on a stalled Docker on macOS.** Docker calls are
+  bounded.
+- **The Windows llama.cpp download works with that project's new release
+  layout.** The installer follows the release pointer to the build that
+  carries the binaries.
+- **`wyrd status` knows a service-managed server.** After a package upgrade
+  or a reboot it reported the live systemd or launchd service as "orphan
+  processes" or "not running"; it now reports it as running with its pid.
+- **Relays keep password-mode households.** A relay's liveness check only
+  recognised connections that signed in with a key, so a household that signs
+  in with a password looked absent and was removed at the end of its window
+  while it was connected. Password logins now count as present.
+- **Rooms can be made on a companion's own time.** Creating a room from a
+  template is now VISIBLE (it lands on the steward feed); creating one by
+  hand asks (CONSENT); zones stay off-limits unprompted. The old FORBIDDEN
+  tier refused the verb *after* she had chosen it from her own menu, and
+  recorded the refusal as if she had acted — both fixed: a refused act is
+  never logged as done, and forbidden verbs are never offered.
+- **The map shows every door.** When rooms were recovered from the database
+  before the map's seed list arrived, exits learned in play were dropped in
+  favour of the seeded ones, so the map showed fewer doors than a room had.
+  Learned exits now survive the merge.
+- **Sleep learning reads her whole day.** The overnight scan that turns
+  "I wish I could…" into a want was filtering by only one of a companion's
+  two identities, so it saw a small fraction of what she had said. It now
+  reads under both identities, builds its store on demand (so a sleep right
+  after a restart still runs it), and logs its counts on every path.
+- **Sleep learning no longer runs at the edge of GPU memory.** The voice
+  server is paused for the write and restored afterwards — by the script's
+  own exit, and by the server as a belt for killed writes.
+
+### Added
+
+- **The steward feed.** Everything a companion does unasked above the ambient
+  rung is recorded to `steward-feed.jsonl` (configurable path), and the making
+  family — rooms, workshop, recipes, code — also leaves a note on the
+  steward's Study desk, pushed in-world and fanned out to their channels.
+  `wyrd feed [--tail N] [--json]` reads it.
+- **`wyrd grants tiers`** lists every verb's autonomy rung, its domain and
+  maturity tier, and the exact grant that lifts it.
+- **CLI messages in Japanese and Spanish** for sleep learning, the feed and the
+  tiers listing, with a test that keeps the three catalogues in step.
+
 ## [0.2.1] — 2026-08-31
 
 Companions now learn from their days.

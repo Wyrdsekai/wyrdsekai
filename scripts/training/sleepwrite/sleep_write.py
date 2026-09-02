@@ -228,6 +228,16 @@ def main():
     m = sum(fresh_ws) / len(fresh_ws)
     weights = [w / m for w in weights]
 
+    # Pause the voice server for the write window. She is asleep; the card is
+    # 16GB serving two brains, and the 4-bit load's bf16 transients want
+    # essentially all of what they leave — measured on the household node
+    # (2026-08-31/09-01): the allocator failed a 20MB map with 2.4MB free,
+    # twice per night, recovering each time. A 20MB margin is a cliff;
+    # stopping the voice (docker container keeps its exact config) turns it
+    # into a ~3.4GB one. Resume is guaranteed by the __main__ finally, and
+    # the Java hook restores it again belt-and-suspenders; a staged adapter's
+    # auto-apply then recreates the container with the night in it anyway.
+    pause_voice()
     quant = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                                bnb_4bit_compute_dtype=torch.bfloat16,
                                bnb_4bit_use_double_quant=True)
@@ -274,6 +284,15 @@ def main():
         masks[k] = (sc >= kth).float()
     del session_acts, acts
 
+    # Do NOT resume the voice here. It was tried (2026-09-02, run-once on the
+    # household node): training settles at ~3GB, but a llama-server coming
+    # BACK has to allocate its whole footprint against the trainer's peak,
+    # and it crash-looped six times on "cudaMalloc failed: out of memory"
+    # (512MB KV cache) until training ended. A week of "training beside the
+    # voice" only ever meant a voice that was already resident. The pause
+    # covers the whole write; the exit finally resumes; the cost is the few
+    # sleep-pass one-shot calls that hit a paused voice — a router-fallback
+    # question, not a memory one.
     torch.cuda.empty_cache()
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
@@ -403,5 +422,54 @@ def main():
     return 0
 
 
+VOICE_CONTAINER = "wyrdsekai-llama-voice"
+_voice_paused = False
+
+
+def pause_voice():
+    """Stop the voice container for the write window — set
+    WYRDSEKAI_SLEEP_WRITE_PAUSE_VOICE=false to keep it up. Graceful no-op
+    where docker or the container is absent (rehearsal boxes)."""
+    global _voice_paused
+    if os.environ.get("WYRDSEKAI_SLEEP_WRITE_PAUSE_VOICE", "true").lower() == "false":
+        return
+    try:
+        r = subprocess.run(["docker", "stop", VOICE_CONTAINER],
+                           capture_output=True, timeout=90)
+        if r.returncode == 0:
+            _voice_paused = True
+            print("[sleepwrite] voice paused for the write — the card is free")
+        else:
+            print("[sleepwrite] voice not paused (no container here) — "
+                  "training beside the servers as before")
+    except Exception as e:
+        print(f"[sleepwrite] voice pause skipped: {e}")
+
+
+def resume_voice():
+    """Start the container back exactly as it was (docker start keeps its
+    config, previous adapter included). Idempotent; auto-apply may recreate
+    it with the new adapter moments later."""
+    global _voice_paused
+    if not _voice_paused:
+        return
+    try:
+        subprocess.run(["docker", "start", VOICE_CONTAINER],
+                       capture_output=True, timeout=180)
+        _voice_paused = False   # the finally at exit is then a no-op
+        print("[sleepwrite] voice resumed")
+    except Exception as e:
+        print(f"[sleepwrite] voice resume FAILED: {e} — "
+              "run 'docker start wyrdsekai-llama-voice' or 'wyrd sleepwrite apply'")
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    code = 1
+    try:
+        code = main()
+    finally:
+        # Whatever happened above — gate refusal, CUDA OOM, converter crash —
+        # her voice comes back. Only a SIGKILL skips this; the Java hook's
+        # restore covers that window.
+        resume_voice()
+    sys.exit(code)

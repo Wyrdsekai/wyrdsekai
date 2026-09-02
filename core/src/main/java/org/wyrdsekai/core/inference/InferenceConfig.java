@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Function;
 import java.util.Optional;
 
 /**
@@ -285,11 +286,34 @@ public record InferenceConfig(
                 // now listening. That turns a duplicate into a DEAD backend,
                 // which lands right back on the voice-fallback path this whole
                 // fix exists to close.
-                log.warn("Backend '{}': {} is already served at {} — using that "
-                    + "instead of starting a duplicate llama-server (configured "
-                    + "url {} would be dead).", name, modelPath, already, url);
+                //
+                // BUT the drive slot must never quietly become the voice. On the
+                // household node `wyrd setup` had written the VOICE model as
+                // MODEL_PATH, so this redirect pointed the priority-5 drive slot
+                // at :8201 — and from 2026-07-30 to 09-02 BOTH router backends were
+                // the 4B while the 9B on :8200 served zero companion tokens.
+                // When the served-at URL is the voice's, look for the other
+                // server (the configured url, then :8200) and take that instead.
+                var voiceUrl = WyrdConfig.get().voiceUrl();
+                var chosen = chooseDriveUrl(already, voiceUrl,
+                    List.of(url, "http://127.0.0.1:8200"), InferenceConfig::modelsServedNow);
+                if (!chosen.equals(already)) {
+                    log.warn("Backend '{}': MODEL_PATH {} names the VOICE model (served at {}) — "
+                        + "the drive slot takes the other server at {} instead. Fix the conf: "
+                        + "MODEL_PATH should name the drive model, or set WYRDSEKAI_LLAMA_URL.",
+                        name, modelPath, already, chosen);
+                } else if (sameServer(already, voiceUrl)) {
+                    log.warn("Backend '{}': {} is served only at the VOICE url {} and nothing "
+                        + "else answers — drive and voice are the SAME server (single-model "
+                        + "node). Companion decisions will run on the voice model.",
+                        name, modelPath, already);
+                } else {
+                    log.warn("Backend '{}': {} is already served at {} — using that "
+                        + "instead of starting a duplicate llama-server (configured "
+                        + "url {} would be dead).", name, modelPath, already, url);
+                }
                 modelPath = "";
-                url = already;
+                url = chosen;
             }
         }
 
@@ -498,6 +522,36 @@ public record InferenceConfig(
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    /**
+     * Pure: where the drive slot should point when the MODEL_PATH it names is
+     * already served at {@code already}. If that is the voice's URL, prefer the
+     * first {@code candidate} (other than the voice) that serves any model;
+     * otherwise keep {@code already}.
+     */
+    static String chooseDriveUrl(String already, String voiceUrl, List<String> candidates,
+                                 Function<String, List<String>> servedModels) {
+        if (already == null) return null;
+        if (!sameServer(already, voiceUrl)) return already;
+        for (var c : candidates) {
+            if (c == null || c.isBlank() || sameServer(c, voiceUrl) || sameServer(c, already)) continue;
+            var models = servedModels.apply(c);
+            if (models != null && !models.isEmpty()) return c;
+        }
+        return already;
+    }
+
+    static boolean sameServer(String a, String b) {
+        if (a == null || b == null) return false;
+        return normalizeUrl(a).equals(normalizeUrl(b));
+    }
+
+    private static String normalizeUrl(String u) {
+        var s = u.strip().toLowerCase(Locale.ROOT);
+        s = s.replace("localhost", "127.0.0.1");
+        while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
+        return s;
     }
 
     private static String servedAt(String modelPath) {

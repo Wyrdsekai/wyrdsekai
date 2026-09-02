@@ -89,6 +89,11 @@ $VoiceLog       = Join-Path $DataDir ".llama-server-voice.log"
 $RestPort  = 7070
 $DrivePort = 8200
 $VoicePort = 8201
+# Context sizes — same as the Linux containers (16384/16384). The old 8192 drive
+# could not fit a coding-backend request (~10k tokens, 0.2.2 first-install test);
+# the voice default is halved for RAM: two 4B servers on one consumer GPU.
+$DriveCtx = if ($env:WYRDSEKAI_DRIVE_CTX) { $env:WYRDSEKAI_DRIVE_CTX } else { "16384" }
+$VoiceCtx = if ($env:WYRDSEKAI_VOICE_CTX) { $env:WYRDSEKAI_VOICE_CTX } else { "8192" }
 
 # llama.cpp release source + model fallback chain (mirrors bin/wyrd setup)
 $LlamaRepo      = "ggml-org/llama.cpp"
@@ -657,8 +662,31 @@ function Resolve-LlamaBackend {
 
 function Get-LatestLlamaAssets {
     # Query the GitHub releases API for the latest llama.cpp Windows assets.
+    # Since 2026-08-25 llama.cpp's "latest" is a named release (v0.3.0) whose
+    # only asset is nightly-tag.txt — a pointer to the current bNNNN build
+    # release that carries the binaries. Follow the pointer; if that fails,
+    # walk the most recent releases for one that has llama-* assets.
     $headers = @{ 'User-Agent' = 'wyrd-cli'; 'Accept' = 'application/vnd.github+json' }
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$LlamaRepo/releases/latest" -Headers $headers -TimeoutSec 30
+    $hasBins = @($rel.assets | Where-Object { $_.name -like 'llama-*' }).Count -gt 0
+    if (-not $hasBins) {
+        $ptr = $rel.assets | Where-Object { $_.name -eq 'nightly-tag.txt' } | Select-Object -First 1
+        if ($ptr) {
+            try {
+                $tag = (Invoke-RestMethod -Uri $ptr.browser_download_url -Headers @{ 'User-Agent' = 'wyrd-cli' } -TimeoutSec 30).ToString().Trim()
+                if ($tag) {
+                    Write-Info "llama.cpp release $($rel.tag_name) points at build $tag"
+                    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$LlamaRepo/releases/tags/$tag" -Headers $headers -TimeoutSec 30
+                    $hasBins = @($rel.assets | Where-Object { $_.name -like 'llama-*' }).Count -gt 0
+                }
+            } catch { Write-Warn2 "nightly-tag.txt lookup failed: $($_.Exception.Message)" }
+        }
+    }
+    if (-not $hasBins) {
+        $list = Invoke-RestMethod -Uri "https://api.github.com/repos/$LlamaRepo/releases?per_page=15" -Headers $headers -TimeoutSec 30
+        $cand = $list | Where-Object { @($_.assets | Where-Object { $_.name -like 'llama-*bin-win-*' }).Count -gt 0 } | Select-Object -First 1
+        if ($cand) { $rel = $cand }
+    }
     return @{ Tag = $rel.tag_name; Assets = $rel.assets }
 }
 
@@ -1051,15 +1079,23 @@ function Install-Goose {
 
     if (-not (Test-Path $GooseExe)) { Write-Err2 "goose.exe not found after extract"; return $false }
 
-    # Wire conf: goose is default backend; provider=openai → local llama-server
-    # (keyless). Record the actual loaded model name so the GOOSE_MODEL forwarded
-    # to the subprocess matches what llama-server reports.
-    Set-ConfKey -Key "WYRDSEKAI_CODING_DEFAULT_BACKEND" -Value "goose"
+    # Wire conf: provider=openai → local llama-server (keyless). Record the
+    # actual loaded model name so the GOOSE_MODEL forwarded to the subprocess
+    # matches what llama-server reports. Since 0.2.0 the bundled codezaiku is
+    # the default coding backend on every platform (the server's preference
+    # chain is codezaiku → goose → pi); pinning goose here overrode that on
+    # Windows alone. Pin goose only when codezaiku is not on this box and
+    # nothing is configured yet.
+    $conf = Get-Conf
+    $bundledBat = Join-Path $AppDir 'data\coding-cli-bundle\codezaiku\codezaiku\bin\codezaiku.bat'   # the .msi payload copy
+    if (-not (Test-Path $CodeZaikuBat) -and -not (Test-Path $bundledBat) -and -not $conf.Contains('WYRDSEKAI_CODING_DEFAULT_BACKEND')) {
+        Set-ConfKey -Key "WYRDSEKAI_CODING_DEFAULT_BACKEND" -Value "goose"
+    }
     Set-ConfKey -Key "WYRDSEKAI_CODING_GOOSE_ENABLED"   -Value "true"
     Set-ConfKey -Key "WYRDSEKAI_CODING_GOOSE_PROVIDER"  -Value "openai"
     $model = Resolve-ModelPath
     if ($model) { Set-ConfKey -Key "WYRDSEKAI_CODING_GOOSE_MODEL" -Value (Split-Path $model -Leaf) }
-    Write-Ok "goose installed → $GooseDir (default coding backend; provider=openai → local :$DrivePort)"
+    Write-Ok "goose installed → $GooseDir (fallback coding backend; provider=openai → local :$DrivePort)"
     return $true
 }
 
@@ -1244,7 +1280,7 @@ function Start-LlamaServer {
         # then disables <think> blocks (the control only engages under --jinja).
         # Qwen3.5-derived models ship reasoning ON and would burn the whole token
         # budget thinking, leaving message.content empty. Mirrors home-server's docker args.
-        $driveArgs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$DrivePort", "-c", "8192", "-np", "1", "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0")
+        $driveArgs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$DrivePort", "-c", "$DriveCtx", "-np", "1", "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0")
         $p = Start-Process -FilePath $LlamaServerExe -ArgumentList $driveArgs -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $LlamaLog -RedirectStandardError "$LlamaLog.err"
         Set-Content -Path $LlamaPidFile -Value $p.Id -Encoding ASCII
@@ -1274,7 +1310,7 @@ function Start-LlamaServer {
         }
         # Working dir = vectors dir so the bare control-vector filenames resolve.
         $voiceCwd = if (Test-Path $VectorsDir) { $VectorsDir } else { $DataDir }
-        $vargs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$VoicePort", "-c", "4096", "-np", "1", "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0") + $vecArgs
+        $vargs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$VoicePort", "-c", "$VoiceCtx", "-np", "1", "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0") + $vecArgs
         $vp2 = Start-Process -FilePath $LlamaServerExe -ArgumentList $vargs -WorkingDirectory $voiceCwd -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $VoiceLog -RedirectStandardError "$VoiceLog.err"
         Set-Content -Path $VoicePidFile -Value $vp2.Id -Encoding ASCII

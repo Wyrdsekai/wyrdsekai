@@ -1098,7 +1098,7 @@ start_inference() {
             : # MLX drive path took :8200; log emitted inside helper.
         elif [[ -f "$drive_model" ]]; then
             log "$(_t start_inference.starting_metal) (drive=$(basename "$drive_model") :8200)"
-            nohup "$llama" -m "$drive_model" --port 8200 -c 8192 -np 1 \
+            nohup "$llama" -m "$drive_model" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 \
                 -ngl "$gpu_layers" --host 0.0.0.0 \
                 ${drive_extra[@]+"${drive_extra[@]}"} \
                 > "$DATA_DIR/.llama-server.log" 2>&1 &
@@ -1168,7 +1168,7 @@ start_inference() {
         # Fall-through to Linux path
         model_path="${model_path:-$MODELS_DIR/wyrdsekai-3.5-4b-v10-q4km.gguf}"
         # Linux: Docker llama-server with CUDA
-        if command -v docker &>/dev/null; then
+        if command -v docker &>/dev/null && _docker_daemon_present; then
             # Ensure model is in the data/models directory for Docker mount
             local models_dir="$DATA_DIR/models"
             mkdir -p "$models_dir"
@@ -1312,7 +1312,7 @@ start_inference() {
                 local llama
                 if llama=$(find_llama_server); then
                     log "$(_t start_inference.starting_native)"
-                    nohup "$llama" -m "$model_path" --port 8200 -c 8192 -np 1 \
+                    nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 \
                         -ngl "${WYRDSEKAI_GPU_LAYERS:-99}" --host 0.0.0.0 \
                         > "$DATA_DIR/.llama-server.log" 2>&1 &
                     echo "$!" > "$DATA_DIR/.llama-server.pid"
@@ -1326,7 +1326,7 @@ start_inference() {
             local llama
             if llama=$(find_llama_server); then
                 log "$(_t start_inference.starting_native)"
-                nohup "$llama" -m "$model_path" --port 8200 -c 8192 -np 1 \
+                nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 \
                     -ngl "${WYRDSEKAI_GPU_LAYERS:-99}" --host 0.0.0.0 \
                     > "$DATA_DIR/.llama-server.log" 2>&1 &
                 echo "$!" > "$DATA_DIR/.llama-server.pid"
@@ -1351,6 +1351,36 @@ start_inference() {
         waited=$((waited + 1))
     done
     warn "$(_t start_inference.not_responding)"
+}
+
+# Docker Desktop's CLI can BLOCK indefinitely on macOS: with no daemon it waits
+# for the socket, and with an unhealthy daemon `docker info` never returns —
+# the 0.2.2 first-install test sat 36 minutes in setup's container probe on a
+# Mac whose Docker Desktop had been idling for 15 days. macOS has no
+# `timeout`, so bound docker calls ourselves; the child we kill is our own.
+_docker_bounded() {   # $1 = seconds, rest = docker args; 124 on timeout
+    local secs="$1"; shift
+    docker "$@" &>/dev/null &
+    local dpid=$! waited=0
+    while kill -0 "$dpid" 2>/dev/null; do
+        if (( waited >= secs * 10 )); then
+            # A wedged Docker Desktop CLI ignores TERM (it needed -9 by hand on
+            # 09-02); escalate, or the `wait` below blocks exactly like the
+            # call we are guarding against.
+            kill "$dpid" 2>/dev/null; sleep 0.3
+            kill -0 "$dpid" 2>/dev/null && kill -9 "$dpid" 2>/dev/null
+            wait "$dpid" 2>/dev/null; return 124
+        fi
+        sleep 0.1; waited=$((waited + 1))
+    done
+    wait "$dpid"
+}
+# True when docker is usable here. Linux: unchanged (the CLI fails fast
+# without a daemon; rootless sockets live anywhere). Darwin: a bounded probe.
+_docker_daemon_present() {
+    command -v docker &>/dev/null || return 1
+    [[ "$(uname -s)" == "Darwin" ]] || return 0
+    _docker_bounded 8 info
 }
 
 stop_inference() {
@@ -1381,7 +1411,11 @@ stop_inference() {
     # stop never matches; left running it keeps serving the model file
     # even after a data-dir wipe. Container names are fixed in compose,
     # so stop by name instead of playing profile games.
-    if command -v docker &>/dev/null; then
+    # Docker Desktop's CLI BLOCKS waiting for its daemon socket when the
+    # daemon is not running — `wyrd stop` on a Mac with the CLI installed but
+    # Docker not started hung for minutes on this line (0.2.2 first-install
+    # test). Only talk to docker when a daemon socket exists.
+    if command -v docker &>/dev/null && _docker_daemon_present; then
         docker stop wyrdsekai-llama wyrdsekai-llama-voice 2>/dev/null || true
     fi
 }
@@ -1412,6 +1446,35 @@ is_running() {
 }
 
 # F8: detect macOS LaunchDaemon for split-brain checks.
+# The macOS .pkg installs a root LaunchDaemon (system/com.wyrdsekai.server)
+# that owns the server the way systemd owns it on Linux. wyrd start/status
+# must route through it — the 0.2.2 first-install test on a clean Mac showed
+# `wyrd start` failing to kill the root-owned port holder, then writing its
+# own org.wyrdsekai.server daemon beside it (two JVMs, one port), while
+# `wyrd status` reported "not running" against a server that answered.
+_LAUNCHD_PKG_LABEL="com.wyrdsekai.server"
+_LAUNCHD_PKG_PLIST="/Library/LaunchDaemons/com.wyrdsekai.server.plist"
+_launchd_pkg_managed() {
+    [[ "$(uname -s)" == "Darwin" && -f "$_LAUNCHD_PKG_PLIST" ]]
+}
+# PID of the running pkg daemon, empty when not running. `launchctl print`
+# on the system domain answers for a normal user on current macOS; fall back
+# to sudo where it does not.
+_launchd_pkg_pid() {
+    local out
+    out=$(launchctl print "system/$_LAUNCHD_PKG_LABEL" 2>/dev/null) \
+        || out=$(sudo -n launchctl print "system/$_LAUNCHD_PKG_LABEL" 2>/dev/null) || return 0
+    echo "$out" | awk '/^[[:space:]]*pid = /{print $3; exit}'
+}
+_launchd_pkg_wait_healthy() {   # $1 = tenths of a second to wait
+    local port="${PORT:-7070}" waited=0 limit="${1:-150}"
+    while [[ $waited -lt $limit ]]; do
+        curl -sf "http://localhost:$port/health" &>/dev/null && return 0
+        sleep 0.2; waited=$((waited + 1))
+    done
+    curl -sf "http://localhost:$port/health" &>/dev/null
+}
+
 is_launchd_managed() {
     [[ "$(uname -s)" == "Darwin" ]] || return 1
     command -v launchctl >/dev/null 2>&1 || return 1
@@ -1537,7 +1600,7 @@ _prompt_countdown() {
 # manual steps when it can't (no sudo / no apt / offline).
 _ensure_nvidia_container_runtime() {
     command -v nvidia-smi &>/dev/null || return 0
-    command -v docker &>/dev/null && docker info &>/dev/null 2>&1 || return 0
+    _docker_daemon_present && docker info &>/dev/null 2>&1 || return 0
     # Already wired — Docker reports an nvidia runtime.
     docker info 2>/dev/null | grep -qi nvidia && return 0
 
@@ -2024,6 +2087,12 @@ if cands:
     # Downloaded via a .part temp so an interrupted pull (ctrl-C mid-setup)
     # never leaves a truncated GGUF that a re-run mistakes for complete.
     local companion_model="$MODELS_DIR/wyrdsekai-3.5-4b-v10-q4km.gguf"
+    # What MODEL_PATH will name. On a dual-model host this MUST be the DRIVE
+    # model: writing the 4B here made the server's "already served" redirect
+    # point the priority-5 drive slot at the VOICE port, and the household
+    # node ran both backends on the 4B for five weeks (2026-07-30 → 09-02)
+    # while the 9B on :8200 served nothing.
+    local drive_model_path="$companion_model"
     if [[ ! -f "$companion_model" ]]; then
         log "$(_t setup.models.companion_downloading)"
         if _model_fetch companion-4b "$companion_model.part" \
@@ -2064,7 +2133,12 @@ if cands:
         else
             log "$(_t setup.models.drive_present)"
         fi
+        [[ -f "$drive_model" ]] && drive_model_path="$drive_model"
     fi
+    # Every tier with a separate drive server names ITS drive model here
+    # (8gb-companion runs the granite drive on :8200; cpu-only has one model).
+    local tier_drive_file="$MODELS_DIR/$(tier_drive_model "$(recommend_tier)")"
+    [[ -f "$tier_drive_file" ]] && drive_model_path="$tier_drive_file"
 
     # pull the MLX voice base on Darwin
     # when the mlx-venv is present (the .pkg postinstall bootstrap landed
@@ -2163,7 +2237,7 @@ except Exception as e:
         # "already running" and skipped its canonical-name resolution. A
         # fresh install ended up serving the wrong file (or FNF-looping
         # without a zoo). start_inference below is the single launch path.
-        if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        if _docker_daemon_present && docker info &>/dev/null 2>&1; then
             # Ensure Docker can actually reach the GPU before we rely on the
             # CUDA llama-server container (else it fails → node comes up mute).
             _ensure_nvidia_container_runtime
@@ -2179,7 +2253,7 @@ except Exception as e:
         #      should delegate to a neighbor via HTTP or via NATS relay.
         if [[ -x /opt/wyrdsekai/bin/llama-server ]]; then
             log "$(_t setup.inference.bundled_found)"
-        elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        elif _docker_daemon_present && docker info &>/dev/null 2>&1; then
             log "$(_t setup.inference.docker_cpu_starting)"
         else
             warn "$(_t setup.inference.no_backend_1)"
@@ -2194,7 +2268,7 @@ except Exception as e:
     echo ""
     info "$(_t setup.container.header)"
     local container_cmd=""
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    if _docker_daemon_present && docker info &>/dev/null 2>&1; then
         container_cmd="docker"
         log "$(_t setup.container.docker "$(docker --version | head -1)")"
     elif command -v podman &>/dev/null; then
@@ -2291,7 +2365,11 @@ except Exception as e:
     # written mode=cloud into the conf before setup runs — honor it.
     echo ""
     info "$(_t setup.start_inference)"
-    maybe_start_inference "$companion_model"
+    # The DRIVE model, not the companion/voice one. Passing $companion_model
+    # here started :8200 with the 4B on a 16GB Mac that had just downloaded
+    # the 9B (first-install test, 2026-09-02) — the same disease as the
+    # Linux MODEL_PATH redirect, on a different branch.
+    maybe_start_inference "$drive_model_path"
 
     # ── Generate env config ──
     if [[ ! -f "$ENV_FILE" ]]; then
@@ -2316,6 +2394,12 @@ except Exception as e:
         local voice_env_lines=""
         if [[ "$(recommend_tier)" != "cpu-only" ]]; then
             voice_env_lines=$'WYRDSEKAI_VOICE_ENABLED=true\nWYRDSEKAI_VOICE_URL=http://127.0.0.1:8201'
+        fi
+        # The drive server's URL, explicit, on dual-model hosts — so the server
+        # never has to guess which of :8200/:8201 is the drive.
+        local drive_env_lines=""
+        if [[ "$(recommend_tier)" != "cpu-only" ]]; then
+            drive_env_lines='WYRDSEKAI_LLAMA_URL=http://127.0.0.1:8200'
         fi
 
         # Household inference auto-share: a node with a
@@ -2348,7 +2432,8 @@ except Exception as e:
 
 # Inference — llama-server is the default backend
 WYRDSEKAI_LLAMA_ENABLED=true
-WYRDSEKAI_MODEL_PATH=$companion_model
+WYRDSEKAI_MODEL_PATH=$drive_model_path
+${drive_env_lines}
 WYRDSEKAI_INFERENCE_TIMEOUT=300
 WYRDSEKAI_INFERENCE_CONCURRENCY=1
 ${voice_env_lines}
@@ -2618,6 +2703,21 @@ ENVEOF
         echo ""
     fi
 
+    # macOS .pkg: the LaunchDaemon booted at install time, before any model
+    # existed, and CapabilityRegistry detects capabilities ONCE at boot — on
+    # the 0.2.2 first-install test it saw [default] from two empty backends
+    # and sent every request (quick, reasoning, full) to :8200 while the voice
+    # server idled. Restart it now that both servers are up.
+    if _launchd_pkg_managed && [[ -n "$(_launchd_pkg_pid)" ]]; then
+        log "$(_t setup.launchd.restarting)"
+        if sudo launchctl kickstart -k "system/$_LAUNCHD_PKG_LABEL" 2>/dev/null \
+                && _launchd_pkg_wait_healthy 450; then
+            log "$(_t setup.launchd.restarted "$(_launchd_pkg_pid)")"
+        else
+            warn "$(_t setup.launchd.restart_failed)"
+        fi
+    fi
+
     # Setup used to end here with a printed "wyrd start" suggestion most
     # stewards have to be told about — ask instead, with the usual timed
     # default. Default Y: the natural next act after setup IS starting.
@@ -2699,7 +2799,7 @@ do_setup_openhands() {
     # Docker → Podman fallback chain (mirrors the search/NATS sections in
     # do_setup so behaviour is consistent across subcommands).
     local container_cmd=""
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    if _docker_daemon_present && docker info &>/dev/null 2>&1; then
         container_cmd="docker"
     elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
         container_cmd="podman"
@@ -2861,7 +2961,7 @@ do_setup_openclaw() {
     fi
 
     local container_cmd=""
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    if _docker_daemon_present && docker info &>/dev/null 2>&1; then
         container_cmd="docker"
     elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
         container_cmd="podman"
@@ -3294,6 +3394,35 @@ do_start() {
         fi
     fi
 
+    # macOS .pkg: route through the LaunchDaemon (see _launchd_pkg_managed).
+    if _launchd_pkg_managed; then
+        local _ld_pid; _ld_pid=$(_launchd_pkg_pid)
+        if [[ -n "$_ld_pid" ]]; then
+            echo "$(_t start.launchd.already_running "$_ld_pid")"
+            ensure_inference
+            return 1
+        fi
+        _bootstrap_companion_names
+        log "$(_t start.launchd.starting)"
+        sudo launchctl enable "system/$_LAUNCHD_PKG_LABEL" 2>/dev/null || true
+        sudo launchctl bootstrap system "$_LAUNCHD_PKG_PLIST" 2>/dev/null || true
+        if sudo launchctl kickstart "system/$_LAUNCHD_PKG_LABEL" 2>/dev/null; then
+            sleep 2
+            _ld_pid=$(_launchd_pkg_pid)
+            [[ -n "$_ld_pid" ]] && echo "$_ld_pid" > "$PID_FILE"
+            log "$(_t start.launchd.started "${_ld_pid:-?}")"
+            ensure_inference
+            if _launchd_pkg_wait_healthy 150; then
+                _bootstrap_steward_invite
+            else
+                warn "$(_t start.started_not_responding "${_ld_pid:-?}" "${PORT:-7070}")"
+            fi
+            return 0
+        fi
+        err "$(_t start.launchd.start_failed)"
+        return 1
+    fi
+
     if is_running; then
         echo "$(_t start.already_running "$(<"$PID_FILE")")"
         # Server up, but inference is separate — self-heal it if it died under a
@@ -3361,7 +3490,7 @@ do_start() {
     fi
 
     # Ensure Docker services (Searxng, NATS) are running
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    if _docker_daemon_present && docker info &>/dev/null 2>&1; then
         local compose_file=""
         for f in "$PROJECT_ROOT/docker-compose.yml" "$PROJECT_ROOT/docker/docker-compose.yml"; do
             if [[ -f "$f" ]]; then compose_file="$f"; break; fi
@@ -3698,7 +3827,20 @@ do_stop() {
 
 # ── Status ──
 do_status() {
-    if is_running; then
+    local _ld_pid=""
+    _launchd_pkg_managed && _ld_pid=$(_launchd_pkg_pid)
+    local _sd_pid=""
+    if is_systemd_managed && systemctl is-active wyrdsekai.service >/dev/null 2>&1; then
+        _sd_pid=$(systemctl show wyrdsekai.service -p MainPID --value 2>/dev/null)
+    fi
+    if [[ -n "$_ld_pid" ]]; then
+        log "$(_t status.server.running_launchd "$_ld_pid")"
+    elif [[ -n "$_sd_pid" && "$_sd_pid" != "0" ]]; then
+        # systemd owns the process; the pid file is only written by `wyrd start`
+        # and is empty/stale after a .deb upgrade or a reboot — status used to
+        # call the live service an "orphan" (second-node, 0.2.2 update).
+        log "$(_t status.server.running_systemd "$_sd_pid")"
+    elif is_running; then
         log "$(_t status.server.running "$(<"$PID_FILE")")"
     else
         local orphans; orphans=$(find_server_pids)
@@ -3725,7 +3867,7 @@ do_status() {
     done
 
     # Docker
-    if command -v docker &>/dev/null; then
+    if command -v docker &>/dev/null && _docker_daemon_present; then
         docker compose ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null || true
     fi
 }
@@ -4593,7 +4735,7 @@ do_uninstall() {
     # container would keep serving deleted model files.
     stop_oracle 2>/dev/null || true
     stop_web_terminal 2>/dev/null || true
-    if command -v docker &>/dev/null; then
+    if command -v docker &>/dev/null && _docker_daemon_present; then
         docker rm -f wyrdsekai-llama wyrdsekai-llama-voice wyrdsekai-searxng \
                      wyrdsekai-nats wyrdsekai-oracle 2>/dev/null || true
     fi
@@ -4682,7 +4824,7 @@ do_uninstall() {
             log "$(_t uninstall.data_removed "${DATA_DIR}")"
         fi
         # Named compose volumes (searxng/oracle) are data too
-        if command -v docker &>/dev/null; then
+        if command -v docker &>/dev/null && _docker_daemon_present; then
             docker volume ls -q 2>/dev/null | grep -E 'searxng-data|oracle-data' \
                 | xargs -r docker volume rm 2>/dev/null || true
         fi
@@ -10191,6 +10333,27 @@ else:
             [[ $rc -eq 2 ]] && return 1
             [[ $rc -ne 0 ]] && echo "$resp"
             ;;
+        tiers)
+            # The autonomy ladder, verb by verb — pure policy read, no server,
+            # no database (same server-classpath shape as do_cred, minus sudo).
+            local SERVER_LIB
+            if [[ "$MODE" == "source" ]]; then
+                if [[ ! -d "$PROJECT_ROOT/server/build/install/server" ]]; then
+                    log "$(_t common.building_server)"
+                    (cd "$PROJECT_ROOT" && "$GRADLE" :server:installDist -q) \
+                        || { err "$(_t common.build_failed)"; return 1; }
+                fi
+                SERVER_LIB="$PROJECT_ROOT/server/build/install/server/lib"
+            else
+                SERVER_LIB="$REAL_BIN/../lib/server"
+                [[ ! -d "$SERVER_LIB" ]] && SERVER_LIB="$REAL_BIN/../lib"
+            fi
+            [[ -d "$SERVER_LIB" ]] || { err "$(_t common.server_libs_missing_hint "$SERVER_LIB")"; return 1; }
+            find_java || { err "$(_t common.java_missing)"; return 1; }
+            local CP
+            CP=$(echo "$SERVER_LIB"/*.jar | tr ' ' ':')
+            "$JAVA_CMD" -cp "$CP" org.wyrdsekai.server.ActionTiersMain "$@"
+            ;;
         help|-h|--help|"")
             echo "$(_t grants.help.usage_header)"
             echo "$(_t grants.help.cmd_list)"
@@ -10200,6 +10363,7 @@ else:
             echo "$(_t grants.help.cmd_issue)"
             echo "$(_t grants.help.cmd_revoke)"
             echo "$(_t grants.help.cmd_check)"
+            echo "$(_t grants.help.cmd_tiers)"
             echo ""
             echo "$(_t grants.help.did_note)"
             ;;
@@ -11335,7 +11499,7 @@ EOF
                 err "$(_t inference.voice_restart.needs_docker)"
                 return 1
             fi
-            if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+            if ! _docker_daemon_present || ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
                 warn "$(_t inference.voice_restart.container_missing "$container")"
                 docker start "$container" 2>/dev/null && log "$(_t inference.voice_restart.container_started "$container")" || {
                     err "$(_t inference.voice_restart.container_not_found "$container")"
@@ -11418,34 +11582,34 @@ do_sleepwrite() {
     case "${1:-status}" in
         status)
             if [[ -f "$sw_dir/last-result.json" ]]; then
-                log "last write:"; sed 's/^/    /' "$sw_dir/last-result.json"
+                log "$(_t sleepwrite.status.last_write)"; sed 's/^/    /' "$sw_dir/last-result.json"
             else
-                log "no write has run yet"
+                log "$(_t sleepwrite.status.no_write)"
             fi
             if [[ -f "$sw_dir/current.gguf" ]]; then
-                log "staged adapter: current.gguf"
+                log "$(_t sleepwrite.status.staged)"
             else
-                log "no adapter staged — voice serves the base weights"
+                log "$(_t sleepwrite.status.none_staged)"
             fi
             if docker inspect wyrdsekai-llama-voice --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^LLAMA_VOICE_ADAPTER=..*'; then
-                log "voice container: adapter ACTIVE"
+                log "$(_t sleepwrite.status.voice_active)"
             else
-                log "voice container: serving base (adapter applies on 'wyrd sleepwrite apply' or next restart)"
+                log "$(_t sleepwrite.status.voice_base)"
             fi
             if [[ -f "$sw_dir/guard-last.json" ]]; then
-                log "morning guard:"; sed 's/^/    /' "$sw_dir/guard-last.json"
+                log "$(_t sleepwrite.status.guard)"; sed 's/^/    /' "$sw_dir/guard-last.json"
             fi
             ;;
         run-once)
             local py="python3"
             [[ -n "$venv" && -x "$venv/bin/python" ]] && py="$venv/bin/python"
-            log "running the night's write now ($py)..."
+            log "$(_t sleepwrite.run_once "$py")"
             WYRDSEKAI_DATA_DIR="$DATA_DIR" "$py" \
                 "${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/sleep_write.py"
             ;;
         apply)
             if [[ ! -f "$sw_dir/current.gguf" ]]; then
-                err "nothing staged at $sw_dir/current.gguf"; return 1
+                err "$(_t sleepwrite.apply.nothing_staged "$sw_dir/current.gguf")"; return 1
             fi
             # --if-idle: the auto-apply path the sleep hook takes. She may
             # already be awake and mid-sentence by the time the write stages;
@@ -11457,17 +11621,17 @@ do_sleepwrite() {
                     busy=$(curl -sf --max-time 3 "http://127.0.0.1:${LLAMA_VOICE_PORT:-8201}/metrics" 2>/dev/null \
                         | grep -E '^llamacpp:requests_processing' | awk '{print $2}' || true)
                     if [[ -n "$busy" && "$busy" != "0" ]]; then
-                        log "voice is mid-reply — leaving the adapter staged; it applies at the next restart"
+                        log "$(_t sleepwrite.apply.busy)"
                         return 0
                     fi
                     sleep 5
                 done
             fi
-            log "restarting voice with the staged adapter..."
+            log "$(_t sleepwrite.apply.restarting)"
             ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
               export WYRDSEKAI_DATA="$DATA_DIR" LLAMA_VOICE_ADAPTER="sleepwrite/current.gguf"
               docker compose --profile voice up -d --force-recreate llama-voice )
-            log "applied — the night is in her voice now"
+            log "$(_t sleepwrite.apply.applied)"
             # Morning-after behavioral guard (§11.3). The training gates are
             # NLL-only and cannot see a write that changed how she BEHAVES.
             # Probe the served stack base-vs-night (same server, LoRA scale
@@ -11478,7 +11642,7 @@ do_sleepwrite() {
             # is not evidence of harm.
             if [[ "${WYRDSEKAI_SLEEP_GUARD:-true}" != "false" ]]; then
                 local probe="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/morning_probe.py"
-                log "morning guard: waiting for the voice to come up..."
+                log "$(_t sleepwrite.guard.waiting)"
                 local healthy=""
                 for _ in $(seq 1 40); do
                     if curl -sf -o /dev/null --max-time 3 \
@@ -11488,7 +11652,7 @@ do_sleepwrite() {
                     sleep 3
                 done
                 if [[ -z "$healthy" ]]; then
-                    warn "morning guard: voice did not become healthy in 120s — guard skipped, adapter stays"
+                    warn "$(_t sleepwrite.guard.unhealthy)"
                     return 0
                 fi
                 local grc=0
@@ -11496,20 +11660,20 @@ do_sleepwrite() {
                     --out "$sw_dir/guard-last.json" \
                     --history "$sw_dir/guard-history.jsonl" || grc=$?
                 if [[ "$grc" -eq 2 ]]; then
-                    warn "morning guard: the night's write changed her behavior — holding it back"
+                    warn "$(_t sleepwrite.guard.failed)"
                     mkdir -p "$sw_dir/rejected"
                     mv "$sw_dir/current.gguf" \
                         "$sw_dir/rejected/rejected-$(date +%Y%m%d-%H%M%S).gguf"
-                    log "adapter quarantined in $sw_dir/rejected — restarting voice on base weights..."
+                    log "$(_t sleepwrite.guard.quarantined "$sw_dir/rejected")"
                     ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
                       export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
                       docker compose --profile voice up -d --force-recreate llama-voice )
-                    log "voice is back on base — verdict details in $sw_dir/guard-last.json"
+                    log "$(_t sleepwrite.guard.back_on_base "$sw_dir/guard-last.json")"
                     return 0
                 elif [[ "$grc" -eq 0 ]]; then
-                    log "morning guard: PASSED — the night behaves like her"
+                    log "$(_t sleepwrite.guard.passed)"
                 else
-                    warn "morning guard: could not measure (rc=$grc) — adapter stays; see guard-last.json"
+                    warn "$(_t sleepwrite.guard.unmeasured "$grc")"
                 fi
             fi
             ;;
@@ -11523,11 +11687,11 @@ do_sleepwrite() {
             ;;
         rollback)
             rm -f "$sw_dir/current.gguf"
-            log "adapter removed — restarting voice on base weights..."
+            log "$(_t sleepwrite.rollback.removed)"
             ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
               export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
               docker compose --profile voice up -d --force-recreate llama-voice )
-            log "rolled back — base voice restored (past adapters kept in $sw_dir)"
+            log "$(_t sleepwrite.rollback.done "$sw_dir")"
             ;;
         setup)
             # Provision the training side: venv (torch + transformers + peft
@@ -11536,32 +11700,68 @@ do_sleepwrite() {
             # this cannot fetch — it says so plainly instead of guessing.
             local sw_venv="${venv:-$DATA_DIR/sleepwrite-venv}"
             if [[ ! -x "$sw_venv/bin/python" ]]; then
-                log "creating training venv at $sw_venv (torch is large; this takes a while)..."
-                python3 -m venv "$sw_venv" || { err "python3 -m venv failed"; return 1; }
+                log "$(_t sleepwrite.setup.creating_venv "$sw_venv")"
+                python3 -m venv "$sw_venv" || { err "$(_t sleepwrite.setup.venv_failed)"; return 1; }
                 "$sw_venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cu130 \
                     || "$sw_venv/bin/pip" install -q torch
                 "$sw_venv/bin/pip" install -q "transformers==5.8.1" peft bitsandbytes accelerate gguf sentencepiece
             else
-                log "venv present: $sw_venv"
+                log "$(_t sleepwrite.setup.venv_present "$sw_venv")"
             fi
             if [[ ! -f "$DATA_DIR/sleepwrite/llama.cpp/convert_lora_to_gguf.py" ]]; then
-                log "fetching GGUF converter (shallow llama.cpp clone)..."
+                log "$(_t sleepwrite.setup.fetching_converter)"
                 mkdir -p "$DATA_DIR/sleepwrite"
                 git clone -q --depth 1 https://github.com/ggml-org/llama.cpp "$DATA_DIR/sleepwrite/llama.cpp" \
-                    || { err "llama.cpp clone failed"; return 1; }
+                    || { err "$(_t sleepwrite.setup.clone_failed)"; return 1; }
             else
-                log "converter present"
+                log "$(_t sleepwrite.setup.converter_present)"
             fi
             if [[ ! -f "$DATA_DIR/models/sleepwrite-base/config.json" ]]; then
-                warn "base model missing: $DATA_DIR/models/sleepwrite-base needs the companion's"
-                warn "HF export (the merged voice-model checkpoint). Copy it there, then set"
-                warn "WYRDSEKAI_SLEEP_WRITE=true and WYRDSEKAI_SLEEP_WRITE_VENV=$sw_venv in the conf."
+                warn "$(_t sleepwrite.setup.base_missing "$DATA_DIR" "$sw_venv")"
             else
-                log "base model present — set WYRDSEKAI_SLEEP_WRITE=true (+_VENV=$sw_venv) in the conf to arm"
+                log "$(_t sleepwrite.setup.base_present "$sw_venv")"
             fi
             ;;
-        *) err "usage: wyrd sleepwrite [status|run-once|apply [--if-idle]|guard|rollback|setup]"; return 1 ;;
+        *) err "$(_t sleepwrite.usage)"; return 1 ;;
     esac
+}
+
+# ── steward feed ──────────────────────────────────────────────────────────
+# What a companion did on her OWN time above the AMBIENT rung — the record
+# ActionPolicy's VISIBLE tier always promised. JSONL written by StewardFeed;
+# path = WYRDSEKAI_STEWARD_FEED_LOG or $DATA_DIR/steward-feed.jsonl.
+do_feed() {
+    local n=20 raw=0 path=""
+    path="${WYRDSEKAI_STEWARD_FEED_LOG:-}"
+    if [[ -z "$path" && -f "$CONFIG_FILE" ]]; then
+        path=$(grep -E '^WYRDSEKAI_STEWARD_FEED_LOG=' "$CONFIG_FILE" | tail -1 | cut -d= -f2- || true)
+    fi
+    [[ -z "$path" ]] && path="$DATA_DIR/steward-feed.jsonl"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tail) n="${2:-20}"; shift 2 || break ;;
+            --json) raw=1; shift ;;
+            --path) echo "$path"; return 0 ;;
+            help|-h|--help) echo "$(_t feed.usage)"; return 0 ;;
+            *) shift ;;
+        esac
+    done
+    if [[ ! -f "$path" ]]; then
+        log "$(_t feed.none_yet "$path")"
+        return 0
+    fi
+    if [[ "$raw" == 1 ]]; then tail -n "$n" "$path"; return 0; fi
+    tail -n "$n" "$path" | python3 -c '
+import json, sys
+for line in sys.stdin:
+    try: d = json.loads(line)
+    except Exception: continue
+    who = d.get("companion") or "?"
+    if d.get("viaBunshin"): who += " (bunshin)"
+    tail = (" — " + d["target"]) if d.get("target") else ""
+    out = (" -> " + d["outcome"]) if d.get("outcome") else ""
+    print(f"{d.get(\"ts\",\"\")[:19]}  {who:<14} {d.get(\"verb\",\"\"):<28} [{d.get(\"tier\",\"\")}]{tail}{out}")
+'
 }
 
 do_voice() {
@@ -11617,7 +11817,7 @@ do_voice() {
             else
                 echo -e "  Base:     ${RED}missing${NC} ($voice_model_file)"
             fi
-            if command -v docker &>/dev/null; then
+            if command -v docker &>/dev/null && _docker_daemon_present; then
                 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${voice_container}$"; then
                     echo -e "  Container: ${GREEN}running${NC} ($voice_container)"
                     local port="${LLAMA_VOICE_PORT:-8201}"
@@ -11728,7 +11928,7 @@ do_voice() {
                 [[ $found -eq 0 ]] && log "$(_t voice.disable.not_running)"
                 return 0
             fi
-            if command -v docker &>/dev/null; then
+            if command -v docker &>/dev/null && _docker_daemon_present; then
                 docker stop "$voice_container" 2>/dev/null && log "$(_t voice.disable.stopped_container "$voice_container")" \
                     || log "$(_t voice.disable.not_running)"
             fi
@@ -12144,6 +12344,7 @@ case "${1:-help}" in
     coding)     do_coding "${@:2}" ;;
     voice)      do_voice "${@:2}" ;;
     sleepwrite) do_sleepwrite "${@:2}" ;;
+    feed)       do_feed "${@:2}" ;;
     invite)     do_invite "${@:2}" ;;
     key)        do_key "${@:2}" ;;
     cred)       do_cred "${@:2}" ;;
@@ -12239,6 +12440,7 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.blocks)"
         echo "$(_t usage.cmd.safety)"
         echo "$(_t usage.cmd.grants)"
+        echo "$(_t usage.cmd.feed)"
         echo "$(_t usage.cmd.home)"
         echo "$(_t usage.cmd.skill)"
         echo "$(_t usage.cmd.wards)"

@@ -64,6 +64,32 @@ class TheMapLearnsANewRoomTest {
     }
 
     @Test
+    @DisplayName("a foundation room recovered BEFORE the seeds keeps its learned exits after them")
+    void recoveredExitsSurviveTheSeeds() {
+        // Boot order on the household node: rooms recover from the DB and announce
+        // themselves BEFORE Main builds the seeded topology. The Nexus comes back
+        // with its seeded exits plus every exit a person or companion ever added.
+        // "Seeds win on conflict" replaced all of that with the seed's canonical
+        // list, so each made room became a node with no way in — walkable, and
+        // absent from `map` on every boot after the one that made it (2026-09-01:
+        // "multiple exits in the Nexus that are not on the map").
+        ZoneTopology.resetForTests();
+        ZoneTopology.learnRoom("nexus", "The Nexus", "hearth", List.of(
+            new Exit("north", "terminal", "The Terminal"),
+            new Exit("to-greenhouse-2063", "greenhouse-2063", "Greenhouse")), null, null);
+        ZoneTopology.learnRoom("greenhouse-2063", "Greenhouse", "player-created",
+            List.of(new Exit("out", "nexus", "The Nexus")), null, null);
+        seedFoundation();   // Main's setShared(build(seeds)) arrives last
+        var nexus = ZoneTopology.getShared().rooms().get("nexus");
+        assertThat(nexus.exits()).as("seeded exit kept, canonical and first")
+            .first().extracting(Exit::targetRoom).isEqualTo("terminal");
+        assertThat(nexus.exits()).as("the recovered exit survives the seeds")
+            .anyMatch(e -> "greenhouse-2063".equals(e.targetRoom()));
+        assertThat(ZoneTopology.getShared().renderTextMap("nexus", 2, java.util.Set.of("greenhouse-2063")))
+            .as("and the map can draw the way there").contains("Greenhouse");
+    }
+
+    @Test
     @DisplayName("learning the same exit twice does not duplicate it")
     void learningIsIdempotent() {
         ZoneTopology.learnExit("nexus", "east", "terminal", "The Terminal");

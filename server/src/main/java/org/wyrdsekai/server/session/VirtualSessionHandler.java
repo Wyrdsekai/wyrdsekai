@@ -153,7 +153,10 @@ public final class VirtualSessionHandler {
         // subscriptions (open / close / notify) on the relay transport so
         // this works identically regardless of local-vs-relay topology.
         if (relayTransport == null || !relayTransport.isConnected()) {
-            log.error("Cannot start VirtualSessionHandler — relay transport not wired");
+            // Expected on every standalone node: no relay configured means no
+            // cross-zone sessions, not a fault. It was the only ERROR in the
+            // logs of three clean 0.2.2 installs — a red line for nothing.
+            log.info("Cross-zone sessions off — no relay transport configured");
             return;
         }
 

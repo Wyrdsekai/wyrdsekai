@@ -29,7 +29,7 @@ class BunshinToolSurfaceTest {
     private static final Set<String> EXCLUDED = Set.of(
         "dispatch_bunshin", "delegate", "voluntary_sleep",
         "emergency_call", "go_to_bondholder",
-        "craft_from_template", "codex_action", "configure_channel");
+        "craft_from_template", "create_room_from_template", "codex_action", "configure_channel");
 
     /** Mirrors CompanionActor.BUNSHIN_HUMAN_DIRECTED_VERBS. */
     private static final Set<String> HUMAN_DIRECTED = Set.of("create_room");
@@ -53,11 +53,16 @@ class BunshinToolSurfaceTest {
     }
 
     @Test
-    @DisplayName("on her own time it cannot — FORBIDDEN means never unprompted")
-    void autonomousSurfaceExcludesCreateRoom() {
-        assertFalse(surface(false).contains("create_room"),
-            "create_room is FORBIDDEN tier: reshaping the household's world "
-            + "unprompted needs a person to have asked.");
+    @DisplayName("on her own time create_room asks — CONSENT, not FORBIDDEN (2026-09-01)")
+    void autonomousSurfaceOffersCreateRoomUnderConsent() {
+        // Room-making came off FORBIDDEN: a room is neither irrevocable nor
+        // identity-altering. Raw create_room asks (CONSENT); the templated verb is
+        // VISIBLE. The surface may offer it; the gate does the asking.
+        assertEquals(ActionPolicy.AutonomyTier.CONSENT,
+            ActionPolicy.autonomyTierFor("create_room"));
+        assertEquals(ActionPolicy.AutonomyTier.VISIBLE,
+            ActionPolicy.autonomyTierFor("create_room_from_template"));
+        assertTrue(surface(false).contains("create_room"));
     }
 
     @Test
@@ -74,12 +79,14 @@ class BunshinToolSurfaceTest {
                 + "bunshin picks its own verb, so a blanket bypass would be a "
                 + "confused deputy.");
         }
-        // The bypass adds exactly one verb, nothing more.
+        // The bypass adds nothing beyond its allowlist (and since create_room is
+        // CONSENT rather than FORBIDDEN, it is already on the autonomous surface —
+        // the bypass is now vacuous for it, and must still admit nothing else).
         var added = new TreeSet<>(granted);
         added.removeAll(surface(false));
-        assertEquals(HUMAN_DIRECTED, added,
-            "the human-directed surface should differ from the autonomous one by "
-            + "exactly BUNSHIN_HUMAN_DIRECTED_VERBS");
+        assertTrue(HUMAN_DIRECTED.containsAll(added),
+            "the human-directed surface may only differ from the autonomous one by "
+            + "verbs in BUNSHIN_HUMAN_DIRECTED_VERBS, got " + added);
     }
 
     @Test

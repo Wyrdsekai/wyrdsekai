@@ -100,8 +100,15 @@ public final class SleepWeightWrite {
             proc.destroyForcibly();
             log.warn("Sleep weight-write for '{}' timed out after {} min — killed; "
                 + "nothing staged", agentName, TIMEOUT_MINUTES);
+            // The trainer pauses her voice container for the write window and
+            // its own finally resumes it — but destroyForcibly is SIGKILL and
+            // skips finally. Restore here so a killed write can never leave
+            // her voiceless. Idempotent: docker start on a running container
+            // is a no-op.
+            restoreVoice();
             return;
         }
+        restoreVoice();
         var summary = String.join(" | ", tail);
         switch (proc.exitValue()) {
             case 0 -> {
@@ -115,6 +122,25 @@ public final class SleepWeightWrite {
                 + "staged (adapter kept for autopsy). {}", agentName, summary);
             default -> log.warn("Sleep weight-write for '{}' failed (exit {}). {}",
                 agentName, proc.exitValue(), summary);
+        }
+    }
+
+    /**
+     * Best-effort voice-container restore after the write window (the trainer
+     * pauses it so the 4-bit load's transients don't ride a 20MB VRAM margin
+     * — measured 2026-09-01). The trainer's own finally is the primary
+     * restore; this is the belt for the paths that skip finally. Swallows
+     * everything: on boxes with no docker or no container it must be silent.
+     */
+    private static void restoreVoice() {
+        try {
+            var pb = new ProcessBuilder("docker", "start", "wyrdsekai-llama-voice");
+            pb.redirectErrorStream(true);
+            var p = pb.start();
+            p.getInputStream().readAllBytes();
+            p.waitFor(3, TimeUnit.MINUTES);
+        } catch (Exception ignored) {
+            // no docker here, or no container — nothing was paused
         }
     }
 

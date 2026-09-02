@@ -110,6 +110,18 @@ public final class BackendExecutableResolver {
         // directory over.
         bundleRoots.add("/opt/wyrdsekai/data");
         bundleRoots.add("/usr/local/wyrdsekai/data");
+        // The Windows .msi lands the same dist tree under
+        // C:\Program Files\Wyrdsekai\app, and its CLI exports that as
+        // WYRDSEKAI_HOME. Without this root the bundled codezaiku was found on
+        // Linux and macOS and silently absent on every Windows install
+        // (0.2.2 first-install test: preference chain [goose, pi]).
+        var installHome = System.getenv("WYRDSEKAI_HOME");
+        if (installHome == null || installHome.isBlank()) installHome = System.getProperty("wyrdsekai.home");
+        if (installHome != null && !installHome.isBlank()) bundleRoots.add(installHome + "/data");
+        if (WINDOWS) {
+            var pf = System.getenv("ProgramFiles");
+            if (pf != null && !pf.isBlank()) bundleRoots.add(pf + "\\Wyrdsekai\\app\\data");
+        }
 
         for (var base : bundleRoots) {
             if (base == null || base.isBlank()) continue;

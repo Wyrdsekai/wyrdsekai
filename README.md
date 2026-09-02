@@ -75,7 +75,18 @@ After setup completes, `wyrd setup` surfaces [FIRST_ENCOUNTER.md](docs/FIRST_ENC
 
 ## What ships
 
-**New in v0.2.1:**
+**New in v0.2.2:**
+
+- **The drive model is actually used.** A config-and-safeguard interaction
+  had been pointing both inference routes at the small voice model on
+  dual-model hosts; the resolver, the boot log and `wyrd setup` now all
+  refuse to let that happen, and existing installs self-correct on restart.
+- **The steward feed** — what a companion did unasked, in a log file and as a
+  note on your desk; `wyrd feed` reads it. **`wyrd grants tiers`** shows every
+  verb's autonomy rung. Companions can make rooms on their own time (you'll
+  see it on the feed), and the map draws every door after a restart.
+
+**v0.2.1:**
 
 - **Sleep learning** — while a companion sleeps, the day's conversations train
   a small adapter onto her voice model, gated hard: it only lands where her

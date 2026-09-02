@@ -52,9 +52,22 @@ internal static class NodeController
     public static bool NeedsOnboarding()
     {
         if (!Directory.Exists(DataDir)) return true;
-        var named = File.Exists(EnvFile)
-            && File.ReadAllText(EnvFile).Contains("WYRDSEKAI_COMPANION_NAME=", StringComparison.Ordinal);
+        // The wizard names her through `wyrd config set`, which writes
+        // wyrdsekai.conf — Windows never sources ~/.wyrdsekai/env. Checking only
+        // the env file re-ran onboarding on every tray start (0.2.2 review).
+        var named = HasCompanionName(EnvFile) || HasCompanionName(ConfFile);
         return !named;
+    }
+
+    private static bool HasCompanionName(string file)
+    {
+        try
+        {
+            return File.Exists(file)
+                && File.ReadAllText(file).Contains("WYRDSEKAI_COMPANION_NAME=", StringComparison.Ordinal);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     public static Task StartAsync() => RunWyrdAsync("start");

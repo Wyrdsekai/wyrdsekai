@@ -106,7 +106,7 @@ class BunshinVerbBatteryIntegrationTest {
     /** Mirrors CompanionActor.BUNSHIN_EXCLUDED. */
     private static final List<String> EXCLUDED = List.of(
         "dispatch_bunshin", "delegate", "voluntary_sleep", "emergency_call",
-        "go_to_bondholder", "craft_from_template", "codex_action", "configure_channel");
+        "go_to_bondholder", "craft_from_template", "create_room_from_template", "codex_action", "configure_channel");
 
     /** The surface under test — derived exactly as bunshinToolSurface does. */
     static Stream<String> surface() {
@@ -398,16 +398,17 @@ class BunshinVerbBatteryIntegrationTest {
     }
 
     @org.junit.jupiter.api.Test
-    @DisplayName("create_room is offered only when a person asked")
-    void createRoomIsOfferedOnlyWhenAsked() {
-        // The property the battery cannot test through TestDispatchBunshin. Both
-        // directions, so neither can pass vacuously.
+    @DisplayName("create_room asks on her own initiative — CONSENT, since 2026-09-01")
+    void createRoomAsksOnHerOwnInitiative() {
+        // Room-making came off FORBIDDEN (a room is neither irrevocable nor
+        // identity-altering). The verb may sit on the autonomous surface; the
+        // AutonomyGate asks before it runs. Zones are still never unprompted.
         assertThat(ActionPolicy.autonomyTierFor("create_room"))
-            .as("create_room must stay FORBIDDEN — never on her own initiative")
+            .isEqualTo(ActionPolicy.AutonomyTier.CONSENT);
+        assertThat(ActionPolicy.autonomyTierFor("create_zone"))
+            .as("create_zone must stay FORBIDDEN — never on her own initiative")
             .isEqualTo(ActionPolicy.AutonomyTier.FORBIDDEN);
-        assertThat(surface().toList())
-            .as("…and therefore absent from the autonomous surface this battery drives")
-            .doesNotContain("create_room");
+        assertThat(surface().toList()).doesNotContain("create_zone");
     }
 
     @org.junit.jupiter.api.Test

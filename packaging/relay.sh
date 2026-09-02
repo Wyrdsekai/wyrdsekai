@@ -497,7 +497,9 @@ mon = os.environ.get("NATS_MONITOR_URL", "http://127.0.0.1:8222").rstrip("/")
 try:
     with urllib.request.urlopen(mon + "/connz?auth=1", timeout=5) as r:
         d = json.loads(r.read().decode())
-    connected = {c.get("nkey") for c in d.get("connections", []) if c.get("nkey")}
+    # nkey-mode zones show under `nkey`; password-mode (operator-invite) zones
+    # under `authorized_user` — both are regs keys (same rule as the reaper).
+    connected = {c.get("nkey") or c.get("authorized_user") for c in d.get("connections", []) if c.get("nkey") or c.get("authorized_user")}
 except Exception:
     connected = None
 # surface the registration mode (relay-policy.json).

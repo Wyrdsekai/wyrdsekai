@@ -64,9 +64,15 @@ public final class ZoneTopology {
     public static synchronized void setShared(ZoneTopology topology) {
         if (topology != null && !PENDING.isEmpty()) {
             var map = new HashMap<>(topology.rooms);
-            // The seeds win on conflict — a foundation room's canonical exits are better
-            // than whatever a mid-recovery snapshot happened to hold.
-            PENDING.forEach(map::putIfAbsent);
+            // Seeds keep their canonical exits FIRST, but a recovered room's other
+            // exits are kept too. "Seeds win" used to mean the Nexus's 17 recovered
+            // exits were replaced by its 9 seeded ones, so every room a companion or
+            // person had ever made was a node with no way in — walkable, and off
+            // the map on every boot after the one that made it (household node,
+            // 2026-09-01: "multiple exits in the Nexus that are not on the map").
+            PENDING.forEach((id, recovered) -> map.merge(id, recovered,
+                (seed, rec) -> new RoomNode(seed.roomId(), seed.name(), seed.zone(),
+                    unionExits(seed.exits(), rec.exits()))));
             PENDING.clear();
             INSTANCE = new ZoneTopology(map);
             return;
@@ -91,6 +97,15 @@ public final class ZoneTopology {
      *
      * <p>No-op before {@link #setShared} — during boot the seeds carry everything.
      */
+    /** Canonical exits first, then any learned exit to a room not already reachable. */
+    static List<Exit> unionExits(List<Exit> canonical, List<Exit> learned) {
+        var out = new ArrayList<>(canonical);
+        for (var e : learned) {
+            if (out.stream().noneMatch(c -> c.targetRoom().equals(e.targetRoom()))) out.add(e);
+        }
+        return List.copyOf(out);
+    }
+
     public static synchronized void learnRoom(String roomId, String name, String zone,
             List<Exit> exits, String connectedFrom, String inboundDirection) {
         if (roomId == null || roomId.isBlank()) return;

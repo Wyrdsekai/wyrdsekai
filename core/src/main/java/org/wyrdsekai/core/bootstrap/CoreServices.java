@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.system.SystemPaths;
 import org.wyrdsekai.core.agent.ActivityLogger;
+import org.wyrdsekai.core.agent.StewardFeed;
 import org.wyrdsekai.core.agent.AgentCostTracker;
 import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.agent.CrossZonePeekService;
@@ -228,6 +229,7 @@ public final class CoreServices {
 
         // Observation & audit.
         ActivityLogger.init();
+        StewardFeed.init();   // the record VISIBLE always promised (2026-09-01)
         PersonalContextAggregator.init();
 
         // Governance & reputation.

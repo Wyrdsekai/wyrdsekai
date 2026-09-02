@@ -232,12 +232,21 @@ public record ActionPolicy(
         // world) are CONSENT, so installing code asks for the same explicit ok.
         Map.entry("add_script",           AutonomyTier.CONSENT),
 
+        // Room-making came off FORBIDDEN on 2026-09-01. The header below says
+        // "irrevocable / identity-altering" and a room is neither: it can be
+        // removed, and it alters the house, not her. The old rationale —
+        // "reshaping the household's world unprompted needs a person to have
+        // asked" — predates the play loop, whose whole thesis is that she
+        // shapes her world and the shaping is the learning. Measured before
+        // changing: on two consecutive days she chose create_room_from_template
+        // (ranked FIRST on her own-time menu) and the gate refused it after the
+        // fact. A template room is VISIBLE (it lands on the steward feed like
+        // dispatch_task); raw create_room asks (CONSENT) — untemplated authoring
+        // is a bigger brush. Zones stay FORBIDDEN.
+        Map.entry("create_room",          AutonomyTier.CONSENT),
+        Map.entry("create_room_from_template", AutonomyTier.VISIBLE),
+
         // ── FORBIDDEN — irrevocable / identity-altering ──────────────────
-        Map.entry("create_room",          AutonomyTier.FORBIDDEN),
-        // Same tier as the parsed verbs they mirror — reshaping the household's
-        // world unprompted needs a person to have asked, whichever tool name
-        // reaches it.
-        Map.entry("create_room_from_template", AutonomyTier.FORBIDDEN),
         Map.entry("create_zone",          AutonomyTier.FORBIDDEN),
         Map.entry("zone_command",         AutonomyTier.FORBIDDEN),
         Map.entry("release_bond",         AutonomyTier.FORBIDDEN),

@@ -232,6 +232,12 @@ public class CapabilityRegistry {
                 if (sizeB > 30) {
                     registry.register(new CapabilityEntry(
                         "reasoning", backend.name(), model, tier, backend.priority()));
+                    // "full" is the prompt assembler's name for the same tier
+                    // (AssembledPrompt.BACKEND_FULL). It was never registered, so
+                    // cap:full fell through to first-healthy-by-priority and only
+                    // reached the drive by luck of ordering (2026-09-02).
+                    registry.register(new CapabilityEntry(
+                        "full", backend.name(), model, tier, backend.priority()));
                 }
                 // "quick" catches small models — <=4B (covers our 4B voice model).
                 if (sizeB > 0 && sizeB <= 4) {
@@ -297,7 +303,10 @@ public class CapabilityRegistry {
                 registry.register(new CapabilityEntry(
                     "reasoning", largest.name(), largestModel,
                     inferTier(largest), largest.priority()));
-                log.info("Registered '{}' ({}) as fallback reasoning backend ({}B)",
+                registry.register(new CapabilityEntry(
+                    "full", largest.name(), largestModel,
+                    inferTier(largest), largest.priority()));
+                log.info("Registered '{}' ({}) as fallback reasoning/full backend ({}B)",
                     largest.name(), largestModel, largestSize);
             }
         }

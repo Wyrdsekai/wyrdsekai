@@ -2,7 +2,7 @@
 #
 #   irm https://wyrdsekai.org/install.ps1 | iex
 #
-# Downloads the 0.2.0 release artifact from GitHub, verifies it against the
+# Downloads the 0.2.2 release artifact from GitHub, verifies it against the
 # release's SHA256SUMS, and installs it. Nothing here is served from
 # wyrdsekai.org except this script - the installer and the checksums both come
 # from the same GitHub release, so this script cannot substitute a payload the
@@ -10,7 +10,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$Version = '0.2.0'
+$Version = '0.2.2'
 $Base    = "https://github.com/Wyrdsekai/wyrdsekai/releases/download/v$Version"
 $Art     = "Wyrdsekai-$Version.msi"
 

@@ -3831,11 +3831,27 @@ def _fetch_connection_counts() -> dict | None:
               "skipping this cycle (no reaping without liveness data)")
         return None
 
+    return _connection_keys_from_connz(data)
+
+
+def _connection_keys_from_connz(data: dict) -> dict:
+    """Map each connected identity to its concurrent-connection count.
+
+    NKey-mode households show up under `nkey` (their regs.json key IS the
+    pubkey). Legacy password-mode households — still the majority of real
+    installs, registered via /register — show up under `authorized_user`,
+    and THAT is their regs.json key (the household id doubles as the NATS
+    user). Counting only `nkey` made every password-mode zone look absent
+    forever: its last_seen was never stamped, and the reaper deleted it at
+    the end of its window WHILE ITS BRIDGE WAS CONNECTED (a household zone,
+    2026-08-24 — the relay regenerated its config without the user and the
+    live connection died with an Authorization Violation on reconnect).
+    """
     counts = {}
     for conn in data.get("connections", []):
-        nk = conn.get("nkey")
-        if nk:
-            counts[nk] = counts.get(nk, 0) + 1
+        key = conn.get("nkey") or conn.get("authorized_user")
+        if key:
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 

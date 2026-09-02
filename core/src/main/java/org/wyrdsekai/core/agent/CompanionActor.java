@@ -7546,6 +7546,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Build tool definitions from scope: inherent actions + equipped tool items + room objects.
         // Small set (5-15 tools), not 66. The agent sees what's in front of it.
         var allTools = buildScopedTools();
+        // Never offer on her own time what the gate will refuse on her own time.
+        // A FORBIDDEN-tier verb ranked first on this surface twice (create_room_
+        // from_template, 2026-08-31/09-01): she chose it, spent the turn, and was
+        // refused after the fact. Offer-then-refuse is a wasted turn and a false
+        // record; the bunshin surface already applies this rule.
+        allTools = allTools.stream()
+            .filter(t -> t.function() == null
+                || ActionPolicy.autonomyTierFor(t.function().name())
+                    != ActionPolicy.AutonomyTier.FORBIDDEN)
+            .toList();
 
         // A4 — shape_recipe is NOT an inherent
         // autonomous tool (ToolItemStarterKit.inherentActions omits it), so the
@@ -11131,6 +11141,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             pendingBunshinOutcomes.add(msg.success()
                 ? "the room '" + msg.roomName() + "' is real and the way in is open"
                 : "the room '" + msg.roomName() + "' has a problem: " + msg.error());
+            if (msg.success()) {
+                stewardFeed("room_created", "creation", msg.roomName(),
+                    "built — " + msg.newRoomId(), true);
+            }
             log.info("Bunshin async outcome held for report: {} success={}",
                 msg.roomName(), msg.success());
             return this;
@@ -11145,6 +11159,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 msg.roomName(), "room-created");
             log.info("Companion '{}' created room '{}' ({})",
                 profile.name(), msg.roomName(), msg.newRoomId());
+            if (!reactiveInference) {
+                stewardFeed("room_created", "creation", msg.roomName(),
+                    "built — " + msg.newRoomId(), false);
+            }
             // THE ROOM IS HALF THE JOB. A template furnishes a place and holds no
             // behaviour, so a request for a room that must DO something is not finished
             // when the room exists. Live 2026-08-22: the Weather Parlor was made, real and
@@ -14301,6 +14319,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // told it worked. BunshinSurfaceIsDispatchableTest enforces this.
         "craft_from_template", // an item-tool BUILTIN — no AgentAction record,
                                // so ActionParser can never produce it
+        "create_room_from_template", // same builtin family; became VISIBLE on
+                               // 2026-09-01 and would otherwise surface here
         "codex_action",        // no handler exists
         "configure_channel"    // no handler exists
     );
@@ -14398,6 +14418,49 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *
      * @return the denial to speak, or null when the call may proceed
      */
+    /**
+     * The steward feed (StewardFeed): record an autonomous act that passed the
+     * gate at any rung above AMBIENT — VISIBLE by tier, or CONSENT/FORBIDDEN by
+     * grant — and, for the making family, leave the steward a note on their
+     * Study desk by the same road an away-reach travels (persisted, pushed
+     * in-world, fanned out). "Lands on the steward feed" was a promise in a
+     * comment for months; verified 2026-09-01 that nothing keyed on VISIBLE.
+     * Called AFTER the gate, at dispatch; outcome handlers add what happened.
+     *
+     * @param domain  null → ActionPolicy's domain for the verb
+     * @param outcome null at dispatch; the result when the caller knows it
+     */
+    private void stewardFeed(String verb, String domain, String target, String outcome,
+                             boolean viaBunshin) {
+        var feed = StewardFeed.get();
+        if (feed == null || verb == null || verb.isBlank()) return;
+        var tier = ActionPolicy.autonomyTierFor(verb);
+        if (tier == ActionPolicy.AutonomyTier.AMBIENT) return;
+        var dom = domain != null ? domain : ActionPolicy.domainFor(verb);
+        var did = profile.did() != null ? profile.did() : profile.entityId();
+        feed.record(profile.name(), did, verb, dom, tier.name(), target, outcome, viaBunshin);
+        if (!feed.wantsDesk(dom)) return;
+        var steward = primaryBondholderDid();
+        if (steward == null) {
+            var grants = ActionGrants.get();
+            steward = grants != null ? grants.fallbackOwnerDid() : null;
+        }
+        if (steward == null) return;
+        var line = StewardFeed.describe(profile.name(), verb, target, outcome);
+        try {
+            if (luceneStore != null) {
+                new StudyService(luceneStore).addNote(steward, "[feed] " + line);
+            }
+            var notifService = NotificationService.get();
+            if (notifService != null) {
+                notifService.notify(steward, truncate(line, 140), "normal", profile.entityId());
+            }
+            fanOutExternal(line, "normal");
+        } catch (Exception e) {
+            log.debug("Steward desk note failed: {}", e.toString());
+        }
+    }
+
     private String builtinAutonomyDenial(String builtin) {
         // A LIVE LOOP OPENED FOR A PERSON IS REACTIVE regardless of what the
         // flag says right now: reactiveInference is one mutable field, and on
@@ -14540,6 +14603,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return this;
             }
         }
+        stewardFeed(name, null, ActionPolicy.describeAction(action), null, true);
 
         try {
             // The boolean is the whole point. This used to ignore the result and
@@ -16881,7 +16945,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  and a gap is in hand (and not in RepairMode). De-dup against existing live
      *  wants; {@link OrientationProjector} surfaces it in ON_OWN_TIME. */
     private void maybeSynthesizeGenerativeWant() {
-        if (wantStore == null) return;
+        // The store is built lazily by the first OODA tick. A companion who
+        // sleeps within a minute of a restart (dev6 rollout, 2026-09-01 21:00:
+        // restart 20:59, asleep 21:00) has no tick yet — and this returned in
+        // silence, as did the aspiration pass below. Resolve it here instead.
+        driveOODA();
+        if (wantStore == null) {
+            log.info("Generative want pass for '{}' skipped — no want store (no DID/DB)", profile.name());
+            return;
+        }
         if (generativitySuppressed()) return;
         var did = profile != null ? profile.did() : null;
         if (did == null || did.isBlank()) return;
@@ -16911,22 +16983,40 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  The only admissible source is language she produced; see the ethics rail
      *  on {@link AspirationWantSynthesizer}. */
     private void maybeSynthesizeAspirationWant() {
-        if (wantStore == null) return;
+        driveOODA();   // see maybeSynthesizeGenerativeWant — never skip in silence
+        if (wantStore == null) {
+            log.info("Aspiration scan for '{}' skipped — no want store (no DID/DB)", profile.name());
+            return;
+        }
         var did = profile != null ? profile.did() : null;
         if (did == null || did.isBlank()) return;
         var since = Instant.now().minus(Duration.ofHours(36));
         var utterances = new ArrayList<AspirationWantSynthesizer.Utterance>();
+        // The trail carries TWO identities for one companion: speak events are
+        // written under the legacy entity id ("companion-<name>") while other
+        // events carry the DID. Scanning by DID alone read 2 utterances out of
+        // a night holding hundreds of her speak lines (found 2026-09-01, by
+        // the scan's own count log) — her actual voice was invisible to the
+        // very seam built to listen to it. Read under both.
         try {
-            for (var ev : TickLogReader.defaultLocation().readNonTickEvents(did, since)) {
-                if (!("speak".equals(ev.type()) || "message".equals(ev.type())
-                        || "commitment".equals(ev.type()))) continue;
-                var t = ev.payload().get("text");
-                if (t != null && !t.isNull() && !t.asText().isBlank()) {
-                    utterances.add(new AspirationWantSynthesizer.Utterance(t.asText(), ev.ts()));
+            var reader = TickLogReader.defaultLocation();
+            var ids = new LinkedHashSet<String>();
+            ids.add(did);
+            if (profile.entityId() != null && !profile.entityId().isBlank()) {
+                ids.add(profile.entityId());
+            }
+            for (var id : ids) {
+                for (var ev : reader.readNonTickEvents(id, since)) {
+                    if (!("speak".equals(ev.type()) || "message".equals(ev.type())
+                            || "commitment".equals(ev.type()))) continue;
+                    var t = ev.payload().get("text");
+                    if (t != null && !t.isNull() && !t.asText().isBlank()) {
+                        utterances.add(new AspirationWantSynthesizer.Utterance(t.asText(), ev.ts()));
+                    }
                 }
             }
         } catch (Exception e) {
-            log.debug("Aspiration scan of the trail failed: {}", e.toString());
+            log.warn("Aspiration scan of the trail failed for '{}': {}", profile.name(), e.toString());
         }
         try {
             for (var e : getHearthJournal().recent(50)) {
@@ -16938,7 +17028,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         } catch (Exception e) {
             log.debug("Aspiration scan of the hearth journal failed: {}", e.toString());
         }
-        if (utterances.isEmpty()) return;
+        if (utterances.isEmpty()) {
+            // Say so. A quiet pass and a pass that never ran looked identical
+            // for a night (2026-09-02) — the denominator is the evidence.
+            log.info("Aspiration scan for '{}': 0 utterances in window — nothing to read",
+                profile.name());
+            return;
+        }
         List<Want> live = List.of();
         try {
             live = wantStore.loadLive(did);
@@ -23207,6 +23303,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return handled;
             }
 
+            // The gate the DOCUMENTED authoring path never had. See
+            // builtinAutonomyDenial — kept out of line because this method is
+            // already long and UserRequestReachesTheToolTest reads a fixed
+            // window of it. It runs BEFORE the enacted line below: a refused
+            // act used to be recorded as enacted, and the trail said she built
+            // two rooms she was never allowed to build (2026-08-31, 09-01).
+            var authoringDenial = builtinAutonomyDenial(toolItem.builtinHandler());
+            if (authoringDenial != null) {
+                speak(authoringDenial);
+                return true;
+            }
+            if (!reactiveInference && toolItem.builtinHandler() != null) {
+                stewardFeed(toolItem.builtinHandler(), null,
+                    node.path("name").asText(node.path("target").asText("")), null, false);
+            }
+
             // Honest enacted-action instrument (2026-06-03): a scripted tool the
             // model ACTUALLY emitted on own-time — e.g. sending_stone toward a peer,
             // the in-room "reach for the other". The tick record's actionVerb is a
@@ -23220,16 +23332,6 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         actionName, node.path("target").asText(""), true,
                         collectDriveLevels());
                 }
-            }
-
-            // The gate the DOCUMENTED authoring path never had. See
-            // builtinAutonomyDenial — kept out of line because this method is
-            // already long and UserRequestReachesTheToolTest reads a fixed
-            // window of it.
-            var authoringDenial = builtinAutonomyDenial(toolItem.builtinHandler());
-            if (authoringDenial != null) {
-                speak(authoringDenial);
-                return true;
             }
 
             // Handle craft_from_template as a special builtin — creates and equips new items
@@ -35828,6 +35930,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return false;
             }
         }
+        // Passed every gate on her own time: it lands on the steward feed.
+        stewardFeed(actionType, null, ActionPolicy.describeAction(action), null, false);
         return true;
     }
 

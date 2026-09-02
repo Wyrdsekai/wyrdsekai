@@ -611,6 +611,40 @@ class TestDeregister:
 # --- Liveness reaper: connz-driven stale pruning ---
 
 class TestLivenessReaper:
+    def test_connz_counts_password_households_as_connected(self):
+        """A legacy /register household authenticates by user+password; connz
+        reports it under `authorized_user`, and that name IS its regs key.
+        Counting only `nkey` reaped a live zone (2026-08-24)."""
+        data = {"connections": [
+            {"cid": 1, "nkey": "UAAAAPUBKEY"},
+            {"cid": 2, "nkey": "UAAAAPUBKEY"},
+            {"cid": 3, "authorized_user": "hh-0123456789ab"},
+            {"cid": 4, "authorized_user": "relay_sidecar"},
+            {"cid": 5},
+        ]}
+        counts = registration._connection_keys_from_connz(data)
+        assert counts["UAAAAPUBKEY"] == 2
+        assert counts["hh-0123456789ab"] == 1
+        assert counts["relay_sidecar"] == 1
+        assert len(counts) == 3
+
+    def test_reaper_keeps_connected_password_household(self, monkeypatch, tmp_path):
+        """The record for a password-mode household, absent for longer than
+        its window on paper, must be stamped and kept while connz shows its
+        user connected."""
+        monkeypatch.setattr(registration, "REGISTRATIONS_FILE", tmp_path / "regs.json")
+        old = (registration.datetime.utcnow() - registration.timedelta(hours=24 * 30)).isoformat()
+        registration.save_registrations({
+            "hh-0123456789ab": {"registered_at": old, "last_seen": old, "tier": "HOUSEHOLD"},
+        })
+        monkeypatch.setattr(registration, "_fetch_connection_counts",
+                            lambda: {"hh-0123456789ab": 1})
+        deleted = registration._reap_stale_registrations()
+        assert deleted == 0
+        regs = registration.load_registrations()
+        assert "hh-0123456789ab" in regs
+        assert regs["hh-0123456789ab"]["last_seen"] != old
+
     def test_reaper_deletes_stale_skips_fresh(self, monkeypatch):
         # Two registrations: one with an old last_seen (stale), one currently
         # connected (fresh). connz reports only the fresh one connected.

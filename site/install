@@ -3,14 +3,14 @@
 #
 #   curl -fsSL https://wyrdsekai.org/install | bash
 #
-# Downloads the 0.2.0 release artifact for this platform from GitHub,
+# Downloads the 0.2.2 release artifact for this platform from GitHub,
 # verifies it against the release's SHA256SUMS, and installs it. Nothing
 # here is served from wyrdsekai.org except this script — artifacts and
 # checksums both come from the same GitHub release, so this script cannot
 # substitute a payload the checksums don't match.
 set -eu
 
-VERSION="0.2.0"
+VERSION="0.2.2"
 BASE="https://github.com/Wyrdsekai/wyrdsekai/releases/download/v${VERSION}"
 
 say() { printf '\033[36m[wyrdsekai]\033[0m %s\n' "$*"; }

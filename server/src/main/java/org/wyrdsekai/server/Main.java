@@ -5250,6 +5250,22 @@ public class Main {
                 log.info("Inference backend: {} (type={}, priority={}, url={})",
                         b.name(), b.type(), b.priority(), b.url());
             }
+            // Two names for one server is a diagram, not an architecture. The
+            // household node ran five weeks with llama-server and llama-voice
+            // both on :8201 and nobody read it off this log (2026-09-02).
+            var byUrl = new HashMap<String, List<String>>();
+            for (var b : inferenceConfig.backends()) {
+                if (b.url() == null) continue;
+                byUrl.computeIfAbsent(b.url().strip().toLowerCase(Locale.ROOT)
+                        .replace("localhost", "127.0.0.1"), k -> new ArrayList<>())
+                    .add(b.name());
+            }
+            byUrl.forEach((url, names) -> {
+                if (names.size() > 1) {
+                    log.warn("Inference backends {} all point at {} — they are ONE server; "
+                        + "the drive/voice split is nominal on this node", names, url);
+                }
+            });
 
             // Build capability registry from configured backends
             var capabilityRegistry = CapabilityRegistry
