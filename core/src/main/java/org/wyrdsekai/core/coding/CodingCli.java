@@ -234,14 +234,29 @@ public final class CodingCli {
 
     private int doUpdate(String[] args) throws IOException {
         if (args.length < 1) {
-            err.println("usage: wyrd coding update <backend>");
+            err.println("usage: wyrd coding update <backend> [--manifest]");
             return 2;
         }
         String name = args[0].toLowerCase(Locale.ROOT);
+        boolean manifestOnly = java.util.Arrays.asList(args).contains("--manifest");
         BundleManifest manifest = loadManifest();
         Path destRoot = resolveDestinationRoot(new String[0]);
         BundleInstaller installer = new BundleInstaller(manifest, makeCache(destRoot));
-        var newPath = installer.updateBackend(name, destRoot);
+        // The newest release the backend's own repository has, not the version this Wyrdsekai
+        // was released with: a household should not wait for our next release to get theirs.
+        // --manifest follows the pin instead (air-gapped, or a release you do not want yet).
+        java.util.Optional<Path> newPath;
+        if (manifestOnly) {
+            newPath = installer.updateBackend(name, destRoot);
+        } else {
+            try {
+                newPath = installer.installLatest(name, destRoot);
+            } catch (BundleInstaller.InstallException e) {
+                err.println("latest release: " + e.getMessage());
+                err.println("falling back to the manifest's pinned version");
+                newPath = installer.updateBackend(name, destRoot);
+            }
+        }
         if (newPath.isEmpty()) {
             out.println(name + " is already current");
         } else {
@@ -578,7 +593,7 @@ public final class CodingCli {
         out.println("  status                     Tabular status of every backend");
         out.println("  install <backend> [-f]     Download + verify + install a backend");
         out.println("  uninstall <backend>        Remove an installed backend");
-        out.println("  update <backend>           Re-install if manifest version differs");
+        out.println("  update <backend> [--manifest]  Install the backend's latest GitHub release (verified against its sums); --manifest follows the pin");
         out.println("  download-bundle [opts]     Pre-fetch every backend archive into the");
         out.println("                             air-gap cache (--platforms / --backends /");
         out.println("                             --cache-dir; see `download-bundle --help`)");

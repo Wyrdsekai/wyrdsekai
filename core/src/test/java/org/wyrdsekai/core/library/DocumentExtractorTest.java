@@ -71,6 +71,23 @@ class DocumentExtractorTest {
         var chunks = DocumentExtractor.chunkText("long-doc.txt", sb.toString());
         assertTrue(chunks.size() > 1, "Long document should produce multiple chunks");
         assertEquals(chunks.size(), chunks.getFirst().totalChunks());
+
+        // Contextual retrieval, mechanical half: every chunk says what it is a chunk of.
+        assertTrue(chunks.getFirst().content().startsWith("From long doc, part 1/" + chunks.size() + "."),
+            chunks.getFirst().content().substring(0, 40));
+        assertTrue(chunks.getLast().content().startsWith("From long doc, part " + chunks.size() + "/"));
+
+        // No overlap: a paragraph appears in exactly one chunk.
+        var all = String.join("\n", chunks.stream().map(DocumentExtractor.Chunk::content).toList());
+        assertEquals(1, all.split("This is paragraph number 50 ", -1).length - 1,
+            "paragraph 50 must be in exactly one chunk");
+    }
+
+    @Test
+    void a_single_chunk_document_gets_no_prefix() {
+        var chunks = DocumentExtractor.chunkText("short.md", "Just one paragraph.");
+        assertEquals(1, chunks.size());
+        assertEquals("Just one paragraph.", chunks.getFirst().content());
     }
 
     @Test

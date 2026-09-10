@@ -9,6 +9,8 @@ import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.scripting.api.ItemEmbodimentSpec;
 import org.wyrdsekai.scripting.api.ItemManifest;
 import org.wyrdsekai.scripting.api.ItemManifestParser;
+import org.wyrdsekai.core.update.ReleaseManifest;
+import org.wyrdsekai.scripting.api.ItemApiSurface;
 import org.wyrdsekai.scripting.api.ItemManifestValidator;
 
 import java.io.IOException;
@@ -90,7 +92,7 @@ public final class ScriptedItemLoader {
      * {@code WyrdConfig.installRoot()} (env WYRDSEKAI_HOME / profile /
      * jar-derived), then the standard package roots.
      */
-    private static Path resolveBundledDir() {
+    static Path resolveBundledDir() {
         var candidates = new ArrayList<Path>();
         candidates.add(Paths.get("scripts", "items"));
         candidates.add(Paths.get("..", "scripts", "items"));
@@ -176,6 +178,21 @@ public final class ScriptedItemLoader {
         return Optional.ofNullable(loaded.get(itemId));
     }
 
+    /** An item whose script calls what this node's world API does not have; loaded, and it will fail on use. */
+    public record WiringAuditEntry(String itemId, String path, List<String> unresolved) {}
+    private final Map<String, WiringAuditEntry> wiringAudit = new ConcurrentHashMap<>();
+
+    /** A copy of an item that another author's copy of the same id kept out: what was kept, what was not, and why. */
+    public record ShadowedEntry(String itemId, String keptPath, String keptAuthor, String keptVersion,
+                                String shadowedPath, String shadowedAuthor, String shadowedVersion) {}
+    private final List<ShadowedEntry> shadowed = Collections.synchronizedList(new ArrayList<>());
+
+    /** Copies kept out by the author rule on the last scan, for the audit file and the steward. */
+    public List<ShadowedEntry> shadowed() { return List.copyOf(shadowed); }
+
+    /** Items loaded with calls that do not resolve here — for the steward, and for `wyrd items check`. */
+    public List<WiringAuditEntry> wiringAudit() { return List.copyOf(wiringAudit.values()); }
+
     /** Re-scan all configured directories. Idempotent. */
     public synchronized List<ScriptedItemDef> reloadAll() {
         loaded.clear();
@@ -183,12 +200,42 @@ public final class ScriptedItemLoader {
         // duplicate shim entries for the same items.
         migrationAudit.clear();
         commandsAudit.clear();
-        for (var dir : searchDirs) {
+        wiringAudit.clear();
+        shadowed.clear();
+        var dirs = scannedDirs();
+        for (var dir : dirs) {
             scanDir(dir);
         }
-        log.info("ScriptedItemLoader: {} item(s) loaded from {} dir(s)",
-            loaded.size(), searchDirs.size());
+        log.info("ScriptedItemLoader: {} item(s) loaded from {} dir(s){}{}",
+            loaded.size(), dirs.size(),
+            wiringAudit.isEmpty() ? "" : " — " + wiringAudit.size() + " MIS-WIRED (will fail on use): " + String.join(", ", wiringAudit.keySet()),
+            shadowed.isEmpty() ? "" : " — " + shadowed.size() + " copy(ies) kept out by another author's same-named item: "
+                + String.join(", ", shadowed.stream().map(ShadowedEntry::itemId).distinct().toList()));
         return all();
+    }
+
+    /**
+     * The search dirs with the same directory counted once, however it is spelled.
+     *
+     * <p>On a .deb host {@code ~/.wyrdsekai} is a symlink to {@code /var/lib/wyrdsekai}, so the
+     * user dir and the household dir are ONE directory reached two ways — and every reload
+     * warned "duplicate item id … replaces …" for all of her items, one path replacing the
+     * other (live 2026-09-03, ~20 warnings per reload, none of them a duplicate). Resolve
+     * each dir to its real path and keep the first spelling of each.
+     */
+    synchronized List<Path> scannedDirs() {
+        var seen = new java.util.LinkedHashMap<Path, Path>();
+        for (var dir : searchDirs) {
+            if (dir == null) continue;
+            Path key;
+            try {
+                key = dir.toRealPath();
+            } catch (IOException e) {
+                key = dir.toAbsolutePath().normalize();
+            }
+            seen.putIfAbsent(key, dir);
+        }
+        return List.copyOf(seen.values());
     }
 
     /** Convenience for boot: ensure default dirs are picked up + reload. */
@@ -218,24 +265,25 @@ public final class ScriptedItemLoader {
         }
     }
 
-    private void loadOne(Path path) {
+    private boolean loadOne(Path path) {
         // Default loadOne (called from register()) is hot-reload — fail-fast
         // on missing embodiment.
-        loadOne(path, /* allowMigration */ false);
+        return loadOne(path, /* allowMigration */ false);
     }
 
-    private void loadOne(Path path, boolean allowMigration) {
+    /** @return true when {@code path} is what now serves its item id; false when it was skipped or kept out. */
+    private boolean loadOne(Path path, boolean allowMigration) {
         try {
             var script = Files.readString(path);
             var manifest = ItemManifestParser.parse(script);
             if (manifest == null) {
                 log.warn("ScriptedItemLoader: {} has no parseable exports.manifest — skipped", path);
-                return;
+                return false;
             }
             var validation = ItemManifestValidator.validate(manifest);
             if (!validation.valid()) {
                 log.warn("ScriptedItemLoader: {} manifest invalid: {}", path, validation.errors());
-                return;
+                return false;
             }
             for (var w : validation.warnings()) {
                 log.info("ScriptedItemLoader: {} manifest warning: {}", path, w);
@@ -257,7 +305,7 @@ public final class ScriptedItemLoader {
                 }
             } catch (ItemManifestValidator.ManifestEmbodimentMissingException e) {
                 log.error("ScriptedItemLoader: §18 REJECT for {}: {}", path, e.getMessage());
-                return;
+                return false;
             }
             // Items-as-tools contract — fail-fast `commands` gate, same
             // boot-vs-register split as embodiment: boot scan
@@ -279,7 +327,7 @@ public final class ScriptedItemLoader {
             } catch (ItemManifestValidator.ManifestCommandsMissingException e) {
                 log.error("ScriptedItemLoader: commands REJECT for {}: {}",
                     path, e.getMessage());
-                return;
+                return false;
             }
             // Items-as-tools contract — entrypoint presence gate. A scripted
             // item without a callable invoke()/execute() is dead on `use`;
@@ -297,11 +345,47 @@ public final class ScriptedItemLoader {
                         + "body declares no `function invoke(`/`function execute(` "
                         + "(or exports.invoke/exports.execute assignment) — a "
                         + "scripted item must implement its declared commands", path);
-                    return;
+                    return false;
                 }
             }
             var itemId = manifest.name();
             var existing = loaded.get(itemId);
+            // AUTHORSHIP: the same id from a different author replaces a loaded copy only when its
+            // version is newer. Three items the coding backend wrote (author did:wyrd:openhands,
+            // v1.0.0, a third the length) took the names of bundled items (did:wyrd:system, v1.0.0)
+            // and, because the household dir scans second, replaced them — the journal that then
+            // died on `use` was theirs, not ours (household node 2026-09-08). A steward who means to
+            // replace a bundled item bumps the version; an agent who means a new item names it.
+            if (existing != null && !sameAuthor(existing.manifest().author(), manifest.author())
+                    && ReleaseManifest.compareVersions(manifest.version(), existing.manifest().version()) <= 0) {
+                log.warn("ScriptedItemLoader: duplicate item id '{}' — '{}' (author {}, v{}) does not replace '{}' "
+                        + "(author {}, v{}): a different author's copy replaces only when its version is newer. "
+                        + "Give it its own name, or bump its version if it is meant to replace.",
+                    itemId, path, manifest.author(), manifest.version(),
+                    existing.sourcePath(), existing.manifest().author(), existing.manifest().version());
+                shadowed.add(new ShadowedEntry(itemId, String.valueOf(existing.sourcePath()),
+                    existing.manifest().author(), existing.manifest().version(),
+                    path.toString(), manifest.author(), manifest.version()));
+                return false;
+            }
+            // WIRING: every world.* call must exist on this node. A copy whose calls do not
+            // resolve is broken before its first use (the journal that called a renamed
+            // method, household node 2026-09-08). It never replaces a copy that works; alone,
+            // it loads with a WARN naming the fix, and the audit carries it for the steward.
+            var unresolved = ItemApiSurface.check(script);
+            if (!unresolved.isEmpty()) {
+                var calls = unresolved.stream().map(ItemApiSurface.Unresolved::reason).toList();
+                if (existing != null && !wiringAudit.containsKey(itemId)) {
+                    log.warn("ScriptedItemLoader: '{}' at {} calls what this node does not have — keeping the working copy at {}. {}",
+                        itemId, path, existing.sourcePath(), String.join(" | ", calls));
+                    return false;
+                }
+                log.warn("ScriptedItemLoader: '{}' at {} is mis-wired and WILL fail on use: {}",
+                    itemId, path, String.join(" | ", calls));
+                wiringAudit.put(itemId, new WiringAuditEntry(itemId, path.toString(), calls));
+            } else {
+                wiringAudit.remove(itemId);   // a working copy replaced a broken one
+            }
             if (existing != null) {
                 log.warn("ScriptedItemLoader: duplicate item id '{}' — '{}' replaces '{}'",
                     itemId, path, existing.sourcePath());
@@ -311,9 +395,17 @@ public final class ScriptedItemLoader {
             loaded.put(itemId, def);
             log.info("ScriptedItemLoader: loaded '{}' v{} ({} caps) from {}",
                 itemId, manifest.version(), manifest.capabilities().size(), path);
+            return true;
         } catch (IOException e) {
             log.warn("ScriptedItemLoader: read failed {}: {}", path, e.getMessage());
+            return false;
         }
+    }
+
+    private static boolean sameAuthor(String a, String b) {
+        var x = a == null ? "" : a.trim();
+        var y = b == null ? "" : b.trim();
+        return x.isEmpty() || y.isEmpty() || x.equalsIgnoreCase(y);
     }
 
     /**
@@ -355,9 +447,11 @@ public final class ScriptedItemLoader {
      * picked up by {@code use <id>} without restarting the daemon.
      *
      * <p>Same parsing + validation as {@link #scanDir} — manifests that
-     * fail validation are NOT registered (returns empty). Duplicate ids
-     * replace the existing entry with a WARN, mirroring the disk-scan
-     * semantics. Also reusable by Goose / future coding adapters.</p>
+     * fail validation are NOT registered (returns empty). A duplicate id
+     * replaces the existing entry with a WARN only when the author matches
+     * or the version is newer, the same rule as the disk scan; otherwise the
+     * loaded copy stands and this returns empty (the loader's log names the
+     * fix). Also reusable by Goose / future coding adapters.</p>
      *
      * @param path absolute or repo-relative path to a {@code .js} file.
      * @return the loaded def on success, empty when parsing/validation
@@ -365,7 +459,7 @@ public final class ScriptedItemLoader {
      */
     public synchronized Optional<ScriptedItemDef> register(Path path) {
         if (path == null) return Optional.empty();
-        loadOne(path);
+        if (!loadOne(path)) return Optional.empty();   // skipped, rejected, or kept out — not this file
         // loadOne keys by manifest.name(); resolve back via that key. We
         // re-parse cheaply to recover the id rather than mutating loadOne
         // — keeping its single-responsibility shape.
@@ -433,6 +527,9 @@ public final class ScriptedItemLoader {
             // Items-as-tools contract — items whose manifests declared no
             // `commands`; boot shimmed a derived default entry for each.
             payload.put("commandsShimmed", List.copyOf(commandsAudit));
+            // Items whose world.* calls do not exist on this node — broken before first use.
+            payload.put("misWired", List.copyOf(wiringAudit.values()));
+            payload.put("shadowed", List.copyOf(shadowed));
             var tmp = auditPath.resolveSibling(auditPath.getFileName() + ".tmp");
             mapper.writeValue(tmp.toFile(), payload);
             Files.move(tmp, auditPath,

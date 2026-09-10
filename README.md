@@ -75,7 +75,25 @@ After setup completes, `wyrd setup` surfaces [FIRST_ENCOUNTER.md](docs/FIRST_ENC
 
 ## What ships
 
-**New in v0.2.2:**
+**New in v0.3.0:**
+
+- **The node keeps itself current.** `wyrd update` says what release runs and
+  what the latest is; `wyrd update now` installs it, verified against the
+  release's checksums, through the package's own upgrade; `wyrd update auto on`
+  lets the node do that itself in the small hours. `wyrd doctor` says when the
+  node, CodeZaiku or ResearchZosho is behind, and `wyrd coding update codezaiku`
+  and `wyrd researcher update` bring each current.
+- **Backups no longer copy the search index** — a snapshot hard-links its
+  write-once files, so a nightly backup of a large library costs seconds and
+  no disk. Swap stopped creeping: the package sets the kernel to drop mmapped
+  model pages before swapping out the server.
+- **A faster served embedder** (`WYRDSEKAI_EMBED_SERVER=tei`): the same bge-m3
+  on Text Embeddings Inference, several times faster on NVIDIA, with an image
+  for every generation from Turing to Blackwell. **The librarian's desk** can
+  sharpen a question before a night's research and explain an entry from its
+  shelves. **Items are checked** against the world API before they can fail.
+
+**v0.2.2:**
 
 - **The drive model is actually used.** A config-and-safeguard interaction
   had been pointing both inference routes at the small voice model on
@@ -289,7 +307,7 @@ wyrd start          # Start the household
 wyrd stop           # Stop services
 wyrd status         # Health check
 wyrd doctor         # Diagnose problems (disk, RAM, GPU, ports, substrate state)
-wyrd update         # Pull latest, rebuild, restart
+wyrd update         # This release vs the latest; `now` installs it; `auto on` lets the node
 wyrd logs           # Follow server logs
 wyrd inference      # Manage inference backends (local/cloud/zone/status)
 wyrd relay register # Register with a household relay

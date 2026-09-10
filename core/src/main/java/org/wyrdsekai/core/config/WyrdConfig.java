@@ -1061,6 +1061,29 @@ public final class WyrdConfig {
             "presence.agents_quiet_when_human_present", true);
     }
 
+    // ── The library she may ask (LIBRARY_PROTOCOL.md) ────────────────────
+
+    /**
+     * The id of the registered MCP service that plays the "library" role — a research
+     * librarian or a peer household's library speaking LIBRARY_PROTOCOL.md. Empty means
+     * none: the desk says so and her search skips the established-elsewhere leg. Items
+     * name the role ("library"); this maps it to the service, so the product behind it
+     * can be renamed or replaced without touching an item.
+     */
+    public String libraryPatronService() {
+        var v = resolve("WYRDSEKAI_LIBRARY_SERVICE", "library.patron.service", () -> "");
+        return v == null ? "" : v.trim();
+    }
+
+    /**
+     * Whether the household's library door serves the companions' ACCEPTED findings to
+     * outside patrons (only those whose every source may travel — the license gate decides).
+     * Off means packs only.
+     */
+    public boolean libraryServeFindings() {
+        return resolveBool("WYRDSEKAI_LIBRARY_SERVE_FINDINGS", "library.serve_findings", true);
+    }
+
     // ── #1038 Library-compact prune knobs ─────────────────────────────────
 
     /** Default TTL for Lucene chunks lacking an explicit expiry. */

@@ -39,6 +39,8 @@ services:
       - "8080"
       - "--ctx-size"
       - "${LLAMA_CTX_SIZE:-16384}"
+      - "--cache-ram"
+      - "${LLAMA_CACHE_RAM:-1024}"
       - "--jinja"
       - "--reasoning"
       - "off"

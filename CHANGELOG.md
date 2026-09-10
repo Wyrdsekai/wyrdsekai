@@ -4,6 +4,168 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+## [0.3.0] — 2026-09-10
+
+The node keeps itself current, and the library learns to remember what was concluded from it.
+
+### Added
+- **`wyrd update`: the node knows its release and installs the next one.** `wyrd update` says
+  what release runs (the `VERSION` file the installer ships), what the latest is (GitHub, asked
+  once a day) and the mode; `wyrd update now [VERSION]` downloads this platform's installer from
+  the GitHub release, verifies it against the release's `SHA256SUMS` and runs the package's own
+  upgrade (databases snapshotted, service restarted); `wyrd update auto on` lets the node do that
+  itself at a quiet moment inside its window (`WYRDSEKAI_UPDATE=check|auto|off`,
+  `WYRDSEKAI_UPDATE_WINDOW`, default 03:00–05:00 local; nothing in flight for ten minutes; one
+  attempt per version per day; never on a dev build). The installer runs outside the service so
+  the service it stops is not the one running it. `wyrd status` and `wyrd doctor` say when a
+  newer release exists, on Linux, macOS and Windows; `/api/update/status` carries the same. On
+  Windows auto mode downloads and verifies the `.msi` and `wyrd update now` finishes it, since the
+  install needs an elevation prompt. The one-line installers on wyrdsekai.org now install the
+  latest release rather than a pinned one (`WYRDSEKAI_VERSION` picks one).
+- **The two programs a household leans on stay current too.** `wyrd coding update codezaiku`
+  installs the coder's newest GitHub release, verified against that release's sums, whatever
+  version this Wyrdsekai shipped with (`--manifest` follows the pin); `wyrd researcher update`
+  runs the librarian's own updater; `wyrd doctor` and `wyrd researcher status` say when either is
+  behind. The bundled CodeZaiku is 0.3.0; the librarian client reads ResearchZosho 0.1.2 (its
+  `version` in `library_status`, `library_inbox`, `library_serials`, the typed open-questions
+  queue).
+- **Text Embeddings Inference as the served embedder** (`WYRDSEKAI_EMBED_SERVER=tei`): the same
+  bge-m3 on Hugging Face's TEI, several times faster than llama-server for the same model on the
+  same card, one image per compute capability (Turing through Blackwell, and a CPU image), the
+  model fetched on first start. `wyrd setup` offers it on NVIDIA tiers; a running node switches
+  with one config key and no re-index, since the vectors are the same model's.
+- **ResearchZosho's public contract, 1.0.** The reference librarian shipped and settled its contract
+  string on 1.0 with the wire this client already spoke; the docs are re-pinned, the wizard's default
+  address is the librarian's own (`127.0.0.1:4649`), and it speaks the release's `reader` commands
+  with the older `patron` word as a fallback. The desk gains `sharpen: <question>` (the librarian
+  rewrites a rough question before anything runs and returns the text to hand over) and
+  `explain <id> [beginner|familiar]` (a reading aid written from the shelves, unsupported sentences
+  marked, never a record); every entry it renders now says how many independent sources stand
+  behind it and what the librarian's review decided, and an ask that reads as "what changed since…"
+  is shown as the changes it routed to. A pushed `revised` or `supplied` notice is written on the
+  companions' findings that cite the entry as a note with the state kept, rather than ignored.
+- **Items are checked against the world API before they can fail.** The loader resolves every
+  `world.*` call in a script against what this build serves; a copy whose calls do not exist
+  never replaces a working copy of the same item, and alone it loads with the fix in the log
+  and an entry in the manifest audit (`misWired`). `wyrd items check [dir…]` runs the same
+  check over the bundled items and the household's own and exits 1 on any mis-wired script.
+  The check also counts arguments: a call that hands a method a number of arguments no overload
+  takes is named with the arities it accepts, since host methods have no defaults and the call
+  would die with "no applicable overload". Found the way a stale copy of the journal in a data
+  directory called a renamed method and died on `use` while the bundled copy worked.
+- **A same-named copy from another author replaces a loaded item only when its version is
+  newer.** Three items a coding backend wrote took the names of bundled items and, because the
+  household directory scans second, replaced them. Now the loaded copy stands, the log names the
+  fix (give it its own name, or bump the version if it is meant to replace), the manifest audit
+  lists it under `shadowed`, and registering such a file at runtime reports that it did not
+  register instead of pointing at the bundled item. The same author re-shipping the same version
+  still replaces, so an edit in place or a re-install behaves as before.
+- **`world.journal.write({title, body})`.** The object form scripts have used beside the string
+  form: the title heads the entry, the text is `body` (or `content`, `text`, `entry`), and every
+  other key travels as an option. It failed with "no applicable overload" before.
+- **`params.args` is always a string** on every path into a scripted item, an empty one when
+  nothing was typed, as the items-as-tools contract says. An item that did `params.args.trim()`
+  died when called with no arguments.
+- **`wyrd researcher`.** A wizard that installs [ResearchZosho](https://researchzosho.org), the
+  research librarian, runs its own setup, and connects this node as a patron over HTTP with a
+  bearer token for the household's identity (`setup`), or connects to a librarian already
+  running here, on another machine, or as a child process (`link`, `link --stdio`); `status`
+  and `unlink`. On Linux, macOS and Windows. The client speaks contract 1.4: over a credential
+  the household is the patron and no did is asserted; a captured page's words are fenced before
+  a model sees them; the sleep-time recall logs every run. The librarian's desk item gains the
+  overnight ask (`research: <question>`, with a time ceiling and a per-day cap), `jobs` and
+  `read <id>`. Contract 1.5: `link` without a token asks the owner to be let in and collects
+  the token once approved; `link` subscribes the node to the librarian's pushed changes (a
+  verified recall marks findings on the spot, a landed write-up is told to the companions);
+  the household's library is served at `/v1/*` for peer librarians, with reader tokens from
+  `wyrd library reader add`; peers' answers under `peers[]` are shown as their own libraries.
+- **A findings tier.** What a companion concludes from reading is kept as a cited,
+  reviewable claim in her Study (`finding` items: claim, claim type, confidence, state,
+  writer, sources). Library search answers "what have I established before?" from her
+  own findings first, then the shelves. A mechanical review at sleep accepts drafts whose
+  sources are still on the shelves, keeps unresolvable ones as drafts with the reason, and
+  retires restatements of accepted claims. `wyrd library findings <companion>` lists,
+  accepts, disputes and retires; `review` runs the pass on demand.
+- **A retrieval bench.** `wyrd library bench` replays the reading log's real queries
+  through the production search path (without writing them back) and reports zero-hit,
+  repeat and dictionary-on-top rates, plus miss@k over queries labeled in
+  `<library>/bench-gold.json`. Every retrieval change is judged by this number.
+- **The library protocol.** `LIBRARY_PROTOCOL.md` fixes the contract by which a companion
+  asks a library outside the household (a research librarian, or later a peer household)
+  over MCP. A `LibraryPatron` client speaks it, pins the contract version, keeps every
+  entry's library id, and reports "holds nothing" as nothing. Items name the *role*
+  ("library"); `WYRDSEKAI_LIBRARY_SERVICE` maps it to a registered service. Library search
+  consults the configured library's "established" verdict after her own findings and
+  before the shelves. Findings record sources as `locator` + `edition` and carry their
+  origin library when they came from elsewhere.
+- **The household serves the library protocol.** `POST /mcp/library` is an inbound MCP door
+  on which the household's own library speaks `LIBRARY_PROTOCOL.md` to an outside patron.
+  The license gate is on the sending side: only packs licensed to travel answer; the
+  steward's shelves, study shares and any finding citing them never leave. The companions'
+  accepted findings are served too, read live from the roster, only those whose every
+  source may travel; `WYRDSEKAI_LIBRARY_SERVE_FINDINGS=false` makes the door packs-only. (The general
+  inbound MCP endpoint the docs described was never constructed; it stays unserved, since
+  its world tools carry no caller identity.)
+- **A librarian's desk.** The bundled `librarian_desk` item makes the household a patron
+  of a librarian service over MCP (`library_ask`, `library_search`): the answer package is
+  labelled as background from another library and never overrides the shelves here.
+- **Acquisition proposals have a surface.** `wyrd library proposals` lists what the
+  library asked to acquire (repeated misses, a companion's `acquire`) and approves or
+  rejects; `wyrd library status` says how many are waiting.
+
+### Changed
+- **A served embedder.** Retrieval embeddings can come from an embedding server
+  (`WYRDSEKAI_EMBEDDING_URL`, llama.cpp `llama-server --embedding` with bge-m3) instead of
+  the in-process ONNX session. On GPU tiers `wyrd setup` fetches the bge-m3 GGUF and
+  `wyrd start` runs it as `wyrdsekai-llama-embed` on :8202; `wyrd status` reports it. The
+  in-process path embeds bge-m3 at about 2 chunks per second on a CPU and does not scale
+  with threads; served on a 16 GB card it does about 80 to 130. Served vectors are stamped
+  with a distinct model version, so they never mix with in-process ones; an over-long text
+  is truncated and retried, and an index-time failure is an error rather than a zero vector.
+  Offline tools embed a copy of the index and bench it (`KnowledgeEmbedMain`,
+  `LibraryBenchMain`).
+- **Chunking.** New document ingests use structure boundaries with no overlap, and every
+  chunk of a multi-part document carries a context line ("From <title>, part i/N"), so a
+  passage says what it is a passage of. Measured elsewhere as the largest single lever
+  for sparse retrieval; existing indexes are unchanged until re-ingested.
+- **Library-card receipts** carry chunk ids to the findings ledger in a separate field,
+  so provenance reaches the record without re-entering speech.
+
+### Fixed
+- **Backups no longer copy the search index.** Lucene segment files are write-once, so a
+  snapshot now hard-links them to the live ones and copies only what cannot be linked: a
+  snapshot of a whole-library index costs seconds and no space instead of eight minutes,
+  the index's full size, and every page of RAM as cache. Five nightly copies of a 174 GB
+  index had filled a household node's disk to 4% free. A snapshot that cannot link and
+  would not fit is skipped with a warning rather than filling the disk. `wyrd doctor` now
+  reports the disk's headroom, what the backups hold, swap in use and the service's memory
+  peak, and warns when the disk is over 90% full.
+- **Swap stopped creeping.** The package sets `vm.swappiness=10`
+  (`/etc/sysctl.d/90-wyrdsekai.conf`, a conffile), so under pressure the kernel drops
+  mmapped model and index pages, which are a fast re-read, before it swaps out the
+  server's own memory. The nightly sleep write now logs its peak host memory. The
+  self-updater counts a backup or a sleep write as work in progress and waits.
+- **A context overflow with nothing left to drop is sheared, not failed fast.** Two turns after a
+  restart had no history to remove and a small system layer; compaction freed 153 tokens, then
+  nothing, and the turn failed as a permanent error. The last step now cuts the middle out of the
+  largest message, keeping its head and the question at its tail with a visible mark, so any
+  prompt the window can hold at all is retried. When compaction still has nothing, the log names
+  where the tokens live (per-message sizes and tool count).
+- **Item notes listing.** `world.notes.list` enumerated with a wildcard text query, which
+  matches the literal token and nothing else — every item that asked for its notes got an
+  empty list. It now enumerates by type.
+- **Sanctuary memories are sentences.** The records written when a companion enters or
+  leaves the sanctuary were tagged machine lines with internal ids and tank readings; a
+  companion read one back as a thing to build around. They are plain first-person
+  sentences now; the readings stay in the log.
+- **Spelling is not permission.** Naming an owned item with a hyphen where its id has an
+  underscore was answered as "not in your permitted scope". Item names now match
+  case- and punctuation-insensitively and resolve to the real name.
+- **Item loader** scans a directory reached by two paths (a symlinked data dir) once,
+  instead of warning "duplicate item" for every item on every reload.
+
 ## [0.2.2] — 2026-09-02
 
 The drive model is back in the driver's seat.

@@ -145,6 +145,9 @@ services:
       - "${LLAMA_PORT:-8200}:8200"
     volumes:
       - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+    # --cache-ram caps llama-server's host-side prompt cache (its default is
+    # 8 GiB PER server, in system RAM, on top of the weights). Two servers on a
+    # 12 GB box got OOM-killed four times a day for a week before this was set.
     # Entrypoint-script pattern (same shape as llama-voice below) so MoE
     # residency flags can be appended conditionally. Sparse-active models
     # (e.g. 32B-A9B, 8B-A1B) run well with attention/KV on GPU and expert
@@ -155,7 +158,7 @@ services:
     command:
       - |
         set -e
-        ARGS="--model /models/$${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf} --port 8200 --ctx-size $${LLAMA_SKILLS_CTX:-16384} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel 1 --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --flash-attn on --metrics"
+        ARGS="--model /models/$${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf} --port 8200 --ctx-size $${LLAMA_SKILLS_CTX:-16384} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel 1 --cache-ram $${LLAMA_CACHE_RAM:-1024} --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --flash-attn on --metrics"
         # LLAMA_CPU_MOE=all|on  -> --cpu-moe   (ALL expert tensors in system RAM)
         # LLAMA_CPU_MOE=<N>     -> --n-cpu-moe N (experts of the first N layers in RAM)
         # unset/0               -> dense placement, no flag
@@ -183,6 +186,7 @@ services:
       - LLAMA_SKILLS_MODEL=${LLAMA_SKILLS_MODEL:-}
       - LLAMA_SKILLS_CTX=${LLAMA_SKILLS_CTX:-}
       - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-}
+      - LLAMA_CACHE_RAM=${LLAMA_CACHE_RAM:-}
       - LLAMA_CPU_MOE=${LLAMA_CPU_MOE:-}
       - LLAMA_CHAT_TEMPLATE_KWARGS=${LLAMA_CHAT_TEMPLATE_KWARGS:-}
       - LLAMA_SKILLS_EXTRA_ARGS=${LLAMA_SKILLS_EXTRA_ARGS:-}
@@ -255,7 +259,7 @@ services:
     command:
       - |
         set -e
-        ARGS="--model /models/$${LLAMA_VOICE_MODEL:-wyrdsekai-3.5-4b-v10-q4km.gguf} --port 8201 --ctx-size $${LLAMA_VOICE_CTX:-16384} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel 1 --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --metrics"
+        ARGS="--model /models/$${LLAMA_VOICE_MODEL:-wyrdsekai-3.5-4b-v10-q4km.gguf} --port 8201 --ctx-size $${LLAMA_VOICE_CTX:-16384} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel 1 --cache-ram $${LLAMA_CACHE_RAM:-1024} --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --metrics"
         if [ -n "$${LLAMA_VOICE_ADAPTER:-}" ] && [ -f "/adapters/$${LLAMA_VOICE_ADAPTER}" ]; then
           echo "[voice] loading LoRA adapter: $${LLAMA_VOICE_ADAPTER}"
           ARGS="$$ARGS --lora /adapters/$${LLAMA_VOICE_ADAPTER}"
@@ -302,6 +306,7 @@ services:
       - LLAMA_VOICE_ADAPTER=${LLAMA_VOICE_ADAPTER:-}
       - LLAMA_VOICE_CTX=${LLAMA_VOICE_CTX:-}
       - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-}
+      - LLAMA_CACHE_RAM=${LLAMA_CACHE_RAM:-}
       - LLAMA_V8_VECTORS=${LLAMA_V8_VECTORS:-}
     deploy:
       resources:
@@ -318,6 +323,106 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  # Embedding server (:8202) — bge-m3 served by llama.cpp on the GPU, for both
+  # index-time and query-time embeddings. The in-process ONNX path embeds bge-m3
+  # at ~2 chunks/s on a CPU and does not scale with threads; served on a
+  # 16GB card it does ~80–130/s, which is the difference between "never" and
+  # "an evening" for a household library. The server reads WYRDSEKAI_EMBEDDING_URL
+  # (written by `wyrd setup` on GPU tiers) and stamps vectors "<model>+server", so
+  # served vectors never mix with in-process ones. 8 slots × 4096 tokens: a chunk
+  # longer than a slot is truncated-and-retried by the client, never dropped.
+  llama-embed:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-llama-embed
+    restart: unless-stopped
+    profiles: ["embed"]
+    ports:
+      - "${LLAMA_EMBED_PORT:-8202}:8202"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+    command:
+      - "--model"
+      - "/models/${LLAMA_EMBED_MODEL:-bge-m3-Q8_0.gguf}"
+      - "--embedding"
+      - "--pooling"
+      - "cls"
+      - "--embd-normalize"
+      - "2"
+      - "--ctx-size"
+      - "${LLAMA_EMBED_CTX:-32768}"
+      - "--parallel"
+      - "${LLAMA_EMBED_PARALLEL:-8}"
+      - "--cache-ram"
+      - "0"
+      - "--batch-size"
+      - "8192"
+      - "--ubatch-size"
+      - "8192"
+      - "--n-gpu-layers"
+      - "${LLAMA_GPU_LAYERS:-99}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8202"
+      - "--metrics"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8202/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Embedding server, the other way (:8202) — Text Embeddings Inference serving the same
+  # bge-m3, chosen with WYRDSEKAI_EMBED_SERVER=tei. TEI keeps the whole batch on the card
+  # and runs several times faster than llama-server for the same model (a 4B-class card:
+  # ~13 chunks/s under llama.cpp, ~115 under TEI, measured 2026-09-10 for Qwen3-Embedding;
+  # the household library's 14M vectors were embedded with TEI). One image per compute
+  # capability: `wyrd start` picks TEI_IMAGE_TAG from nvidia-smi (turing / 1.9 / 86 / 89 /
+  # hopper / 120 for Blackwell), cpu-1.9 without a card. The model is fetched from Hugging
+  # Face on first start into data/models/tei. Same OpenAI route (/v1/embeddings), same
+  # "<model>+server" stamp, so its vectors and llama-embed's are interchangeable.
+  tei-embed:
+    image: ghcr.io/huggingface/text-embeddings-inference:${TEI_IMAGE_TAG:-cpu-1.9}
+    container_name: wyrdsekai-tei-embed
+    restart: unless-stopped
+    profiles: ["embed-tei"]
+    ports:
+      - "${LLAMA_EMBED_PORT:-8202}:80"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models/tei:/data
+    command:
+      - "--model-id"
+      - "${TEI_EMBED_MODEL:-BAAI/bge-m3}"
+      - "--max-client-batch-size"
+      - "128"
+      - "--max-batch-tokens"
+      - "${TEI_MAX_BATCH_TOKENS:-65536}"
+      - "--auto-truncate"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   # SGLang — high-performance NVIDIA inference (optional, for multi-companion setups)
   sglang:

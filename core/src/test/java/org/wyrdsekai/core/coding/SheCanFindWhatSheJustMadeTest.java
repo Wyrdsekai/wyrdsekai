@@ -39,6 +39,20 @@ class SheCanFindWhatSheJustMadeTest {
     }
 
     @Test
+    void the_registry_answers_where_a_task_placed_its_objects() {
+        // Live 2026-09-02: she dispatched from the Nexus, went to the sanctuary
+        // while codezaiku worked, and the hand-off looked only where she stood.
+        CodingItemRegistry.get().stamp(new CodingItemMetadata(
+            "codex-aaa", "codezaiku", "task-1", UUID.randomUUID(), "codex", null, "nexus"));
+        CodingItemRegistry.get().stamp(new CodingItemMetadata(
+            "codex-old", "goose", "task-2", UUID.randomUUID(), "codex"));
+
+        assertThat(CodingItemRegistry.get().roomForTask("task-1")).contains("nexus");
+        assertThat(CodingItemRegistry.get().roomForTask("task-2")).isEmpty();
+        assertThat(CodingItemRegistry.get().roomForTask(null)).isEmpty();
+    }
+
+    @Test
     void the_registry_answers_which_objects_a_task_placed() {
         CodingItemRegistry.get().stamp(new CodingItemMetadata(
             "codex-aaa", "goose", "task-1", UUID.randomUUID(), "codex"));

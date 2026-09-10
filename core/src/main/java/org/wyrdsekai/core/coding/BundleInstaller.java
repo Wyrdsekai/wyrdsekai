@@ -368,6 +368,113 @@ public final class BundleInstaller {
         return Optional.of(installBackend(name, destinationRoot, /*force*/ true));
     }
 
+    /**
+     * The newest release of a GitHub-distributed backend, whatever the manifest pins: the
+     * repository is read from the manifest's download URL, the latest tag from GitHub, the
+     * tarball and {@code SHA256SUMS} from that release, and the archive is verified against the
+     * release's own sums before it is unpacked. Works for a bundled backend too — the copy lands
+     * in the data directory, which the resolver searches before the install prefix, so a household
+     * runs the newest codezaiku without waiting for the next Wyrdsekai release.
+     *
+     * @return the install dir when something newer was installed; empty when already current
+     * @throws InstallException when GitHub cannot be reached, the release has no sums, or the
+     *         sum does not match
+     */
+    public Optional<Path> installLatest(String name, Path destinationRoot) throws IOException {
+        BackendBundleEntry entry = manifest.get(name).orElseThrow(() ->
+                new InstallException("Unknown backend '" + name + "'"));
+        String template = entry.downloadUrlTemplate();
+        var m = GITHUB_RELEASE.matcher(template == null ? "" : template);
+        if (!m.find()) {
+            throw new InstallException("Backend '" + name + "' is not distributed as a GitHub release; "
+                    + "`wyrd coding update " + name + "` follows the manifest instead.");
+        }
+        String repo = m.group(1);
+        String latest = latestReleaseTag(repo).orElseThrow(() ->
+                new InstallException("Could not read the latest release of " + repo + " from GitHub."));
+        Status status = getStatus(name, destinationRoot);
+        if (status.installed() && latest.equals(status.version())) {
+            log.info("[BundleInstaller] '{}' is at the latest release {}", name, latest);
+            return Optional.empty();
+        }
+        String base = "https://github.com/" + repo + "/releases/download/v" + latest;
+        String asset = template.substring(template.lastIndexOf('/') + 1)
+                .replace(entry.version() == null ? "" : entry.version(), latest);
+        Files.createDirectories(destinationRoot);
+        Path sums = destinationRoot.resolve(name + ".SHA256SUMS");
+        try {
+            downloadTo(base + "/SHA256SUMS", sums);
+        } catch (IOException e) {
+            throw new InstallException("The " + repo + " release " + latest + " has no SHA256SUMS; refusing an unverified download.");
+        }
+        String expectedSha = null;
+        for (var line : Files.readAllLines(sums)) {
+            var t = line.trim().split("\\s+");
+            if (t.length >= 2 && t[t.length - 1].replace("*", "").equals(asset)) { expectedSha = t[0]; break; }
+        }
+        try { Files.deleteIfExists(sums); } catch (IOException ignore) {}
+        if (expectedSha == null) throw new InstallException(asset + " is not listed in the release's SHA256SUMS.");
+        log.info("[BundleInstaller] downloading {} {} from {}", name, latest, base + "/" + asset);
+        Path archive = downloadToPartial(name, destinationRoot, base + "/" + asset);
+        String actualSha = sha256Hex(archive);
+        if (!actualSha.equalsIgnoreCase(expectedSha)) {
+            try { Files.deleteIfExists(archive); } catch (IOException ignore) {}
+            throw new InstallException("sha256 mismatch for " + name + " " + latest + ": expected " + expectedSha
+                    + " but got " + actualSha + ". Refusing to install.");
+        }
+        Path targetDir = destinationRoot.resolve(name);
+        Path tmpDir = destinationRoot.resolve(name + ".tmp");
+        if (Files.exists(tmpDir)) deleteRecursively(tmpDir);
+        Files.createDirectories(tmpDir);
+        archiver.extract(archive, tmpDir);
+        Files.writeString(tmpDir.resolve(".version"), latest);
+        if (Files.exists(targetDir)) deleteRecursively(targetDir);
+        try {
+            Files.move(tmpDir, targetDir, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            Files.move(tmpDir, targetDir);
+        }
+        try { Files.deleteIfExists(archive); } catch (IOException ignore) {}
+        log.info("[BundleInstaller] installed '{}' {} (latest release of {}) -> {}", name, latest, repo, targetDir);
+        return Optional.of(targetDir);
+    }
+
+    private static final java.util.regex.Pattern GITHUB_RELEASE =
+            java.util.regex.Pattern.compile("github\\.com/([^/]+/[^/]+)/releases/download/");
+
+    /** The latest release tag of a GitHub repository without its {@code v}; empty when GitHub does not answer. */
+    Optional<String> latestReleaseTag(String repo) {
+        try {
+            var req = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/" + repo + "/releases/latest"))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("User-Agent", "wyrdsekai-coding-install")
+                    .header("Accept", "application/vnd.github+json").GET().build();
+            var r = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            if (r.statusCode() != 200) return Optional.empty();
+            String body;
+            try (InputStream in = r.body()) { body = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8); }
+            var mm = java.util.regex.Pattern.compile("\"tag_name\"\\s*:\\s*\"v?([0-9][^\"]*)\"").matcher(body);
+            return mm.find() ? Optional.of(mm.group(1)) : Optional.empty();
+        } catch (IOException e) {
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        }
+    }
+
+    private void downloadTo(String url, Path to) throws IOException {
+        try {
+            var req = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build();
+            var r = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            if (r.statusCode() != 200) throw new IOException("HTTP " + r.statusCode() + " for " + url);
+            try (InputStream in = r.body()) { Files.copy(in, to, StandardCopyOption.REPLACE_EXISTING); }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted");
+        }
+    }
+
     /** Recursively delete a backend's install directory. No-op if absent. */
     public boolean uninstallBackend(String name, Path destinationRoot) throws IOException {
         Path dir = destinationRoot.resolve(name);

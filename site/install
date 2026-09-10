@@ -3,18 +3,27 @@
 #
 #   curl -fsSL https://wyrdsekai.org/install | bash
 #
-# Downloads the 0.2.2 release artifact for this platform from GitHub,
-# verifies it against the release's SHA256SUMS, and installs it. Nothing
-# here is served from wyrdsekai.org except this script — artifacts and
-# checksums both come from the same GitHub release, so this script cannot
-# substitute a payload the checksums don't match.
+# Downloads the latest release artifact for this platform from GitHub
+# (WYRDSEKAI_VERSION=0.3.0 installs that release instead), verifies it against
+# the release's SHA256SUMS, and installs it. Nothing here is served from
+# wyrdsekai.org except this script — artifacts and checksums both come from
+# the same GitHub release, so this script cannot substitute a payload the
+# checksums don't match.
 set -eu
 
-VERSION="0.2.2"
-BASE="https://github.com/Wyrdsekai/wyrdsekai/releases/download/v${VERSION}"
+REPO="Wyrdsekai/wyrdsekai"
 
 say() { printf '\033[36m[wyrdsekai]\033[0m %s\n' "$*"; }
 die() { printf '\033[31m[wyrdsekai]\033[0m %s\n' "$*" >&2; exit 1; }
+
+VERSION="${WYRDSEKAI_VERSION:-}"
+if [ -z "$VERSION" ]; then
+    VERSION=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)
+    [ -n "$VERSION" ] || die "could not find the latest release. Set WYRDSEKAI_VERSION=0.3.0 and re-run."
+fi
+say "release $VERSION"
+BASE="https://github.com/$REPO/releases/download/v${VERSION}"
 
 OS=$(uname -s)
 ARCH=$(uname -m)

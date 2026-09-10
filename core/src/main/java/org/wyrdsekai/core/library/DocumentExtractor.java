@@ -30,7 +30,13 @@ public final class DocumentExtractor {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentExtractor.class);
     private static final int CHUNK_TARGET_WORDS = 500;
-    private static final int CHUNK_OVERLAP_WORDS = 50;
+    /**
+     * Overlap between consecutive chunks. ZERO since 2026-09-03: measured on a sibling
+     * corpus (codezaiku's librarian bench, and the survey it cites), overlap bought nothing
+     * at top-k while inflating the index; structure boundaries plus the context prefix
+     * below were the lever (sparse top-10 miss 82% → 50%). Re-judge with `wyrd library bench`.
+     */
+    private static final int CHUNK_OVERLAP_WORDS = 0;
 
     private DocumentExtractor() {}
 
@@ -271,13 +277,25 @@ public final class DocumentExtractor {
             chunks.add(new Chunk(title, currentChunk.toString().trim(), chunks.size(), -1));
         }
 
-        // Fix totalChunks
+        // Fix totalChunks, and give every chunk of a multi-part document its context
+        // prefix — "From <title>, part i/N." — the mechanical half of contextual
+        // retrieval (2026-09-03). A chunk that says what it is a chunk OF matches the
+        // question that names the book; a bare paragraph from part 78 of 387 does not.
         int total = chunks.size();
         var fixed = new ArrayList<Chunk>(total);
         for (var c : chunks) {
-            fixed.add(new Chunk(c.title(), c.content(), c.chunkIndex(), total));
+            var content = total > 1 && title != null && !title.isBlank()
+                ? contextPrefix(title, c.chunkIndex() + 1, total) + c.content()
+                : c.content();
+            fixed.add(new Chunk(c.title(), content, c.chunkIndex(), total));
         }
         return fixed;
+    }
+
+    /** The mechanical context line prepended to each chunk of a multi-part document. */
+    static String contextPrefix(String title, int part, int total) {
+        var t = title.replaceAll("\\.(txt|md|epub|pdf|html?|docx?)$", "").replace('_', ' ').replace('-', ' ').trim();
+        return "From " + t + ", part " + part + "/" + total + ".\n";
     }
 
     /**

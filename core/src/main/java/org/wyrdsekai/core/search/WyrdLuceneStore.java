@@ -36,6 +36,7 @@ import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.regex.Pattern;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.Query;
 
 /**
  * Embedded vector + text search store using Apache Lucene.
@@ -68,6 +69,40 @@ public class WyrdLuceneStore implements Closeable {
 
     // Per-collection writer + searcher manager
     private final Map<String, IndexWriter> writers = new ConcurrentHashMap<>();
+    /** System property: Lucene RAM buffer per writer in MB (default 32). Offline bulk jobs raise it. */
+    public static final String RAM_BUFFER_MB_PROP = "wyrdsekai.lucene.ram_buffer_mb";
+    /**
+     * System property: threads that build the HNSW graph when segments merge (default 1).
+     * A merge of millions of vectors on one thread is hours of cosine; the offline job sets
+     * this to the cores it was pinned to. The written format is the same
+     * {@code Lucene99HnswVectorsFormat} either way, so a household reads the index unchanged.
+     */
+    public static final String HNSW_MERGE_WORKERS_PROP = "wyrdsekai.lucene.hnsw_merge_workers";
+    private static volatile java.util.concurrent.ExecutorService hnswMergeExec;
+
+    private static org.apache.lucene.codecs.Codec parallelHnswCodec(int workers) {
+        if (hnswMergeExec == null) {
+            synchronized (WyrdLuceneStore.class) {
+                if (hnswMergeExec == null) {
+                    hnswMergeExec = java.util.concurrent.Executors.newFixedThreadPool(workers, r -> {
+                        var t = new Thread(r, "hnsw-merge");
+                        t.setDaemon(true);
+                        return t;
+                    });
+                }
+            }
+        }
+        var format = new org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat(
+            org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_MAX_CONN,
+            org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat.DEFAULT_BEAM_WIDTH,
+            workers, hnswMergeExec);
+        return new org.apache.lucene.codecs.lucene104.Lucene104Codec() {
+            @Override
+            public org.apache.lucene.codecs.KnnVectorsFormat getKnnVectorsFormatForField(String field) {
+                return format;
+            }
+        };
+    }
     private final Map<String, SearcherManager> searcherManagers = new ConcurrentHashMap<>();
     private volatile boolean closed = false;
 
@@ -554,6 +589,19 @@ public class WyrdLuceneStore implements Closeable {
     /** Search the knowledge base with explicit mode. */
     public List<SearchResult> searchKnowledge(String queryText, List<Float> queryEmbedding,
                                                int topK, SearchMode mode) {
+        // THE DENSE JOIN (2026-09-03). Every production caller passed a null query embedding
+        // here — KnowledgeSearch, the companion's library search, the admission controller —
+        // and a null embedding silently collapses the mode to TEXT_ONLY. So the knowledge
+        // collection has never been searched densely, vectors or no vectors. When the caller
+        // brings no embedding and an embedder exists, embed the query here, once.
+        if ((queryEmbedding == null || queryEmbedding.isEmpty())
+                && mode != SearchMode.TEXT_ONLY && queryText != null && !queryText.isBlank()) {
+            var svc = EmbeddingService.get();
+            if (svc != null) {
+                var q = svc.embed(stripProtectionMarkers(queryText));
+                if (q != null && !q.isEmpty() && q.stream().anyMatch(f -> f != 0f)) queryEmbedding = q;
+            }
+        }
         return doSearch(SearchCollections.KNOWLEDGE, queryText, queryEmbedding, topK,
             defaultKnowledgeFilter(), mode);
     }
@@ -660,6 +708,32 @@ public class WyrdLuceneStore implements Closeable {
      * Diagnostic-only — paired with {@link #reembedStaleKnowledgeChunks}
      * which performs the actual update.
      */
+    /**
+     * How many documents in {@code collection} actually carry a dense vector — read from the
+     * vector index itself, not from a stamp. The per-document {@code embedding_model} term
+     * says which model a document was indexed UNDER; a document indexed text-only still has
+     * no vector, and the honest answer to "should we re-embed" starts with this number.
+     */
+    public long countWithVectors(String collection) {
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                long n = 0;
+                for (var leaf : searcher.getIndexReader().leaves()) {
+                    var values = leaf.reader().getFloatVectorValues(FIELD_VECTOR);
+                    if (values != null) n += values.size();
+                }
+                return n;
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException e) {
+            log.warn("countWithVectors failed for {}: {}", collection, e.getMessage());
+            return 0;
+        }
+    }
+
     public long countStaleEmbeddingChunks(String targetVersion) {
         if (targetVersion == null || targetVersion.isBlank()) return 0;
         try {
@@ -688,15 +762,37 @@ public class WyrdLuceneStore implements Closeable {
      * reembed. Idempotent; safe to call on an empty collection.
      */
     public boolean forceMergeCollection(String collection) {
+        return forceMergeCollection(collection, 1);
+    }
+
+    /**
+     * Merge down to at most {@code maxSegments} and commit. A very large collection is
+     * merged in steps (64 → 16 → 4 → 1) so each merge's working set is a fraction of the
+     * vectors and the steps already done survive an abort (gpu-host, 2026-09-05: a single
+     * merge to one segment held 57 GB of vectors hot for hours and lost all of it when
+     * stopped).
+     */
+    public boolean forceMergeCollection(String collection, int maxSegments) {
         try {
             var writer = getWriter(collection);
-            writer.forceMerge(1, /* doWait */ true);
+            writer.forceMerge(Math.max(1, maxSegments), /* doWait */ true);
             writer.commit();
             refreshSearcher(collection);
             return true;
         } catch (IOException e) {
-            log.warn("forceMerge failed for {}: {}", collection, e.getMessage());
+            log.warn("forceMerge({}) failed for {}: {}", maxSegments, collection, e.getMessage());
             return false;
+        }
+    }
+
+    /** Segments currently in {@code collection}'s index. */
+    public int segmentCount(String collection) {
+        try {
+            var sm = getSearcherManager(collection);
+            var s = sm.acquire();
+            try { return s.getIndexReader().leaves().size(); } finally { sm.release(s); }
+        } catch (IOException e) {
+            return -1;
         }
     }
 
@@ -764,6 +860,167 @@ public class WyrdLuceneStore implements Closeable {
      *         {@code oldTags}, {@code newTags}; or {@code error} when the
      *         chunk is not found / collection unsupported.
      */
+    /**
+     * Give an existing knowledge chunk a dense vector, keeping every stored field as it is.
+     * The offline embed job's write path (2026-09-03): the chunk was indexed text-only, the
+     * vector is computed later, beside a copy of the index, and written back here. Batched
+     * by the caller — this does not commit.
+     */
+    public boolean addKnowledgeVector(String id, List<Float> embedding) throws IOException {
+        if (id == null || embedding == null || embedding.isEmpty()) return false;
+        var existing = getById(SearchCollections.KNOWLEDGE, id);
+        if (existing == null) return false;
+        var meta = existing.metadata();
+        var writer = getWriter(SearchCollections.KNOWLEDGE);
+        var doc = newDocument(id, existing.content(), embedding);
+        if (meta != null) {
+            var pack = String.valueOf(meta.getOrDefault("pack", ""));
+            var title = String.valueOf(meta.getOrDefault("title", ""));
+            var source = String.valueOf(meta.getOrDefault("source", ""));
+            var subject = String.valueOf(meta.getOrDefault("subject", ""));
+            if (!pack.isEmpty()) doc.add(new StringField("pack", pack, Field.Store.YES));
+            if (!title.isEmpty()) doc.add(new StoredField("title", title));
+            if (!source.isEmpty()) doc.add(new StoredField("source", source));
+            if (!subject.isEmpty()) doc.add(new TextField("subject", subject, Field.Store.YES));
+            doc.add(new StringField("trust_tier", String.valueOf(meta.getOrDefault("trust_tier", "UNKNOWN")), Field.Store.YES));
+            if (meta.get("provenance_json") != null) {
+                doc.add(new StoredField("provenance_json", String.valueOf(meta.get("provenance_json"))));
+            }
+        }
+        writer.updateDocument(new Term(FIELD_ID, id), doc);
+        return true;
+    }
+
+    /**
+     * Ids of knowledge chunks in {@code pack} (or every pack when null) that carry NO vector,
+     * at most {@code limit}. Walks the pack's postings (a {@code TermQuery} on the indexed
+     * {@code pack} field), so the cost is the pack's size, not the index's — the first
+     * version read every live document's stored fields per call and went quadratic on a
+     * half-million-document index (2026-09-03). Per leaf, "no vector" is an ordinal the
+     * vector values skip.
+     */
+    public List<String> knowledgeIdsWithoutVectors(String pack, int limit) {
+        var out = new ArrayList<String>();
+        if (limit <= 0) return out;
+        try {
+            var sm = getSearcherManager(SearchCollections.KNOWLEDGE);
+            var searcher = sm.acquire();
+            try {
+                Query q = pack == null ? new MatchAllDocsQuery() : new TermQuery(new Term("pack", pack));
+                var weight = searcher.createWeight(searcher.rewrite(q), org.apache.lucene.search.ScoreMode.COMPLETE_NO_SCORES, 1f);
+                for (var leaf : searcher.getIndexReader().leaves()) {
+                    var scorer = weight.scorer(leaf);
+                    if (scorer == null) continue;
+                    var reader = leaf.reader();
+                    var live = reader.getLiveDocs();
+                    var values = reader.getFloatVectorValues(FIELD_VECTOR);
+                    var withVec = new java.util.BitSet(reader.maxDoc());
+                    if (values != null) {
+                        var vit = values.iterator();
+                        for (int d = vit.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = vit.nextDoc()) withVec.set(d);
+                    }
+                    var idField = java.util.Set.of(FIELD_ID);
+                    var stored = reader.storedFields();
+                    var it = scorer.iterator();
+                    for (int d = it.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = it.nextDoc()) {
+                        if (live != null && !live.get(d)) continue;
+                        if (withVec.get(d)) continue;
+                        var id = stored.document(d, idField).get(FIELD_ID);
+                        if (id != null) out.add(id);
+                        if (out.size() >= limit) return out;
+                    }
+                }
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException e) {
+            log.warn("knowledgeIdsWithoutVectors failed: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /**
+     * Copy dense vectors from a published pack's knowledge chunks back onto the Study
+     * documents they were projected from. A share is the same text twice — the Study copy
+     * and its zone-wide projection {@code <pack>:<studyId>} — so once the projection is
+     * embedded, the Study side needs no second pass through the model: an hour of disk
+     * work instead of another overnight on a GPU (2026-09-04). Every stored field of the
+     * Study document is kept; only the vector is added. Returns documents updated.
+     */
+    public long copyVectorsToStudy(String packName, int commitEvery, java.util.function.LongConsumer progress) {
+        long copied = 0;
+        try {
+            var sm = getSearcherManager(SearchCollections.KNOWLEDGE);
+            var searcher = sm.acquire();
+            try {
+                var weight = searcher.createWeight(searcher.rewrite(new TermQuery(new Term("pack", packName))),
+                    org.apache.lucene.search.ScoreMode.COMPLETE_NO_SCORES, 1f);
+                var studyWriter = getWriter(SearchCollections.STUDY);
+                var idOnly = java.util.Set.of(FIELD_ID);
+                for (var leaf : searcher.getIndexReader().leaves()) {
+                    var scorer = weight.scorer(leaf);
+                    if (scorer == null) continue;
+                    var reader = leaf.reader();
+                    var live = reader.getLiveDocs();
+                    var values = reader.getFloatVectorValues(FIELD_VECTOR);
+                    if (values == null) continue;
+                    var stored = reader.storedFields();
+                    var vit = values.iterator();
+                    int vdoc = vit.nextDoc();
+                    var it = scorer.iterator();
+                    for (int d = it.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = it.nextDoc()) {
+                        if (live != null && !live.get(d)) continue;
+                        while (vdoc < d && vdoc != DocIdSetIterator.NO_MORE_DOCS) vdoc = vit.nextDoc();
+                        if (vdoc != d) continue;   // this chunk has no vector
+                        var kid = stored.document(d, idOnly).get(FIELD_ID);
+                        if (kid == null || !kid.startsWith(packName + ":")) continue;
+                        var studyId = kid.substring(packName.length() + 1);
+                        var existing = getById(SearchCollections.STUDY, studyId);
+                        if (existing == null) continue;
+                        var raw = values.vectorValue(vdoc);
+                        var vec = new ArrayList<Float>(raw.length);
+                        for (var f : raw) vec.add(f);
+                        var meta = existing.metadata();
+                        var doc = newDocument(studyId, existing.content(), vec);
+                        if (meta != null) {
+                            doc.add(new StringField("user_did", safe(String.valueOf(meta.getOrDefault("user_did", ""))), Field.Store.YES));
+                            doc.add(new StringField("item_type", safe(String.valueOf(meta.getOrDefault("item_type", ""))), Field.Store.YES));
+                            var title = String.valueOf(meta.getOrDefault("title", ""));
+                            doc.add(new StoredField("title", title));
+                            addChunkOrder(doc, title);
+                            doc.add(new StringField("collection", safe(String.valueOf(meta.getOrDefault("collection", ""))), Field.Store.YES));
+                            if (meta.get("timestamp") instanceof Number n) doc.add(new StoredField("timestamp", n.longValue()));
+                            if (meta.get("version") instanceof Number n) doc.add(new StoredField("version", n.intValue()));
+                            if (meta.get("vector_clock") != null) doc.add(new StoredField("vector_clock", String.valueOf(meta.get("vector_clock"))));
+                            if (meta.get("last_modified_by") != null) doc.add(new StringField("last_modified_by", String.valueOf(meta.get("last_modified_by")), Field.Store.YES));
+                            doc.add(new StoredField("deleted", "1".equals(String.valueOf(meta.get("deleted"))) ? 1 : 0));
+                        }
+                        studyWriter.updateDocument(new Term(FIELD_ID, studyId), doc);
+                        copied++;
+                        if (commitEvery > 0 && copied % commitEvery == 0) {
+                            studyWriter.commit();
+                            refreshSearcher(SearchCollections.STUDY);
+                            if (progress != null) progress.accept(copied);
+                        }
+                    }
+                }
+                studyWriter.commit();
+                refreshSearcher(SearchCollections.STUDY);
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException e) {
+            log.warn("copyVectorsToStudy({}) failed after {}: {}", packName, copied, e.getMessage());
+        }
+        return copied;
+    }
+
+    /** Commit the knowledge writer and reopen its searcher — the batch boundary for offline jobs. */
+    public void commitKnowledge() throws IOException {
+        getWriter(SearchCollections.KNOWLEDGE).commit();
+        refreshSearcher(SearchCollections.KNOWLEDGE);
+    }
+
     public Map<String, Object> updateKnowledgeTags(String collection, String id,
                                                      List<String> newTags) {
         if (!SearchCollections.KNOWLEDGE.equals(collection)) {
@@ -2975,7 +3232,13 @@ public class WyrdLuceneStore implements Closeable {
 
                 var config = new IndexWriterConfig(analyzer);
                 config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
-                config.setRAMBufferSizeMB(32.0);
+                // 32 MB is right for a running household; an offline bulk job with many
+                // writer threads flushes thousands of tiny segments at that size and pays
+                // for them in merges (gpu-host 2026-09-05: 37 GB → 102 GB of pending
+                // merges on a USB-attached disk). The job raises it via the property.
+                config.setRAMBufferSizeMB(Double.parseDouble(System.getProperty(RAM_BUFFER_MB_PROP, "32")));
+                int hnswWorkers = Integer.parseInt(System.getProperty(HNSW_MERGE_WORKERS_PROP, "1"));
+                if (hnswWorkers > 1) config.setCodec(parallelHnswCodec(hnswWorkers));
                 config.setCommitOnClose(true);
                 var writer = new IndexWriter(dir, config);
                 log.info("Lucene IndexWriter opened for collection '{}' at {}",

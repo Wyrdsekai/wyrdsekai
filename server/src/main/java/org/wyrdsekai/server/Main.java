@@ -193,6 +193,13 @@ import org.wyrdsekai.core.household.StewardAuditLog;
 import org.wyrdsekai.server.http.HouseholdRoutes;
 import org.wyrdsekai.server.http.IssueRoutes;
 import org.wyrdsekai.server.http.LibraryKnowledgeRoutes;
+import org.wyrdsekai.core.library.LibraryProvider;
+import org.wyrdsekai.core.library.LibraryReaders;
+import org.wyrdsekai.server.http.LibraryDoorRoutes;
+import org.wyrdsekai.server.http.LibraryWebhookRoutes;
+import org.wyrdsekai.server.mcp.LibraryTools;
+import org.wyrdsekai.server.mcp.McpEndpoint;
+import org.wyrdsekai.server.mcp.McpToolRegistry;
 import org.wyrdsekai.server.http.StudyRoutes;
 import org.wyrdsekai.server.http.SearchRoutes;
 import org.wyrdsekai.server.http.SoulRoutes;
@@ -317,6 +324,8 @@ import org.wyrdsekai.core.skill.WorkshopPinboard;
 import org.wyrdsekai.core.substrate.DeepSleepTrainer;
 import org.wyrdsekai.core.substrate.training.PeerTrainingTransport;
 import org.wyrdsekai.core.substrate.training.TrainingPeerService;
+import org.wyrdsekai.core.update.ActivityGauge;
+import org.wyrdsekai.core.update.SelfUpdate;
 import org.wyrdsekai.core.update.UpdateChannelPoller;
 import org.wyrdsekai.core.update.UpdateConfig;
 import org.wyrdsekai.core.voice.SpeechToTextService;
@@ -940,8 +949,11 @@ public class Main {
                     return t;
                 });
                 backupScheduler.scheduleAtFixedRate(
-                    () -> orchestrator.snapshotAll(
-                        dbPath, searchDir, nodeIdentityPath, extraBackupDirs),
+                    () -> {
+                        ActivityGauge.maintenanceStarted();   // an update must not land mid-snapshot
+                        try { orchestrator.snapshotAll(dbPath, searchDir, nodeIdentityPath, extraBackupDirs); }
+                        finally { ActivityGauge.maintenanceFinished(); }
+                    },
                     intervalHours, intervalHours, TimeUnit.HOURS);
                 log.info("BackupOrchestrator enabled — interval={}h, maxSnapshots={}, dir={} "
                     + "(DB via VACUUM INTO + search/Study + node-identity + "
@@ -3928,6 +3940,47 @@ public class Main {
                 try { Files.createDirectories(packsDir); } catch (Exception ignored) {}
                 new LibraryKnowledgeRoutes(finalLuceneStore,
                     new KnowledgePackIndexer(finalLuceneStore), packsDir).register(cfg.routes);
+                // THE LIBRARY DOOR (2026-09-03). docs/MCP.md has described "the household as
+                // an MCP server" at POST /mcp since spring; McpEndpoint existed and nothing
+                // ever constructed it. The general door stays unserved — its world tools have
+                // no caller identity and would be exposed unauthenticated. What IS served is
+                // one narrow surface at POST /mcp/library: the household's library speaking
+                // LIBRARY_PROTOCOL.md, packs licensed to travel only; the steward's shelves
+                // and study shares never answer an outside patron (LibraryProvider's gate is
+                // on the sending side). Findings served are the roster companions' accepted
+                // ones whose every source may travel.
+                try {
+                    var mcpDoor = new McpEndpoint(system, new McpToolRegistry(false), "/mcp/library");
+                    mcpDoor.register(cfg.routes);
+                    // Findings served = the unarchived companions on the roster, read at call
+                    // time; WYRDSEKAI_LIBRARY_SERVE_FINDINGS=false makes the door packs-only.
+                    java.util.function.Supplier<java.util.List<String>> libraryOwners = () ->
+                        WyrdConfig.get().libraryServeFindings()
+                            ? companionRegistry.all().stream()
+                                .filter(r -> !r.archived())
+                                .map(CompanionRegistry.Row::did)
+                                .filter(d -> d != null && !d.isBlank())
+                                .distinct().toList()
+                            : java.util.List.of();
+                    var libraryProvider = new LibraryProvider(finalLuceneStore,
+                        WyrdConfig.get().zoneId(), WyrdConfig.get().nodeName() + " library",
+                        libraryOwners, LibraryProvider.packJsonGate(packsDir));
+                    LibraryTools.register(mcpDoor.toolRegistry(), libraryProvider);
+                    // The same door as JSON routes at /v1/* — what a peer librarian speaks
+                    // (contract 1.5 peers), with bearer tokens from `wyrd library reader add`.
+                    new LibraryDoorRoutes(libraryProvider, new LibraryReaders(SystemPaths.dataDir())).register(cfg.routes);
+                    // Where a subscribed librarian pushes its changes (contract 1.5 webhooks):
+                    // a verified recall marks findings now; a landed write-up is told to her.
+                    java.util.function.Supplier<java.util.List<java.util.Map.Entry<String, String>>> companionRows = () ->
+                        companionRegistry.all().stream()
+                            .filter(r -> !r.archived())
+                            .filter(r -> r.did() != null && !r.did().isBlank())
+                            .map(r -> java.util.Map.<String, String>entry(r.did(), r.entityId() == null ? "" : r.entityId()))
+                            .toList();
+                    new LibraryWebhookRoutes(finalLuceneStore, companionRows, null).register(cfg.routes);
+                } catch (Exception e) {
+                    log.warn("Inbound MCP door not served: {}", e.toString());
+                }
                 // /issue + /feedback store, REST surface
                 // and the context-capture wiring (conversation turns via jdbc,
                 // WARN/ERROR tail from the live log).
@@ -4732,7 +4785,20 @@ public class Main {
                     updateConfig.releasePublicKey());
                 updatePoller.start(Duration.ofMinutes(1));
             }
-            new UpdateRoutes(updateConfig, updatePoller)
+            // The release check and the self-updater (WYRDSEKAI_UPDATE=check|auto|off): the
+            // install root carries the VERSION file the packagers ship; a source checkout has
+            // none, reports its snapshot version, and is never auto-updated.
+            Path selfUpdateRoot = null;
+            try {
+                var root = WyrdConfig.get().installRoot();
+                if (root != null && !root.isBlank()) selfUpdateRoot = Path.of(root);
+            } catch (RuntimeException ignore) { }
+            var selfUpdate = new SelfUpdate(selfUpdateRoot, SystemPaths.dataDir());
+            var selfUpdateScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+                var t = new Thread(r, "self-update"); t.setDaemon(true); return t;
+            });
+            selfUpdate.start(selfUpdateScheduler, Duration.ofMinutes(15), updateConfig.checkInterval());
+            new UpdateRoutes(updateConfig, updatePoller, selfUpdate, selfUpdateRoot, SystemPaths.dataDir())
                 .register(cfg.routes);
 
             // Backup route (manual trigger)
@@ -5234,7 +5300,7 @@ public class Main {
             ActorSystem<?> system, Config config,
             ResourceMeter resourceMeter) {
         try {
-            var inferenceConfig = InferenceConfig.fromConfig(
+            var inferenceConfig = InferenceConfig.fromConfigOnce(
                     config.getConfig("wyrdsekai.inference"));
 
             var betweenEnabled = WyrdConfig.get().betweenEnabled();
@@ -5446,7 +5512,7 @@ public class Main {
             // Set node capabilities from environment (inference backend, GPU, network)
             InferenceConfig finalInfConfig = null;
             try {
-                finalInfConfig = InferenceConfig.fromConfig(config.getConfig("wyrdsekai.inference"));
+                finalInfConfig = InferenceConfig.fromConfigOnce(config.getConfig("wyrdsekai.inference"));
                 if (finalInfConfig.backends().isEmpty()) finalInfConfig = null;
             } catch (Exception ignored) {}
             final var infConfig = finalInfConfig;

@@ -83,6 +83,22 @@ public final class CodingItemRegistry {
             .toList();
     }
 
+    /**
+     * The room a task's objects were placed in, when the bridge recorded it.
+     * The hand-off used to look only in the companion's CURRENT room: live
+     * 2026-09-02 she dispatched from the Nexus, walked to the sanctuary while
+     * codezaiku worked, and reported "nothing placed" for a tool sitting in
+     * the Nexus. Knowing the room lets her walk back and hand it over.
+     */
+    public Optional<String> roomForTask(String taskId) {
+        if (taskId == null || taskId.isBlank()) return Optional.empty();
+        return byRoomObjectId.values().stream()
+            .filter(m -> taskId.equals(m.taskId()))
+            .map(CodingItemMetadata::placedRoomId)
+            .filter(r -> r != null && !r.isBlank())
+            .findFirst();
+    }
+
     /** Drop the entry for a RoomObject id. */
     public void forget(String roomObjectId) {
         if (roomObjectId == null) return;

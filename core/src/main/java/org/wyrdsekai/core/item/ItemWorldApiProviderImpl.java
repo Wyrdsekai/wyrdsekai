@@ -1903,7 +1903,11 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     public List<Map<String, Object>> notesList(String tag) {
         var s = study();
         if (s == null || agentId == null || luceneStore == null) return List.of();
-        var results = luceneStore.searchStudyByType(agentId, "note", "*", 100);
+        // A TEXT_ONLY "*" matches the literal token "*", not every note — so this
+        // listing was EMPTY for every item that ever called it (found 2026-09-03 when
+        // the companion's quiet place asked what it held). Enumerate with the
+        // match-all-by-type path the sync peer and journal use.
+        var results = luceneStore.listStudyByTypeRecent(agentId, "note", 100);
         var out = new ArrayList<Map<String, Object>>(results.size());
         for (var r : results) {
             var m = new HashMap<String, Object>();
@@ -3010,6 +3014,19 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
                     "error", Map.of("code", "invalid_args",
                         "message", "server and tool required",
                         "retryable", false));
+            }
+            // ROLE, NOT NAME (LIBRARY_PROTOCOL.md): an item asks "library"; the steward's
+            // config says which registered service plays that part today.
+            if ("library".equals(server)) {
+                var svc = WyrdConfig.get().libraryPatronService();
+                if (svc.isEmpty()) {
+                    return Map.of("success", false,
+                        "error", Map.of("code", "mcp_unavailable",
+                            "message", "No library is configured for this household to ask "
+                                + "(WYRDSEKAI_LIBRARY_SERVICE names the service that plays the library role).",
+                            "retryable", false));
+                }
+                server = svc;
             }
             var qualified = "mcp__" + server + "__" + tool;
             var start = System.currentTimeMillis();

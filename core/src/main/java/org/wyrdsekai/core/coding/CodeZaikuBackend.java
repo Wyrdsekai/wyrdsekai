@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.core.update.ActivityGauge;
+
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -113,6 +115,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
         var args = fitForWindowsCommandLine(buildArgs(spec, taskId), workdir);
 
         Thread.ofVirtual().name("codezaiku-task-" + taskId).start(() -> {
+            ActivityGauge.codingTaskStarted();
             try {
                 var result = runner.run(args, env, workdir, config.maxWallclock());
                 long durationMs = System.currentTimeMillis() - started;
@@ -215,6 +218,8 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             } catch (Exception e) {
                 future.complete(failed(taskId,
                     "CodeZaiku subprocess error: " + e.getMessage(), started));
+            } finally {
+                ActivityGauge.codingTaskFinished();
             }
         });
         return future;

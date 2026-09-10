@@ -10,6 +10,7 @@ import org.wyrdsekai.core.crypto.PrivateJournalCipher;
 import org.wyrdsekai.core.home.HomeClient;
 import org.wyrdsekai.core.search.SearchCollections;
 import org.wyrdsekai.core.search.EmbeddingService;
+import org.wyrdsekai.core.search.IngestEmbedding;
 import org.wyrdsekai.core.identity.StudyOwnerGuard;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
@@ -325,8 +326,11 @@ public final class StudyService {
         // is enabled, so un-migrated installs are unaffected.
         userDid = StudyOwnerGuard.require(userDid);
         var id = documentChunkId(userDid, collection, discriminator);
+        // Embedded at ingest when the embedder is served (IngestEmbedding) — the 13.6M-chunk
+        // household shelf was indexed text-only because this call never asked (2026-09-03).
+        var embedding = IngestEmbedding.one(IngestEmbedding.textOf(title, content));
         luceneStore.insertStudyItem(id, userDid, "document", title, content,
-            collection, Instant.now().toEpochMilli(), 1, null);
+            collection, Instant.now().toEpochMilli(), 1, embedding);
     }
 
     /** Stable chunk id: doc:&lt;user&gt;:&lt;collection&gt;:&lt;sha256(discriminator)[:16]&gt;. */

@@ -2,20 +2,29 @@
 #
 #   irm https://wyrdsekai.org/install.ps1 | iex
 #
-# Downloads the 0.2.2 release artifact from GitHub, verifies it against the
-# release's SHA256SUMS, and installs it. Nothing here is served from
-# wyrdsekai.org except this script - the installer and the checksums both come
-# from the same GitHub release, so this script cannot substitute a payload the
-# checksums don't match.
+# Downloads the latest release artifact from GitHub ($env:WYRDSEKAI_VERSION = '0.3.0'
+# installs that release instead), verifies it against the release's SHA256SUMS,
+# and installs it. Nothing here is served from wyrdsekai.org except this script -
+# the installer and the checksums both come from the same GitHub release, so this
+# script cannot substitute a payload the checksums don't match.
 
 $ErrorActionPreference = 'Stop'
 
-$Version = '0.2.2'
-$Base    = "https://github.com/Wyrdsekai/wyrdsekai/releases/download/v$Version"
-$Art     = "Wyrdsekai-$Version.msi"
-
 function Say([string]$m) { Write-Host "[wyrdsekai] $m" -ForegroundColor Cyan }
 function Die([string]$m) { Write-Host "[wyrdsekai] $m" -ForegroundColor Red; exit 1 }
+
+$Repo    = 'Wyrdsekai/wyrdsekai'
+$Version = $env:WYRDSEKAI_VERSION
+if (-not $Version) {
+    try {
+        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'wyrdsekai-install'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 20
+        $Version = "$($rel.tag_name)"; if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
+    } catch { }
+    if (-not $Version) { Die "could not find the latest release. Set `$env:WYRDSEKAI_VERSION = '0.3.0' and re-run." }
+}
+Say "release $Version"
+$Base    = "https://github.com/$Repo/releases/download/v$Version"
+$Art     = "Wyrdsekai-$Version.msi"
 
 # The published .msi is x64. Say so rather than installing something that
 # cannot run: an installer that "succeeds" onto the wrong architecture is a

@@ -472,4 +472,13 @@ if __name__ == "__main__":
         # her voice comes back. Only a SIGKILL skips this; the Java hook's
         # restore covers that window.
         resume_voice()
+        # The night's cost in host memory, for the server log (the JVM keeps the last lines).
+        # A 4B loaded through bitsandbytes peaks at several GB of RSS on the way to the card;
+        # on a 12 GB node that is what pushes the household into swap (2026-09-10).
+        try:
+            import resource
+            _peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            print(f"[sleepwrite] peak rss {_peak_kb / 1024:.0f} MB")
+        except Exception:
+            pass
     sys.exit(code)

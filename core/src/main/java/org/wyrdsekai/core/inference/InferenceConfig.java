@@ -36,6 +36,27 @@ public record InferenceConfig(
      * Parse inference config from HOCON.
      * Tries backends[] first, falls back to legacy local/cloud, then auto-detects Claude CLI.
      */
+    private static Config sharedSource;
+    private static InferenceConfig shared;
+
+    /**
+     * One inference config per process for one source config.
+     *
+     * <p>The server built its inference config TWICE at boot — once for the node's
+     * capabilities, once for the router — and each build may spawn a managed
+     * llama-server. On the household node the first build ran before the docker
+     * servers were healthy, spawned a CPU copy of the 9B on :11525, and was then
+     * discarded when the second build found :8200 serving. Nobody stopped the
+     * child: 5.6 GB of RAM and swap, eight idle slots, zero requests, every boot
+     * (2026-09-07). Building once means one manager, one child, or none.
+     */
+    public static synchronized InferenceConfig fromConfigOnce(Config config) {
+        if (shared != null && config.equals(sharedSource)) return shared;
+        shared = fromConfig(config);
+        sharedSource = config;
+        return shared;
+    }
+
     public static InferenceConfig fromConfig(Config config) {
         var defaultModel = config.getString("default-model");
         var healthInterval = config.getDuration("health-check-interval");
@@ -279,6 +300,24 @@ public record InferenceConfig(
         // model instead of the port (second-node, 2026-07-29).
         if (!modelPath.isBlank()) {
             var already = servedAt(modelPath);
+            if (already == null && siblingExpected(url)) {
+                // The bundled docker pair takes ~30 s after boot to load its models;
+                // this code ran at +5 s, found nobody serving, and started its own
+                // CPU copy of the same weights (the fail-open the javadoc below
+                // promises). A sibling that is expected gets a bounded wait first.
+                long budgetMs = 1000L * Math.max(0, WyrdConfig.get().resolveInt(
+                    "WYRDSEKAI_INFERENCE_SIBLING_WAIT_SECONDS", "inference.sibling_wait_seconds", 120));
+                log.info("Backend '{}': a server is expected on :8200/:8201 but nothing serves {} yet — "
+                    + "waiting up to {}s for it before starting our own llama-server",
+                    name, modelPath, budgetMs / 1000);
+                final var wanted = modelPath;
+                already = awaitServedAt(() -> servedAt(wanted), budgetMs,
+                    System::currentTimeMillis, Thread::sleep);
+                if (already == null) {
+                    log.warn("Backend '{}': nothing came to serve {} within {}s — starting our own llama-server",
+                        name, modelPath, budgetMs / 1000);
+                }
+            }
             if (already != null) {
                 // REDIRECT, don't just skip. Clearing model-path alone would drop
                 // through to "connect to the configured url" — and that url is
@@ -337,8 +376,9 @@ public record InferenceConfig(
                 bc.hasPath("context-size") ? bc.getInt("context-size") : MIN_PER_SLOT_CONTEXT);
             var gpuLayers = bc.hasPath("gpu-layers") ? bc.getInt("gpu-layers") : 0;
             var port = bc.hasPath("port") ? bc.getInt("port") : 11525;
+            var cacheRam = bc.hasPath("cache-ram") ? bc.getInt("cache-ram") : LlamaServerManager.DEFAULT_CACHE_RAM_MB;
 
-            manager = new LlamaServerManager(executable, modelPath, port, contextSize, gpuLayers);
+            manager = new LlamaServerManager(executable, modelPath, port, contextSize, gpuLayers, cacheRam);
             try {
                 var client = manager.start();
                 log.info("llama-server started on port {} for backend '{}'", port, name);
@@ -552,6 +592,56 @@ public record InferenceConfig(
         s = s.replace("localhost", "127.0.0.1");
         while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
         return s;
+    }
+
+    /** How a poll waits; a test passes a no-op. */
+    @FunctionalInterface
+    interface Sleeper { void sleep(long ms) throws InterruptedException; }
+
+    /** Poll cadence while waiting for an expected sibling to finish loading. */
+    static final long SIBLING_POLL_MS = 2000;
+
+    /**
+     * Pure: poll {@code probe} until it answers or {@code budgetMs} is spent, sleeping
+     * {@link #SIBLING_POLL_MS} between polls. Returns the probe's answer or null.
+     */
+    static String awaitServedAt(java.util.function.Supplier<String> probe, long budgetMs,
+                                java.util.function.LongSupplier clock, Sleeper sleeper) {
+        long deadline = clock.getAsLong() + budgetMs;
+        while (true) {
+            var found = probe.get();
+            if (found != null) return found;
+            long left = deadline - clock.getAsLong();
+            if (left <= 0) return null;
+            try {
+                sleeper.sleep(Math.min(SIBLING_POLL_MS, left));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Is a sibling llama-server EXPECTED on the bundled ports? True when something already
+     * holds :8200 or :8201 (docker publishes the port before the model has loaded) or the
+     * configured url names one of them. A CPU-only box with no docker answers false and
+     * starts its own server without waiting.
+     */
+    static boolean siblingExpected(String configuredUrl) {
+        for (var u : List.of("http://127.0.0.1:8200", "http://127.0.0.1:8201")) {
+            if (sameServer(configuredUrl, u)) return true;
+        }
+        return portOpen(8200) || portOpen(8201);
+    }
+
+    private static boolean portOpen(int port) {
+        try (var s = new java.net.Socket()) {
+            s.connect(new java.net.InetSocketAddress("127.0.0.1", port), 300);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static String servedAt(String modelPath) {

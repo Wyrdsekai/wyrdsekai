@@ -148,6 +148,11 @@ public class ItemScriptExecutor implements Closeable {
                         jsParams.putMember(entry.getKey(), entry.getValue());
                     }
                 }
+                // The contract says `use <name> <args>` arrives as params.args, a string — so it
+                // is one on every path, an empty one when nothing was typed. A drafting item did
+                // `params.args.trim()` and died three times in a week on a call with no args
+                // (household node 2026-09-08); the contract was true on some callers, not all.
+                if (params == null || params.get("args") == null) jsParams.putMember("args", "");
 
                 // Execute
                 var result = invoke.execute(jsParams);

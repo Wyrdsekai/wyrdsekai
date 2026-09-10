@@ -1048,6 +1048,53 @@ resolve_voice_model() {
     echo "$MODELS_DIR/wyrdsekai-3.5-4b-v10-q4km.gguf"
 }
 
+# `docker compose up -d <svc>` is idempotent: a running container whose compose
+# definition is unchanged is left alone; one whose definition changed (a package
+# upgrade rewrote docker-compose.yml) is recreated with the new flags. Without
+# this, an upgraded node kept serving on the PREVIOUS package's llama-server
+# flags until a reboot — one node ran a week of 8 GiB prompt caches (the
+# llama-server default; OOM-killed four times a day) after the cap shipped.
+# Env for the service (model names, data dir, adapter) must already be set by
+# the caller exactly as at creation, or the recreate is a needless one.
+_reconcile_container() {  # <profile> <service>
+    local out
+    if ! out=$(docker compose --profile "$1" up -d "$2" 2>&1); then
+        warn "$2: compose reconcile failed — still running the previous definition"
+        return 0
+    fi
+    if grep -qi "recreat" <<<"$out"; then
+        log "$2: recreated — its compose definition changed since it was started"
+    fi
+    return 0
+}
+
+# ── The served embedder: which server answers on :8202 ────────────────────────
+# WYRDSEKAI_EMBED_SERVER=llama (llama-server on the bge-m3 GGUF, the default) or tei
+# (Hugging Face Text Embeddings Inference on the same bge-m3 — the whole batch stays on
+# the card; several times faster on NVIDIA). Same route, same model, same vector stamp.
+_embed_server() {
+    local m="${WYRDSEKAI_EMBED_SERVER:-}"
+    [[ -z "$m" ]] && m="$(grep -E '^WYRDSEKAI_EMBED_SERVER=' "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d ' ' || true)"
+    case "$(echo "${m:-llama}" | tr '[:upper:]' '[:lower:]')" in tei) echo tei ;; *) echo llama ;; esac
+}
+
+# TEI ships one image per compute capability. From nvidia-smi and the docker runtimes;
+# cpu when either is missing (it works, slowly). 12.0 is Blackwell (the 50-series).
+TEI_VERSION="${TEI_VERSION:-1.9}"
+_tei_tag() {
+    if ! docker info --format '{{.Runtimes}}' 2>/dev/null | grep -q nvidia; then echo "cpu-$TEI_VERSION"; return 0; fi
+    local cap; cap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ' || true)"
+    case "$cap" in
+        7.5)  echo "turing-$TEI_VERSION" ;;
+        8.0)  echo "$TEI_VERSION" ;;
+        8.6)  echo "86-$TEI_VERSION" ;;
+        8.9)  echo "89-$TEI_VERSION" ;;
+        9.0)  echo "hopper-$TEI_VERSION" ;;
+        12.0) echo "120-$TEI_VERSION" ;;
+        *)    echo "cpu-$TEI_VERSION" ;;
+    esac
+}
+
 start_inference() {
     local model_path="${1:-}"
 
@@ -1098,7 +1145,7 @@ start_inference() {
             : # MLX drive path took :8200; log emitted inside helper.
         elif [[ -f "$drive_model" ]]; then
             log "$(_t start_inference.starting_metal) (drive=$(basename "$drive_model") :8200)"
-            nohup "$llama" -m "$drive_model" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 \
+            nohup "$llama" -m "$drive_model" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                 -ngl "$gpu_layers" --host 0.0.0.0 \
                 ${drive_extra[@]+"${drive_extra[@]}"} \
                 > "$DATA_DIR/.llama-server.log" 2>&1 &
@@ -1141,13 +1188,13 @@ start_inference() {
                 fi
                 if [[ -n "$v8_csv" ]]; then
                     log "starting voice llama-server (model=$(basename "$voice_model") :8201 +V8 vectors)"
-                    nohup "$llama" -m "$voice_model" --port 8201 -c 4096 -np 1 \
+                    nohup "$llama" -m "$voice_model" --port 8201 -c 4096 -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "$gpu_layers" --host 0.0.0.0 \
                         --control-vector-scaled "$v8_csv" \
                         > "$DATA_DIR/.llama-server-voice.log" 2>&1 &
                 else
                     warn "voice :8201 starting WITHOUT V8 vectors — bundled vectors missing at $DATA_DIR/vectors/v8 (set WYRDSEKAI_V8_VECTORS or reinstall)"
-                    nohup "$llama" -m "$voice_model" --port 8201 -c 4096 -np 1 \
+                    nohup "$llama" -m "$voice_model" --port 8201 -c 4096 -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "$gpu_layers" --host 0.0.0.0 \
                         > "$DATA_DIR/.llama-server-voice.log" 2>&1 &
                 fi
@@ -1240,9 +1287,18 @@ start_inference() {
                 # false alarm that read as a broken install on every fresh run.
                 local _docker_started=0
                 if [[ "$_drive_was_running" == "1" ]]; then
-                    _docker_started=1  # :8200 already serving — leave it be
+                    _docker_started=1  # :8200 already serving — leave it be…
+                    # …unless it is our compose container: reconcile it against
+                    # the current docker-compose.yml (no-op when unchanged). The
+                    # first cut put this only on the branch below, which :8200
+                    # already serving never reaches — the drive kept its old
+                    # flags through the very upgrade that changed them.
+                    if docker compose --profile inference ps --format '{{.Name}}' 2>/dev/null | grep -qx wyrdsekai-llama; then
+                        _reconcile_container inference llama-server
+                    fi
                 elif docker compose --profile inference ps --format '{{.Name}}' 2>/dev/null | grep -qx wyrdsekai-llama; then
                     log "$(_t start_inference.docker_already_running)"
+                    _reconcile_container inference llama-server
                     _docker_started=1
                 else
                     # Self-heal: make sure Docker can reach the GPU before the
@@ -1254,6 +1310,44 @@ start_inference() {
                         _docker_started=1
                     else
                         warn "$(_t start_inference.docker_failed_native)"
+                    fi
+                fi
+                # Embedding server (:8202, bge-m3 on the GPU) — the served
+                # embedder behind WYRDSEKAI_EMBEDDING_URL. Started when the
+                # conf names it and the GGUF is in the models dir; without it
+                # the node embeds in-process (CPU, ~2 chunks/s) and text-only
+                # ingests stay text-only until a server exists.
+                if [[ "${WYRDSEKAI_EMBEDDING_URL:-}" == *:8202* ]]; then
+                    local _em_dir="${_sm_dir:-$DATA_DIR}"
+                    local _embed_name="${LLAMA_EMBED_MODEL:-bge-m3-Q8_0.gguf}"
+                    local _running_embed; _running_embed="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^wyrdsekai-(llama|tei)-embed$' || true)"
+                    if [[ "$(_embed_server)" == "tei" ]]; then
+                        # Text Embeddings Inference on the same bge-m3. The other server on :8202
+                        # steps aside; the port is the contract, the server behind it is a choice.
+                        if grep -qx wyrdsekai-llama-embed <<<"$_running_embed"; then docker stop wyrdsekai-llama-embed >/dev/null 2>&1 || true; log "llama-embed stopped — WYRDSEKAI_EMBED_SERVER=tei"; fi
+                        local _tag; _tag="$(_tei_tag)"
+                        mkdir -p "$_em_dir/models/tei" 2>/dev/null || true
+                        if grep -qx wyrdsekai-tei-embed <<<"$_running_embed"; then
+                            log "embedding :8202 already running (TEI $_tag)"
+                            TEI_IMAGE_TAG="$_tag" _reconcile_container embed-tei tei-embed
+                        else
+                            log "$(_t embed.starting_container wyrdsekai-tei-embed "${LLAMA_EMBED_PORT:-8202}") — TEI $_tag, the model fetched on first start"
+                            TEI_IMAGE_TAG="$_tag" docker compose --profile embed-tei up -d tei-embed 2>/dev/null \
+                                || warn "$(_t voice.enable.needs_docker)"
+                        fi
+                    else
+                        if grep -qx wyrdsekai-tei-embed <<<"$_running_embed"; then docker stop wyrdsekai-tei-embed >/dev/null 2>&1 || true; log "tei-embed stopped — WYRDSEKAI_EMBED_SERVER=llama"; fi
+                        if grep -qx wyrdsekai-llama-embed <<<"$_running_embed"; then
+                            log "embedding :8202 already running"
+                            LLAMA_EMBED_MODEL="$_embed_name" _reconcile_container embed llama-embed
+                        elif [[ -f "$_em_dir/models/$_embed_name" ]]; then
+                            log "$(_t embed.starting_container wyrdsekai-llama-embed "${LLAMA_EMBED_PORT:-8202}")"
+                            LLAMA_EMBED_MODEL="$_embed_name" \
+                                docker compose --profile embed up -d llama-embed 2>/dev/null \
+                                || warn "$(_t voice.enable.needs_docker)"
+                        else
+                            log "$(_t embed.model_missing "$_em_dir/models/$_embed_name")"
+                        fi
                     fi
                 fi
                 # Voice brain (:8201, 4B) — Darwin starts both brains by
@@ -1279,6 +1373,9 @@ start_inference() {
                     fi
                     if docker compose --profile voice ps --format '{{.Name}}' 2>/dev/null | grep -qx wyrdsekai-llama-voice; then
                         log "voice :8201 already running"
+                        if [[ -n "$_voice_name" ]]; then
+                            LLAMA_VOICE_MODEL="$_voice_name" _reconcile_container voice llama-voice
+                        fi
                     elif [[ -n "$_voice_name" ]]; then
                         # Pre-create mount sources as the user — docker
                         # auto-creates missing host dirs AS ROOT, which
@@ -1312,7 +1409,7 @@ start_inference() {
                 local llama
                 if llama=$(find_llama_server); then
                     log "$(_t start_inference.starting_native)"
-                    nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 \
+                    nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "${WYRDSEKAI_GPU_LAYERS:-99}" --host 0.0.0.0 \
                         > "$DATA_DIR/.llama-server.log" 2>&1 &
                     echo "$!" > "$DATA_DIR/.llama-server.pid"
@@ -1326,7 +1423,7 @@ start_inference() {
             local llama
             if llama=$(find_llama_server); then
                 log "$(_t start_inference.starting_native)"
-                nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 \
+                nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                     -ngl "${WYRDSEKAI_GPU_LAYERS:-99}" --host 0.0.0.0 \
                     > "$DATA_DIR/.llama-server.log" 2>&1 &
                 echo "$!" > "$DATA_DIR/.llama-server.pid"
@@ -1416,7 +1513,7 @@ stop_inference() {
     # Docker not started hung for minutes on this line (0.2.2 first-install
     # test). Only talk to docker when a daemon socket exists.
     if command -v docker &>/dev/null && _docker_daemon_present; then
-        docker stop wyrdsekai-llama wyrdsekai-llama-voice 2>/dev/null || true
+        docker stop wyrdsekai-llama wyrdsekai-llama-voice wyrdsekai-llama-embed wyrdsekai-tei-embed 2>/dev/null || true
     fi
 }
 
@@ -2114,6 +2211,36 @@ if cands:
         log "$(_t setup.models.companion_present)"
     fi
 
+    # Embedding model (bge-m3 GGUF, ~630MB) — GPU tiers, for the served embedder
+    # on :8202. Downloaded via a .part temp like the brains.
+    if [[ "$(recommend_tier)" != "cpu-only" ]]; then
+        local embed_model="$MODELS_DIR/${LLAMA_EMBED_MODEL:-bge-m3-Q8_0.gguf}"
+        if [[ ! -f "$embed_model" ]]; then
+            log "$(_t setup.models.embedserver_downloading)"
+            if _download \
+                "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf" \
+                "$embed_model.part"; then
+                mv "$embed_model.part" "$embed_model"
+            else
+                rm -f "$embed_model.part"
+                warn "$(_t setup.models.embedserver_failed "$embed_model")"
+            fi
+        else
+            log "$(_t setup.models.embedserver_present)"
+        fi
+    fi
+
+    # Which server serves them. TEI keeps the whole batch on the card and embeds several
+    # times faster than llama-server for the same model; it needs the NVIDIA container
+    # runtime, and fetches the model on first start. Offered on NVIDIA tiers, default yes.
+    WYRD_SETUP_EMBED_SERVER="${WYRD_SETUP_EMBED_SERVER:-}"
+    if [[ -z "$WYRD_SETUP_EMBED_SERVER" && "$(recommend_tier)" != "cpu-only" ]] && docker info --format '{{.Runtimes}}' 2>/dev/null | grep -q nvidia; then
+        local _tei_default="Y" _tei_ans="y"
+        if [[ -t 0 ]]; then read -r -p "Serve embeddings with Text Embeddings Inference (image $(_tei_tag); several times faster than llama-server on this card)? [Y/n] " _tei_ans || true; fi
+        [[ -z "$_tei_ans" ]] && _tei_ans="$_tei_default"
+        if [[ "$_tei_ans" =~ ^[Yy] ]]; then WYRD_SETUP_EMBED_SERVER=tei; log "Embedding server: Text Embeddings Inference (WYRDSEKAI_EMBED_SERVER=tei)"; else WYRD_SETUP_EMBED_SERVER=llama; fi
+    fi
+
     # Drive model (9B, ~5.3GB) — 16GB-tier hosts only. Smaller tiers run the
     # 4B (or Granite-Sub-v2) as drive per tier_drive_model. Downloaded via a
     # .part temp so an interrupted pull never leaves a truncated GGUF that a
@@ -2401,6 +2528,14 @@ except Exception as e:
         if [[ "$(recommend_tier)" != "cpu-only" ]]; then
             drive_env_lines='WYRDSEKAI_LLAMA_URL=http://127.0.0.1:8200'
         fi
+        # Served embedder (:8202, bge-m3 via llama.cpp) on GPU tiers. Index-time
+        # and query-time embeddings come from the same server; the vectors are
+        # stamped "<model>+server" so they never mix with in-process ones.
+        local embed_env_lines=""
+        if [[ "$(recommend_tier)" != "cpu-only" ]] && { [[ -f "$MODELS_DIR/${LLAMA_EMBED_MODEL:-bge-m3-Q8_0.gguf}" ]] || [[ "${WYRD_SETUP_EMBED_SERVER:-}" == "tei" ]]; }; then
+            embed_env_lines=$'WYRDSEKAI_EMBEDDING_MODEL=bge-m3\nWYRDSEKAI_EMBEDDING_URL=http://127.0.0.1:8202'
+            [[ "${WYRD_SETUP_EMBED_SERVER:-}" == "tei" ]] && embed_env_lines+=$'\nWYRDSEKAI_EMBED_SERVER=tei'
+        fi
 
         # Household inference auto-share: a node with a
         # local accelerator offers it to household members by default; a CPU-only
@@ -2437,6 +2572,7 @@ ${drive_env_lines}
 WYRDSEKAI_INFERENCE_TIMEOUT=300
 WYRDSEKAI_INFERENCE_CONCURRENCY=1
 ${voice_env_lines}
+${embed_env_lines}
 
 # Household inference auto-share (offer local GPU to household / borrow a household GPU)
 WYRDSEKAI_INFERENCE_HOUSEHOLD_SHARE=$household_share_value
@@ -3866,6 +4002,23 @@ do_status() {
         fi
     done
 
+    # Embedding server
+    if [[ -n "${WYRDSEKAI_EMBEDDING_URL:-}" ]]; then
+        if curl -sf "${WYRDSEKAI_EMBEDDING_URL}/health" &>/dev/null; then
+            log "$(_t status.embedding.running "${WYRDSEKAI_EMBEDDING_URL}")"
+        else
+            info "$(_t status.embedding.down "${WYRDSEKAI_EMBEDDING_URL}")"
+        fi
+    fi
+
+    # Release: a newer one is worth a line here, since this is the command people run
+    if [[ "$(_update_mode)" != "off" ]]; then
+        local _st_inst _st_latest; _st_inst="$(_installed_version)"; _st_latest="$(_release_latest "$WYRDSEKAI_RELEASE_REPO")"
+        if [[ -n "$_st_latest" ]] && _version_newer "$_st_latest" "$_st_inst"; then
+            if [[ "$(_update_mode)" == "auto" ]] && _is_release_version "$_st_inst"; then info "$(_t update.status.newer_auto "$_st_latest" "$(_update_window)")"; else info "$(_t update.status.newer "$_st_latest")"; fi
+        fi
+    fi
+
     # Docker
     if command -v docker &>/dev/null && _docker_daemon_present; then
         docker compose ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null || true
@@ -3987,50 +4140,188 @@ for j in glob.glob('$SERVER_LIB/common-*.jar'):
     find_java && echo "$(_t version.java "$(${JAVA_CMD} -version 2>&1 | head -1)")" || echo "$(_t version.java_missing)"
 }
 
+# ── Releases: what runs, what is out, and installing it ──────────────────────
+# The node's own version is the VERSION file the packagers ship beside the program
+# (0.3.0, 0.2.3~dev17); a source checkout has none and reports "dev". The latest
+# release comes from GitHub and is remembered for a day in $DATA_DIR. The install
+# itself is the platform installer's own upgrade path (dpkg / installer / msiexec),
+# which snapshots the databases and restarts the service — the same path
+# `wyrd update <file>` always took.
+WYRDSEKAI_RELEASE_REPO="Wyrdsekai/wyrdsekai"
+
+_installed_version() {
+    if [[ -f "$PROJECT_ROOT/VERSION" ]]; then tr -d ' \n\r' < "$PROJECT_ROOT/VERSION"; return 0; fi
+    if [[ "$MODE" == "source" ]]; then echo "dev"; return 0; fi
+    if command -v dpkg-query >/dev/null 2>&1; then dpkg-query -W -f='${Version}' wyrdsekai 2>/dev/null && return 0; fi
+    echo "unknown"
+}
+
+_is_release_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# semver compare on the numeric base: 0 when $1 > $2
+_version_newer() {
+    local a="${1%%[~-]*}" b="${2%%[~-]*}"
+    [[ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -1)" == "$a" && "$a" != "$b" ]]
+}
+
+# The latest release of a GitHub repo, cached a day under $DATA_DIR; empty when unknown.
+_release_latest() {   # <owner/repo> [--fresh]
+    local repo="$1" slug="${1#*/}" cache="$DATA_DIR/latest-${1#*/}.txt" v=""
+    if [[ "${2:-}" != "--fresh" && -f "$cache" ]] && [[ -n "$(find "$cache" -mmin -1440 2>/dev/null)" ]]; then
+        v="$(tr -d ' \n\r' < "$cache")"; _is_release_version "$v" && { echo "$v"; return 0; }
+    fi
+    v="$(curl -fsSL -m 10 -H 'Accept: application/vnd.github+json' -H "User-Agent: wyrdsekai-cli" \
+        "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null \
+        | python3 -c 'import json,sys
+try:
+    t=json.load(sys.stdin).get("tag_name","")
+    print(t[1:] if t.startswith("v") else t)
+except Exception: pass' 2>/dev/null || true)"
+    if _is_release_version "$v"; then mkdir -p "$DATA_DIR" 2>/dev/null; echo "$v" > "$cache" 2>/dev/null || true; echo "$v"; return 0; fi
+    [[ -f "$cache" ]] && { v="$(tr -d ' \n\r' < "$cache")"; _is_release_version "$v" && echo "$v"; }
+    return 0
+}
+
+_update_mode() {
+    local m; m="$(grep -E '^WYRDSEKAI_UPDATE=' "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr '[:upper:]' '[:lower:]' | tr -d ' ' || true)"
+    m="${WYRDSEKAI_UPDATE:-$m}"
+    case "$m" in auto|off) echo "$m" ;; *) echo "check" ;; esac
+}
+
+_update_window() {
+    local w; w="$(grep -E '^WYRDSEKAI_UPDATE_WINDOW=' "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d ' ' || true)"
+    echo "${WYRDSEKAI_UPDATE_WINDOW:-${w:-03:00-05:00}}"
+}
+
+# The artifact name this platform installs, the way the release ships it.
+_release_artifact() {   # <version>
+    local v="$1"
+    case "$(uname -s)" in
+        Darwin) echo "Wyrdsekai-$v.pkg" ;;
+        Linux)  if command -v dpkg >/dev/null 2>&1; then echo "wyrdsekai_${v}_amd64.deb"; else echo "wyrdsekai-$v.tar.gz"; fi ;;
+        *)      echo "Wyrdsekai-$v.msi" ;;
+    esac
+}
+
+_update_status() {
+    local installed latest mode
+    installed="$(_installed_version)"; mode="$(_update_mode)"
+    echo "$(_t update.status.installed "$installed")"
+    if [[ "$mode" == "off" ]]; then echo "$(_t update.status.mode "$mode")"; return 0; fi
+    latest="$(_release_latest "$WYRDSEKAI_RELEASE_REPO")"
+    if [[ -n "$latest" ]]; then echo "$(_t update.status.latest "$latest")"; else echo "$(_t update.status.latest_unknown)"; fi
+    echo "$(_t update.status.mode "$mode")"
+    if [[ -n "$latest" ]] && _version_newer "$latest" "$installed"; then
+        if [[ "$mode" == "auto" ]] && _is_release_version "$installed"; then echo "$(_t update.status.newer_auto "$latest" "$(_update_window)")"
+        else echo "$(_t update.status.newer "$latest")"; fi
+        _is_release_version "$installed" || echo "$(_t update.status.dev)"
+    elif [[ -n "$latest" ]]; then
+        if _is_release_version "$installed"; then echo "$(_t update.status.current)"; else echo "$(_t update.status.dev)"; fi
+    fi
+}
+
+# Download the release artifact for this platform and its SHA256SUMS, verify, and print the path.
+_release_download_verify() {   # <version>
+    local v="$1" art base dir
+    art="$(_release_artifact "$v")"; base="https://github.com/$WYRDSEKAI_RELEASE_REPO/releases/download/v$v"
+    dir="$DATA_DIR/updates"; mkdir -p "$dir"
+    if [[ ! -f "$dir/$art" ]]; then
+        log "$(_t update.now.downloading "$art")" >&2
+        curl -fL --progress-bar -o "$dir/$art.partial" "$base/$art" || { err "download failed: $base/$art"; rm -f "$dir/$art.partial"; return 1; }
+        mv "$dir/$art.partial" "$dir/$art"
+    fi
+    curl -fsSL -o "$dir/SHA256SUMS.$v" "$base/SHA256SUMS" || { err "the release has no SHA256SUMS — refusing an unverified install"; return 1; }
+    log "$(_t update.now.verifying)" >&2
+    local expected actual
+    expected="$(grep -E "[[:space:]]\*?$art\$" "$dir/SHA256SUMS.$v" | awk '{print $1}' | head -1)"
+    [[ -n "$expected" ]] || { err "$art is not listed in the release's SHA256SUMS"; return 1; }
+    if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$dir/$art" | awk '{print $1}')"; else actual="$(shasum -a 256 "$dir/$art" | awk '{print $1}')"; fi
+    if [[ "$actual" != "$expected" ]]; then err "$(_t update.now.mismatch)"; rm -f "$dir/$art"; return 1; fi
+    echo "$dir/$art"
+}
+
+_update_now() {   # [VERSION] [--yes]
+    local want="" yes=0 a
+    for a in "$@"; do case "$a" in --yes|-y) yes=1 ;; [0-9]*) want="$a" ;; esac; done
+    if [[ "$MODE" == "source" ]]; then
+        log "$(_t update.pulling)"
+        cd "$PROJECT_ROOT"
+        git pull --rebase || { warn "$(_t update.git_failed)"; return 1; }
+        log "$(_t update.rebuilding)"
+        ./gradlew :server:installDist || { err "Build failed"; return 1; }
+        log "$(_t update.done)"
+        return 0
+    fi
+    local installed latest
+    installed="$(_installed_version)"
+    if [[ -z "$want" ]]; then
+        log "$(_t update.now.resolving)"
+        latest="$(_release_latest "$WYRDSEKAI_RELEASE_REPO" --fresh)"
+        [[ -n "$latest" ]] || { err "$(_t update.now.no_latest)"; return 1; }
+        want="$latest"
+    fi
+    _is_release_version "$want" || { err "not a release version: $want"; return 1; }
+    if [[ "$want" == "${installed%%[~-]*}" ]] && _is_release_version "$installed"; then log "$(_t update.now.already "$want")"; return 0; fi
+    if [[ "$yes" != "1" ]] && [[ -t 0 ]]; then
+        local ans; read -r -p "$(_t update.now.confirm "$want" "$installed") [y/N] " ans
+        [[ "$ans" =~ ^[Yy] ]] || { log "$(_t update.now.cancelled)"; return 0; }
+    fi
+    local file; file="$(_release_download_verify "$want")" || return 1
+    do_update "$file"
+}
+
 do_update() {
-    local artifact="$1"
+    local artifact="${1:-}"
+    case "$artifact" in
+        ""|status) _update_status; return 0 ;;
+        now)       shift; _update_now "$@"; return $? ;;
+        auto)
+            case "${2:-}" in
+                on)  do_config set "WYRDSEKAI_UPDATE=auto" >/dev/null && log "$(_t update.auto.on "$(_update_window)")" ;;
+                off) do_config set "WYRDSEKAI_UPDATE=check" >/dev/null && log "$(_t update.auto.off)" ;;
+                *)   err "$(_t update.auto.usage)"; return 2 ;;
+            esac
+            return 0 ;;
+        stage)   # download + verify only (what the daemon does on Windows); the install is a person's step
+            local v; v="$(_release_latest "$WYRDSEKAI_RELEASE_REPO" --fresh)"; [[ -n "$v" ]] || { err "$(_t update.now.no_latest)"; return 1; }
+            local f; f="$(_release_download_verify "$v")" || return 1
+            log "$(_t update.now.staged "$f")"; return 0 ;;
+    esac
 
     # `wyrd update <path-to-installer>` — one-command in-place upgrade for an
     # installed node. The installer's own upgrade machinery does the heavy
     # lifting (deb: prerm stop → jar swap → postinst DB-snapshot + restart;
     # pkg: preinstall snapshot → payload → postinstall kickstart; msi:
     # snapshot + MajorUpgrade). Data + config are preserved by all three.
-    if [ -n "$artifact" ]; then
-        [ -f "$artifact" ] || { err "$(_t update.no_file "$artifact")"; return 1; }
-        case "$artifact" in
-            *.deb)
-                log "$(_t update.installing "$artifact")"
-                sudo dpkg -i "$artifact" || { err "$(_t update.install_failed)"; return 1; }
-                ;;
-            *.pkg)
-                log "$(_t update.installing "$artifact")"
-                sudo installer -pkg "$artifact" -target / \
-                    || { err "$(_t update.install_failed)"; return 1; }
-                ;;
-            *.msi)
-                # msiexec elevates itself; /qb = basic UI, no wizard clicks.
-                log "$(_t update.installing "$artifact")"
-                msiexec //i "$artifact" //qb || { err "$(_t update.install_failed)"; return 1; }
-                ;;
-            *)
-                err "$(_t update.unknown_artifact "$artifact")"; return 1
-                ;;
-        esac
-        log "$(_t update.done)"
-        return 0
-    fi
-
-    # No artifact → source-mode self-update (git pull + rebuild).
-    log "$(_t update.pulling)"
-    if [ "$MODE" = "source" ]; then
-        cd "$PROJECT_ROOT"
-        git pull --rebase || { warn "$(_t update.git_failed)"; return 1; }
-        log "$(_t update.rebuilding)"
-        ./gradlew :server:installDist || { err "Build failed"; return 1; }
-        log "$(_t update.done)"
-    else
-        warn "$(_t update.source_only)"
-    fi
+    [ -f "$artifact" ] || { err "$(_t update.no_file "$artifact")"; return 1; }
+    case "$artifact" in
+        *.deb)
+            log "$(_t update.installing "$artifact")"
+            sudo dpkg -i "$artifact" || { err "$(_t update.install_failed)"; return 1; }
+            ;;
+        *.pkg)
+            log "$(_t update.installing "$artifact")"
+            sudo installer -pkg "$artifact" -target / \
+                || { err "$(_t update.install_failed)"; return 1; }
+            ;;
+        *.msi)
+            # msiexec elevates itself; /qb = basic UI, no wizard clicks.
+            log "$(_t update.installing "$artifact")"
+            msiexec //i "$artifact" //qb || { err "$(_t update.install_failed)"; return 1; }
+            ;;
+        *.tar.gz)
+            log "$(_t update.installing "$artifact")"
+            local _v; _v="$(basename "$artifact" .tar.gz)"; _v="${_v#wyrdsekai-}"
+            sudo tar -xzf "$artifact" -C /opt && sudo rm -rf /opt/wyrdsekai.prev \
+                && { [ -d /opt/wyrdsekai ] && sudo mv /opt/wyrdsekai /opt/wyrdsekai.prev; sudo mv "/opt/wyrdsekai-$_v" /opt/wyrdsekai; } \
+                || { err "$(_t update.install_failed)"; return 1; }
+            ;;
+        *)
+            err "$(_t update.unknown_artifact "$artifact")"; return 1
+            ;;
+    esac
+    log "$(_t update.done)"
+    return 0
 }
 
 do_doctor() {
@@ -4049,6 +4340,23 @@ do_doctor() {
 
     local avail=$(df -h "$DATA_DIR" 2>/dev/null | tail -1 | awk '{print $4}')
     log "$(_t doctor.disk_avail "${avail:-$(_t doctor.disk_unknown)}")"
+    # The disk's headroom and what the backups hold: five nightly copies of a whole-library
+    # index ate a household node's disk to 4% free before anyone looked (2026-09-10).
+    local _use_pct; _use_pct="$(df -P "$DATA_DIR" 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%' || true)"
+    if [[ -n "$_use_pct" && "$_use_pct" -ge 90 ]]; then warn "$(_t doctor.disk_tight "$_use_pct")"; _wbump; fi
+    if [[ -d "$DATA_DIR/backups" ]]; then
+        local _bk_size _bk_n; _bk_size="$(du -sh "$DATA_DIR/backups" 2>/dev/null | cut -f1 || true)"; _bk_n="$(ls -1 "$DATA_DIR/backups" 2>/dev/null | wc -l | tr -d ' ')"
+        log "$(_t doctor.backups "${_bk_size:-?}" "$_bk_n" "$DATA_DIR/backups")"
+    fi
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        local _sw_used _sw_total; _sw_used="$(free -m 2>/dev/null | awk '/Swap:/{print $3}')"; _sw_total="$(free -m 2>/dev/null | awk '/Swap:/{print $2}')"
+        local _peak=""; if is_systemd_managed 2>/dev/null; then _peak="$(systemctl show wyrdsekai -p MemoryPeak --value 2>/dev/null | awk '{ if ($1+0 > 0) printf "%.1f GB", $1/1073741824 }' || true)"; fi
+        if [[ -n "$_sw_total" && "$_sw_total" -gt 0 ]]; then
+            if [[ "${_sw_used:-0}" -gt $(( _sw_total / 2 )) ]]; then warn "$(_t doctor.swap "${_sw_used}" "${_sw_total}" "${_peak:-?}")"; _wbump; else log "$(_t doctor.swap "${_sw_used}" "${_sw_total}" "${_peak:-?}")"; fi
+        fi
+        local _swp; _swp="$(cat /proc/sys/vm/swappiness 2>/dev/null || true)"
+        [[ -n "$_swp" && "$_swp" -gt 20 ]] && info "$(_t doctor.swappiness "$_swp")"
+    fi
 
     case "$platform" in
         Darwin) log "$(_t doctor.ram "$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f GB", $1/1073741824}')")" ;;
@@ -4070,6 +4378,33 @@ do_doctor() {
         || { warn "$(_t doctor.java_missing)"; _ebump; }
     command -v docker &>/dev/null && log "$(_t doctor.docker "$(docker --version 2>/dev/null | head -1)")" \
         || warn "$(_t doctor.docker_missing)"
+
+    # ── Releases: this node, and the two programs it leans on ──
+    local _rel_installed _rel_latest
+    _rel_installed="$(_installed_version)"
+    if [[ "$(_update_mode)" != "off" ]]; then
+        _rel_latest="$(_release_latest "$WYRDSEKAI_RELEASE_REPO")"
+        if [[ -z "$_rel_latest" ]]; then info "$(_t doctor.release_unknown "$_rel_installed")"
+        elif _version_newer "$_rel_latest" "$_rel_installed"; then warn "$(_t doctor.release_newer "$_rel_installed" "$_rel_latest")"; _wbump
+        else log "$(_t doctor.release "$_rel_installed" "$_rel_latest")"; fi
+        local _cz_bin _cz_ver _cz_latest
+        _cz_bin="$(command -v codezaiku 2>/dev/null || true)"
+        [[ -z "$_cz_bin" ]] && for _c in "$DATA_DIR/coding-cli-bundle/codezaiku/codezaiku/bin/codezaiku" "$PROJECT_ROOT/data/coding-cli-bundle/codezaiku/codezaiku/bin/codezaiku"; do [[ -x "$_c" ]] && { _cz_bin="$_c"; break; }; done
+        if [[ -n "$_cz_bin" ]]; then
+            _cz_ver="$("$_cz_bin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+            _cz_latest="$(_release_latest Wyrdsekai/codezaiku)"
+            if [[ -n "$_cz_latest" && -n "$_cz_ver" ]] && _version_newer "$_cz_latest" "$_cz_ver"; then warn "$(_t doctor.sibling_newer codezaiku "$_cz_ver" "$_cz_latest" "wyrd coding update codezaiku")"; _wbump
+            else log "$(_t doctor.sibling codezaiku "${_cz_ver:-?}" "${_cz_latest:-?}")"; fi
+        fi
+        local _rz_bin_d _rz_ver _rz_latest
+        _rz_bin_d="$(_rz_bin 2>/dev/null || true)"
+        if [[ -n "$_rz_bin_d" ]]; then
+            _rz_ver="$("$_rz_bin_d" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+            _rz_latest="$(_release_latest Wyrdsekai/researchzosho)"
+            if [[ -n "$_rz_latest" && -n "$_rz_ver" ]] && _version_newer "$_rz_latest" "$_rz_ver"; then warn "$(_t doctor.sibling_newer researchzosho "$_rz_ver" "$_rz_latest" "wyrd researcher update")"; _wbump
+            else log "$(_t doctor.sibling researchzosho "${_rz_ver:-?}" "${_rz_latest:-?}")"; fi
+        fi
+    fi
 
     if curl -s http://localhost:${PORT:-7070}/health &>/dev/null; then
         log "$(_t doctor.server_running)"
@@ -9375,12 +9710,486 @@ _library_consent() {
     fi
 }
 
+# ── ResearchZosho — the household's research librarian ──────────────────────
+# `wyrd researcher`: install ResearchZosho (its own one-line installer, checked
+# against its release's SHA256SUMS), run ITS setup (the library, the model, the
+# service), then connect this node as a patron: an allow-list entry and a bearer
+# token for the household's identity, an MCP service entry (http, the token from
+# the conf), WYRDSEKAI_LIBRARY_SERVICE pointed at it, a restart. The companions
+# then reach it as "library" — the librarian's desk item, the established-elsewhere
+# leg, the recall pass, the overnight ask.
+RESEARCHZOSHO_SERVICE_ID="researchzosho"
+RESEARCHZOSHO_INSTALL_URL="${RESEARCHZOSHO_INSTALL_URL:-https://researchzosho.org/install}"
+RESEARCHZOSHO_DEFAULT_URL="http://127.0.0.1:4649"   # the librarian's own default (researchzosho serve)
+
+# The librarian's reader commands. The public release says `reader`; releases before it said
+# `patron` and the new one keeps that as an alias — so try the current word, fall back to the old.
+_rz_reader() {
+    local rz="$1"; shift
+    "$rz" reader "$@" 2>/dev/null || "$rz" patron "$@"
+}
+
+_rz_bin() {   # the researchzosho launcher, or nothing (RESEARCHZOSHO_BIN overrides — a dev checkout)
+    local c
+    if [[ -n "${RESEARCHZOSHO_BIN:-}" && -x "${RESEARCHZOSHO_BIN}" ]]; then echo "$RESEARCHZOSHO_BIN"; return 0; fi
+    for c in researchzosho "$HOME/.local/bin/researchzosho" "$HOME/.local/share/researchzosho/bin/researchzosho" /usr/local/bin/researchzosho; do
+        if command -v "$c" >/dev/null 2>&1; then command -v "$c"; return 0; fi
+        [[ -x "$c" ]] && { echo "$c"; return 0; }
+    done
+    return 1
+}
+
+_rz_ask() {   # _rz_ask <question> <default>  — prints the answer; --yes takes the default
+    local q="$1" d="$2" a
+    if [[ "${RZ_YES:-0}" == "1" ]]; then echo "$d"; return 0; fi
+    read -r -p "$q [$d] " a </dev/tty || a=""
+    echo "${a:-$d}"
+}
+
+_rz_yesno() {   # _rz_yesno <question> <Y|N>
+    local a; a="$(_rz_ask "$1" "$2")"
+    [[ "$a" =~ ^[Yy] ]]
+}
+
+_rz_services_file() { echo "$DATA_DIR/mcp-services.json"; }
+
+# Merge one service entry into mcp-services.json (created if absent). Args: the entry as JSON,
+# and optionally an id to DISABLE (the door this one replaces).
+_rz_register_service() {
+    local entry="$1" disable="${2:-}" f; f="$(_rz_services_file)"
+    local tmp; tmp="$(mktemp)"
+    python3 - "$f" "$entry" "$disable" > "$tmp" <<'PY'
+import json, os, sys
+path, entry, disable = sys.argv[1], json.loads(sys.argv[2]), sys.argv[3]
+doc = {"mcp_services": []}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        doc = loaded if isinstance(loaded, dict) and "mcp_services" in loaded else {"mcp_services": loaded if isinstance(loaded, list) else []}
+    except Exception:
+        pass
+svcs = [s for s in doc.get("mcp_services", []) if isinstance(s, dict)]
+out = []
+for s in svcs:
+    if s.get("id") == entry["id"]:
+        continue
+    if disable and s.get("id") == disable:
+        s = dict(s); s["enabled"] = False
+    out.append(s)
+out.append(entry)
+doc["mcp_services"] = out
+print(json.dumps(doc, indent=2, ensure_ascii=False))
+PY
+    if [[ -w "$f" || ( ! -e "$f" && -w "$(dirname "$f")" ) ]]; then
+        cp "$tmp" "$f"
+    else
+        sudo cp "$tmp" "$f" && sudo chmod 644 "$f"
+    fi
+    rm -f "$tmp"
+}
+
+_rz_current_service() {   # the id playing the library role today, from the conf
+    grep -E "^WYRDSEKAI_LIBRARY_SERVICE=" "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true
+}
+
+_rz_household_did() {   # the person who keeps this node — the patron the token names
+    local api="$1" ctx; ctx="$(_library_sharing_ctx "$api" || true)"
+    [[ -n "$ctx" ]] || return 1
+    _json_str "$ctx" person
+}
+
+_rz_install() {
+    local rz; rz="$(_rz_bin)" && { log "ResearchZosho is already installed: $rz"; echo "$rz"; return 0; }
+    command -v java >/dev/null 2>&1 || warn "ResearchZosho needs Java 21 or newer on PATH; its installer will say so if it is missing."
+    log "Fetching the ResearchZosho installer from $RESEARCHZOSHO_INSTALL_URL"
+    local tmp; tmp="$(mktemp -d)"
+    if ! curl -fsSL "$RESEARCHZOSHO_INSTALL_URL" -o "$tmp/install.sh"; then
+        err "Could not fetch the installer. Install ResearchZosho by hand (https://researchzosho.org) and run: wyrd researcher setup"
+        rm -rf "$tmp"; return 1
+    fi
+    # The installer downloads the release AND its SHA256SUMS from the same GitHub release and
+    # refuses a mismatch; only this script comes from the site. It is short — readable in a minute.
+    if [[ "${RZ_YES:-0}" != "1" ]] && _rz_yesno "Show the installer before running it?" "N"; then
+        sed -n '1,200p' "$tmp/install.sh" | less 2>/dev/null || cat "$tmp/install.sh"
+    fi
+    if ! sh "$tmp/install.sh"; then err "The ResearchZosho installer failed."; rm -rf "$tmp"; return 1; fi
+    rm -rf "$tmp"
+    rz="$(_rz_bin)" || { err "ResearchZosho installed but its command was not found on PATH; open a new shell or add ~/.local/bin to PATH, then: wyrd researcher setup"; return 1; }
+    echo "$rz"
+}
+
+_rz_lan_ip() {
+    if [[ -n "${WYRDSEKAI_LAN_IP:-}" ]]; then echo "$WYRDSEKAI_LAN_IP"; return 0; fi
+    local ip=""
+    if command -v hostname >/dev/null 2>&1; then ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"; fi
+    [[ -z "$ip" ]] && command -v ipconfig >/dev/null 2>&1 && ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+    [[ -z "$ip" ]] && ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1 || true)"
+    echo "$ip"
+}
+
+_rz_request_file() { echo "$DATA_DIR/researcher-request.json"; }
+
+# Ask the librarian at <url> to let <did> in (contract 1.5 library_request_access), then wait for the
+# owner's answer and collect the token with the claim. A pending request is remembered so a second
+# `link` resumes instead of asking twice. Prints the token on success.
+_rz_request_access() {
+    local url="${1%/}" did="$2" name="$3" f; f="$(_rz_request_file)"
+    local req_id="" claim=""
+    if [[ -f "$f" ]] && [[ "$(_json_str "$(cat "$f")" url)" == "$url" ]]; then
+        req_id="$(_json_str "$(cat "$f")" request_id)"; claim="$(_json_str "$(cat "$f")" claim)"
+        log "Resuming access request $req_id at $url" >&2
+    else
+        local body; body="$(python3 -c 'import json,sys; print(json.dumps({"did": sys.argv[1], "name": sys.argv[2], "note": "A Wyrdsekai household asking to be a patron: its companions ask the desk, read what is established, and hand questions over for the night."}))' "$did" "$name")"
+        local r; r="$(curl -sf -m 15 -X POST -H "Content-Type: application/json" -d "$body" "$url/v1/request_access" 2>/dev/null || true)"
+        [[ -n "$r" ]] || { err "The librarian at $url did not take an access request. Is it running, and reachable from here?"; return 1; }
+        req_id="$(_json_str "$r" request_id)"; claim="$(_json_str "$r" claim)"
+        [[ -n "$req_id" ]] || { err "The librarian answered without a request id: $r"; return 1; }
+        if [[ -z "$claim" ]]; then
+            err "A request from this household is already pending there as $req_id, but its claim secret is not on this machine. Ask the owner to deny it (researchzosho reader deny $req_id), then link again."
+            return 1
+        fi
+        python3 -c 'import json,sys; json.dump({"url": sys.argv[1], "request_id": sys.argv[2], "claim": sys.argv[3], "did": sys.argv[4]}, open(sys.argv[5], "w"))' "$url" "$req_id" "$claim" "$did" "$f"
+        chmod 600 "$f" 2>/dev/null || true
+        log "Asked to be let in: request $req_id." >&2
+    fi
+    echo >&2
+    echo "  On the librarian's machine, the owner approves with:" >&2
+    echo "      researchzosho reader approve $req_id write" >&2
+    echo "  (or denies with: researchzosho reader deny $req_id)" >&2
+    echo >&2
+    local waits="${RZ_WAIT_SECONDS:-600}"; [[ "${RZ_YES:-0}" == "1" ]] && waits="${RZ_WAIT_SECONDS:-120}"
+    local waited=0 state="" out=""
+    while :; do
+        out="$(curl -sf -m 10 -X POST -H "Content-Type: application/json" -d "{\"request_id\":\"$req_id\",\"claim\":\"$claim\"}" "$url/v1/access" 2>/dev/null || true)"
+        state="$(_json_str "$out" state)"
+        case "$state" in
+            approved)
+                local tok; tok="$(_json_str "$out" token)"
+                if [[ -n "$tok" ]]; then rm -f "$f"; log "Let in as a $(_json_str "$out" level) reader." >&2; echo "$tok"; return 0; fi
+                err "Approved, but the token was already collected once; ask the owner for a new token (researchzosho reader token $did)."; rm -f "$f"; return 1 ;;
+            denied)
+                err "The owner denied the request${out:+: $(_json_str "$out" reason)}"; rm -f "$f"; return 1 ;;
+            lapsed)
+                err "The request lapsed unanswered; link again to ask afresh."; rm -f "$f"; return 1 ;;
+        esac
+        if (( waited >= waits )); then
+            warn "Still pending after $((waits/60)) min. Run \`wyrd researcher link $url\` again after the owner approves — the request is remembered." >&2
+            return 1
+        fi
+        [[ $waited -eq 0 ]] && log "Waiting for the owner's answer (up to $((waits/60)) min; Ctrl-C and link again later is fine)…" >&2
+        sleep 5; waited=$((waited+5))
+    done
+}
+
+# Subscribe this node's webhook door to the librarian's changes (contract 1.5). Best effort: a
+# librarian that cannot reach this node, or a node without a LAN address, still works by polling.
+_rz_subscribe() {
+    local url="${1%/}" token="$2"
+    [[ "${RZ_NO_WEBHOOK:-0}" == "1" ]] && return 0
+    local ip; ip="$(_rz_lan_ip)"
+    if [[ -z "$ip" ]]; then warn "No LAN address found for this node — the librarian's pushes are off; recall runs at sleep from the feed."; return 0; fi
+    local hook="http://$ip:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID"
+    local r; r="$(curl -sf -m 15 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"url\":\"$hook\"}" "$url/v1/subscribe" 2>/dev/null || true)"
+    local secret; secret="$(_json_str "$r" secret)"
+    if [[ -z "$secret" ]]; then warn "The librarian did not accept a webhook to $hook (it may not reach this node) — recall runs at sleep from the feed."; return 0; fi
+    do_config set "$(python3 -c 'import sys; print("WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + sys.argv[1].upper().replace("-", "_").replace(".", "_"))' "$RESEARCHZOSHO_SERVICE_ID")=$secret" >/dev/null || { warn "Could not store the webhook secret."; return 0; }
+    log "The librarian will push its changes to $hook (signed): recalls apply on the spot, and a landed write-up is told to the companions."
+}
+
+_rz_unsubscribe() {
+    local ep="$1" token="$2"
+    local url="${ep%/rpc}"; local ip; ip="$(_rz_lan_ip)"
+    [[ -n "$token" && -n "$ip" && "$ep" == http* ]] || return 0
+    local hook="http://$ip:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID"
+    curl -sf -m 10 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"url\":\"$hook\"}" "$url/v1/unsubscribe" >/dev/null 2>&1 || true
+}
+
+# Connect this node to a librarian. Args: <url> and either a token or a local researchzosho to
+# issue one with; or --stdio "<command>" for a librarian reached as a child process.
+_rz_connect() {
+    local url="$1" token="$2" rz="$3" stdio="$4" api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local did; did="$(_rz_household_did "$api" || true)"
+    if [[ -z "$did" ]]; then
+        err "The node is not running at $api, or has no identity yet — the token names the household, so start it first: wyrd start"
+        return 1
+    fi
+    local zone="${WYRDSEKAI_ZONE_NAME:-$(hostname -s 2>/dev/null || echo household)}"
+    local entry
+    if [[ -n "$stdio" ]]; then
+        # stdio: the librarian's own allow list decides by the did we assert; make sure it lists us.
+        if [[ -n "$rz" ]]; then
+            _rz_reader "$rz" allow "$did" write "$zone household (wyrdsekai)" >/dev/null 2>&1 \
+                && log "Allowed $did to write to the library."
+        else
+            warn "On the librarian's machine, allow this household:  researchzosho reader allow $did write \"$zone household (wyrdsekai)\""
+        fi
+        entry="$(python3 -c 'import json,sys; print(json.dumps({"id": sys.argv[1], "name": "ResearchZosho", "transport": "stdio", "endpoint": sys.argv[2], "tier": "local", "enabled": True}))' "$RESEARCHZOSHO_SERVICE_ID" "$stdio")"
+    else
+        if [[ -z "$token" && -n "$rz" ]]; then
+            _rz_reader "$rz" allow "$did" write "$zone household (wyrdsekai)" >/dev/null || { err "Could not allow $did on the library."; return 1; }
+            token="$(_rz_reader "$rz" token "$did" 2>/dev/null | tail -1 || true)"
+            [[ -n "$token" ]] || { err "Could not issue a token for $did."; return 1; }
+            log "Allowed $did to write to the library and issued its token (kept only as a hash there)."
+        fi
+        if [[ -z "$token" ]]; then
+            # No shell on the librarian's machine: ask to be let in (contract 1.5), then collect the token.
+            token="$(_rz_request_access "$url" "$did" "$zone household (wyrdsekai)" || true)"
+            [[ -n "$token" ]] || return 1
+        fi
+        local st; st="$(curl -sf -m 8 -H "Authorization: Bearer $token" "${url%/}/v1/status" 2>/dev/null || true)"
+        if [[ -z "$st" ]]; then
+            err "The librarian at $url did not answer with that token. Is the service running (researchzosho service status)? A librarian on another machine listens on loopback: reach it through an ssh tunnel, or use --stdio \"ssh -T <box> researchzosho mcp\"."
+            return 1
+        fi
+        log "The librarian answers: $(_json_str "$st" library_name) (contract $(_json_str "$st" contract))"
+        do_config set "WYRDSEKAI_MCP_KEY_$(echo "$RESEARCHZOSHO_SERVICE_ID" | tr '[:lower:]-' '[:upper:]_')=$token" >/dev/null || { err "Could not store the token in $CONFIG_FILE"; return 1; }
+        _rz_subscribe "$url" "$token" || true
+        entry="$(python3 -c 'import json,sys; print(json.dumps({"id": sys.argv[1], "name": "ResearchZosho", "transport": "http", "endpoint": sys.argv[2].rstrip("/") + "/rpc", "tier": "local", "auth": {"type": "bearer", "safe_key": sys.argv[1]}, "enabled": True}))' "$RESEARCHZOSHO_SERVICE_ID" "$url")"
+    fi
+    local old; old="$(_rz_current_service || true)"
+    local disable=""
+    if [[ -n "$old" && "$old" != "$RESEARCHZOSHO_SERVICE_ID" ]]; then
+        if _rz_yesno "The library role is played by '$old' today. Disable that entry now that ResearchZosho takes the role?" "Y"; then disable="$old"; fi
+    fi
+    _rz_register_service "$entry" "$disable" || { err "Could not write $(_rz_services_file)"; return 1; }
+    do_config set "WYRDSEKAI_LIBRARY_SERVICE=$RESEARCHZOSHO_SERVICE_ID" >/dev/null || { err "Could not set WYRDSEKAI_LIBRARY_SERVICE in $CONFIG_FILE"; return 1; }
+    log "Registered '$RESEARCHZOSHO_SERVICE_ID' in $(_rz_services_file) and made it the library role."
+    if grep -qE "^WYRDSEKAI_MCP_STRICT_GRANTS=true" "$CONFIG_FILE" 2>/dev/null; then
+        warn "Strict MCP grants are on: grant the companions the '$RESEARCHZOSHO_SERVICE_ID' service from the steward's Study before they can use it."
+    fi
+    if [[ "${RZ_NO_RESTART:-0}" != "1" ]] && _rz_yesno "Restart the node so the companions can reach the librarian?" "Y"; then
+        if is_systemd_managed; then sudo systemctl restart wyrdsekai; else do_stop; sleep 1; do_start; fi
+        log "Restarted. The librarian's desk item and the sleep-time recall now use ResearchZosho."
+    else
+        log "Restart when convenient: wyrd restart"
+    fi
+    echo
+    echo "Next:  the desk item 'librarian_desk' in a room — ask, search:, established?, sharpen: <question>, research: <question>, explain <id>, jobs, read <id>"
+    echo "       wyrd researcher status"
+}
+
+_rz_status() {
+    local rz; rz="$(_rz_bin 2>/dev/null || true)"
+    echo "ResearchZosho:"
+    if [[ -n "$rz" ]]; then echo "  command   = $rz ($("$rz" version 2>/dev/null | head -1 || echo '?'))"; else echo "  command   = not installed (wyrd researcher setup)"; fi
+    if [[ -n "$rz" && "$(_update_mode)" != "off" ]]; then
+        local _rzv _rzl; _rzv="$("$rz" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"; _rzl="$(_release_latest Wyrdsekai/researchzosho)"
+        if [[ -n "$_rzl" && -n "$_rzv" ]] && _version_newer "$_rzl" "$_rzv"; then echo "  latest    = $_rzl — newer than $_rzv (wyrd researcher update)"; elif [[ -n "$_rzl" ]]; then echo "  latest    = $_rzl"; fi
+    fi
+    local f; f="$(_rz_services_file)"
+    local ep; ep="$(python3 -c 'import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    for s in (d.get("mcp_services", d) if isinstance(d, dict) else d):
+        if isinstance(s, dict) and s.get("id")==sys.argv[2]: print(("%s %s%s" % (s.get("transport"), s.get("endpoint"), "" if s.get("enabled", True) else " (disabled)"))); break
+except Exception: pass' "$f" "$RESEARCHZOSHO_SERVICE_ID" 2>/dev/null)"
+    echo "  service   = ${ep:-not registered in $f}"
+    local role; role="$(_rz_current_service || true)"
+    echo "  role      = WYRDSEKAI_LIBRARY_SERVICE=${role:-(unset — no library configured)}"
+    local keyvar="WYRDSEKAI_MCP_KEY_$(echo "$RESEARCHZOSHO_SERVICE_ID" | tr '[:lower:]-' '[:upper:]_')"
+    if grep -qE "^$keyvar=" "$CONFIG_FILE" 2>/dev/null; then echo "  token     = set ($keyvar in $CONFIG_FILE)"; else echo "  token     = none (stdio, or not linked)"; fi
+    local url="${ep#http }"; url="${url%/rpc}"
+    if [[ "$ep" == http* ]]; then
+        local tok; tok="$(grep -E "^$keyvar=" "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+        local st; st="$(curl -sf -m 6 ${tok:+-H "Authorization: Bearer $tok"} "$url/v1/status" 2>/dev/null || true)"
+        if [[ -n "$st" ]]; then echo "  daemon    = answers: $(_json_str "$st" library_name), contract $(_json_str "$st" contract)"; else echo "  daemon    = not answering at $url"; fi
+    fi
+    if grep -qE "^WYRDSEKAI_MCP_STRICT_GRANTS=true" "$CONFIG_FILE" 2>/dev/null; then echo "  grants    = strict (companions need a grant for the service)"; else echo "  grants    = open (every companion may use it)"; fi
+    if grep -qE "^WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_$(echo "$RESEARCHZOSHO_SERVICE_ID" | tr '[:lower:]-' '[:upper:]_')=" "$CONFIG_FILE" 2>/dev/null; then echo "  webhook   = subscribed (changes are pushed to this node)"; else echo "  webhook   = none (recall reads the feed at sleep)"; fi
+    local rq; rq="$(_rz_request_file)"; [[ -f "$rq" ]] && echo "  pending   = access request $(_json_str "$(cat "$rq")" request_id) at $(_json_str "$(cat "$rq")" url) — link again once the owner approves"
+}
+
+do_researcher() {
+    local sub="${1:-status}"; shift || true
+    case "$sub" in
+        status) _rz_status ;;
+        update)
+            # The librarian's own updater (researchzosho 0.1.2+): the latest release, verified against its sums, service restarted.
+            local rz; rz="$(_rz_bin 2>/dev/null || true)"
+            [[ -n "$rz" ]] || { err "ResearchZosho is not installed here (wyrd researcher setup). A librarian on another machine updates itself there: researchzosho update now"; return 1; }
+            "$rz" update now "$@" ;;
+        install)
+            RZ_YES=0; [[ "${1:-}" == "--yes" ]] && RZ_YES=1
+            local rz; rz="$(_rz_install)" || return 1
+            log "Run its setup next: $rz setup   (or all at once: wyrd researcher setup)"
+            ;;
+        setup)
+            # The wizard: install if missing → ITS setup → the service → connect this node.
+            RZ_YES=0; RZ_NO_RESTART=0; RZ_NO_WEBHOOK=0; local url="$RESEARCHZOSHO_DEFAULT_URL" port=4649
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --yes) RZ_YES=1; shift ;;
+                    --no-restart) RZ_NO_RESTART=1; shift ;;
+                    --no-webhook) RZ_NO_WEBHOOK=1; shift ;;
+                    --url) url="$2"; shift 2 ;;
+                    --port) port="$2"; url="http://127.0.0.1:$2"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            local rz; rz="$(_rz_install)" || return 1
+            echo
+            log "ResearchZosho's own setup asks where the library goes, which model reads, and whether it runs as a service."
+            log "Say yes to the service: that is what the companions talk to."
+            if [[ "$RZ_YES" == "1" ]]; then "$rz" setup --yes </dev/null || { err "researchzosho setup failed"; return 1; }
+            else "$rz" setup </dev/tty || { err "researchzosho setup failed"; return 1; }; fi
+            echo
+            local st; st="$(curl -sf -m 6 "${url%/}/v1/status" 2>/dev/null || true)"
+            if [[ -z "$st" ]]; then
+                warn "The librarian's service is not answering at $url."
+                if _rz_yesno "Install it as a user service now (researchzosho service install)?" "Y"; then
+                    "$rz" service install --port "$port" || { err "service install failed"; return 1; }
+                    local i; for i in 1 2 3 4 5 6 7 8 9 10; do st="$(curl -sf -m 4 "${url%/}/v1/status" 2>/dev/null || true)"; [[ -n "$st" ]] && break; sleep 2; done
+                fi
+            fi
+            if [[ -n "$st" ]]; then
+                _rz_connect "$url" "" "$rz" ""
+            else
+                warn "No daemon at $url — connecting over stdio instead (no overnight asks until the service runs)."
+                _rz_connect "" "" "$rz" "$rz mcp"
+            fi
+            ;;
+        link)
+            # Connect to a librarian that already exists: here, on another machine, or as a child process.
+            RZ_YES=0; RZ_NO_RESTART=0; RZ_NO_WEBHOOK=0; local url="" token="" stdio=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --yes) RZ_YES=1; shift ;;
+                    --no-restart) RZ_NO_RESTART=1; shift ;;
+                    --no-webhook) RZ_NO_WEBHOOK=1; shift ;;
+                    --wait) RZ_WAIT_SECONDS=$(( ${2:-10} * 60 )); shift 2 ;;
+                    --token) token="$2"; shift 2 ;;
+                    --stdio) stdio="$2"; shift 2 ;;
+                    http://*|https://*) url="$1"; shift ;;
+                    *) shift ;;
+                esac
+            done
+            if [[ -z "$stdio" && -z "$url" ]]; then url="$RESEARCHZOSHO_DEFAULT_URL"; fi
+            local rz; rz="$(_rz_bin 2>/dev/null || true)"
+            _rz_connect "$url" "$token" "$rz" "$stdio"
+            ;;
+        unlink)
+            local f; f="$(_rz_services_file)"
+            local keyvar="WYRDSEKAI_MCP_KEY_$(echo "$RESEARCHZOSHO_SERVICE_ID" | tr '[:lower:]-' '[:upper:]_')"
+            local tok; tok="$(grep -E "^$keyvar=" "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+            local ep; ep="$(python3 -c 'import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    for s in (d.get("mcp_services", d) if isinstance(d, dict) else d):
+        if isinstance(s, dict) and s.get("id")==sys.argv[2]: print(s.get("endpoint","")); break
+except Exception: pass' "$f" "$RESEARCHZOSHO_SERVICE_ID" 2>/dev/null || true)"
+            _rz_unsubscribe "$ep" "$tok"
+            do_config unset "WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_$(echo "$RESEARCHZOSHO_SERVICE_ID" | tr '[:lower:]-' '[:upper:]_')" >/dev/null 2>&1 || true
+            _rz_register_service "$(python3 -c 'import json,sys; print(json.dumps({"id": sys.argv[1], "name": "ResearchZosho", "transport": "http", "endpoint": "", "tier": "local", "enabled": False}))' "$RESEARCHZOSHO_SERVICE_ID")" ""
+            do_config unset "WYRDSEKAI_LIBRARY_SERVICE" >/dev/null 2>&1 || true
+            log "ResearchZosho is no longer the library role (entry disabled in $f). Restart to apply: wyrd restart"
+            ;;
+        help|-h|--help|*)
+            echo "Usage: wyrd researcher <setup|install|link|status|update|unlink>"
+            echo "  setup [--yes] [--url U|--port N]   install ResearchZosho if needed, run its setup, connect this node (the wizard)"
+            echo "        [--no-restart]               (--yes takes every default; RESEARCHZOSHO_BIN points at a checkout)"
+            echo "  install [--yes]                    install ResearchZosho only (its checked one-line installer)"
+            echo "  link [url] [--token T]             connect to a librarian that already runs (default $RESEARCHZOSHO_DEFAULT_URL);"
+            echo "       [--wait MIN] [--no-webhook]     without a token it asks the owner to be let in and waits for the answer"
+            echo "  link --stdio \"<command>\"           connect to one reached as a child process, e.g. \"ssh -T box researchzosho mcp\""
+            echo "  status                             what is installed, registered, and answering"
+            echo "  unlink                             stop using it as the library role"
+            [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 1
+            ;;
+    esac
+}
+
+# ── Scripted items: are they wired to the world API this build serves? ───────
+# `wyrd items check [dir…]`: every world.* call in every item script, resolved
+# against the API. Runs what the loader runs at boot; exits 1 on any mis-wired
+# item, with the fix in the line (the journal that called a renamed method and
+# died on `use`, 2026-09-08).
+do_items() {
+    local sub="${1:-check}"; shift || true
+    case "$sub" in
+        check)
+            local CLI_LIB
+            if [[ "$MODE" == "source" ]]; then
+                if [[ ! -d "$PROJECT_ROOT/cli/build/install/cli" ]]; then
+                    log "Building cli for wyrd items (one-time)..."
+                    (cd "$PROJECT_ROOT" && "$GRADLE" :cli:installDist -q) || { err "Failed to build cli"; return 1; }
+                fi
+                CLI_LIB="$PROJECT_ROOT/cli/build/install/cli/lib"
+            else
+                CLI_LIB="$REAL_BIN/../lib/cli"
+                [[ ! -d "$CLI_LIB" ]] && CLI_LIB="$REAL_BIN/../lib"
+            fi
+            [[ ! -d "$CLI_LIB" ]] && { err "wyrd items: cli libs not found at $CLI_LIB"; return 1; }
+            find_java || { err "$(_t common.java_missing 2>/dev/null || echo 'Java >=25 required')"; return 1; }
+            local CP; CP=$(echo "$CLI_LIB"/*.jar | tr ' ' ':')
+            if [[ "$MODE" == "source" ]] && [[ -d "$PROJECT_ROOT/core/build/classes/java/main" ]]; then
+                CP="$PROJECT_ROOT/core/build/classes/java/main:$PROJECT_ROOT/scripting/build/classes/java/main:$PROJECT_ROOT/common/build/classes/java/main:$CP"
+            fi
+            WYRDSEKAI_DATA_DIR="${WYRDSEKAI_DATA_DIR:-$DATA_DIR}" \
+                "$JAVA_CMD" --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Dpolyglot.engine.WarnInterpreterOnly=false -Dpolyglot.log.level=OFF -cp "$CP" org.wyrdsekai.core.item.ItemWiringCli "$@" 2> >(grep -vE "^\[engine\]|^\[To redirect|^\* |^Execution without|^The following cause|^For more information|^To disable this warning|^WARNING: |^\s*$" >&2)
+            ;;
+        *)
+            echo "Usage: wyrd items check [--quiet] [dir…]"
+            echo "  check   every item script's world.* calls against the API this build serves (bundled + the household's items by default)"
+            [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 1
+            ;;
+    esac
+}
+
 do_library() {
     local subcmd="${1:-help}"
     shift || true
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
 
     case "$subcmd" in
+        # ── Readers of the library door (LIBRARY_PROTOCOL.md, "Serving it") ──
+        # A peer librarian speaks the /v1 door with a bearer token this issues.
+        reader|readers)
+            local op="${1:-list}"; shift || true
+            local f="$DATA_DIR/library-readers.json"
+            case "$op" in
+                list)
+                    python3 -c 'import json,sys,os
+p=sys.argv[1]
+if not os.path.exists(p): print("no readers yet — wyrd library reader add <name> [--did did] [--write]"); sys.exit(0)
+for r in json.load(open(p)).get("readers", []): print("- %s — %s — %s" % (r.get("name"), r.get("did") or "(no did)", r.get("level")))' "$f"
+                    ;;
+                add)
+                    local name="${1:-}"; shift || true
+                    local did="" level="read"
+                    while [[ $# -gt 0 ]]; do case "$1" in --did) did="$2"; shift 2 ;; --write) level="write"; shift ;; *) shift ;; esac; done
+                    [[ -n "$name" ]] || { echo "Usage: wyrd library reader add <name> [--did <did>] [--write]"; return 1; }
+                    local tok; tok="$(python3 - "$f" "$name" "$did" "$level" <<'PY'
+import json, os, sys, secrets, hashlib
+p, name, did, level = sys.argv[1:5]
+doc = {"readers": []}
+if os.path.exists(p):
+    try: doc = json.load(open(p))
+    except Exception: pass
+readers = [r for r in doc.get("readers", []) if r.get("name", "").lower() != name.lower()]
+tok = secrets.token_urlsafe(32)
+readers.append({"name": name, "did": did, "level": level, "token_hash": hashlib.sha256(tok.encode()).hexdigest()})
+os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+json.dump({"readers": readers}, open(p, "w"), indent=2); open(p, "a").write("\n")
+print(tok)
+PY
+)" || { err "Could not write $f"; return 1; }
+                    echo "reader token for '$name' ($level) — shown once; only its hash is kept:"
+                    echo "$tok"
+                    echo "  Give it to the librarian: researchzosho peer add <name> http://$(_rz_lan_ip):${WYRDSEKAI_PORT:-7070} <token>"
+                    ;;
+                remove)
+                    [[ -n "${1:-}" ]] || { echo "Usage: wyrd library reader remove <name>"; return 1; }
+                    python3 -c 'import json,sys,os
+p, name = sys.argv[1], sys.argv[2]
+doc = json.load(open(p)) if os.path.exists(p) else {"readers": []}
+kept = [r for r in doc.get("readers", []) if r.get("name","").lower() != name.lower()]
+print("removed" if len(kept) != len(doc.get("readers", [])) else "no such reader")
+json.dump({"readers": kept}, open(p, "w"), indent=2)' "$f" "$1"
+                    ;;
+                *) echo "Usage: wyrd library reader <list|add <name> [--did <did>] [--write]|remove <name>>"; return 1 ;;
+            esac
+            ;;
         # ── Sharing a shelf with a companion ────────────────────────────────
         # 2026-08-07: the consent model was complete and correct and had NO
         # usable interface — enabling it meant reading two DIDs out of sqlite
@@ -9633,6 +10442,141 @@ do_library() {
         status)
             curl -s "$api/api/library/status"
             echo
+            # Proposals the shelves made for themselves (gap signals, acquire) wait
+            # here for you; until 2026-09-03 nothing surfaced them anywhere.
+            local pending
+            pending=$(curl -sf "$api/api/library/proposals" 2>/dev/null | grep -o '"count":[0-9]*' | head -1 | cut -d: -f2)
+            if [[ -n "$pending" && "$pending" != "0" ]]; then
+                echo "$pending acquisition proposal(s) waiting for review — wyrd library proposals"
+            fi
+            ;;
+        proposals)
+            # Acquisition proposals: what the library asked to acquire (a topic queried
+            # and missed N times, or a companion's `acquire`) — waiting for the steward.
+            #   wyrd library proposals                 list pending
+            #   wyrd library proposals --all           include reviewed
+            #   wyrd library proposals approve <id>    (id or unique prefix)
+            #   wyrd library proposals reject <id> [reason]
+            local verb="${1:-list}"
+            case "$verb" in
+                approve|reject)
+                    local pid="${2:-}"; [[ -z "$pid" ]] && { err "proposal id (or prefix) required"; return 1; }
+                    local reason="${3:-}"
+                    curl -sf -X POST "$api/api/library/proposals/$pid/$verb" -H 'Content-Type: application/json' \
+                        -d "{\"reviewer\":\"steward\",\"reason\":\"${reason//\"/\\\"}\"}" \
+                        || { err "The server refused that — check the id with: wyrd library proposals"; return 1; }
+                    echo ;;
+                *)
+                    local q=""; [[ "$verb" == "--all" ]] && q="?status=all"
+                    curl -sf "$api/api/library/proposals$q" 2>/dev/null | python3 -c '
+import json, sys
+import datetime
+r = json.load(sys.stdin)
+ps = r.get("proposals") or []
+if not ps:
+    print("No acquisition proposals waiting."); sys.exit(0)
+def when(v):
+    # Instants serialize as epoch seconds (a number) or ISO text depending on the mapper.
+    if isinstance(v, (int, float)):
+        return datetime.datetime.fromtimestamp(v, datetime.timezone.utc).strftime("%Y-%m-%d")
+    return str(v or "")[:10]
+print("%d proposal(s)" % len(ps))
+for p in ps:
+    print("\n%s  [%s]  %s" % (str(p.get("id", ""))[:8], p.get("status"), p.get("topic")))
+    print("  " + (p.get("summary") or ""))
+    print("  trigger: %s  proposed: %s  by: %s" % (p.get("trigger"), when(p.get("proposedAt")), str(p.get("proposedBy") or "")[:24]))
+    srcs = p.get("sources") or []
+    if not srcs: print("  sources: none yet — approving records the gap; add sources or install a pack that covers it")
+print("\napprove: wyrd library proposals approve <id>   reject: wyrd library proposals reject <id> [reason]")
+' || { err "Could not list proposals — is the server running?"; return 1; }
+                    ;;
+            esac
+            ;;
+        findings)
+            # The findings tier — what a companion established from reading, with
+            # sources and a state. wyrd library findings <companion> [draft|accepted|all] [--json]
+            #                      wyrd library findings <companion> accept|dispute|retire <id> [note]
+            #                      wyrd library findings <companion> review
+            local who="${1:-}"; shift || true
+            if [[ -z "$who" ]]; then
+                echo "Usage: wyrd library findings <companion> [draft|accepted|disputed|retired|all]"
+                echo "       wyrd library findings <companion> accept|dispute|retire <finding-id> [note]"
+                echo "       wyrd library findings <companion> review"
+                return 1
+            fi
+            local ctx; ctx="$(_library_sharing_ctx "$api")"
+            [[ -z "$ctx" ]] && { err "Could not reach the server at $api — is it running?"; return 1; }
+            local owner; owner="$(_library_companion_did "$who" "$ctx")"
+            if [[ -z "$owner" ]]; then
+                [[ "$who" == did:* ]] && owner="$who" || { err "Don't know a companion called '$who'."; return 1; }
+            fi
+            local verb="${1:-all}"
+            case "$verb" in
+                accept|dispute|retire)
+                    local fid="${2:-}"; [[ -z "$fid" ]] && { err "finding id required"; return 1; }
+                    local note="${3:-}"
+                    curl -sf -X POST "$api/api/library/findings/$fid/$verb" -H 'Content-Type: application/json' \
+                        -d "{\"note\":\"${note//\"/\\\"}\"}" || { err "The server refused that"; return 1; }
+                    echo ;;
+                review)
+                    curl -sf -X POST "$api/api/library/findings/review?owner=$owner" || { err "Review failed"; return 1; }
+                    echo ;;
+                *)
+                    local state="$verb" as_json=0
+                    [[ "${2:-}" == "--json" || "$verb" == "--json" ]] && as_json=1
+                    [[ "$verb" == "--json" ]] && state="all"
+                    local out; out=$(curl -sf "$api/api/library/findings?owner=$owner&state=$state&limit=100") \
+                        || { err "Could not list findings"; return 1; }
+                    if [[ "$as_json" == "1" ]]; then echo "$out"; return 0; fi
+                    echo "$out" | python3 -c '
+import json, sys
+r = json.load(sys.stdin)
+print("%d finding(s)" % r["count"])
+for f in r["findings"]:
+    flag = " (edited since review)" if f.get("reviewStale") else ""
+    print("\n[%s, %s] %s%s" % (f["state"], f["claimType"], f["id"], flag))
+    print("  " + f["claim"].replace("\n", "\n  ")[:600])
+    for s in f.get("sources") or []: print("  source: " + s)
+    if f.get("reviewNote"): print("  review: " + f["reviewNote"])
+' ;;
+            esac
+            ;;
+        bench)
+            # The retrieval bench — replays her REAL reading-log queries through the
+            # production search path (recording off) and scores the labeled ones against
+            # <library>/bench-gold.json. Every retrieval change is judged by this number.
+            #   wyrd library bench [k] [--limit N] [--json]
+            local k=10 limit=300 as_json=0
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --limit) limit="${2:-300}"; shift 2 ;;
+                    --json) as_json=1; shift ;;
+                    [0-9]*) k="$1"; shift ;;
+                    *) shift ;;
+                esac
+            done
+            local bench_json
+            bench_json=$(curl -sf "$api/api/library/bench?k=$k&limit=$limit") \
+                || { err "wyrd library bench: server not answering at $api"; return 1; }
+            if [[ "$as_json" == "1" ]]; then echo "$bench_json"; return 0; fi
+            echo "$bench_json" | python3 -c '
+import json, sys
+r = json.load(sys.stdin)
+mr = r.get("missRate")
+print("Library retrieval bench  (k=%d)" % r["k"])
+print("  queries replayed : %d asked, %d distinct, %d repeated" % (r["askedTotal"], r["distinctQueries"], r["repeated"]))
+print("  zero-hit         : %d / %d  (%.0f%%)" % (r["zeroHit"], r["distinctQueries"], 100.0 * r["zeroHitRate"]))
+print("  dictionary on top: %d" % r["dictionaryTop"])
+if r["labeled"]:
+    print("  labeled miss@%-3d: %d / %d  (%.0f%%)" % (r["k"], r["labeledMiss"], r["labeled"], 100.0 * mr))
+else:
+    print("  labeled          : none — add {\"query\",\"expect\":[...]} entries to %s" % r["goldFile"])
+print()
+print("  %-4s %-4s %-6s %-22s %s" % ("ask", "hits", "score", "top pack", "query"))
+for row in r["rows"]:
+    mark = "" if row["goldRank"] < 0 else (" MISS" if row["goldRank"] == 0 else " gold@%d" % row["goldRank"])
+    print("  %-4d %-4d %-6.2f %-22s %s%s" % (row["asked"], row["hits"], row["topScore"], (row["topPack"] or "-")[:22], row["query"][:60], mark))
+'
             ;;
         bundle)
             # air-gap helper. Pre-downloads packs
@@ -9665,17 +10609,30 @@ do_library() {
             ;;
         help|-h|--help|"")
             echo "Usage: wyrd library <subcommand>"
-            echo "  install <pack-name> [--from-dir <path> | --url <url>]"
-            echo "  ingest <dir> [--collection <name>] [--user <name>] [--catalog | --full-text]"
-            echo "                                  (index ebooks/documents — epub/pdf/docx/md/txt; Calibre"
-            echo "                                   libraries default to --catalog: instant card catalog from"
-            echo "                                   metadata.db; --full-text extracts everything, resumable)"
-            echo "  available                       (registry packs)"
-            echo "  status                          (installed packs + chunk counts)"
-            echo "  bundle [--dest <dir>] [--packs <csv> | --langs <csv>]"
-            echo "                                  (air-gap: pre-download packs offline-installable)"
-            echo "  compact <snapshot|merge|prune|reembed|probe> ..."
-            echo "  freshness <enumerate|prune-ids> ..."
+            echo ""
+            echo "  Shelves"
+            echo "    install <pack-name> [--from-dir <path> | --url <url>]"
+            echo "    ingest <dir> [--collection <name>] [--user <name>] [--catalog | --full-text]"
+            echo "                                    (index ebooks/documents — epub/pdf/docx/md/txt; Calibre"
+            echo "                                     libraries default to --catalog: instant card catalog from"
+            echo "                                     metadata.db; --full-text extracts everything, resumable)"
+            echo "    available                       (registry packs)"
+            echo "    status                          (installed packs + chunk counts + proposals waiting)"
+            echo "    publish <collection>            (project a Study shelf zone-wide, private to the household)"
+            echo "    grant|revoke <companion> <shelf> (let a companion read a Study shelf)"
+            echo "    prune-sidecars <collection>     (drop metadata sidecars an older ingest swept in)"
+            echo "    bundle [--dest <dir>] [--packs <csv> | --langs <csv>]"
+            echo "                                    (air-gap: pre-download packs offline-installable)"
+            echo "    compact <snapshot|merge|prune|reembed|probe> ..."
+            echo "    freshness <enumerate|prune-ids> ..."
+            echo ""
+            echo "  The librarian"
+            echo "    bench [k] [--limit N] [--json]  (replay the reading log through search; score vs bench-gold.json)"
+            echo "    findings <companion> [state]    (what she established from reading: draft|accepted|disputed|retired|all)"
+            echo "    findings <companion> accept|dispute|retire <id> [note]"
+            echo "    findings <companion> review     (run the mechanical review now; it also runs at sleep)"
+            echo "    proposals [--all]               (acquisition proposals waiting for you)"
+            echo "    proposals approve|reject <id> [reason]"
             ;;
         *)
             err "unknown subcommand: $subcmd"; return 1 ;;
@@ -11257,7 +12214,7 @@ EOF
                 local port=11525
                 pkill -f "llama-server.*--port $port" 2>/dev/null || true
                 nohup "$llama_bin" --host 127.0.0.1 --port $port \
-                    --model "$model_path" --ctx-size 8192 --jinja \
+                    --model "$model_path" --ctx-size 8192 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" --jinja \
                     --reasoning off --reasoning-budget 0 \
                     > "$DATA_DIR/.llama-server.log" 2>&1 &
                 echo $! > "$DATA_DIR/.llama-server.pid"
@@ -11751,17 +12708,28 @@ do_feed() {
         return 0
     fi
     if [[ "$raw" == 1 ]]; then tail -n "$n" "$path"; return 0; fi
-    tail -n "$n" "$path" | python3 -c '
+    # Heredoc, not `python3 -c '…'`: inside single quotes the f-string had to
+    # escape its quotes with backslashes, which Python rejects inside an
+    # f-string expression — `wyrd feed` printed a SyntaxError on every node
+    # (0.2.2). The file path and line count travel as argv.
+    python3 - "$path" "$n" <<'PY'
 import json, sys
-for line in sys.stdin:
-    try: d = json.loads(line)
-    except Exception: continue
+from collections import deque
+path, n = sys.argv[1], int(sys.argv[2])
+with open(path, encoding="utf-8") as fh:
+    lines = deque(fh, maxlen=n)
+for line in lines:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
     who = d.get("companion") or "?"
-    if d.get("viaBunshin"): who += " (bunshin)"
+    if d.get("viaBunshin"):
+        who += " (bunshin)"
     tail = (" — " + d["target"]) if d.get("target") else ""
     out = (" -> " + d["outcome"]) if d.get("outcome") else ""
-    print(f"{d.get(\"ts\",\"\")[:19]}  {who:<14} {d.get(\"verb\",\"\"):<28} [{d.get(\"tier\",\"\")}]{tail}{out}")
-'
+    print("%s  %-14s %-28s [%s]%s%s" % (d.get("ts", "")[:19], who, d.get("verb", ""), d.get("tier", ""), tail, out))
+PY
 }
 
 do_voice() {
@@ -11864,7 +12832,7 @@ do_voice() {
                 log "$(_t voice.enable.starting_metal "$port")"
                 local gpu_layers="${WYRDSEKAI_GPU_LAYERS:-99}"
                 nohup "$llama" -m "$voice_model_file" --lora "$adapter_file" \
-                    --port "$port" -c "${LLAMA_VOICE_CTX:-4096}" -np 1 \
+                    --port "$port" -c "${LLAMA_VOICE_CTX:-4096}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                     -ngl "$gpu_layers" --host 0.0.0.0 --jinja \
                     --reasoning off --reasoning-budget 0 \
                     > "$DATA_DIR/.llama-voice.log" 2>&1 &
@@ -12338,7 +13306,7 @@ case "${1:-help}" in
     restore)    do_restore "$2" ;;
     recover)    do_recover "$2" "$3" ;;
     reset-zone) do_reset_zone "$2" ;;
-    update)     do_update "$2" ;;
+    update)     do_update "${@:2}" ;;
     doctor)     do_doctor ;;
     inference)  do_inference "${2:-help}" "${3:-}" ;;
     coding)     do_coding "${@:2}" ;;
@@ -12356,6 +13324,8 @@ case "${1:-help}" in
     repair)     do_repair "${2:-status}" "${@:3}" ;;
     issue)      do_issue "${2:-list}" "${@:3}" ;;
     library)    do_library "${2:-help}" "${@:3}" ;;
+    researcher) do_researcher "${2:-status}" "${@:3}" ;;
+    items)      do_items "${2:-check}" "${@:3}" ;;
     oracle)     do_oracle "${2:-status}" ;;
     relay)         do_relay "${@:2}" ;;
     phone)         do_phone "${@:2}" ;;
@@ -12424,6 +13394,8 @@ case "${1:-help}" in
         echo "  embedding-model   Manage which embedding model is active (status/list/recommend/set/download)"
         echo "$(_t usage.cmd.inference)"
         echo "  coding       Manage coding-CLI backends: list/status/install/uninstall/update <backend>"
+        echo "  researcher   ResearchZosho, the research librarian: setup (the wizard) / install / link / status / update / unlink"
+        echo "  items        Scripted items: check — every item's world.* calls against the API this build serves"
         echo "$(_t usage.cmd.invite)"
         echo "$(_t usage.cmd.invite_2)"
         echo "$(_t usage.cmd.cred)"

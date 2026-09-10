@@ -1227,6 +1227,10 @@ public final class ToolItemStarterKit {
 
             var blocks = [];
             var sources = [];
+            // Chunk ids travel SEPARATELY from the source lines: the lines go to her
+            // working memory (and used to leak into speech), the ids go to the
+            // findings ledger so a claim's source can be checked at sleep (2026-09-03).
+            var sourceIds = [];
             var picked = 0;
             for (var i = 0; i < results.length && picked < 8; i++) {
                 if (results[i].score && results[i].score < minScore) continue;
@@ -1244,6 +1248,7 @@ public final class ToolItemStarterKit {
                 blocks.push("[" + key + " | " + title + " | " + pack + "]\\n"
                     + body + "\\n[/" + key + "]");
                 sources.push(key + ": " + title + " (" + pack + ")");
+                sourceIds.push(String(results[i].id));
                 picked++;
             }
             if (blocks.length === 0) {
@@ -1270,7 +1275,7 @@ public final class ToolItemStarterKit {
             // whatever she says next is grounded in words that are on the page.
             if (wantsTheWords) {
                 return { findings: blocks.slice(0, 3).join("\\n\\n"),
-                         sources: sources, verbatim: true };
+                         sources: sources, source_ids: sourceIds, verbatim: true };
             }
 
             // ANSWER THE PERSON'S QUESTION, NOT THE SEARCH STRING.
@@ -1290,7 +1295,7 @@ public final class ToolItemStarterKit {
                 + "the question, say so. Answer from the source text; a name spelled oddly "
                 + "in the question is the same name as in the sources.";
             var summary = world.llm.analyze(combined, instruction);
-            return { findings: summary, sources: sources };
+            return { findings: summary, sources: sources, source_ids: sourceIds };
         }
         """;
 

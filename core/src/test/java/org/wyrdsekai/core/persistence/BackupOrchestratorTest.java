@@ -111,17 +111,21 @@ class BackupOrchestratorTest {
         Files.writeString(sourceDb, "db");
         orchestrator.snapshotAll(sourceDb, searchDir);
 
-        // Modify the original (simulating corruption/loss)
-        Files.writeString(studyDir.resolve("segments_1"), "corrupted");
+        // Lose the original the way an index loses it: Lucene never edits a segment file in
+        // place, it writes new files and unlinks old ones — which is why a snapshot may
+        // hard-link them. A crash mid-commit leaves the old file gone and a bad new one.
+        Files.delete(studyDir.resolve("segments_1"));
+        Files.writeString(studyDir.resolve("segments_2"), "corrupted");
 
         // Restore
         var backup = orchestrator.latestSearchSnapshot();
         assertThat(backup).isPresent();
         assertThat(orchestrator.restoreSearch(backup.get().location(), searchDir)).isTrue();
 
-        // Verify restored content
+        // Verify restored content — and that the restore is a copy, independent of the snapshot
         assertThat(Files.readString(searchDir.resolve("study/segments_1")))
             .isEqualTo("original study data");
+        assertThat(Files.exists(searchDir.resolve("study/segments_2"))).isFalse();
     }
 
     @Test void snapshotAll_handles_null_search_dir() throws IOException {
@@ -433,5 +437,34 @@ class BackupOrchestratorTest {
         var manifest = orchestrator.snapshotAll(sourceDb, searchDir);
         assertThat(manifest).isPresent();
         assertThat(manifest.get().source()).contains("search");
+    }
+
+    @Test
+    void the_search_index_is_hard_linked_not_copied_so_a_snapshot_costs_no_space(@TempDir Path root) throws IOException {
+        // A Lucene index: write-once segment files. Five nightly copies of a 174 GB index ate a
+        // household node's disk (2026-09-10); a link shares the bytes and costs nothing.
+        var search = root.resolve("search"); var backups = root.resolve("backups");
+        Files.createDirectories(search.resolve("knowledge"));
+        Files.writeString(search.resolve("knowledge").resolve("_0.cfs"), "segment zero ".repeat(1000));
+        Files.writeString(search.resolve("knowledge").resolve("segments_1"), "commit one");
+        var orch = new BackupOrchestrator(backups);
+        var out = BackupOrchestrator.linkOrCopyDirectory(search, backups.resolve("search.t1"));
+        assertThat(out.linked()).isEqualTo(2);
+        assertThat(out.copied()).isEqualTo(0);
+        var live = search.resolve("knowledge").resolve("_0.cfs");
+        var snap = backups.resolve("search.t1").resolve("knowledge").resolve("_0.cfs");
+        assertThat(Files.isSameFile(live, snap)).as("a hard link: the same inode").isTrue();
+        assertThat(Files.readString(snap)).startsWith("segment zero");
+
+        // Lucene retires a segment by unlinking it: the snapshot keeps its own link, so the
+        // bytes stay readable from the backup after the live index has moved on.
+        Files.delete(live);
+        Files.writeString(search.resolve("knowledge").resolve("_1.cfs"), "segment one");
+        assertThat(Files.readString(snap)).startsWith("segment zero");
+        var out2 = BackupOrchestrator.linkOrCopyDirectory(search, backups.resolve("search.t2"));
+        assertThat(out2.linked()).isEqualTo(2);
+        assertThat(Files.exists(backups.resolve("search.t2").resolve("knowledge").resolve("_1.cfs"))).isTrue();
+        assertThat(Files.exists(backups.resolve("search.t2").resolve("knowledge").resolve("_0.cfs"))).isFalse();
+        assertThat(orch).isNotNull();
     }
 }

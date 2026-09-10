@@ -16,6 +16,8 @@ public class McpServerManager {
     private static volatile McpServerManager instance;
 
     private final Map<String, McpTransportHandler> handlers = new ConcurrentHashMap<>();
+    /** Services whose calls carry a credential from the key store — the far side proves WHO we are. */
+    private final java.util.Set<String> authenticated = ConcurrentHashMap.newKeySet();
     private final McpToolIndex toolIndex = new McpToolIndex();
     private final McpKeyStore keyStore;
 
@@ -34,6 +36,13 @@ public class McpServerManager {
     /** Global accessor for MCP tool discovery. */
     public static McpServerManager get() { return instance; }
 
+    /**
+     * Whether calls to {@code serviceId} carry a credential that names the caller. A library
+     * protocol daemon resolves a bearer token to ONE patron and refuses a body that asserts a
+     * different did — so a patron speaking through such a service must not assert one.
+     */
+    public boolean isAuthenticated(String serviceId) { return serviceId != null && authenticated.contains(serviceId); }
+
     /** Attach a grant-based authorization check ( MCP_TOOL). */
     public void setGrantCheck(McpGrantCheck check) {
         this.grantCheck = check;
@@ -46,6 +55,7 @@ public class McpServerManager {
 
         var handler = McpTransportFactory.create(config, authHeader);
         var initResult = handler.initialize();
+        if (authHeader != null && !authHeader.isBlank()) authenticated.add(config.id()); else authenticated.remove(config.id());
 
         log.info("MCP server '{}' initialized: {} v{} (transport: {})",
             config.id(),

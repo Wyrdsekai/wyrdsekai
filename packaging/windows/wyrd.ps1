@@ -94,6 +94,8 @@ $VoicePort = 8201
 # the voice default is halved for RAM: two 4B servers on one consumer GPU.
 $DriveCtx = if ($env:WYRDSEKAI_DRIVE_CTX) { $env:WYRDSEKAI_DRIVE_CTX } else { "16384" }
 $VoiceCtx = if ($env:WYRDSEKAI_VOICE_CTX) { $env:WYRDSEKAI_VOICE_CTX } else { "8192" }
+# llama-server keeps a host-RAM prompt cache that defaults to 8 GiB PER server; cap it.
+$CacheRam = if ($env:WYRDSEKAI_LLAMA_CACHE_RAM) { $env:WYRDSEKAI_LLAMA_CACHE_RAM } else { "1024" }
 
 # llama.cpp release source + model fallback chain (mirrors bin/wyrd setup)
 $LlamaRepo      = "ggml-org/llama.cpp"
@@ -114,7 +116,7 @@ $V8Default = @(
 $GooseRepo    = "aaif-goose/goose"   # repo moved block/goose -> aaif-goose/goose
 $GooseTag     = "v1.34.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuRepo = "Wyrdsekai/codezaiku"
-$CodeZaikuTag  = "v0.1.0"             # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuTag  = "v0.3.0"             # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuDir  = Join-Path $DataDir "coding-cli-bundle\codezaiku"
 # The tarball carries its own top-level codezaiku/ dir, so the launcher lands
 # nested — same shape BackendExecutableResolver searches on the Java side.
@@ -1280,7 +1282,7 @@ function Start-LlamaServer {
         # then disables <think> blocks (the control only engages under --jinja).
         # Qwen3.5-derived models ship reasoning ON and would burn the whole token
         # budget thinking, leaving message.content empty. Mirrors home-server's docker args.
-        $driveArgs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$DrivePort", "-c", "$DriveCtx", "-np", "1", "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0")
+        $driveArgs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$DrivePort", "-c", "$DriveCtx", "-np", "1", "--cache-ram", $CacheRam, "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0")
         $p = Start-Process -FilePath $LlamaServerExe -ArgumentList $driveArgs -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $LlamaLog -RedirectStandardError "$LlamaLog.err"
         Set-Content -Path $LlamaPidFile -Value $p.Id -Encoding ASCII
@@ -1310,7 +1312,7 @@ function Start-LlamaServer {
         }
         # Working dir = vectors dir so the bare control-vector filenames resolve.
         $voiceCwd = if (Test-Path $VectorsDir) { $VectorsDir } else { $DataDir }
-        $vargs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$VoicePort", "-c", "$VoiceCtx", "-np", "1", "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0") + $vecArgs
+        $vargs = @("-m", "`"$model`"", "--host", "127.0.0.1", "--port", "$VoicePort", "-c", "$VoiceCtx", "-np", "1", "--cache-ram", $CacheRam, "-ngl", $ngl, "--jinja", "--reasoning", "off", "--reasoning-budget", "0") + $vecArgs
         $vp2 = Start-Process -FilePath $LlamaServerExe -ArgumentList $vargs -WorkingDirectory $voiceCwd -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $VoiceLog -RedirectStandardError "$VoiceLog.err"
         Set-Content -Path $VoicePidFile -Value $vp2.Id -Encoding ASCII
@@ -1774,6 +1776,10 @@ function Invoke-Status {
             Write-Host ("  llama    : drive :$DrivePort $dl  |  voice :$VoicePort $vc")
         }
     }
+    if ((Get-UpdateMode) -ne 'off') {
+        $lat = Get-LatestRelease $ReleaseRepo
+        if ($lat -and (Test-VersionNewer $lat (Get-InstalledRelease))) { Write-Host ("  {0}" -f (_T 'update.status.newer' $lat)) }
+    }
 }
 
 # Locate the shipped config catalog (scripts/config-catalog.json): every
@@ -1963,6 +1969,26 @@ function Invoke-Doctor {
     $serverPid = Get-ServerPid
     Write-Host ("  server       : {0}" -f $(if ($serverPid) { "running (pid $serverPid), /health=$(Test-Health)" } else { "stopped" }))
     Write-Host ("  port $RestPort   : {0}" -f $(if (Test-PortListening) { "listening" } else { "free" }))
+    # Releases: this node, and the two programs it leans on
+    if ((Get-UpdateMode) -ne 'off') {
+        $inst = Get-InstalledRelease; $lat = Get-LatestRelease $ReleaseRepo
+        if (-not $lat) { Write-Host ("  release      : {0}" -f (_T 'doctor.release_unknown' $inst)) }
+        elseif (Test-VersionNewer $lat $inst) { Write-Host ("  release      : {0}" -f (_T 'doctor.release_newer' $inst $lat)) }
+        else { Write-Host ("  release      : {0}" -f (_T 'doctor.release' $inst $lat)) }
+        if (Test-Path $CodeZaikuBat) {
+            $czv = $null; try { $czv = ((& $CodeZaikuBat --version 2>$null | Out-String) -replace '[^\d.]', ' ').Trim().Split(' ')[0] } catch { }
+            $czl = Get-LatestRelease 'Wyrdsekai/codezaiku'
+            if ($czl -and $czv -and (Test-VersionNewer $czl $czv)) { Write-Host ("  codezaiku    : {0}" -f (_T 'doctor.sibling_newer' 'codezaiku' $czv $czl 'wyrd coding update codezaiku')) }
+            else { Write-Host ("  codezaiku    : {0}" -f (_T 'doctor.sibling' 'codezaiku' $(if ($czv) { $czv } else { '?' }) $(if ($czl) { $czl } else { '?' }))) }
+        }
+        $rz = Get-ResearchZoshoCmd
+        if ($rz) {
+            $rzv = $null; try { $rzv = ((& $rz version 2>$null | Out-String) -replace '[^\d.]', ' ').Trim().Split(' ')[0] } catch { }
+            $rzl = Get-LatestRelease 'Wyrdsekai/researchzosho'
+            if ($rzl -and $rzv -and (Test-VersionNewer $rzl $rzv)) { Write-Host ("  researchzosho: {0}" -f (_T 'doctor.sibling_newer' 'researchzosho' $rzv $rzl 'wyrd researcher update')) }
+            else { Write-Host ("  researchzosho: {0}" -f (_T 'doctor.sibling' 'researchzosho' $(if ($rzv) { $rzv } else { '?' }) $(if ($rzl) { $rzl } else { '?' }))) }
+        }
+    }
 }
 
 function Invoke-Help {
@@ -1979,7 +2005,10 @@ Lifecycle:
   status                process + REST health + config summary
   log                   tail -f the server log
   version [--mesh]      installed build (from the jar); --mesh = peers too
-  update                source checkout: git pull + rebuild (msi: use a new .msi)
+  update [status]       this release, the latest, the mode (WYRDSEKAI_UPDATE = check|auto|off)
+  update now [VER] [--yes]  download the latest (or VER) .msi from the GitHub release, verify, install
+  update auto on|off    let the node download and verify a newer release at a quiet moment
+  update <file.msi>     install a downloaded release
 
 Config:
   config list           print wyrdsekai.conf
@@ -2002,6 +2031,14 @@ Inference:
 Coding:
   coding status                        show default backend + goose state
   coding install goose [--force]       fetch the goose binary (default coding backend)
+Researcher (ResearchZosho, the research librarian):
+  researcher setup [--yes]             install it if missing, run its setup, connect this node (the wizard)
+  researcher link [url] [--token T]    connect to a librarian already running (default http://127.0.0.1:4649);
+                 [--wait MIN]          without a token it asks the owner to be let in and waits for the answer
+  researcher status                    what is installed, registered, and answering
+  researcher update                    the librarian's own updater: latest release, verified, restarted
+Items:
+  items check [dir...]                 every item's world.* calls against the API this build serves
 
 Search:
   search status                        show web-search backend (metasearch vs DuckDuckGo)
@@ -2234,25 +2271,163 @@ function Invoke-ResetZone {
     } catch { Write-Err2 "reset-zone failed: $_"; exit 1 }
 }
 
-function Invoke-Update {
-    # Source-checkout dev layout (this script two levels below the repo root):
-    # git pull + rebuild, mirroring bin/wyrd source mode. Installed .msi node:
-    # updates ship as a new installer (which snapshots DBs before upgrading).
+# ── Releases: what runs, what is out, and installing it ────────────────────
+# The node's version is the VERSION file the installer ships beside the program; the
+# latest release comes from GitHub and is remembered for a day under the data dir. The
+# install is msiexec's own upgrade (database snapshot, MajorUpgrade), elevated by UAC.
+$ReleaseRepo = "Wyrdsekai/wyrdsekai"
+
+function Get-InstalledRelease {
+    foreach ($f in @((Join-Path $AppDir "VERSION"), (Join-Path $InstallDir "VERSION"))) {
+        if (Test-Path $f) { $v = (Get-Content $f -Raw).Trim(); if ($v) { return $v } }
+    }
     $repoRoot = Join-Path $AppDir "..\.."
-    if ((Test-Path (Join-Path $repoRoot ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Info (_T 'update.pulling')
-        Push-Location $repoRoot
-        try {
-            & git pull --rebase
-            if ($LASTEXITCODE -ne 0) { Write-Warn2 (_T 'update.git_failed'); exit 1 }
-            Write-Info (_T 'update.rebuilding')
-            & .\gradlew.bat :server:installDist
-            if ($LASTEXITCODE -ne 0) { Write-Err2 "Build failed"; exit 1 }
-            Write-Info (_T 'update.done')
-        } finally { Pop-Location }
-    } else {
-        Write-Warn2 (_T 'update.source_only')
-        Write-Host "  Windows: download and run the new .msi - the installer snapshots your databases before upgrading."
+    if (Test-Path (Join-Path $repoRoot ".git")) { return "dev" }
+    return "unknown"
+}
+
+function Test-ReleaseVersion([string]$v) { return ($v -match '^\d+\.\d+\.\d+$') }
+
+function Test-VersionNewer([string]$a, [string]$b) {
+    # true when $a > $b on the numeric base (suffixes ignored)
+    $pa = ($a -split '[~-]')[0]; $pb = ($b -split '[~-]')[0]
+    try { return ([version]$pa) -gt ([version]$pb) } catch { return $false }
+}
+
+function Get-LatestRelease([string]$Repo, [switch]$Fresh) {
+    $slug = $Repo.Split('/')[1]
+    $cache = Join-Path $DataDir "latest-$slug.txt"
+    if (-not $Fresh -and (Test-Path $cache) -and ((Get-Date) - (Get-Item $cache).LastWriteTime).TotalHours -lt 24) {
+        $v = (Get-Content $cache -Raw).Trim(); if (Test-ReleaseVersion $v) { return $v }
+    }
+    try {
+        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'wyrdsekai-cli'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 10
+        $v = "$($rel.tag_name)"; if ($v.StartsWith('v')) { $v = $v.Substring(1) }
+        if (Test-ReleaseVersion $v) { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null; Set-Content -Path $cache -Value $v -Encoding ASCII; return $v }
+    } catch { }
+    if (Test-Path $cache) { $v = (Get-Content $cache -Raw).Trim(); if (Test-ReleaseVersion $v) { return $v } }
+    return $null
+}
+
+function Get-UpdateMode {
+    $conf = Get-Conf
+    $m = if ($env:WYRDSEKAI_UPDATE) { $env:WYRDSEKAI_UPDATE } elseif ($conf.Contains('WYRDSEKAI_UPDATE')) { $conf['WYRDSEKAI_UPDATE'] } else { 'check' }
+    $m = "$m".Trim().ToLowerInvariant()
+    if ($m -eq 'auto' -or $m -eq 'off') { return $m }
+    return 'check'
+}
+
+function Get-UpdateWindow {
+    $conf = Get-Conf
+    if ($env:WYRDSEKAI_UPDATE_WINDOW) { return $env:WYRDSEKAI_UPDATE_WINDOW }
+    if ($conf.Contains('WYRDSEKAI_UPDATE_WINDOW')) { return $conf['WYRDSEKAI_UPDATE_WINDOW'] }
+    return '03:00-05:00'
+}
+
+function Show-UpdateStatus {
+    $installed = Get-InstalledRelease; $mode = Get-UpdateMode
+    Write-Host (_T 'update.status.installed' $installed)
+    if ($mode -eq 'off') { Write-Host (_T 'update.status.mode' $mode); return }
+    $latest = Get-LatestRelease $ReleaseRepo
+    if ($latest) { Write-Host (_T 'update.status.latest' $latest) } else { Write-Host (_T 'update.status.latest_unknown') }
+    Write-Host (_T 'update.status.mode' $mode)
+    if ($latest -and (Test-VersionNewer $latest $installed)) {
+        Write-Host (_T 'update.status.newer' $latest)
+        Write-Host "  (on Windows the node downloads and verifies it; the install itself asks for elevation, so it is a person's step)"
+        if (-not (Test-ReleaseVersion $installed)) { Write-Host (_T 'update.status.dev') }
+    } elseif ($latest) { if (Test-ReleaseVersion $installed) { Write-Host (_T 'update.status.current') } else { Write-Host (_T 'update.status.dev') } }
+}
+
+function Get-ReleaseArtifact([string]$Version) {
+    $dir = Join-Path $DataDir "updates"; New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $art = "Wyrdsekai-$Version.msi"; $base = "https://github.com/$ReleaseRepo/releases/download/v$Version"
+    $msi = Join-Path $dir $art; $sums = Join-Path $dir "SHA256SUMS.$Version"
+    $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try {
+        if (-not (Test-Path $msi)) {
+            Write-Info (_T 'update.now.downloading' $art)
+            Invoke-WebRequest -Uri "$base/$art" -OutFile "$msi.partial" -UseBasicParsing
+            Move-Item -Force "$msi.partial" $msi
+        }
+        try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums -UseBasicParsing }
+        catch { Write-Err2 "the release has no SHA256SUMS - refusing an unverified install"; return $null }
+    } finally { $ProgressPreference = $prev }
+    Write-Info (_T 'update.now.verifying')
+    $line = Select-String -Path $sums -Pattern ("\s\*?" + [regex]::Escape($art) + "$") | Select-Object -First 1
+    if (-not $line) { Write-Err2 "$art is not listed in the release's SHA256SUMS"; return $null }
+    $expected = ($line.Line -split '\s+')[0]
+    $actual = (Get-FileHash -Path $msi -Algorithm SHA256).Hash
+    if ($actual -ine $expected) { Write-Err2 (_T 'update.now.mismatch'); Remove-Item -Force $msi -ErrorAction SilentlyContinue; return $null }
+    return $msi
+}
+
+function Install-ReleaseArtifact([string]$Path) {
+    Write-Info (_T 'update.installing' $Path)
+    $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$Path`"", '/passive', '/norestart') -Verb RunAs -Wait -PassThru
+    if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Write-Err2 "msiexec exited with $($p.ExitCode)"; return $false }
+    Write-Info (_T 'update.done'); return $true
+}
+
+function Invoke-Update {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
+    $repoRoot = Join-Path $AppDir "..\.."
+    $sourceMode = (Test-Path (Join-Path $repoRoot ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)
+    switch ($sub) {
+        "status" { Show-UpdateStatus; return }
+        "auto" {
+            $on = if ($Rest.Count -ge 2) { $Rest[1] } else { "" }
+            if ($on -eq 'on') { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null; Set-ConfKey -Key 'WYRDSEKAI_UPDATE' -Value 'auto'; Write-Ok (_T 'update.auto.on' (Get-UpdateWindow)) }
+            elseif ($on -eq 'off') { Set-ConfKey -Key 'WYRDSEKAI_UPDATE' -Value 'check'; Write-Ok (_T 'update.auto.off') }
+            else { Write-Err2 (_T 'update.auto.usage'); exit 2 }
+            return
+        }
+        "stage" {
+            $v = Get-LatestRelease $ReleaseRepo -Fresh
+            if (-not $v) { Write-Err2 (_T 'update.now.no_latest'); exit 1 }
+            if (-not (Test-VersionNewer $v (Get-InstalledRelease))) { Write-Info (_T 'update.now.already' $v); return }
+            $f = Get-ReleaseArtifact $v; if (-not $f) { exit 1 }
+            Write-Ok (_T 'update.now.staged' $f); return
+        }
+        "now" {
+            if ($sourceMode) {
+                Write-Info (_T 'update.pulling')
+                Push-Location $repoRoot
+                try {
+                    & git pull --rebase
+                    if ($LASTEXITCODE -ne 0) { Write-Warn2 (_T 'update.git_failed'); exit 1 }
+                    Write-Info (_T 'update.rebuilding')
+                    & .\gradlew.bat :server:installDist
+                    if ($LASTEXITCODE -ne 0) { Write-Err2 "Build failed"; exit 1 }
+                    Write-Info (_T 'update.done')
+                } finally { Pop-Location }
+                return
+            }
+            $want = $null; $yes = $false
+            foreach ($a in $Rest[1..($Rest.Count)]) { if ($a -eq '--yes' -or $a -eq '-y' -or $a -eq '-Yes') { $yes = $true } elseif ("$a" -match '^\d') { $want = "$a" } }
+            $installed = Get-InstalledRelease
+            if (-not $want) {
+                Write-Info (_T 'update.now.resolving')
+                $want = Get-LatestRelease $ReleaseRepo -Fresh
+                if (-not $want) { Write-Err2 (_T 'update.now.no_latest'); exit 1 }
+            }
+            if (-not (Test-ReleaseVersion $want)) { Write-Err2 "not a release version: $want"; exit 1 }
+            if ((Test-ReleaseVersion $installed) -and $want -eq $installed) { Write-Info (_T 'update.now.already' $want); return }
+            if (-not $yes) {
+                $ans = Read-Host ((_T 'update.now.confirm' $want $installed) + " [y/N]")
+                if ($ans -notmatch '^[Yy]') { Write-Info (_T 'update.now.cancelled'); return }
+            }
+            $f = Get-ReleaseArtifact $want; if (-not $f) { exit 1 }
+            if (-not (Install-ReleaseArtifact $f)) { exit 1 }
+            return
+        }
+        default {
+            if (Test-Path $sub) {
+                if ($sub -match '\.msi$') { if (-not (Install-ReleaseArtifact (Resolve-Path $sub).Path)) { exit 1 }; return }
+                Write-Err2 (_T 'update.unknown_artifact' $sub); exit 1
+            }
+            if ($sourceMode) { $script:Rest = @('now'); Invoke-Update; return }
+            Write-Err2 "usage: wyrd update [status | now [VERSION] [--yes] | auto on|off | stage | <file.msi>]"; exit 2
+        }
     }
 }
 
@@ -2745,11 +2920,369 @@ function Invoke-Recipes {
     }
 }
 
+# ── ResearchZosho, the research librarian ────────────────────────────────────
+# wyrd researcher: install ResearchZosho (its own checked installer), run ITS setup,
+# then connect this node as a patron: allow-list entry + bearer token for the
+# household's identity, an MCP service entry (http, token in the conf),
+# WYRDSEKAI_LIBRARY_SERVICE pointed at it, a restart. ASCII only in this block:
+# Windows PowerShell 5.1 reads a BOM-less file in the system codepage.
+$ResearchZoshoServiceId = "researchzosho"
+$ResearchZoshoInstallUrl = if ($env:RESEARCHZOSHO_INSTALL_URL) { $env:RESEARCHZOSHO_INSTALL_URL } else { "https://researchzosho.org/install.ps1" }
+$ResearchZoshoDefaultUrl = "http://127.0.0.1:4649"   # the librarian's own default (researchzosho serve)
+
+# The librarian's reader commands: the public release says `reader`, older ones said `patron` (kept as an alias).
+function Invoke-RzReader {
+    param([string]$Rz, [string[]]$Rest)
+    $out = & $Rz reader @Rest 2>$null
+    if ($LASTEXITCODE -ne 0) { $out = & $Rz patron @Rest 2>$null }
+    return $out
+}
+
+function Get-ResearchZoshoCmd {
+    foreach ($n in @("researchzosho.cmd", "researchzosho.bat", "researchzosho")) {
+        $c = Get-Command $n -ErrorAction SilentlyContinue
+        if ($c) { return $c.Source }
+    }
+    $prefix = if ($env:RESEARCHZOSHO_PREFIX) { $env:RESEARCHZOSHO_PREFIX } else { Join-Path $env:LOCALAPPDATA "Programs" }
+    foreach ($n in @("researchzosho.cmd", "researchzosho.bat")) {
+        $p = Join-Path (Join-Path (Join-Path $prefix "researchzosho") "bin") $n
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+function Read-ResearcherAnswer { param($Question, $Default, [switch]$Yes)
+    if ($Yes) { return $Default }
+    $a = Read-Host "$Question [$Default]"
+    if ([string]::IsNullOrWhiteSpace($a)) { return $Default } else { return $a }
+}
+
+function Install-ResearchZosho { param([switch]$Yes)
+    $have = Get-ResearchZoshoCmd
+    if ($have) { Write-Ok "ResearchZosho already installed: $have"; return $have }
+    if (-not (Get-Command java -ErrorAction SilentlyContinue)) { Write-Warn2 "ResearchZosho needs Java 21 or newer on PATH; its installer will say so." }
+    $tmp = Join-Path $env:TEMP "wyrd-researchzosho-install.ps1"
+    Write-Info "Fetching the ResearchZosho installer from $ResearchZoshoInstallUrl"
+    try { Invoke-WebRequest -Uri $ResearchZoshoInstallUrl -OutFile $tmp -TimeoutSec 120 } catch { Write-Err2 "Could not fetch the installer: $($_.Exception.Message)"; return $null }
+    # The installer downloads the release and its SHA256SUMS from the same GitHub release and refuses a mismatch.
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $tmp
+    if ($LASTEXITCODE -ne 0) { Write-Err2 "The ResearchZosho installer failed."; return $null }
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+    $have = Get-ResearchZoshoCmd
+    if (-not $have) { Write-Err2 "Installed, but researchzosho is not on PATH yet. Open a new terminal, then: wyrd researcher setup"; return $null }
+    return $have
+}
+
+function Write-ResearcherService { param($Entry, $Disable)
+    $f = Join-Path $DataDir "mcp-services.json"
+    $doc = @{ mcp_services = @() }
+    if (Test-Path $f) {
+        try {
+            $loaded = Get-Content $f -Raw | ConvertFrom-Json
+            if ($loaded.mcp_services) { $doc = @{ mcp_services = @($loaded.mcp_services) } }
+        } catch { }
+    }
+    $out = @()
+    foreach ($s in $doc.mcp_services) {
+        if ($s.id -eq $Entry.id) { continue }
+        if ($Disable -and $s.id -eq $Disable) { $s | Add-Member -NotePropertyName enabled -NotePropertyValue $false -Force }
+        $out += $s
+    }
+    $out += $Entry
+    $json = @{ mcp_services = $out } | ConvertTo-Json -Depth 6
+    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    # ASCII: the file is read by the JVM as UTF-8 and every value here is ASCII anyway.
+    Set-Content -Path $f -Value $json -Encoding ASCII
+    return $f
+}
+
+function Get-WyrdLanIp {
+    if ($env:WYRDSEKAI_LAN_IP) { return $env:WYRDSEKAI_LAN_IP }
+    try {
+        $c = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.IPv4Address } | Select-Object -First 1
+        if ($c) { return $c.IPv4Address.IPAddress }
+    } catch { }
+    return $null
+}
+
+# Ask the librarian to let this household in (contract 1.5), wait for the owner's answer, collect the token.
+function Request-ResearchZoshoAccess { param($Url, $Did, $Name, [switch]$Yes, [int]$WaitSeconds)
+    $f = Join-Path $DataDir "researcher-request.json"
+    $reqId = $null; $claim = $null
+    if (Test-Path $f) {
+        try { $saved = Get-Content $f -Raw | ConvertFrom-Json; if ($saved.url -eq $Url) { $reqId = $saved.request_id; $claim = $saved.claim; Write-Info "Resuming access request $reqId at $Url" } } catch { }
+    }
+    if (-not $reqId) {
+        $body = @{ did = $Did; name = $Name; note = "A Wyrdsekai household asking to be a patron: its companions ask the desk, read what is established, and hand questions over for the night." } | ConvertTo-Json -Compress
+        try { $r = Invoke-RestMethod -Method Post -Uri "$Url/v1/request_access" -ContentType 'application/json' -Body $body -TimeoutSec 15 }
+        catch { Write-Err2 "The librarian at $Url did not take an access request. Is it running, and reachable from here?"; return $null }
+        $reqId = $r.request_id; $claim = $r.claim
+        if (-not $reqId) { Write-Err2 "The librarian answered without a request id."; return $null }
+        if (-not $claim) { Write-Err2 "A request from this household is already pending there as $reqId, but its claim secret is not on this machine. Ask the owner to deny it (researchzosho reader deny $reqId), then link again."; return $null }
+        New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+        @{ url = $Url; request_id = $reqId; claim = $claim; did = $Did } | ConvertTo-Json -Compress | Set-Content -Path $f -Encoding ASCII
+        Write-Info "Asked to be let in: request $reqId."
+    }
+    Write-Host ""
+    Write-Host "  On the librarian's machine, the owner approves with:"
+    Write-Host "      researchzosho reader approve $reqId write"
+    Write-Host "  (or denies with: researchzosho reader deny $reqId)"
+    Write-Host ""
+    if ($WaitSeconds -le 0) { $WaitSeconds = if ($Yes) { 120 } else { 600 } }
+    $waited = 0
+    while ($true) {
+        try { $o = Invoke-RestMethod -Method Post -Uri "$Url/v1/access" -ContentType 'application/json' -Body (@{ request_id = $reqId; claim = $claim } | ConvertTo-Json -Compress) -TimeoutSec 10 } catch { $o = $null }
+        if ($o -and $o.state -eq 'approved') {
+            if ($o.token) { Remove-Item $f -ErrorAction SilentlyContinue; Write-Ok "Let in as a $($o.level) reader."; return $o.token }
+            Write-Err2 "Approved, but the token was already collected once; ask the owner for a new token."; Remove-Item $f -ErrorAction SilentlyContinue; return $null
+        }
+        if ($o -and $o.state -eq 'denied') { Write-Err2 "The owner denied the request: $($o.reason)"; Remove-Item $f -ErrorAction SilentlyContinue; return $null }
+        if ($o -and $o.state -eq 'lapsed') { Write-Err2 "The request lapsed unanswered; link again to ask afresh."; Remove-Item $f -ErrorAction SilentlyContinue; return $null }
+        if ($waited -ge $WaitSeconds) { Write-Warn2 "Still pending after $([int]($WaitSeconds/60)) min. Run 'wyrd researcher link $Url' again after the owner approves - the request is remembered."; return $null }
+        if ($waited -eq 0) { Write-Info "Waiting for the owner's answer (up to $([int]($WaitSeconds/60)) min; Ctrl-C and link again later is fine)..." }
+        Start-Sleep -Seconds 5; $waited += 5
+    }
+}
+
+# Subscribe this node's webhook door to the librarian's changes (contract 1.5). Best effort.
+function Subscribe-ResearchZosho { param($Url, $Token, [switch]$NoWebhook)
+    if ($NoWebhook) { return }
+    $ip = Get-WyrdLanIp
+    if (-not $ip) { Write-Warn2 "No LAN address found for this node - the librarian's pushes are off; recall runs at sleep from the feed."; return }
+    $port = if ($env:WYRDSEKAI_PORT) { $env:WYRDSEKAI_PORT } else { $RestPort }
+    $hook = "http://${ip}:${port}/api/library/webhook/$ResearchZoshoServiceId"
+    try { $r = Invoke-RestMethod -Method Post -Uri "$Url/v1/subscribe" -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json' -Body (@{ url = $hook } | ConvertTo-Json -Compress) -TimeoutSec 15 } catch { $r = $null }
+    if (-not ($r -and $r.secret)) { Write-Warn2 "The librarian did not accept a webhook to $hook (it may not reach this node) - recall runs at sleep from the feed."; return }
+    Set-ConfKey ("WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + $ResearchZoshoServiceId.ToUpper().Replace('-', '_')) $r.secret
+    Write-Ok "The librarian will push its changes to $hook (signed): recalls apply on the spot, and a landed write-up is told to the companions."
+}
+
+function Connect-ResearchZosho { param($Url, $Token, $Rz, $Stdio, [switch]$Yes, [switch]$NoRestart, [switch]$NoWebhook, [int]$WaitSeconds)
+    $api = Get-ApiBase
+    $did = $null
+    try { $ctx = Invoke-RestMethod -Uri "$api/api/study/sharing-context" -TimeoutSec 8; $did = $ctx.person } catch { }
+    if (-not $did) { Write-Err2 "The node is not running at $api, or has no identity yet; the token names the household, so start it first: wyrd start"; return $false }
+    $zone = if ($env:WYRDSEKAI_ZONE_NAME) { $env:WYRDSEKAI_ZONE_NAME } else { $env:COMPUTERNAME }
+    if ($Stdio) {
+        if ($Rz) { Invoke-RzReader -Rz $Rz -Rest @('allow', $did, 'write', "$zone household (wyrdsekai)") | Out-Null; Write-Ok "Allowed $did to write to the library." }
+        else { Write-Warn2 "On the librarian's machine, allow this household:  researchzosho reader allow $did write ""$zone household (wyrdsekai)""" }
+        $entry = [ordered]@{ id = $ResearchZoshoServiceId; name = "ResearchZosho"; transport = "stdio"; endpoint = $Stdio; tier = "local"; enabled = $true }
+    } else {
+        if (-not $Token -and $Rz) {
+            Invoke-RzReader -Rz $Rz -Rest @('allow', $did, 'write', "$zone household (wyrdsekai)") | Out-Null
+            $Token = (Invoke-RzReader -Rz $Rz -Rest @('token', $did) | Select-Object -Last 1)
+            if (-not $Token) { Write-Err2 "Could not issue a token for $did."; return $false }
+            Write-Ok "Allowed $did to write to the library and issued its token (kept only as a hash there)."
+        }
+        if (-not $Token) {
+            # No shell on the librarian's machine: ask to be let in (contract 1.5), then collect the token.
+            $Token = Request-ResearchZoshoAccess -Url $Url.TrimEnd('/') -Did $did -Name "$zone household (wyrdsekai)" -Yes:$Yes -WaitSeconds $WaitSeconds
+            if (-not $Token) { return $false }
+        }
+        try { $st = Invoke-RestMethod -Uri "$($Url.TrimEnd('/'))/v1/status" -Headers @{ Authorization = "Bearer $Token" } -TimeoutSec 8 }
+        catch { Write-Err2 "The librarian at $Url did not answer with that token. Is the service running (researchzosho service status)?"; return $false }
+        Write-Ok "The librarian answers: $($st.library_name) (contract $($st.contract))"
+        Set-ConfKey ("WYRDSEKAI_MCP_KEY_" + $ResearchZoshoServiceId.ToUpper().Replace('-', '_')) $Token
+        Subscribe-ResearchZosho -Url $Url.TrimEnd('/') -Token $Token -NoWebhook:$NoWebhook
+        $entry = [ordered]@{ id = $ResearchZoshoServiceId; name = "ResearchZosho"; transport = "http"; endpoint = ($Url.TrimEnd('/') + "/rpc"); tier = "local"; auth = @{ type = "bearer"; safe_key = $ResearchZoshoServiceId }; enabled = $true }
+    }
+    $conf = Get-Conf
+    $old = if ($conf.Contains('WYRDSEKAI_LIBRARY_SERVICE')) { $conf['WYRDSEKAI_LIBRARY_SERVICE'] } else { "" }
+    $disable = $null
+    if ($old -and $old -ne $ResearchZoshoServiceId) {
+        $a = Read-ResearcherAnswer "The library role is played by '$old' today. Disable that entry now that ResearchZosho takes the role? (Y/n)" "Y" -Yes:$Yes
+        if ($a -match '^[Yy]') { $disable = $old }
+    }
+    $f = Write-ResearcherService -Entry $entry -Disable $disable
+    Set-ConfKey 'WYRDSEKAI_LIBRARY_SERVICE' $ResearchZoshoServiceId
+    Write-Ok "Registered '$ResearchZoshoServiceId' in $f and made it the library role."
+    if ($conf.Contains('WYRDSEKAI_MCP_STRICT_GRANTS') -and $conf['WYRDSEKAI_MCP_STRICT_GRANTS'] -eq 'true') { Write-Warn2 "Strict MCP grants are on: grant the companions the '$ResearchZoshoServiceId' service from the steward's Study." }
+    $r = if ($NoRestart) { "n" } else { Read-ResearcherAnswer "Restart the node so the companions can reach the librarian? (Y/n)" "Y" -Yes:$Yes }
+    if ($r -match '^[Yy]') { Invoke-Stop; Start-Sleep -Seconds 1; Invoke-Start; Write-Ok "Restarted." } else { Write-Info "Restart when convenient: wyrd restart" }
+    Write-Host ""
+    Write-Host "Next:  the desk item 'librarian_desk' in a room - ask, search:, established?, research: <question>, jobs, read <id>"
+    Write-Host "       wyrd researcher status"
+    return $true
+}
+
+function Invoke-Items {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "check" }
+    $args2 = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count-1)]) } else { @() }
+    switch ($sub) {
+        "check" {
+            # Every item script's world.* calls against the API this build serves; exit 1 on any mis-wired item.
+            $env:WYRDSEKAI_DATA_DIR = $DataDir
+            $prevOpts = $env:JAVA_TOOL_OPTIONS
+            $env:JAVA_TOOL_OPTIONS = "--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Dpolyglot.engine.WarnInterpreterOnly=false -Dpolyglot.log.level=OFF"
+            try { $rc = Invoke-WyrdJavaClass -Class "org.wyrdsekai.core.item.ItemWiringCli" -JavaArgs $args2 }
+            finally { if ($null -eq $prevOpts) { Remove-Item Env:\JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue } else { $env:JAVA_TOOL_OPTIONS = $prevOpts } }
+            exit $rc
+        }
+        default { Write-Host "Usage: wyrd items check [--quiet] [dir...]"; if ($sub -ne 'help') { exit 2 } }
+    }
+}
+
+function Invoke-Researcher {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
+    $args2 = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count-1)]) } else { @() }
+    $yes = $args2 -contains '--yes'
+    $noRestart = $args2 -contains '--no-restart'
+    $noWebhook = $args2 -contains '--no-webhook'
+    $waitSeconds = 0
+    for ($wi = 0; $wi -lt $args2.Count; $wi++) { if ($args2[$wi] -eq '--wait' -and ($wi + 1) -lt $args2.Count) { $waitSeconds = [int]$args2[$wi+1] * 60 } }
+    switch ($sub) {
+        "update" {
+            # The librarian's own updater (researchzosho 0.1.2+): the latest release, verified, service restarted.
+            $rz = Get-ResearchZoshoCmd
+            if (-not $rz) { Write-Err2 "ResearchZosho is not installed here (wyrd researcher setup). A librarian on another machine updates itself there: researchzosho update now"; exit 1 }
+            & $rz update now @args2
+            exit $LASTEXITCODE
+        }
+        "status" {
+            $rz = Get-ResearchZoshoCmd
+            Write-Host "ResearchZosho:"
+            Write-Host ("  command   = {0}" -f $(if ($rz) { $rz } else { "not installed (wyrd researcher setup)" }))
+            if ($rz -and (Get-UpdateMode) -ne 'off') {
+                $rzv = $null; try { $rzv = ((& $rz version 2>$null | Out-String) -replace '[^\d.]', ' ').Trim().Split(' ')[0] } catch { }
+                $rzl = Get-LatestRelease 'Wyrdsekai/researchzosho'
+                if ($rzl -and $rzv -and (Test-VersionNewer $rzl $rzv)) { Write-Host "  latest    = $rzl - newer than $rzv (wyrd researcher update)" }
+                elseif ($rzl) { Write-Host "  latest    = $rzl" }
+            }
+            $f = Join-Path $DataDir "mcp-services.json"
+            $ep = "not registered in $f"
+            if (Test-Path $f) { try { $d = Get-Content $f -Raw | ConvertFrom-Json; foreach ($s in $d.mcp_services) { if ($s.id -eq $ResearchZoshoServiceId) { $ep = "$($s.transport) $($s.endpoint)" + $(if ($s.enabled -eq $false) { " (disabled)" } else { "" }) } } } catch { } }
+            Write-Host "  service   = $ep"
+            $conf = Get-Conf
+            $role = if ($conf.Contains('WYRDSEKAI_LIBRARY_SERVICE')) { $conf['WYRDSEKAI_LIBRARY_SERVICE'] } else { "(unset - no library configured)" }
+            Write-Host "  role      = WYRDSEKAI_LIBRARY_SERVICE=$role"
+            $keyvar = "WYRDSEKAI_MCP_KEY_" + $ResearchZoshoServiceId.ToUpper().Replace('-', '_')
+            Write-Host ("  token     = {0}" -f $(if ($conf.Contains($keyvar)) { "set ($keyvar in $ConfFile)" } else { "none (stdio, or not linked)" }))
+            if ($ep -like "http *") {
+                $url = ($ep -replace '^http ', '') -replace '/rpc$', ''
+                try { $h = @{}; if ($conf.Contains($keyvar)) { $h['Authorization'] = "Bearer " + $conf[$keyvar] }
+                      $st = Invoke-RestMethod -Uri "$url/v1/status" -Headers $h -TimeoutSec 6; Write-Host "  daemon    = answers: $($st.library_name), contract $($st.contract)" }
+                catch { Write-Host "  daemon    = not answering at $url" }
+            }
+            Write-Host ("  grants    = {0}" -f $(if ($conf.Contains('WYRDSEKAI_MCP_STRICT_GRANTS') -and $conf['WYRDSEKAI_MCP_STRICT_GRANTS'] -eq 'true') { "strict (companions need a grant for the service)" } else { "open (every companion may use it)" }))
+            $secretVar = "WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + $ResearchZoshoServiceId.ToUpper().Replace('-', '_')
+            Write-Host ("  webhook   = {0}" -f $(if ($conf.Contains($secretVar)) { "subscribed (changes are pushed to this node)" } else { "none (recall reads the feed at sleep)" }))
+            $rq = Join-Path $DataDir "researcher-request.json"
+            if (Test-Path $rq) { try { $sv = Get-Content $rq -Raw | ConvertFrom-Json; Write-Host "  pending   = access request $($sv.request_id) at $($sv.url) - link again once the owner approves" } catch { } }
+        }
+        "install" {
+            $rz = Install-ResearchZosho -Yes:$yes
+            if (-not $rz) { exit 1 }
+            Write-Info "Run its setup next: $rz setup   (or all at once: wyrd researcher setup)"
+        }
+        "setup" {
+            $url = $ResearchZoshoDefaultUrl; $port = 4649
+            for ($i = 0; $i -lt $args2.Count; $i++) {
+                switch ($args2[$i]) {
+                    "--url"  { if (($i + 1) -lt $args2.Count) { $url = $args2[$i+1]; $i++ } }
+                    "--port" { if (($i + 1) -lt $args2.Count) { $port = [int]$args2[$i+1]; $url = "http://127.0.0.1:$port"; $i++ } }
+                }
+            }
+            $rz = Install-ResearchZosho -Yes:$yes
+            if (-not $rz) { exit 1 }
+            Write-Host ""
+            Write-Info "ResearchZosho's own setup asks where the library goes, which model reads, and whether it runs as a service."
+            Write-Info "Say yes to the service: that is what the companions talk to."
+            if ($yes) { & $rz setup --yes } else { & $rz setup }
+            if ($LASTEXITCODE -ne 0) { Write-Err2 "researchzosho setup failed"; exit 1 }
+            Write-Host ""
+            $st = $null
+            try { $st = Invoke-RestMethod -Uri "$($url.TrimEnd('/'))/v1/status" -TimeoutSec 6 } catch { }
+            if (-not $st) {
+                Write-Warn2 "The librarian's service is not answering at $url."
+                $a = Read-ResearcherAnswer "Install it as a logon task now (researchzosho service install)? (Y/n)" "Y" -Yes:$yes
+                if ($a -match '^[Yy]') {
+                    & $rz service install --port $port
+                    for ($i = 0; $i -lt 10 -and -not $st; $i++) { Start-Sleep -Seconds 2; try { $st = Invoke-RestMethod -Uri "$($url.TrimEnd('/'))/v1/status" -TimeoutSec 4 } catch { } }
+                }
+            }
+            if ($st) { if (-not (Connect-ResearchZosho -Url $url -Token $null -Rz $rz -Stdio $null -Yes:$yes -NoRestart:$noRestart -NoWebhook:$noWebhook)) { exit 1 } }
+            else {
+                Write-Warn2 "No daemon at $url - connecting over stdio instead (no overnight asks until the service runs)."
+                if (-not (Connect-ResearchZosho -Url "" -Token $null -Rz $rz -Stdio "$rz mcp" -Yes:$yes -NoRestart:$noRestart -NoWebhook:$noWebhook)) { exit 1 }
+            }
+        }
+        "link" {
+            $url = ""; $token = $null; $stdio = $null
+            for ($i = 0; $i -lt $args2.Count; $i++) {
+                switch -Regex ($args2[$i]) {
+                    '^--token$' { if (($i + 1) -lt $args2.Count) { $token = $args2[$i+1]; $i++ } }
+                    '^--stdio$' { if (($i + 1) -lt $args2.Count) { $stdio = $args2[$i+1]; $i++ } }
+                    '^https?://' { $url = $args2[$i] }
+                }
+            }
+            if (-not $stdio -and -not $url) { $url = $ResearchZoshoDefaultUrl }
+            $rz = Get-ResearchZoshoCmd
+            if (-not (Connect-ResearchZosho -Url $url -Token $token -Rz $rz -Stdio $stdio -Yes:$yes -NoRestart:$noRestart -NoWebhook:$noWebhook -WaitSeconds $waitSeconds)) { exit 1 }
+        }
+        "unlink" {
+            $entry = [ordered]@{ id = $ResearchZoshoServiceId; name = "ResearchZosho"; transport = "http"; endpoint = ""; tier = "local"; enabled = $false }
+            $f = Write-ResearcherService -Entry $entry -Disable $null
+            $lines = if (Test-Path $ConfFile) { Get-Content $ConfFile | Where-Object { $_ -notmatch '^\s*WYRDSEKAI_LIBRARY_SERVICE\s*=' -and $_ -notmatch '^\s*WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_' } } else { @() }
+            Set-Content -Path $ConfFile -Value $lines -Encoding ASCII
+            Write-Ok "ResearchZosho is no longer the library role (entry disabled in $f). Restart to apply: wyrd restart"
+        }
+        default {
+            Write-Host "Usage: wyrd researcher <setup|install|link|status|unlink>"
+            Write-Host "  setup [--yes] [--url U|--port N]   install ResearchZosho if needed, run its setup, connect this node (the wizard)"
+            Write-Host "  install [--yes]                    install ResearchZosho only (its checked one-line installer)"
+            Write-Host "  link [url] [--token T]             connect to a librarian that already runs (default $ResearchZoshoDefaultUrl)"
+            Write-Host "  link --stdio ""<command>""           connect to one reached as a child process"
+            Write-Host "  status                             what is installed, registered, and answering"
+            Write-Host "  unlink                             stop using it as the library role"
+            if ($sub -ne 'help') { exit 2 }
+        }
+    }
+}
+
 function Invoke-Library {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "help" }
     $api = Get-ApiBase
     $subArgs = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count-1)]) } else { @() }
     switch ($sub) {
+        { $_ -in 'reader','readers' } {
+            # Readers of the library door (LIBRARY_PROTOCOL.md, "Serving it"): a peer librarian speaks /v1 with a token this issues.
+            $f = Join-Path $DataDir "library-readers.json"
+            $op = if ($subArgs.Count -ge 1) { $subArgs[0] } else { "list" }
+            $doc = @{ readers = @() }
+            if (Test-Path $f) { try { $loaded = Get-Content $f -Raw | ConvertFrom-Json; if ($loaded.readers) { $doc = @{ readers = @($loaded.readers) } } } catch { } }
+            switch ($op) {
+                "list" {
+                    if ($doc.readers.Count -eq 0) { Write-Host "no readers yet - wyrd library reader add <name> [--did did] [--write]" }
+                    foreach ($r in $doc.readers) { Write-Host ("- {0} - {1} - {2}" -f $r.name, $(if ($r.did) { $r.did } else { "(no did)" }), $r.level) }
+                }
+                "add" {
+                    $name = if ($subArgs.Count -ge 2) { $subArgs[1] } else { $null }
+                    if (-not $name) { Write-Host "Usage: wyrd library reader add <name> [--did <did>] [--write]"; exit 1 }
+                    $did = ""; $level = "read"
+                    for ($i = 2; $i -lt $subArgs.Count; $i++) { if ($subArgs[$i] -eq '--did' -and ($i + 1) -lt $subArgs.Count) { $did = $subArgs[$i+1]; $i++ } elseif ($subArgs[$i] -eq '--write') { $level = "write" } }
+                    $bytes = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+                    $tok = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+                    $sha = [System.Security.Cryptography.SHA256]::Create()
+                    $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($tok))) -replace '-', '').ToLower()
+                    $kept = @($doc.readers | Where-Object { $_.name.ToLower() -ne $name.ToLower() })
+                    $kept += [ordered]@{ name = $name; did = $did; level = $level; token_hash = $hash }
+                    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+                    (@{ readers = $kept } | ConvertTo-Json -Depth 4) | Set-Content -Path $f -Encoding ASCII
+                    Write-Host "reader token for '$name' ($level) - shown once; only its hash is kept:"
+                    Write-Host $tok
+                    $ip = Get-WyrdLanIp; $port = if ($env:WYRDSEKAI_PORT) { $env:WYRDSEKAI_PORT } else { $RestPort }
+                    Write-Host "  Give it to the librarian: researchzosho peer add <name> http://${ip}:${port} <token>"
+                }
+                "remove" {
+                    $name = if ($subArgs.Count -ge 2) { $subArgs[1] } else { $null }
+                    if (-not $name) { Write-Host "Usage: wyrd library reader remove <name>"; exit 1 }
+                    $kept = @($doc.readers | Where-Object { $_.name.ToLower() -ne $name.ToLower() })
+                    Write-Host $(if ($kept.Count -ne $doc.readers.Count) { "removed" } else { "no such reader" })
+                    (@{ readers = $kept } | ConvertTo-Json -Depth 4) | Set-Content -Path $f -Encoding ASCII
+                }
+                default { Write-Host "Usage: wyrd library reader <list|add <name> [--did <did>] [--write]|remove <name>>"; exit 1 }
+            }
+        }
         "install" {
             $pack = if ($subArgs.Count -ge 1 -and $subArgs[0] -notlike '--*') { $subArgs[0] } else { $null }
             $url = $null
@@ -3287,6 +3820,8 @@ switch ($Command.ToLower()) {
     "journal"   { Invoke-Journal }
     "recipes"   { Invoke-Recipes }
     "library"   { Invoke-Library }
+    "researcher" { Invoke-Researcher }
+    "items"     { Invoke-Items }
     "federate"  { Invoke-Federate }
     "zone"      { Invoke-ZoneCmd }
     "zones"     { Invoke-NamingAdmin -Sub "zones" }

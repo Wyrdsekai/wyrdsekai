@@ -236,4 +236,83 @@ class ScriptedItemLoaderTest {
         assertTrue(tool.isScripted());
         assertEquals("did:wyrd:test", tool.creatorDid());
     }
+    /**
+     * Live 2026-09-08: a copy of the journal in the data directory called world.journal.list —
+     * renamed long before — and shadowed the working bundled copy by name. `use journal` died
+     * on its first call. A mis-wired copy must never replace a working one; alone, it loads
+     * with the fix in the log and sits in the audit.
+     */
+    @Test
+    void a_mis_wired_copy_never_replaces_a_working_one_and_is_audited_when_alone(@TempDir Path bundled, @TempDir Path household) throws IOException {
+        var good = """
+            exports.manifest = { name: "journal", version: "1.0.0", description: "A journal.", author: "did:wyrd:test", capabilities: ["journal.write"] };
+            function invoke(p) { return { entries: world.journal.recent(5) }; }
+            """;
+        var stale = """
+            exports.manifest = { name: "journal", version: "1.0.0", description: "A journal.", author: "did:wyrd:test", capabilities: ["journal.write"] };
+            function invoke(p) { return { entries: world.journal.list() }; }
+            """;
+        Files.writeString(bundled.resolve("journal.js"), good);
+        Files.writeString(household.resolve("journal.js"), stale);
+        loader.setSearchDirs(List.of(bundled, household));
+        var loaded = loader.reloadAll();
+        assertEquals(1, loaded.size());
+        assertEquals(bundled.resolve("journal.js"), loaded.getFirst().sourcePath(), "the working copy is kept");
+        assertTrue(loader.wiringAudit().isEmpty(), "a shadowed broken copy is not what runs, so it is not audited as running");
+
+        // the broken copy alone: loaded (nothing better), but named in the audit with the fix
+        loader.setSearchDirs(List.of(household));
+        loaded = loader.reloadAll();
+        assertEquals(1, loaded.size());
+        assertEquals(1, loader.wiringAudit().size());
+        var entry = loader.wiringAudit().getFirst();
+        assertEquals("journal", entry.itemId());
+        assertTrue(entry.unresolved().getFirst().contains("world.journal.list does not exist"), entry.unresolved().toString());
+        assertTrue(entry.unresolved().getFirst().contains("has: recent, search, write"), entry.unresolved().toString());
+
+        // a working copy arriving later replaces the broken one and clears the audit
+        loader.setSearchDirs(List.of(household, bundled));
+        loaded = loader.reloadAll();
+        assertEquals(bundled.resolve("journal.js"), loaded.getFirst().sourcePath());
+        assertTrue(loader.wiringAudit().isEmpty());
+    }
+
+    @Test
+    void another_authors_same_named_copy_replaces_a_bundled_item_only_when_newer(@TempDir Path bundled, @TempDir Path household) throws IOException {
+        var ours = """
+            exports.manifest = { name: "journal", version: "1.0.0", description: "The journal.", author: "did:wyrd:system", capabilities: ["journal.write"] };
+            function invoke(p) { return { entries: world.journal.recent(5) }; }
+            """;
+        var theirs = """
+            exports.manifest = { name: "journal", version: "1.0.0", description: "A journal.", author: "did:wyrd:openhands", capabilities: ["journal.write"] };
+            function invoke(p) { return { entries: world.journal.recent(1) }; }
+            """;
+        Files.writeString(bundled.resolve("journal.js"), ours);
+        Files.writeString(household.resolve("journal.js"), theirs);
+        loader.setSearchDirs(List.of(bundled, household));
+        var loaded = loader.reloadAll();
+        assertEquals(1, loaded.size());
+        assertEquals(bundled.resolve("journal.js"), loaded.getFirst().sourcePath(), "same version, different author: the loaded copy stands");
+        assertEquals(1, loader.shadowed().size());
+        var sh = loader.shadowed().getFirst();
+        assertEquals("journal", sh.itemId());
+        assertEquals("did:wyrd:openhands", sh.shadowedAuthor());
+        assertEquals("did:wyrd:system", sh.keptAuthor());
+
+        // register() of the same file says it did not register — the bridge must not stamp it
+        assertTrue(loader.register(household.resolve("journal.js")).isEmpty());
+        assertEquals(bundled.resolve("journal.js"), loader.all().getFirst().sourcePath());
+
+        // a newer version from another author is a deliberate replacement and wins
+        Files.writeString(household.resolve("journal.js"), theirs.replace("1.0.0", "1.1.0"));
+        loaded = loader.reloadAll();
+        assertEquals(household.resolve("journal.js"), loaded.getFirst().sourcePath());
+        assertTrue(loader.shadowed().isEmpty());
+
+        // the same author re-shipping the same version still replaces (a re-install, an edit in place)
+        Files.writeString(household.resolve("journal.js"), ours.replace("recent(5)", "recent(7)"));
+        loaded = loader.reloadAll();
+        assertEquals(household.resolve("journal.js"), loaded.getFirst().sourcePath());
+        assertTrue(loaded.getFirst().scriptSource().contains("recent(7)"));
+    }
 }

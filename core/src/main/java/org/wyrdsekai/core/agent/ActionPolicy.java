@@ -440,7 +440,7 @@ public record ActionPolicy(
         // growth gate, while the equivalent parsed action (create_room) is
         // tier 3. Mirrors of their parsed counterparts.
         entry("craft_from_template",  2, 0.3,  false, false, "creation"),
-        entry("create_room_from_template", 3, 0.7, false, false, "creation"),
+        entry("create_room_from_template", 1, 0.5, false, false, "creation"),   // VISIBLE: a template room is hers to make
         entry("create_zone",          3, 0.8,  false, false, "creation"),
         entry("add_script",           3, 0.7,  false, false, "code"),
         entry("workbench_submit",     3, 0.7,  false, false, "code"),
@@ -551,6 +551,16 @@ public record ActionPolicy(
      * Extract canonical action type name from an {@link ActionParser.AgentAction} instance.
      */
     public static String actionTypeOf(ActionParser.AgentAction action) {
+        // A templated room is its own verb: the play-loop change (2026-07-30) made
+        // create_room_from_template VISIBLE, but every CreateRoom resolved here to
+        // "create_room" (CONSENT, tier 3) and the templated entry never matched — she
+        // chose it on her own time three nights running and was refused each time
+        // (2026-09-06). Decided before the switch so the switch stays one line per
+        // record (BunshinSurfaceIsDispatchableTest reads it as source).
+        if (action instanceof ActionParser.AgentAction.CreateRoom r
+                && r.template() != null && !r.template().isBlank()) {
+            return "create_room_from_template";
+        }
         return switch (action) {
             case ActionParser.AgentAction.GoToRoom _ -> "go_to_room";
             case ActionParser.AgentAction.TravelTo _ -> "travel_to";

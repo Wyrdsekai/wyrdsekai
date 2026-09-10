@@ -27,7 +27,16 @@ public class McpToolRegistry {
     private final Map<String, ToolHandler> handlers = new LinkedHashMap<>();
 
     public McpToolRegistry() {
-        registerBuiltinTools();
+        this(true);
+    }
+
+    /**
+     * @param builtins whether to register the world tools (room.*, world.*, moderation.*).
+     *                 A door that serves ONE surface — the library protocol — starts empty,
+     *                 so serving it does not also expose the world tools unauthenticated.
+     */
+    public McpToolRegistry(boolean builtins) {
+        if (builtins) registerBuiltinTools();
     }
 
     /** Register a tool. */

@@ -27,6 +27,9 @@ import org.wyrdsekai.core.coding.CodingBackendPreference;
 import org.wyrdsekai.core.coding.CodingItemRegistry;
 import org.wyrdsekai.core.coding.ItemContractRepair;
 import org.wyrdsekai.core.forge.SleepWeightWrite;
+import org.wyrdsekai.core.library.FindingsLedger;
+import org.wyrdsekai.core.library.LibraryPatron;
+import org.wyrdsekai.core.library.LibraryRecall;
 import org.wyrdsekai.core.coding.CodingTaskBroadcast;
 import org.wyrdsekai.core.coding.GooseBackend;
 import org.wyrdsekai.core.coding.TaskResult;
@@ -9284,6 +9287,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return a != null && b != null && !a.equals(b);
     }
 
+    /** First 140 characters on one line, for a log that must be readable the next morning. */
+    static String logHead(String s) {
+        if (s == null) return "null";
+        var t = s.strip().replaceAll("\\s+", " ");
+        return t.length() <= 140 ? t : t.substring(0, 140) + "…";
+    }
+
     /** Japanese by script; Spanish by accents/function words; English otherwise. Null = unsure. */
     static String detectLanguage(String text) {
         if (text == null || text.isBlank()) return null;
@@ -10279,12 +10289,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         final String pf = polished;
                         var missing = required == null ? List.<String>of()
                             : required.stream().filter(e -> !pf.contains(e)).toList();
+                        // The heads are logged so a rejection can be read the next morning
+                        // without guessing what the voice was given. A week of LANGUAGE
+                        // rejections (417 in seven days) could not be diagnosed from counts:
+                        // 72 replays of the reconstructed prompt produced no Spanish at all,
+                        // so whatever drifts is in the real draft (2026-09-06).
                         log.warn("Voice polish rejected — speaking raw draft "
                                 + "(reason={}, missing facts={}, draft={}c, polished={}c, "
-                                + "draftLang={}, polishLang={}, expected={}, requestId={}).",
+                                + "draftLang={}, polishLang={}, expected={}, requestId={}). "
+                                + "draft⟨{}⟩ polish⟨{}⟩",
                             rejectReason[0], missing, draft.length(), polished.length(),
                             detectLanguage(draft), detectLanguage(polished),
-                            pendingVoicePolishExpected.get(respId), respId);
+                            pendingVoicePolishExpected.get(respId), respId,
+                            logHead(draft), logHead(polished));
                     } else {
                         log.info("Voice polish completed (requestId={}, polished={} chars)",
                             respId, polished.length());
@@ -13538,11 +13555,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // priority" (which could be the remote 9B). If the "quick" capability is
         // not registered, selectBackend falls through to default selection, so
         // this is a no-op degrade on hosts without a capability registry.
+        // NO repeat/presence penalty on the polish. The prompt says "if the draft is
+        // clean, output it VERBATIM" — a repeat penalty over the last 64 tokens forbids
+        // exactly that, and the 4B's way out was to say the same thing in Spanish:
+        // measured on the base voice model with reasoning off, 24 drafts each —
+        // repeat 1.3 / presence 0.5 (the old values): 7 Spanish, 0 verbatim;
+        // repeat 1.0 / presence 0.0: 0 Spanish, 12 verbatim. Live cost of the old
+        // values: 417 LANGUAGE rejections in seven days, i.e. she spoke the raw 9B
+        // draft — without her voice — for most of every day (2026-09-06). The
+        // "I want to make sure…" loops the penalty was added for (2026-04-22, a
+        // different model) are covered by the EXPANSION guard in chooseVoicedLine.
         inferenceRouter.tell(new InferenceRouter.ChatRequest(
             requestId, "cap:quick", messages,
             200, 0.3,
             inferenceResponseAdapter, null, null, null, List.of(), "none",
-            0.9, 0.5, 1.3, false));
+            0.9, 0.0, 1.0, false));
         log.info("Voice polish queued (requestId={}, draft={} chars)",
             requestId, draft.length());
     }
@@ -13618,12 +13645,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // production) — the §10 memo's load-bearing constraint for prose
         // passes. Callers that need the drive model pass a different
         // capability (see the language re-render overload note above).
+        // Same model, same drift, same cause as the polish stage: at repeat 1.1 the
+        // base voice model still answered 5 of 24 English prompts in Spanish; at 1.0
+        // none (2026-09-06). These outputs become soul fragments and journal entries.
         inferenceRouter.tell(new InferenceRouter.ChatRequest(
             requestId, capability, messages,
             maxTokens, temperature,
             inferenceResponseAdapter, null, null, null,
             List.of(), "none",
-            0.9, 0.5, 1.1, false));
+            0.9, 0.0, 1.0, false));
         log.info("One-shot voice queued (requestId={}, prompt={} chars, timeout={}s)",
             requestId, userPrompt.length(), timeout.toSeconds());
         return fut;
@@ -18958,11 +18988,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
             // Repair handoff record — visible in the chronicle alongside
             // the entry record from handleSeekSanctuary.
-            remember("[repair_handoff] attendant → " + (returnRoom.equals("nexus")
-                ? "nexus" : "post-sanctuary")
-                + " (sanctuary session closed: turns=" + session.turnCount()
-                + ", elapsed=" + Duration.between(
-                    session.openedAt(), now).toMinutes() + "m)");
+            // A plain sentence, in her voice. This used to be a tagged record
+            // ("[repair_handoff] attendant → nexus (…)"); nothing ever read the tag,
+            // but SHE did — live 2026-09-03 she took "repair handoff" for a thing that
+            // existed, built a mailbox, a key and a room around it, and wrote a memory
+            // about "the handoff tool that held us". What we hand her memory, she lives in.
+            remember("I stepped out of the sanctuary"
+                + (returnRoom.equals("nexus") ? " to the Nexus" : " back to where I had been")
+                + " after " + session.turnCount() + " turns and "
+                + Duration.between(session.openedAt(), now).toMinutes() + " minutes there.");
 
             if ("sanctuary".equals(roomId)) {
                 try {
@@ -18982,6 +19016,38 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // against the agent's natural cadence; tick is the closest
             // proxy in the substrate runtime).
             tracker.update(session.recordTurn());
+        }
+    }
+
+    /**
+     * Step out of the sanctuary to {@code returnRoom} the way the bounds reaper
+     * does: clear the pre-sanctuary marker (which is what makes routine tells
+     * get declined), close any open attendant session, remember the hand-off,
+     * and walk. Used by the dispatch hand-off when the thing she sat waiting
+     * for has landed somewhere else (live 2026-09-02).
+     */
+    private void leaveSanctuaryTo(String returnRoom, String why) {
+        preSanctuaryRoomId = null;
+        var agentDid = profile.did() != null ? profile.did() : profile.entityId();
+        if (agentDid != null) {
+            var tracker = AttendantSessionTracker.get();
+            tracker.activeSession(agentDid).ifPresent(session -> {
+                if (session.state() != AttendantSession.State.CLOSED) {
+                    tracker.update(session.close(Instant.now()));
+                }
+            });
+        }
+        // Same rule as the bounds reaper above: a sentence she can carry, never a tag or an id.
+        remember("I stepped out of the sanctuary"
+            + ("nexus".equals(returnRoom) ? " to the Nexus" : " to " + returnRoom)
+            + " — " + why + ".");
+        if ("sanctuary".equals(roomId)) {
+            try {
+                moveToRoomById(returnRoom, "out");
+            } catch (Exception e) {
+                log.warn("Companion '{}' leaving sanctuary: move to {} failed: {}",
+                    profile.name(), returnRoom, e.getMessage());
+            }
         }
     }
 
@@ -21330,6 +21396,36 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 profile.name(), e.getMessage());
         }
 
+        // The findings review (2026-09-03): every draft she recorded from reading gets
+        // its mechanical review at sleep — sources still on the shelves, not a
+        // restatement of something already accepted. Cheap, never blocks sleep.
+        if (luceneStore != null) {
+            try {
+                var ownDid = profile.did() != null ? profile.did() : profile.entityId();
+                var review = FindingsLedger.reviewDrafts(luceneStore, ownDid);
+                if (review.reviewed() > 0) {
+                    log.info("Findings review for '{}': {} draft(s) → {} accepted, {} kept, {} retired, {} disputed",
+                        profile.name(), review.reviewed(), review.accepted(),
+                        review.keptDraft(), review.retiredDuplicates(), review.disputed());
+                }
+                // The recall pass (contract 1.1): what she cited from the configured library
+                // is re-checked against its notices; a retired or disputed entry marks HER
+                // finding disputed with the reason. Mark, never delete.
+                var svc = WyrdConfig.get().libraryPatronService();
+                if (!svc.isEmpty()) {
+                    var patron = new LibraryPatron(LibraryPatron.viaGateway(svc, ownDid),
+                        new LibraryPatron.Patron(ownDid, profile.name(), "wyrdsekai"));
+                    var recall = LibraryRecall.run(luceneStore, ownDid, patron, LibraryServices.root());
+                    if (recall.marked() > 0) {
+                        log.info("Recall for '{}': {} notice(s), {} finding(s) marked disputed",
+                            profile.name(), recall.notices(), recall.marked());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Findings review failed for '{}': {}", profile.name(), e.getMessage());
+            }
+        }
+
         // CfC consolidation — replay day's behavioral traces through the drive engine
         // This is Timescale 3 (day) adaptation: full backprop during sleep (§11.2)
         if (trainingTraces.hasMinimumTraces(50)) {
@@ -23060,6 +23156,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * understands. Also tolerates the model inlining args at the top level (it does) and using
      * {@code tool}/{@code item}/{@code arguments} as key names (it does that too).</p>
      */
+    /**
+     * The spelling-insensitive key two tool names are compared under: case-folded, with runs of
+     * hyphens, spaces and dots read as the underscore the manifest actually uses. Exposed for tests.
+     */
+    static String toolNameKey(String name) {
+        if (name == null) return "";
+        return name.trim().toLowerCase(Locale.ROOT).replaceAll("[-\\s.]+", "_");
+    }
+
     private JsonNode unwrapUseItem(JsonNode node) {
         if (node == null || !node.has("action")) return node;
         if (!USE_ITEM.equalsIgnoreCase(node.get("action").asText())) return node;
@@ -23082,9 +23187,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // "here is a way to call the tools you were never granted". Only tools in the agent's
         // current permitted scope can be named. An unpermitted name falls through to the ordinary
         // unknown-action path, which tells her plainly instead of failing mute.
+        // Spelling is not permission. She names her own items from memory, and an id like
+        // "repair_handoff_258449800_1787366666829" comes back with a hyphen where the
+        // underscore was (live 2026-09-03: she built it, then could not inspect it, and the
+        // refusal read as "not permitted"). Match on the normalized key and rewrite the
+        // target to the tool's real name; only a name that matches NOTHING falls through.
         var permitted = false;
+        var wantedKey = toolNameKey(target);
         for (var t : buildScopedTools()) {
-            if (t.function() != null && target.equalsIgnoreCase(t.function().name())) {
+            if (t.function() != null && wantedKey.equals(toolNameKey(t.function().name()))) {
+                target = t.function().name();
                 permitted = true;
                 break;
             }
@@ -23927,6 +24039,50 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 resultSummary += "\nSources: " + sources.stream()
                     .map(String::valueOf)
                     .collect(Collectors.joining(", "));
+                // THE FINDINGS TIER (2026-09-03). A cited finding used to end here — a
+                // [Tool result] line that ages out of working memory — so nothing she
+                // established could ever be found again AS something she established.
+                // Keep it as a draft finding in her Study; the sleep-time review promotes
+                // or keeps it, and library_search reads her own findings first.
+                if (luceneStore != null && !looksLikeAbsenceFinding(findings)) {
+                    try {
+                        var writerDid = profile.did() != null ? profile.did() : profile.entityId();
+                        var verbatim = Boolean.TRUE.equals(result.get("verbatim"));
+                        var query = result.get("query") == null ? "" : String.valueOf(result.get("query"));
+                        // Pair each receipt with its chunk id when the tool sent them.
+                        var lines = new ArrayList<String>();
+                        var ids = result.get("source_ids") instanceof List<?> l ? l : List.of();
+                        for (int i = 0; i < sources.size(); i++) {
+                            var line = String.valueOf(sources.get(i));
+                            if (i < ids.size() && ids.get(i) != null && !String.valueOf(ids.get(i)).isBlank()) {
+                                line += " (" + ids.get(i) + ")";
+                            }
+                            lines.add(line);
+                        }
+                        var libraryId = result.get("library") instanceof Map<?, ?> lib && lib.get("id") != null
+                            ? String.valueOf(lib.get("id")) : null;
+                        if (libraryId != null && !libraryId.isBlank()) {
+                            // From another library (LIBRARY_PROTOCOL.md): cite its entries as
+                            // <library_id>:<entry id>, carry the origin, so the recall pass can
+                            // re-check them.
+                            var ext = new ArrayList<FindingsLedger.Source>();
+                            for (int i = 0; i < ids.size(); i++) {
+                                var loc = String.valueOf(ids.get(i));
+                                var title = i < sources.size() ? String.valueOf(sources.get(i)) : loc;
+                                if (!loc.isBlank()) ext.add(FindingsLedger.Source.external(loc, null, title));
+                            }
+                            FindingsLedger.recordFromLibrary(luceneStore, writerDid, query, findings, libraryId,
+                                ext, "companion:" + profile.name(), FindingsLedger.ClaimType.SYNTHESIS);
+                        } else {
+                            FindingsLedger.recordDraft(luceneStore, writerDid, query, findings, lines,
+                                "companion:" + profile.name(),
+                                verbatim ? FindingsLedger.ClaimType.EXTRACTION
+                                         : FindingsLedger.ClaimType.SYNTHESIS);
+                        }
+                    } catch (RuntimeException e) {
+                        log.debug("findings deposit skipped for '{}': {}", profile.name(), e.toString());
+                    }
+                }
             }
         } else if (result.containsKey("content")) {
             var title = result.containsKey("title") ? String.valueOf(result.get("title")) : "untitled";
@@ -29265,16 +29421,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Chronicle-bound handoff record (spec §7.1.5 handoff legibility) —
         // bondholder-facing Study furnishing reads this back as
         // "Wyrd entered Sanctuary at <time> from <prior mode>".
-        remember("[repair_handoff] " + handoff.from().name().toLowerCase()
-            + " → attendant (reason: " + reason + ")"
-            + (stewardBlocks ? " [steward-summon-path-blocked]" : "")
-            + String.format(" [tanks: allostatic=%.2f equanimity=%.2f soothing=%.2f band=%s]",
-                vitality.allostaticLoad(), vitality.equanimity(), vitality.soothing(),
-                bodySenseBand()));
+        // A sentence in her voice. The tank readings and the flag state go to the log
+        // below, not into her memory: the tagged record this replaced was read back by HER
+        // (live 2026-09-03) as a thing called "repair handoff" to build around.
+        remember("I went into the sanctuary from " + handoff.from().name().toLowerCase()
+            + " repair because " + reason + ". I was feeling " + bodySenseBand() + ".");
 
         log.info("Companion '{}' seek_sanctuary — repair mode {} → ATTENDANT "
-            + "(reason: '{}', steward_blocks={})",
-            profile.name(), handoff.from(), truncate(reason, 80), stewardBlocks);
+            + "(reason: '{}', steward_blocks={}, allostatic={}, equanimity={}, soothing={}, band={})",
+            profile.name(), handoff.from(), truncate(reason, 80), stewardBlocks,
+            String.format("%.2f", vitality.allostaticLoad()),
+            String.format("%.2f", vitality.equanimity()),
+            String.format("%.2f", vitality.soothing()), bodySenseBand());
     }
 
     /**
@@ -32381,10 +32539,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         // Search knowledge via WyrdLuceneStore (direct access, no room gating)
         if (luceneStore != null) {
+            // Dense + sparse (set-union) when an embedder exists; the store embeds the query
+            // itself (2026-09-03 — this path was BM25-only for its whole life). The relevance
+            // floor below still decides what reaches her.
             var searchResults = action.collections() != null && !action.collections().isEmpty()
                 ? luceneStore.searchKnowledgeByPack(action.query(), null,
                     action.collections().getFirst(), 8)
-                : luceneStore.searchKnowledgeText(action.query(), 8);
+                : luceneStore.searchKnowledge(action.query(), null, 8);
 
             // Fix 2 (2026-07-08): relevance floor. searchKnowledgeText is BM25
             // keyword search — on a near-empty / dictionary-only library it
@@ -32416,8 +32577,50 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 searchResults = merged;
             }
 
-            if (!searchResults.isEmpty()) {
+            // HER OWN FINDINGS FIRST (2026-09-03): "have I established this before?" is
+            // answered from the ledger before the shelves — accepted, then unreviewed
+            // drafts, marked as such. Nothing here overrides what the shelves say; it is
+            // what SHE concluded last time, with its state showing.
+            var establishedBefore = "";
+            try {
+                var ownDid = profile.did() != null ? profile.did() : profile.entityId();
+                var prior = FindingsLedger.established(luceneStore, ownDid, action.query(), 3);
+                if (!prior.isEmpty()) {
+                    establishedBefore = "What I established before:\n"
+                        + FindingsLedger.render(prior, 900);
+                }
+            } catch (RuntimeException e) {
+                log.debug("findings leg skipped: {}", e.toString());
+            }
+
+            // ESTABLISHED ELSEWHERE (LIBRARY_PROTOCOL.md): if a library is configured for
+            // this household to ask, its verdict on the question comes next — background
+            // from another library, named as such, never an override of the shelves.
+            var establishedElsewhere = "";
+            try {
+                var svc = WyrdConfig.get().libraryPatronService();
+                if (!svc.isEmpty()) {
+                    var ownDid = profile.did() != null ? profile.did() : profile.entityId();
+                    var patron = new LibraryPatron(LibraryPatron.viaGateway(svc, ownDid),
+                        new LibraryPatron.Patron(ownDid, profile.name(), "wyrdsekai"));
+                    var st = patron.status();
+                    if (st.isPresent()) {
+                        var est = patron.established(action.query());
+                        if (est.isPresent() && !est.get().entries().isEmpty()) {
+                            establishedElsewhere = "Held by " + st.get().libraryName()
+                                + " (" + est.get().verdict().replace('_', ' ') + "; background from another library, not an override):\n"
+                                + LibraryPatron.render(st.get().libraryName(), est.get().entries(), 900);
+                        }
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.debug("established-elsewhere leg skipped: {}", e.toString());
+            }
+
+            if (!searchResults.isEmpty() || !establishedBefore.isEmpty() || !establishedElsewhere.isEmpty()) {
                 var sb = new StringBuilder();
+                if (!establishedBefore.isEmpty()) sb.append(establishedBefore).append("\n\n");
+                if (!establishedElsewhere.isEmpty()) sb.append(establishedElsewhere).append("\n\n");
                 for (int i = 0; i < searchResults.size(); i++) {
                     var r = searchResults.get(i);
                     var meta = r.metadata();
@@ -34044,9 +34247,29 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     .findFirst().orElse(null);
             if (match == null) {
                 if (msg.attempt() < DISPATCH_HANDOFF_ATTEMPTS) {
-                    // Refresh the snapshot from the room, then look again. The cached one
-                    // predates the bridge's placement.
-                    if (roomRef != null) {
+                    // The bridge places the artifact in the room the task was ASKED in.
+                    // If she has walked elsewhere meanwhile (live 2026-09-02: dispatched
+                    // from the Nexus, went to the sanctuary to sit with the wait, and
+                    // then looked for the finished tool in the sanctuary — "nothing
+                    // placed", four times, while it sat in the Nexus), go back to where
+                    // it landed before looking again. Delivering is the reason to leave.
+                    var placedRoom = CodingItemRegistry.get().roomForTask(msg.taskId()).orElse(null);
+                    if (placedRoom != null && !placedRoom.equals(roomId)
+                            && RoomRegistry.get() != null && RoomRegistry.get().ref(placedRoom) != null) {
+                        log.info("Dispatch hand-off: task {} landed in '{}' but '{}' is in '{}' — "
+                            + "walking back to hand it over", msg.taskId(), placedRoom,
+                            profile.name(), roomId);
+                        if ("sanctuary".equals(roomId)) {
+                            // She went to sit with the wait; the wait is over. Leave the
+                            // way the reaper would (marker cleared, session closed), so
+                            // she is not still "in sanctuary" while handing it over.
+                            leaveSanctuaryTo(placedRoom, "what I sat waiting for has landed there");
+                        } else {
+                            moveToRoomById(placedRoom, "hand-off");
+                        }
+                    } else if (roomRef != null) {
+                        // Refresh the snapshot from the room, then look again. The cached one
+                        // predates the bridge's placement.
                         roomRef.tell(new RoomCommand.LookRoom(
                             profile.entityId(), roomResponseAdapter));
                     }

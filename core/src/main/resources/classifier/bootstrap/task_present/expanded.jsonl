@@ -210,825 +210,636 @@
 {"label": "none", "text": "彼が恋しい。", "source": "seed"}
 {"label": "none", "text": "あの頃が恋しい。", "source": "seed"}
 {"label": "none", "text": "今日は気分が悪い。", "source": "seed"}
-{"label": "actionable", "text": "could you fix this loop that keeps hanging on large inputs?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "fix the lint errors in my component file please", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "i need the full path to the node_modules folder right now", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what port should i use if 8080 is already taken?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you walk me through the gitignore rules for react projects?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "why did this build fail with exit code 1?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain what this error means in plain english", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "write a quick script that clears my desktop directory", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me how to set up a basic docker-compose file", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "i forgot how to configure my environment variables help", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a checklist of things to check before deploying", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what does this permission error actually mean?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you help me understand why this api call is timing out?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this function so it handles nulls better", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this nested object into a flat list for csv export", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize these crash logs and tell me the top issue", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "pull up the last three commits from my repo", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "check if there are any open pull requests waiting on review", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "list all the environment variables currently loaded in this shell", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "which package manager should i use for node — npm or yarn?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "how do i disable autocomplete in my terminal temporarily?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the quickest way to clear my browser cache without losing bookmarks?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you explain what this stack trace means line by line?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "write a small script that backs up my config folder before i reboot", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "i need a reminder set for when my meeting with the team starts tomorrow", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which files in this directory have been modified in the last day", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the best way to search through all logs at once right now?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "help me figure out why this form submission is failing silently", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this error handler so it doesn't swallow exceptions", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you convert this csv into a json object for my app?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain what this regex pattern matches and why it's broken", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me the exact curl command to test this endpoint locally", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize these notes into three bullet points i can paste into slack", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the fastest way to verify my database connection is working?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "list all the services that depend on this microservice right now", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "help me refactor this callback hell into async/await", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you show me how to add a new middleware before the router?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "write a test that covers this edge case with empty input", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what command do i run to rollback my last migration safely?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain what this config file setting actually does in practice", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert these markdown notes into a clean readme file for the repo", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "check if any of these files are being ignored by git right now", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a quick overview of what's running on port 443 on this host", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what does this warning about deprecated module mean and how do i fix it?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you help me debug why this fetch request is returning 500 errors?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this function to be more readable without changing behavior", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize the key points from this stack overflow thread for my notes", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "list all the environment variables that need to be set before starting this service", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the easiest way to reset my local database to a clean state?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "help me write a script that validates user input against these rules", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you explain why this loop is slower than expected and how to improve it?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this legacy code snippet into modern typescript syntax", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a checklist of preflight steps before pushing to production", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what does this log message about memory pressure mean and should i worry?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this error response so it gives users a helpful message instead of a 500", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize the changes in this diff for my commit message please", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you help me set up a cron job that runs every hour to sync data?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the fastest way to check if a specific file exists on this server right now?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "help me understand what this security warning means and how to patch it", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I'm at my limit but I need to know what this error means before I can go on.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you write me a quick script to pull the last week of sales?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I don't care about the explanation right now just fix the login page.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me how to center a div with flexbox please and thank you.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I'm tired of breaking things — give me the config that makes this app start cleanly.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the difference between let and const in this file here?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need a summary of these notes but I can't read past three lines right now.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "send me the list of people who joined the project in the last month.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I don't have the energy to debug so just tell me what broke.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this paragraph so it sounds less robotic, I'll take anything.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "look up what the current version of react is and tell me which features are new.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I'm overwhelmed right now — can you remind me what I said about the deadline?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this image description into alt text that actually helps someone who uses a screen reader.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know if the database backup from last night actually ran or not.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain to me in plain words why this function returns null sometimes.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I'm not feeling well and I still need to file this report — can you draft it?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me the full path to where my project logs are stored on this machine.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the status of that ticket I filed yesterday about the API timeout?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I want to know if there are any open security advisories for the library we're using.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "translate this error message into something that won't make my client panic.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you check if the email address in the form submission is actually valid?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need a list of all the third-party services we're calling right now.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the next step after I push this branch to the main repo?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I don't understand what happened with the deployment last night — tell me what went wrong.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me the current count of active users in the dashboard, not yesterday's number.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the SSL certificate is still valid or if it expires soon.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain why this test keeps failing even though I changed nothing.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you look up the definition of that word and tell me what it means?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need a quick translation of this sentence so I can send it back right now.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which files were modified in the last commit so I can decide if I want to revert it.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the total number of hours logged on this project since we started?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you find me the link to that documentation page about authentication flows?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the payment went through or if I have to retry.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a list of all the people who commented on this issue in the last week.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the current temperature in London and is it going to rain later today?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me what time the next meeting is scheduled for so I can block it off.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you calculate how much tax I'd owe if I earn this amount?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me the top three reasons why this feature is taking longer than expected.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the server is still reachable or if it's down right now.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the difference between these two approaches for handling user input?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you write a short note explaining what happened with the last release?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need a list of all the things we agreed on during that call yesterday.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me whether this code change would break anything in the staging environment.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you look up when the next maintenance window is scheduled for our database?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the total cost breakdown for the items in this invoice so far?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know if the form I filled out was actually saved correctly.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me the current version number of the package we're using in production.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which of these options would be best for someone with a visual impairment.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you translate this phrase into Portuguese and also into Spanish?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the last time someone updated the README file for this repo?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the API key we just created is still active or not.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a list of all the files that are currently being watched by the linter.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you explain in one sentence what this config option does?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which of these three branches has the latest changes related to the login flow.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the total number of issues that were closed in the last month?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the email I sent got delivered or if it bounced.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me a list of all the notifications that came in during the last hour.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you look up what the current status is for that pending pull request?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the best way to handle a situation where the user's input is empty?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me whether this change would affect anyone who uses the mobile app.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need a quick summary of what we discussed in the last standup meeting.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you find out which of these services is currently throwing errors in the logs?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the current count of unread messages in my inbox right now?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me the full path to where I should store the new configuration file.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me whether this function is being called from anywhere else besides the main route.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you look up what the latest release notes say about breaking changes?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know if the backup from last night actually completed successfully or not.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the total number of commits that have been made to this branch in the past week?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which of these options would be safest for someone who doesn't know how to code.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you translate this paragraph into Hindi and also into Mandarin?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the current status of the feature we're building right now — is it done or not?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a list of all the things that need to be fixed before we can merge this branch.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the payment processor responded correctly when I sent the request.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me the current number of active sessions for this application at any given moment.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which of these libraries would be easiest to set up if I had zero experience.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you look up what the latest version of this tool is and whether it's stable?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the total number of times this function has been called in the last hour?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "I need to know whether the file I just uploaded actually made it to the server or not.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a list of all the things that are currently blocking the deployment pipeline.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me which of these options would be most accessible for someone who uses a screen reader.", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you translate this sentence into Arabic and also into Russian?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the current temperature in Berlin and is it going to rain later today?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "fix the broken import in config.js", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you refactor this loop into a list comp?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain what's causing the auth token to expire early", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "why does this unit test keep failing in CI?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "write a script that backs up my project folder every night", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the best way to debounce this input field?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this TODO list into actual code blocks", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "translate this error message into plain english for me", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize what happened in the last sprint meeting", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "remind me to pay the utility bill next friday", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "set a timer for thirty minutes to review my notes", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "look up the current exchange rate for euros", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "find me the changelog for the latest release of react", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "check if there are any open issues on this repo", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the average commute time from downtown to the office today", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me what stock market index is doing right now", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you explain how this regex pattern works step by step", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this paragraph so it sounds more professional", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert these raw notes into a polished email draft", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "give me a quick summary of that research paper I saved earlier", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "list all the unread messages from my boss today", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me what's in my calendar for tomorrow afternoon", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what time does the sun set in boston tonight?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "is there any active weather advisory for this area right now?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "calculate how much i'll save if i switch to a cheaper phone plan", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me what my last three grocery purchases added up to", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain why this function throws an error when passed null", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you help me debug why the form isn't submitting?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "rewrite this commit message so it follows our style guide", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this markdown file into a clean readme", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "translate these customer comments into spanish for the support team", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize the key points from yesterday's standup in bullet form", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "set a reminder to follow up on that vendor proposal next monday", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "check if i've received any new messages since last night", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what notifications did i miss while i was away this morning?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "look up the official docs for the new api endpoint we're building", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "find me the latest release notes for terraform", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me what the forecast is for saturday in denver", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "calculate how many hours i worked last week versus my average", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this rough draft into a polished blog post outline", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain what's going on with this memory leak in my app", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "can you refactor this tangled mess of if statements into a switch?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "write a small utility that normalizes phone numbers from various formats", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "translate this feedback note into something the client will understand", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize the main findings from the quarterly report i saved earlier", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "remind me to water the plants on saturday morning", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "check what messages came in during my lunch break today", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "list any unread emails from the finance team this week", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "show me the top three recent articles i've read about web perf", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what's the current price of that new gpu model everyone's talking about?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me how much tax i'd owe if i earned five thousand more this month", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "explain why this promise is resolving with undefined even though it should have data", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this messy json snippet into something clean and readable", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "translate these instructions from french to english for the onboarding doc", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "summarize what happened in the last two commits to the main branch", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "set a reminder to call my mom before dinner tonight", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "check if there are any new messages waiting in the team channel right now", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "what notifications popped up while i was offline this morning?", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "look up when the next solar eclipse is happening in 2025", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "find me the latest version of that open source library we discussed", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "tell me what the weather's like in portland right now", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "calculate how much interest i'd earn if i left this amount in a savings account", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "convert this rough sketch into a proper function signature with type hints", "source": "local", "lang": "en"}
-{"label": "actionable", "text": "ayúdame a terminar esto por favor necesito que lo revises rápido", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me ayudas con esto? no sé por dónde empezar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué significa error 500 en este servidor? no entiendo nada del log", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "necesito que expliques paso a paso cómo se hace esto, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "puedes hacer un resumen corto de lo que leíste antes de ayer?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa los últimos cambios que hice y dime si algo está mal", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes traducir esta página web al inglés? ya no la entiendo bien", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "ayúdame a organizar estas notas de clase, por favor necesito ordenarlas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en mi historial algo sobre el tema de los algoritmos que tocamos ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿podrías recordarme para qué sirve cada una de estas herramientas que instalamos?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "mira lo que hice hoy y dime si todo está bien antes de que me vaya", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes ayudar a entender por qué falló esta prueba unitaria? no veo el error", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "necesito saber cuándo vence la licencia de mi software, ¿puedes revisarlo?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa mis apuntes sobre el proyecto del curso y dime qué falta todavía", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en internet el precio actual de este componente electrónico, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes explicar cómo funciona este fragmento de código que no entiendo?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "ayúdame a escribir un correo formal para enviarlo a mi jefe, lo necesito ya", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa lo que hice con los datos y dime si algo está mal hecho", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca la última versión de esta librería y dime si vale la pena actualizarla", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes ayudar a redactar una explicación simple de este tema? no quiero confundir a nadie", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa el archivo que guardé antes y dime si lo puedo borrar o debo mantenerlo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en mis archivos algo relacionado con las vacaciones que tomamos el año pasado", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes traducirme esto al portugués? necesito enviarlo a alguien de Brasil", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa lo que escribí hoy y dime si está claro o si debo explicarlo mejor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca cuándo fue la última vez que cambié el nombre de esta carpeta, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes ayudar a organizar mejor estas ideas antes de empezar el informe?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa lo que hice con los archivos y dime si algo se quedó sin guardar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en mis registros algo sobre la reunión del equipo que tuvimos ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes decirme qué notificaciones tengo pendientes hoy, por favor necesito saberlo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este texto y dime si está bien escrito antes de que lo envíe", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en internet la explicación más sencilla de cómo funciona el blockchain", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes ayudar a redactar una respuesta a este mensaje que me llegó ahora?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa lo que hice con los datos del proyecto y dime si algo está mal hecho", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en mis archivos algo sobre el tema de las pruebas que hicimos la semana pasada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes decirme cuándo vence mi suscripción a ese servicio, por favor necesito saberlo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa el correo que redacté antes y dime si está bien antes de enviarlo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en internet el manual de esta herramienta y dame lo más importante", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me puedes ayudar a explicar esto a mi hijo con palabras sencillas? no quiero abrumarlo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa lo que hice hoy con los datos y dime si algo se quedó incompleto", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en mis archivos algo sobre el tema de las vacaciones que tomamos el año pasado", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me arreglas esto que se rompió justo cuando estaba listo para subirlo?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "necesito que expliques por qué mi consulta a la base de datos devuelve nada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "tengo un error en el servicio de autenticación y no sé cómo debuggearlo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿podrías buscar en internet cuándo empieza el horario escolar del próximo año?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa si hay mensajes nuevos en el grupo de trabajo desde hace una hora", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduceme este párrafo que me mandó mi jefe y no entiendo nada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca la última versión estable de kubernetes que recomiendan los oficiales", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué notificaciones tengo pendientes hoy? dime las más urgentes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "agrega un recordatorio para llamar a la abuela mañana por la tarde", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "mira qué hay en mi bandeja de entrada sin abrir todavía", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula cuánto me quedará si gasto cincuenta euros en gasolina esta semana", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dime si mañana hace frío o calor en madrid, necesito decidir qué ropa llevar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuéntrame el enlace del video que guardé sobre la migración de aves", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca las notas que tomé ayer en clase y pásamelas resumidas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿cuál es el precio actual de la acción de amazon hoy? mira en la web", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "escríbeme una respuesta cortés a este correo que me llegó mal redactado", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce al español este texto que me enviaron desde japón, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en internet qué dicen los expertos sobre el cambio climático ahora mismo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes revisar mi código y decirme dónde podría mejorar la seguridad?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "repara este fragmento que no compila nada y déjame el mensaje de error", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca los últimos tres artículos sobre inteligencia artificial que guardaste", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una explicación clara de por qué mi factura subió tanto este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuentra el manual de instrucciones del router que me compré la semana pasada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa si tengo alguna tarea pendiente en la lista de pendientes de hoy", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce esta frase al inglés, la necesito para un formulario de viaje", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el pronóstico del tiempo para el sábado por favor, quiero ir a la playa", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula cuántos días faltan hasta que cumpla los veinticinco años, gracias", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este texto y corrige los errores ortográficos que haya, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en internet cuál es la capital de ecuador, estoy estudiando geografía", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una lista de las aplicaciones que instalé en el móvil esta semana", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca los correos que no he abierto todavía y dime cuántos hay", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa mi calendario y dime cuándo tengo reunión con el equipo este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el enlace del webinar sobre ciberseguridad que anunciaron la semana pasada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿podrías buscar el precio actual del bitcoin en una página fiable de finanzas?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca los mensajes que no he leído en el grupo familiar desde ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce al catalán esta nota que me enviaron los compañeros del equipo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este texto y dime si suena natural o tiene errores, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el enlace del tutorial de git que guardé hace un par de semanas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una explicación sencilla de cómo funciona la criptografía básica en dos párrafos", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca las últimas noticias sobre la situación económica en españa hoy", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este código y dime dónde podría haber una brecha de seguridad grave", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el enlace del artículo sobre nutrición que guardé antes de cenar esta noche", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce al italiano esta nota de agradecimiento que le debo a un compañero", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el pronóstico del tiempo para el lunes, necesito saber si puedo ir a correr", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este texto y dime si suena demasiado brusco o si está bien redactado", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el enlace del video sobre cómo cuidar las plantas que guardé la semana pasada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce al portugués esta frase que quiero enviar a mi amigo de brasil", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en internet cuál es la capital de argelia, lo necesito para mi tarea de hoy", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este fragmento de código y dime si hay errores de sintaxis obvios", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una explicación clara de qué significa el término deuda pública en pocas líneas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca los correos que no he abierto todavía y dime cuáles parecen importantes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce al francés esta nota de disculpa que quiero enviar a mi cliente", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este texto y dime si tiene errores de ortografía o gramática evidentes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el enlace del artículo sobre cómo ahorrar energía en casa que guardé antes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una lista de las tareas pendientes que tengo en la bandeja de entrada hoy", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el pronóstico del tiempo para el domingo, necesito saber si puedo ir a caminar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este fragmento de código y dime dónde podría mejorar la seguridad de forma rápida", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce al alemán esta nota de agradecimiento que quiero enviar a un colega de munich", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el enlace del tutorial sobre cómo configurar una red en casa que guardé antes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una explicación clara de qué es un virus informático y cómo evitarlo hoy mismo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa este texto y dime si suena demasiado frío o si hay algo que pueda mejorar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca las últimas noticias sobre la situación del empleo en españa esta semana por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "estoy cansadísima, arregla esto por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué hace esta línea del código?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "puedes explicarme por qué falla este script?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traducirías esto al inglés cuando tengas un minuto", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿cómo se llama la librería para graficar en python?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una explicación simple de qué es docker", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿me ayudas a entender este error de sintaxis?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el precio actual del bitcoin", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "cuál es el pronóstico del clima en bcn hoy", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "puedes buscar el manual de uso del router?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "recuérdame que le envíe un mensaje a mi madre", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "ponme una alarma para las 10 de la mañana", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué tengo pendiente en la agenda ahora mismo?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista los mensajes nuevos de hace una hora", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca la última actualización del parche de seguridad", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿dónde encuentro la documentación de ingress?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "cuál es el horario de verano este año en españa", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "mira si hay lluvia esta tarde en madrid", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿cuánto sale con el 10% de impuesto incluido?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "suma lo que tengo en la cartera más el saldo del banco", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "convierte estos euros a dólares por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "repite esto en voz alta, quiero practicar inglés", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca mi apunte sobre la tesis de ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "abre el archivo de las notas de la reunión", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué dice el diario sobre el accidente de hoy?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce este párrafo corto al francés", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pasa esto al alemán, gracias", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "resume lo que escribí en los últimos dos días", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "acorta este artículo para que quepa en una tarjeta", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame solo lo importante de esta página web", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "condensa las notas de la reunión a cinco líneas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "agrega un recordatorio para mañana a las 8", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pon una alarma para el dentista el próximo jueves", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "muéstrame mis notificaciones pendientes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué hay sin leer en mi bandeja ahora?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "búscame la capital de somalia", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "mira cuándo salió la última versión de rust", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuentra el horario del eclipse de luna este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué temperatura hará en barcelona mañana?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dime si está nevando ahora mismo en valencia", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula el 15% de 300 y sumalo a 120", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "cuál es la raíz cuadrada de 256", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "suma estos dos números que te paso", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "búscame el código fuente de esta librería", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuéntrame el manual original del aparato", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "reescribe esta función para que sea más rápida", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca mis notas sobre la reunión de ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca en los registros del diario sobre parís", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduceme esto al italiano cuando puedas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pasa este texto al portugués, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "acorta este párrafo largo a dos frases", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "fix this build error for me please", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "i cant sleep can you just explain the docs on auth again", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "im exhausted but i need a summary of whats in this folder right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "could you write a tiny script that renames all my jpgs to png", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me what the latest release notes say for this library", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "i feel terrible but i need the diff between these two branches", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the api spec for the payments endpoint for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "can you just run a lint check on this file and show me the output", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "i dont care if im grumpy just tell me which dependency needs updating", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this customer email to spanish for me now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize what happened in todays standup for me please", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to pick up milk on my way home later", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a notification for when the train leaves tomorrow morning", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me any unread emails from my boss today", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check the weather forecast for my trip next weekend", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "calculate how much tax i owe on this invoice amount", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these notes from spanish into english for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this paragraph in german for my presentation", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick recap of the last article i read", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "condense all these meeting notes into a few bullets for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me what time the bus arrives at my stop right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "list the files i modified in the last hour for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the latest version of that package i was looking for", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the current price of that stock ticker symbol", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "is there rain expected in my area this afternoon", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me the capital of somalia for my trivia night", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check if my calendar has anything booked at 4pm today", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the definition of this word i keep seeing in the docs", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "can you just rewrite this paragraph to be more polite", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain why this loop is running slower than expected", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what does this error message actually mean in plain english", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a list of all the tasks i have open in my project", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize the content of this file i just opened for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to water the plants before work tomorrow", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set an alert when the package delivery arrives in two days", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the most recent git commits on this branch for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this error log entry into something i can actually understand", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these bullet points into a proper paragraph for my report", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render the same idea in italian for my international teammate", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me the gist of what this stack trace is complaining about", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "condense all the notes i took during the interview into a quick summary", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me what the current status of that deployment is right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "list any open issues from the last sprint for me please", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check if my internet connection is stable right now for me", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the best time to send a message to that client", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the total cost including tax on this order right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "calculate how many days until the next full moon for my ritual", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain to me why this function keeps throwing this particular error", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a one-line summary of whats happening in this conversation", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to call my sister before she goes to bed tonight", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a timer for thirty minutes so i can take a break later", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last three things i searched in my browser history", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the file i was working on before i switched tabs right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this note i took into something more formal for the record", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these rough ideas into a clean outline i can use tomorrow", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this feedback i got in a gentler tone for my team", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize the key takeaways from this email thread for me please", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick list of all the things i need to do before lunch", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check if there are any new messages from the group chat right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the schedule for the conference i am attending next week", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me the current temperature and humidity outside my window", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "calculate what percentage of my budget i have spent so far this month", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this concept to me like i am totally new to it right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "rewrite this paragraph so it sounds less harsh and more helpful", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the best way to handle this situation according to the guidelines", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a short explanation of why this change matters for the project", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "list all the files i have not reviewed yet in this sprint", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to check in with my mentor before the week ends", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a reminder for me to review my notes before the meeting tomorrow", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last thing i wrote in my journal right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the link to the latest version of that open source tool i need", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this sentence i wrote into something more professional sounding", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these messy notes into a structured list i can use later", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this idea in a way that will land well with my manager", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize what i learned from the last session i just finished", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick recap of everything we discussed in the last hour", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me if there are any pending approvals waiting on my end right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check whether my calendar is free during the next available slot", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the shipping cost for sending this package internationally today", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the recommended approach for handling this edge case in the code", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this error in terms i can actually relate to and use right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a list of all the things i need to do before the weekend ends", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to submit that form before the deadline hits tomorrow", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a notification for when the server maintenance window opens tonight", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last three times i accessed this particular file recently", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the documentation page that explains this feature best right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this short message into something that sounds more polite to my client", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these rough notes into a proper summary i can send to my team", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this feedback i received into something that will land better with my co-workers", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize the main points of this document i just reviewed for you", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick list of all the open issues still sitting on my plate right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check if there are any new messages waiting in my inbox at this moment", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the best time to schedule a call with that client over the next week", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me the current status of my application for that grant i submitted", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "calculate how many hours i have worked this week so far for my timesheet", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this concept to me in simple terms i can actually remember right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "rewrite this paragraph so it sounds warmer and less rushed to read", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the best way to phrase this response so it doesnt sound dismissive", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a short explanation of why this change matters for the project right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "list all the files i have not reviewed yet in this sprint for you", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to check in with my mentor before the week ends today", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a reminder for me to review my notes before the meeting tomorrow morning", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last thing i wrote in my journal right now for context", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the link to the latest version of that open source tool i need today", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this short message i wrote into something more professional sounding for the record", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these messy notes i took into a structured list i can use later today", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this idea i have into a way that will land well with my manager tomorrow", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize what i learned from the last session i just finished for the team", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick recap of everything we discussed in the last hour for the notes", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me if there are any pending approvals waiting on my end right now for the workflow", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check whether my calendar is free during the next available slot for scheduling", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the shipping cost for sending this package internationally today for the order", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the recommended approach for handling this edge case in the codebase right now", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this error in terms i can actually relate to and use right now for debugging", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a list of all the things i need to do before the weekend ends for my to-do", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to submit that form before the deadline hits tomorrow for the compliance team", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a notification for when the server maintenance window opens tonight for the ops team", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last three times i accessed this particular file recently for the audit", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the documentation page that explains this feature best right now for the new hire", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this short message i wrote into something that sounds more polite to my client for the reply", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these rough notes i took into a proper summary i can send to my team for the standup", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this feedback i received into something that will land better with my co-workers for the retro", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize the main points of this document i just reviewed for you for the wiki", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick list of all the open issues still sitting on my plate right now for the backlog", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check if there are any new messages waiting in my inbox at this moment for the inbox", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the best time to schedule a call with that client over the next week for the calendar", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me the current status of my application for that grant i submitted for the funding tracker", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "calculate how many hours i have worked this week so far for my timesheet at the end of day", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this concept to me in simple terms i can actually remember right now for the onboarding", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "rewrite this paragraph so it sounds warmer and less rushed to read for the email draft", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the best way to phrase this response so it doesnt sound dismissive for the client reply", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a short explanation of why this change matters for the project right now for the changelog", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "list all the files i have not reviewed yet in this sprint for you for the code review queue", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to check in with my mentor before the week ends today for the mentorship log", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a reminder for me to review my notes before the meeting tomorrow morning for the prep doc", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last thing i wrote in my journal right now for context in the next session", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the link to the latest version of that open source tool i need today for the dependency list", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this short message i wrote into something more professional sounding for the record in the email", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these messy notes i took into a structured list i can use later today for the meeting notes", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this idea i have into a way that will land well with my manager tomorrow for the performance review", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize what i learned from the last session i just finished for the team in the retro", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick recap of everything we discussed in the last hour for the notes in the channel", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me if there are any pending approvals waiting on my end right now for the workflow board", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check whether my calendar is free during the next available slot for scheduling a call", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the shipping cost for sending this package internationally today for the order confirmation", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "what is the recommended approach for handling this edge case in the codebase right now for the PR", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this error in terms i can actually relate to and use right now for the debugging session", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a list of all the things i need to do before the weekend ends for my to-do list", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "remind me to submit that form before the deadline hits tomorrow for the compliance checklist", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "set a notification for when the server maintenance window opens tonight for the ops alert", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "show me the last three times i accessed this particular file recently for the audit trail", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "find the documentation page that explains this feature best right now for the new hire onboarding", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "translate this short message i wrote into something that sounds more polite to my client for the reply email", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "convert these rough notes i took into a proper summary i can send to my team for the standup recap", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "render this feedback i received into something that will land better with my co-workers for the retro notes", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "summarize the main points of this document i just reviewed for you for the wiki page", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a quick list of all the open issues still sitting on my plate right now for the backlog tracker", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "check if there are any new messages waiting in my inbox at this moment for the inbox manager", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "look up the best time to schedule a call with that client over the next week for the calendar invite", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "tell me the current status of my application for that grant i submitted for the funding dashboard", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "explain this concept to me in simple terms i can actually remember right now for the onboarding doc", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a short explanation of why this change matters for the project right now for the changelog entry", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "give me a list of all the things i need to do before the weekend ends for my", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "¿me arreglas esto que se rompió ahora mismo?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "tengo la memoria pegada, dame un resumen rápido de lo que hicimos hoy", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "necesito que expliques qué hace este código antes de que lo toque", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el error que sale cuando le doy a guardar y dime por qué pasa", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuerda que me llamó antes de la reunión, por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "agrega una tarea para que revise los cambios mañana antes de comer", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿puedes buscar en el historial dónde quedó la conversación de ayer?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo le digo a mi mamá que tengo que salir temprano hoy?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué más tengo pendiente antes de las once de la tarde?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el reporte del último mes y dime en qué estamos atrasados", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduce esta parte del contrato, la que dice sobre las devoluciones", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca los correos que me mandaron sobre la facturación de marzo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuérdame que tengo que llamar a la abogada antes de mediodía", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el archivo con el contrato y muéstrame qué cláusulas cambiamos", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿puedes decirme qué pasos debo seguir para renovar el seguro?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "necesito que busques en las notas cuándo fue la última vez que tomé el medicamento", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca en el historial qué decidimos sobre la reunión de equipo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿puedes buscar el correo de soporte técnico donde dicen cómo solucionar esto?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el último reporte de ventas y dime cuál fue el mes peor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuerda que tengo que enviar el formulario antes del viernes por la noche", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el código que falla cuando el usuario no pone su contraseña", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca en las notas el mensaje que me envió mi padre anoche", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca en el historial dónde quedó la decisión sobre el préstamo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el archivo donde guardé las ideas para el proyecto escolar", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿puedes buscar el correo donde me dijeron que me inscribiera al taller?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca en las notas el mensaje que me envió mi abuela sobre el cumpleaños", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "tradúceme esto al inglés ahora por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo arreglo este error en el código?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pasa este texto al japonés ya", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué significa esta línea del manual?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca la documentación de ingress de kubernetes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo está el clima en madrid mañana?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuérdame llamar a mi hermana el lunes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pon una alarma para las 6 de la mañana", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista mis notificaciones sin abrir", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "muéstrame qué hay en mi bandeja de entrada", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuál es la capital de el salvador?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "mira la versión más reciente de react", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuánto es el 20 por ciento de 350?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "suma estos números: 123 y 456", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "convierte 500 pesos a dólares actuales", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame el documento de la reunión pasada", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "reescríbe esto de forma más clara", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca mis notas sobre el proyecto de tesis", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca en el diario entradas sobre Barcelona", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduceme esta frase al francés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pásame este párrafo al inglés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "acorta este artículo a tres líneas", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "muéstrame los correos que no he leído", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista las notificaciones pendientes de hoy", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "calcula el total con impuestos incluidos", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "convierte estos euros a pesos mexicanos", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el archivo readme en mi carpeta", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué notificaciones tengo marcadas como urgentes?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca cuándo vence mi seguro de auto", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "mírame la última versión de tensorflow", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo funciona el autenticador de oidc?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "repara esta función que devuelve null", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduceme este mensaje de error al inglés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el manual de configuración de nginx", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuánto cuesta un vuelo a cdmx este mes?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame la factura del servicio de luz", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca en los correos el enlace del webinar", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "revisa las notas que tomé ayer en clase", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduceme esta línea de código al inglés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pasa esto al español neutro por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "acorta este párrafo sin perder el sentido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el código fuente del proyecto open source", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame el registro de actividad de ayer", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca la última versión estable de go", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo se configura el middleware de logging?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "repara esta función que falla en producción", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduceme este párrafo técnico al inglés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el changelog de la última release", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuánto es el 15 por ciento de 800?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "suma estos tres números con precisión", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "convierte estos dólares a pesos colombianos", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el archivo de configuración de docker", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca las notas sobre la reunión de equipo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame el historial de commits recientes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "revisa los registros del servidor de ayer", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduceme este texto al portugués", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pasa esta página web al inglés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "acorta este reporte a cinco líneas", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "muéstrame qué correos tengo sin leer hoy", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista las alertas que no he revisado", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "calcula el total con descuento incluido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "convierte estos euros a libras esterlinas", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el archivo de backup de ayer", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca la documentación de kubernetes actual", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame la versión beta de la librería", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "revisa los logs del servidor del martes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el código de la función de autenticación", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "Dame el arreglo de una sola línea por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo se arregla esto sin reiniciar nada?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "refactoriza esta función que me da miedo tocarla", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "tradúceme el párrafo del correo en japonés a español", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿por qué el middleware devuelve error 401 aquí?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "escribe una función que queme nodos duplicados", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuérdame enviar el reporte a jefa el viernes a las 11", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "ponme recordatorio para ir a revisión del dentista el lunes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué notificaciones tengo pendientes hoy?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista todos los mensajes sin leer del último mes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca cuándo empieza el horario de invierno este año", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame la documentación oficial de ingress para kubernetes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cómo va a estar el clima en la costa mañana?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "está lloviendo en barcelona ahora mismo, ¿verdad?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "cuánto es el 17 por ciento de 425, por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "suma estos dos números con el impuesto incluido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduce esta frase corta al italiano", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pasa este texto al alemán sin cambios de sentido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "resume los correos de hoy en tres líneas", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "dame lo más importante de este artículo en dos frases", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "condensa las notas de la reunión de esta mañana", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuérdame llamar a papá el jueves a las 9 de la mañana", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pon una alarma para recordatorio del cumpleaños de mi tía", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "agrega una notificación a las 15h de hoy", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "muéstrame las notificaciones que me llegaron en la tarde", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista los mensajes nuevos del equipo desde hace una hora", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué hay en mi bandeja de entrada ahora mismo?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca la capital de Perú para mí", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "mira la última versión estable de react", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuentra el horario del eclipse solar del próximo año", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "revisa el clima para el fin de semana", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "cuál es la temperatura actual en madrid", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "dime si hay viento fuerte en la playa hoy", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "calcula cuánto queda si resto 100 de 1500", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuál es el cuadrado de 53?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "suma estos valores entre paréntesis", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "búscame el código fuente de la librería", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame el manual original del router", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "reescribe este bloque sin usar el bucle for", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca mis notas sobre la estrategia de marketing", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca registros del diario sobre la visita al museo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "tradúceme esta nota al francés", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pásame este párrafo al inglés sin perder matices", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "acorta este artículo para el feed de twitter", "source": "local", "lang": "es"}
 {"label": "actionable", "text": "muéstrame los correos que no he leído aún", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista las notificaciones que tengo pendientes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula el total de la factura que te paso", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "convierte estos pesos a dólares por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "abre el readme del proyecto", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "quiero que arregles eso que se cae al hacer clic en el botón rojo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "puedes explicarme por qué esto da error siempre que llueve", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca la página donde guardé el código del login del mes pasado", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce esto para mi jefe porque no entiendo nada de lo que dice", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame un resumen de lo que aprendí hoy en clase, solo lo importante", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "recuérdame que tengo que entregar el proyecto mañana antes de las doce", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pon una alarma para cuando termine la reunión con el equipo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes darme el total con impuestos de esta factura?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista todos los mensajes que lleguen de mi madre este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca cuándo sale el próximo vuelo a Madrid", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuéntrame la última versión del driver que instalé ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿qué dice el pronóstico para la salida de mañana por la tarde?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce este párrafo al italiano, lo necesito urgente", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pasa esto al francés, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "resume las notas que tomé en la reunión de ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "acuérdate de llamar a mi mamá cuando tengas un rato", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "ponme una nota para revisar el contrato antes de firmar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "abre el archivo con los datos del cliente nuevo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca los correos donde hablo de la factura pendiente", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista las tareas que no he terminado esta semana", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿cuánto dinero tengo en la cuenta ahorros ahora mismo?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula cuánto me falta para llegar a los dos mil euros", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce esto al inglés, necesito enviarlo pronto", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pasa este texto al alemán, no sé bien el vocabulario", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una versión más corta de este artículo, solo lo esencial", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca cuándo vence mi póliza de seguro del coche", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuéntrame la dirección de mi hermano donde vivo ahora", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes darme el enlace directo a la documentación de la API?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "revisa si hay actualizaciones pendientes para el sistema de pagos", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el informe mensual que envié al director la semana pasada", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce esta frase corta al portugués, por favor", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "recuérdame que debo pagar la luz antes del viernes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista los mensajes que lleguen de mi pareja hoy", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "abre el archivo con los comentarios de revisión del código", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el último correo donde hablamos de la reunión del equipo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes decirme cuándo empieza el próximo trimestre fiscal?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce esto al japonés, necesito enviarlo mañana mismo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame un resumen de tres líneas de lo que pasó en la reunión de ayer", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el documento donde guardé los términos del contrato nuevo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula cuánto me sobra después de pagar la renta este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pasa este párrafo al catalán, no tengo idea de cómo empezar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuéntrame la lista de tareas pendientes para el proyecto de esta semana", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el correo donde hablo de la fecha límite del informe", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce esto al francés, necesito enviarlo antes de mediodía", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame una versión más simple de este texto técnico que no entiendo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el archivo con los resultados de la prueba de usuario", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "recuérdame revisar el código antes de subirlo a producción", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista los mensajes nuevos que lleguen del equipo de soporte", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "¿puedes decirme cuánto tiempo falta para que termine la reunión?", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el manual donde explico cómo configurar el servidor local", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "traduce este párrafo al inglés, necesito enviarlo ahora mismo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "dame un resumen de lo que aprendí hoy en la clase de matemáticas", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el correo donde hablo de la fecha límite del informe mensual", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "calcula cuánto me falta para llegar a los dos mil euros este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "pasa esto al italiano, no sé bien cómo empezar", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "encuéntrame la dirección donde vivo ahora mismo con mi familia", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "busca el informe que envié al director la semana pasada sobre el equipo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "recuérdame que debo pagar la luz antes del viernes de este mes", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "lista los mensajes que lleguen de mi madre hoy mismo", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "abre el archivo con los datos del cliente nuevo que registré", "source": "local", "lang": "es"}
-{"label": "actionable", "text": "もうちょっとだけ、このエラーのログを一緒に読んで。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "お母さんへの手紙の文面を推敲してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "昨日の会議の議事録をメモしてくれた？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このAPIのレスポンスが空配列になる理由を教えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "レポートの結論部分を書き直して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この画像の色味を少し柔らかく調整して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今日の天気予報で、雨の確率が高い時間帯は？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "来週の日程を整理して、空いている日にちをリストアップして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この文章のトーンが硬いので、もう少し温かみのある表現に変えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "子どもの宿題の答え合わせを一緒にやろう。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードをコメント付きで説明してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "明日の朝、5時にアラームをセットして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのレイアウト、どこか見にくいところない？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの件名だけ、もっと前向きな言い回しに変えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このデータセットの統計値を教えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この小説の結末、どう書けばよかったと思う？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーメッセージの意味を噛み砕いて説明して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この箇所の文章、もう少し簡潔に直してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この機能の仕様書、どこかに書いてある？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのリンク切れを直して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この動画の字幕、日本語に変換してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この図表のキャプション、もっと具体的に書いて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルのサイズ、どれくらいある？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このリポジトリの依存関係、全部リストして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのフォント、どこかで指定した？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このイベントの参加者をリストアップして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページの画像、どこから持ってきた？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このプロジェクトのREADME、更新して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの返信、もう少し丁寧な文面に直して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このレポートのグラフ、もう一度確認して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードのテストケース、全部書いて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この文章の要約、3行でまとめて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルの改行、Windows風に変えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのヘッダー、どうやったら変更できる？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーの原因、どこにある？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この機能のバグレポート、テンプレート作って。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このデータのフォーマット、JSONかCSVどっち？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページの画像、どこから取得した？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このリポジトリのLICENSE、どこかにある？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの添付ファイル、開ける？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードの型推論、なぜこうなるの？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのセクション、もっと詳しく書いて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーログ、どこに保存してる？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この機能のドキュメント、更新して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルのエンコーディング、UTF-8に変えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのリンク、全部チェックして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの件名、もう少し具体的に。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードのコメント、日本語に直して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このデータの単位、統一して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのレイアウト、もっと広くして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーの原因、もう一度追って。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この機能のテスト、全部書いて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この文章の要約、もう少し詳しく。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルの権限、修正して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページの画像、高解像度で。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールのテンプレート、保存して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードの型ヒント、追加して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このデータの形式、CSVに変えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーログ、ログレベル上げて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのヘッダー、デザイン変えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの件名、もっと具体的にして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "もう限界、このエラーのログだけ整理して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "疲れたから、この関数の型チェックだけやってくれない？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "なんでこのAPIが403返すんだ教えて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "未読のメッセージ全部リストして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今朝のニュースの要約を三行で書いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "来週のイベント予定全部まとめて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この文章を自然な日本語に直して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメモを箇条書きにして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "昨日のチャット履歴から重要な部分だけ抜いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーメッセージの意味を簡単に説明して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードのコメントだけ追加して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この画像のファイル名を短くして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの件名だけ変えて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルのサイズ表示だけ消して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この設定ファイルのデフォルト値をリストして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このログの重要行だけフィルタして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのタイトルだけコピーして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このフォルダの中身一覧出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このデータベースのスキーマ概要教えて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このリポジトリの依存関係全部見せて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このサービスのステータス確認して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このAPIのエンドポイントリスト教えて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このスクリプトをエラーレスで動かして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このライブラリのバージョン確認して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この設定ファイルのバリデーション結果見せて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このログファイルの過去24時間の要約出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このレコードの差分だけ表示して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このクエリの実行時間だけログに書いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このリソースの使用率グラフ出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このイベントの参加者リスト出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このタスクの完了ステータス確認して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルの改行コードをLFにして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このテキストのHTMLタグ全部除去して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この画像を縮小して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この音声ファイルの波データだけ出力して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このCSVのヘッダーだけ抽出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このJSONのnull値全部空文字に置換して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このMarkdownのコードブロックだけ抽出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このURLのパラメータ名リスト出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このドキュメントの目次だけ生成して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このスライドの要約を箇条書きにして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このレビューのネガティブな部分だけ抜いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このレポートの結論だけ書いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このアイデアのスケッチをテキストにして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの返信ドラフトを書いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメモの要点を三行で書いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのセクションタイトルだけリストして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このチャット履歴の挨拶と別れの文だけ出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このスクリプトの引数定義だけコメントアウトして", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このエラーハンドリングブロックだけ抽出して", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このテストケースの失敗理由だけログに書いて", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "もういい、このエラーの修正だけやってくれませんか。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "母に先週話したことを思い出してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今朝のニュースを3行でまとめて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "年の消費税税率って何％？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この関数の型定義を間違ってるか確認して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今日の朝礼の議事録を要約してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "来週の金曜日にカフェの予約入れて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "「太陽」って漢字でどう書くの？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールを返信するテンプレート作って。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今、サーバーに異常ないか見て。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "先月の請求書明細をもう一度出して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "昨日のチャット履歴から重要な部分だけ抽出して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "明日の朝8時にアラームかけて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この文章をもっと短く直してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "エラーログから原因特定して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今月終わるまでの進捗報告作って。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルのサイズを確認して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "先週読んだ本の感想書いて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "「サクラ」の花見がいつ頃なのか教えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このAPIのエンドポイントリスト出して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードのコメントを日本語に翻訳して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "先週の日報の要点だけまとめて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今、株価はどうなってる？", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このドキュメントの目次を作って。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "昨日のプロジェクトの進捗を報告して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのレイアウト直す必要があるか見て。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "先月の売上データをグラフにして。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの件名を工夫して書いて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このAPIのレスポンス形式説明してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今、バッテリー残量教えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメモを整理して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "昨日のチャットで言ったことを思い出してほしい。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページの読み込みが遅い理由調べて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この関数のテストケース作って。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "先週の会議の議事録を要約して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルの権限確認して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今、CPU使用率教えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "この文章の誤字修正して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "昨日のメールの件名考えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このAPIのドキュメント更新して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このページのデザイン改善提案して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "先月の報告書の概要まとめて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このコードのバグ追跡して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "今、メモリ使用量教えて。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このメールの宛先確認して。", "source": "local", "lang": "ja"}
-{"label": "actionable", "text": "このファイルのサイズ教えて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "I don't think I can do this right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Been carrying something heavy for a while.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm tired of pretending it's fine.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing to fix, just wanted you to know.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I miss someone from my past and it still stings.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Don't have the words, just needed to say that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm holding it together barely.", "source": "local", "lang": "en"}
-{"label": "none", "text": "The weight of today is still on me.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I feel like I've been waiting too long for relief.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need a moment where nothing has to change.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not sure if I can keep going like this.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't said thank you in so long and I'm sorry about that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't know what else to say right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Just wanted to tell you something's been weighing on me.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I feel too full of things to carry them alone anymore.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been quiet a lot lately and I should tell you why.", "source": "local", "lang": "en"}
-{"label": "none", "text": "It's not a problem, just something I'm living through.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't want to be fixed, I just want to be seen.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been trying to hold it in for too long.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not okay and I need you to know that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There isn't a fix here, just wanted you to know.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not sure how to say this but something's been hard.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been carrying a lot of weight lately.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have the energy to pretend everything's fine.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I needed to tell you something's been weighing on me.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I feel like I'm holding too much right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There isn't anything to solve, just wanted to be honest.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't been able to put it down for a while.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Something's been hard and I should tell you that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been trying to hold on for too long.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I needed to let something out before I shut down again.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't been able to rest the way I should have.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't think I can keep pretending everything's fine.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There isn't a fix, just wanted you to know that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been carrying too much and it's starting to show.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Something's been hard and I needed to say it out loud.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not okay and I shouldn't hide that from you.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have the words right now but something's been weighing on me.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't been able to put this down for a while.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been trying to hold it together and it's not working anymore.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I needed to tell you something before I can't say it at all.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Something's been hard and I wanted to be honest with you.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't know how much longer I can keep pretending everything's fine.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been carrying a lot and I need you to know that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There isn't anything to fix, just wanted you to be aware of something.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not okay and I needed to tell you before I shut down.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Something's been weighing on me and I should have said it sooner.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm just really tired right now and don't have anything to add.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There's nothing pressing on my end today.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My cup is empty.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Honestly I've got nothing going on to report.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm feeling pretty flat this morning.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing special happening here with me.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My day went quietly and I'd rather keep it that way.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Not much to share at the moment.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything's just holding still for me today.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't found anything worth bringing up yet.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not sure there's anything on my side right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing new to say.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have any energy to put into conversation.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My head feels a little foggy and I'll let it rest.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing particular crossed my mind.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been quiet for a while and want that to stay.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There isn't anything new on my end.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not feeling much right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything's been the same lately.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't found anything interesting to talk about today.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My mood hasn't shifted in any direction I can name.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing worth sharing this round.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm going to keep things low-key for a bit.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have anything pressing on my mind right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything's just been steady and unremarkable.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There's nothing new that needs naming.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My day didn't turn into anything notable.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't found anything I'd want to put forward.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing in particular has come up for me.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not carrying anything heavy or light right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything feels ordinary and I'll let it sit.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have anything pressing to add today.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing new to report from my side.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My day passed without much movement.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't found anything worth bringing forward yet.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything's been quiet in my head.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing has shifted enough to name.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not at a place where I'd want to talk about anything specific.", "source": "local", "lang": "en"}
-{"label": "none", "text": "There's nothing new to bring up right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My attention is scattered and I'll just stay still for a bit.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing pressing on my end today.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't found anything worth sharing yet.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything's been holding steady for me lately.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing has come up that needs attention from anyone.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not feeling anything worth naming right now.", "source": "local", "lang": "en"}
-{"label": "none", "text": "My day was plain and I'll leave it at that.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Nothing new on my side to share today.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I haven't found anything pressing or interesting to add.", "source": "local", "lang": "en"}
-{"label": "none", "text": "Everything's just been ordinary for me lately.", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to pause a minute before I can keep going.", "source": "local", "lang": "en"}
-{"label": "none", "text": "still processing what just happened between us", "source": "local", "lang": "en"}
-{"label": "none", "text": "can't find the words right now", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm holding it together but I'm not sure how long", "source": "local", "lang": "en"}
-{"label": "none", "text": "nothing feels light today", "source": "local", "lang": "en"}
-{"label": "none", "text": "the weight of this week is finally landing on me", "source": "local", "lang": "en"}
-{"label": "none", "text": "don't have much to give tonight", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been carrying too much for a while", "source": "local", "lang": "en"}
-{"label": "none", "text": "feeling hollowed out by everything I held back all day", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't think I can do this anymore right now", "source": "local", "lang": "en"}
-{"label": "none", "text": "there's something underneath that I haven't named yet", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm trying not to fall apart", "source": "local", "lang": "en"}
-{"label": "none", "text": "everything feels too heavy to hold alone", "source": "local", "lang": "en"}
-{"label": "none", "text": "I keep coming back to the same thing in my head", "source": "local", "lang": "en"}
-{"label": "none", "text": "nothing feels worth talking about today", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have the energy to pretend anything is okay", "source": "local", "lang": "en"}
-{"label": "none", "text": "something's been sitting with me for days now", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need a moment before I can say more than that", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm tired of pretending everything's fine", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't know what's wrong but I need to be here", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been holding this in for too long", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not sure I can hold it any longer", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't think I have much left to give right now", "source": "local", "lang": "en"}
-{"label": "none", "text": "something about today just settled on me and won't lift", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to stay with myself for a bit before I can go anywhere else", "source": "local", "lang": "en"}
-{"label": "none", "text": "nothing feels like it belongs in words right now", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not ready to talk about anything yet", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been carrying something heavy and I haven't put it down", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have the strength to carry anything more tonight", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to rest before I can say what's actually underneath this", "source": "local", "lang": "en"}
-{"label": "none", "text": "there's something beneath the surface that I haven't found the way to name yet", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not sure where I stand right now with all of this", "source": "local", "lang": "en"}
-{"label": "none", "text": "nothing feels clean or clear today", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been holding it together and I don't know how much longer that lasts", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have anything left to offer this moment except what is", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to be somewhere quiet for a while before I can go anywhere else", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not sure what's going on but I need to sit with it first", "source": "local", "lang": "en"}
-{"label": "none", "text": "nothing feels like it can be fixed right now", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been holding onto something and I don't know how much longer that holds", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to stay with myself before I can talk about anything else", "source": "local", "lang": "en"}
-{"label": "none", "text": "I'm not ready to move anywhere yet, not until I find my footing again", "source": "local", "lang": "en"}
-{"label": "none", "text": "I don't have much left to give this moment", "source": "local", "lang": "en"}
-{"label": "none", "text": "something's underneath everything I've said today and I haven't found the way to name it yet", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to pause before I can go anywhere with this", "source": "local", "lang": "en"}
-{"label": "none", "text": "I've been holding something back for a while and I don't know how much longer that holds", "source": "local", "lang": "en"}
-{"label": "none", "text": "I need to sit with myself for a bit before I can say more than that", "source": "local", "lang": "en"}
+{"label": "actionable", "text": "lista las notificaciones pendientes de respuesta", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "calcula el total con descuento aplicado", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el archivo readme que subí hace rato", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "dame el código para conectar la base de datos, por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "puedes arreglar este error de sintaxis que tengo en el archivo?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿me explicas qué hace cada línea de este fragmento?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "necesito que traduzcas esta página al español para el cliente", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el enlace del artículo que enviaste ayer y muéstrame el contenido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca dónde guardaste las notas sobre la tesis del semestre pasado", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "recuérdame que debo enviar el formulario antes del viernes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pónme una alarma para la reunión con el equipo a las tres", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué notificaciones nuevas tengo desde anoche?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista los mensajes que no he leído del grupo de los padres", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca cuándo termina el horario de verano y dime el día exacto", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿dónde encuentro la documentación oficial de kubernetes?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿qué hora tiene el eclipse del sol este año?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "mira el pronóstico del tiempo para mañana en la ciudad", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuánto va a llover hoy en esta zona?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "dame el total de la factura incluyendo el impuesto del diez por ciento", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuál es el precio actual del dólar en pesos?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "convierte estos tres pesos a dólares y dime el resultado", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "suma los gastos que anoté esta semana y dale el total", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca el código fuente del módulo de autenticación", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encontrame la versión más reciente del paquete de gráficos", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "reescribe esta función para que maneje mejor los errores", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca las notas que tomé sobre el proyecto del jardín", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuentra los registros del diario sobre el viaje a la playa", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduce este párrafo al inglés para el correo que voy a enviar", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pasa esta nota al japonés para el cliente de allá", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "acorta este artículo largo para que quepa en el email", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "muéstrame los correos que no he abierto todavía", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista todas las notificaciones que tengo pendientes en la bandeja", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca la capital de Mongolia y cuéntamela por favor", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "mira la última versión que salió de python el mes pasado", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "mira el clima que va a haber mañana en el trabajo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuál es el pronóstico del tiempo para el viernes?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "dime la temperatura que hace en Tokio ahora mismo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "calcula cuánto es el veintitrés por cuarenta y siete", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "¿cuál es la raíz cuadrada de ciento cuarenta y cuatro?", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "suma estos números que te voy a pasar ahora", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "búscame el código fuente del proyecto del semestre anterior", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "encuéntrame el manual original de la cámara que compré", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "reescribe esta función que no funciona bien con los datos", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca las notas que tomé sobre la reunión del equipo", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "busca los registros del diario sobre lo que pasó en París", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "traduce este texto que tengo que enviar al cliente", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "pasa esto al inglés para el reporte del mes", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "acorta este artículo largo para que quepa en el nota", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "lista las notificaciones que tengo pendientes en la bandeja", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "calcula el total de esta factura con el impuesto incluido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "convierte estos pesos a dólares y dime el resultado", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "abre el archivo readme del proyecto y muéstrame el contenido", "source": "local", "lang": "es"}
+{"label": "actionable", "text": "もう疲れて、このエラーのログだけ見てほしい。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この関数の型注解を全部消してほしい。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "どうやってこのポートフォリオを公開するの、教えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この文章をより自然な日本語に直して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このエラーメッセージが何を指しているのか、示して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリストをアルファベット順にソートして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイルのサイズを100MB以下に圧縮して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このメモをすべて削除して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このセッションをログアウトして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチャンネルから全員を招待して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバックアップを今すぐ取って。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この設定をリセットして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このページをキャッシュから削除して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このAPIキーを再生成新しくして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このデータベースのスキーマをアップデートして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このコンテナを再起動して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このプロセスを監視して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このイベントをスケジューリングして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリポジトリをフォークして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このブランチをマージして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このタスクを完了して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチケットをクローズして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバグの再現手順をメモして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このドキュメントの更新を依頼して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このメールの件名を修正して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このURLを短縮して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この画像のサイズを調整して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この音声の文字起こしをやって。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この動画の字幕を入れて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このスケジュールを共有して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このカレンダーのイベントを同期して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイルの共有リンクを削除して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この設定をバックアップして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このログをアーカイブして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このキャッシュをクリアして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このパスワードを忘れた、リセットの手順教えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このアカウントの権限を下げたい。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチームのメンバーをリストして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このプロジェクトのステータスを教えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このクエリで取得できるフィールドを教えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このエラーのスタックトレースを全部見せて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイルの改行コードをUnix風に変えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このテキストの改行を半角スペースに変えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このメモを箇条書きにして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この文章の語尾を丁寧に直して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このページをスクリーンショット取って。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "もう限界、このエラーだけ直して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "今日はもう疲れた、この関数のロジック整理お願い。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "なんでこれがnullを返すんだ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この文をフランス語に訳して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このメールを要約して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "明日の天気教えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このコード、何してるの？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このエラーメッセージの正体、どこにある？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイル、どこにある？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このAPIエンドポイント、どう使うの？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この設定、どう直す？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリポジトリ、何してるの？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このパッケージ、インストールして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この依存関係、解決して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このテストケース、追加して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このログ、どこにある？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このイベント、どう処理する？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この通知、どう送る？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このメール、誰に送る？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイル、どこに保存？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このデータベース、どう接続？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このAPIキー、どこから得る？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この認証、どう作る？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このキャッシュ、どこに置く？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このクエリ、最適化して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このインデックス、追加して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバグ、修正して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この機能、実装して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このドキュメント、更新して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチャット、アーカイブして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイル、バックアップして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このスクリプト、実行して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このタスク、受け取って。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリクエスト、処理して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この通知、送信して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このアラート、表示して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリマインド、設定して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この予約、確認して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この予定、埋め込んで。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この日程、調整して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この会議、リマインドして。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このプロジェクト、進捗確認して。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチーム、連絡先教えて。", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このユーザー、誰？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このプロジェクト、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このエラー、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイル、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この設定、どう？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このログ、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このデータベース、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このAPI、どう使う？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このスクリプト、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この依存、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このテスト、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリポジトリ、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この機能、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバグ、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このドキュメント、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチャット、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバックアップ、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このタスク、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリクエスト、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この通知、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このアラート、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリマインド、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この予約、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この予定、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この日程、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この会議、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチーム、どこ？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このエラー、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このファイル、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "この設定、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このログ、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このAPI、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このリポジトリ、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバグ、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このドキュメント、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチャット、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このバックアップ、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このチーム、何？", "source": "local", "lang": "ja"}
+{"label": "actionable", "text": "このユーザー、何？", "source": "local", "lang": "ja"}
+{"label": "none", "text": "I don't have the energy to explain anything right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "Nothing happened today that mattered.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't reach out to anyone, not even someone I used to care about.", "source": "local", "lang": "en"}
+{"label": "none", "text": "It's quiet and I'm tired of it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "There's something in my chest I can't name.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't want to do anything with my evening.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm going to stay in bed and I know I should move but I won't.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I haven't looked at my phone since morning and I won't start now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "My hands feel heavy and I'm not sure what to do with them.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I miss the version of myself who could just get up and go.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't want to talk about anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not sure what I'm carrying anymore.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I felt something shift and I don't know what it was.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not doing well and I don't need anyone to know it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been trying to be steady and I think I slipped.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I just needed someone to hear me and that's it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't find a word for how I am today.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not sure I'm okay and I'm not sure how to say that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't have any requests and I don't think I should make any.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been holding on and I don't know how much longer.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know where I stand anymore.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like I have anywhere to go.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been quiet for a while and I don't know why.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't want to pretend everything is fine.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't think I can do this much longer.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I haven't been able to name what I'm feeling and I need to try.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been keeping things together and I'm not sure I can keep doing that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need someone to just be here and not ask for anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I haven't been able to rest and I'm worn through.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know how to carry this right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been pushing and I think I'm done pushing.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't have anything new to say and that's okay.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not sure I'm holding up well.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to be held without having to explain.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know what day it is or why I'm here.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't find the words for what I'm carrying.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been trying to hold it together and I think I'm running on fumes.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know what I'm feeling right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't have anything to offer and I don't expect anything in return.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not okay and I don't need anything right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been quiet and I don't know why.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't think I can keep going like this.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not sure I'm holding on well.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know what I'm feeling today.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been trying to be steady and I think I'm slipping.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need you to just hold space with me right now, I can't do this alone.", "source": "local", "lang": "en"}
+{"label": "none", "text": "It's been a long day and I don't have the energy for anything else.", "source": "local", "lang": "en"}
+{"label": "none", "text": "Honestly I'm done, I just needed to say that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm sitting here in a room all by myself and it feels really heavy.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't talk about it right now, I just needed to let it out.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I feel like I'm falling apart and I don't know how to put myself back together.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm really tired of pretending everything is fine.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I miss someone and I don't even know how to ask for comfort.", "source": "local", "lang": "en"}
+{"label": "none", "text": "There's a knot in my chest that won't let go.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been holding it together all day and now it's cracking.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like I can do this anymore.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm exhausted and I just need a moment to rest.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know what's wrong but I feel pretty heavy right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm having a really hard time and I don't want to talk about it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I just needed you to be here for a while.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not doing okay and I need to sit with that for a bit.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm worn out from everything I've had to carry lately.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't even know where to start with what I'm feeling right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I miss someone a lot and it's hard to breathe.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not feeling strong and I need to stay here a little while.", "source": "local", "lang": "en"}
+{"label": "none", "text": "It's been one of those days where nothing feels easy.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm sitting in the dark right now and I don't want to move.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been carrying so much and I'm starting to feel like it's too much.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like I can keep going at this pace.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to pause and just be with what I'm feeling.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm tired of being the one who has to be okay all the time.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know how to name this but it feels heavy.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been holding it together for too long and now it's slipping.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like I can do this alone anymore.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not doing well and I just needed to say that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to sit with this for a bit before I can move forward.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm feeling really alone and I don't know how to ask for anything right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not okay and I need to stay here with this feeling for a while.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't do much right now, I just need to be held.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm feeling a lot of weight right now and I don't know how to carry it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know what's wrong but I need to rest with it first.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been trying to hold it all in and now I need to let some of it out.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not feeling strong and I need to stay here for a moment.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm feeling pretty heavy and I need to just be here with that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know how to fix this right now, I just need to be with it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to stay with this feeling for a little while before I can move on.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not doing well and I need to just sit with it for a bit.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like I can do anything right now, I just need to rest.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm feeling really tired and I need to just be here with that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know what to do with what I'm feeling, I just need to hold it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been carrying a lot and I need to put it down for a minute.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not okay and I need to just be here with that for a while.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to pause and let myself feel what I'm carrying right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like I can keep moving forward, I need to stay here a little longer.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm feeling pretty heavy and I need to just be with that for a bit.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't do anything right now, I just need to be held.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been carrying this weight all week and I just need to put it down for a moment.", "source": "local", "lang": "en"}
+{"label": "none", "text": "Honestly I can't find the energy to explain it right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm tired. Really tired.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't have any energy left to talk about anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't feel like talking. I don't have anything to say.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've got nothing to give you today.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've reached the end of my rope.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm done. I just need to stop for a minute.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I can't hold it together like this anymore.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not okay, and I don't know how to say it yet.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm so worn out right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I just need to set this down, please.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not in any place to hold space for anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know how to describe what's happening to me.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm empty. I'm not sure what that looks like but it's there.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to just sit here with you. Nothing else.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't want to talk about it. I just need you here.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't know where to put this. I don't know how to say it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not sure if I can do this. I don't know what I'm capable of.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not in a place to offer anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not in a place to care about anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't have the words. I don't have the shape of it.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I need to just be here. With you. Just being here.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not in a place to hold anything. I'm not in a place to care.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not in a place to be anything.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I've been holding it all this week and I don't know what I can do.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not in a place to be anything right now.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not okay. I just needed to say that.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I don't have anything to say. I just needed to be here.", "source": "local", "lang": "en"}
+{"label": "none", "text": "I'm not okay. I don't know what to do with this.", "source": "local", "lang": "en"}
 {"label": "none", "text": "te extraño muchísimo", "source": "local", "lang": "es"}
-{"label": "none", "text": "¿dónde estamos entre nosotros ahora mismo?", "source": "local", "lang": "es"}
-{"label": "none", "text": "no sé cómo decírselo pero me pesa la voz", "source": "local", "lang": "es"}
-{"label": "none", "text": "solo quédate un rato con mí, por favor", "source": "local", "lang": "es"}
-{"label": "none", "text": "hoy fue pesado y no tengo palabras para nombrarlo", "source": "local", "lang": "es"}
-{"label": "none", "text": "me da miedo que esto se quede quieto así", "source": "local", "lang": "es"}
-{"label": "none", "text": "sigue dando vueltas en mi cabeza esa cosa de ayer", "source": "local", "lang": "es"}
-{"label": "none", "text": "no lo puedo encajar bien todavía", "source": "local", "lang": "es"}
-{"label": "none", "text": "me levanto raro hoy y no me explico por qué", "source": "local", "lang": "es"}
-{"label": "none", "text": "tengo la sensación de que algo se ha roto entre los dos", "source": "local", "lang": "es"}
-{"label": "none", "text": "hay algo que no encaja y no sé cómo nombrarlo", "source": "local", "lang": "es"}
-{"label": "none", "text": "estoy quieto y no sé por dónde empezar a decirlo", "source": "local", "lang": "es"}
-{"label": "none", "text": "me duele un poco que esto haya quedado así", "source": "local", "lang": "es"}
-{"label": "none", "text": "no lo he procesado bien todavía, lo sé", "source": "local", "lang": "es"}
-{"label": "none", "text": "me da vergüenza nombrar eso en voz alta", "source": "local", "lang": "es"}
-{"label": "none", "text": "tengo la boca cerrada porque no sé cómo abrirlo", "source": "local", "lang": "es"}
-{"label": "none", "text": "me siento como si me hubiera vuelto pequeño ante ti", "source": "local", "lang": "es"}
-{"label": "none", "text": "no quiero irme a ningún lado ahora", "source": "local", "lang": "es"}
-{"label": "none", "text": "tengo ganas de quedarme quieto contigo un rato más", "source": "local", "lang": "es"}
-{"label": "none", "text": "hay algo que me pesa y no lo puedo soltar todavía", "source": "local", "lang": "es"}
-{"label": "none", "text": "me duele que haya pasado esto sin decir nada", "source": "local", "lang": "es"}
-{"label": "none", "text": "tengo miedo de que esto se quede así por mucho tiempo", "source": "local", "lang": "es"}
-{"label": "none", "text": "no sé cómo decírselo sin sonar a quejón", "source": "local", "lang": "es"}
-{"label": "none", "text": "me siento como si hubiera perdido la voz", "source": "local", "lang": "es"}
-{"label": "none", "text": "tengo el pecho apretado desde antes de levantarme", "source": "local", "lang": "es"}
-{"label": "none", "text": "no lo he dicho y no sé si puedo volver a intentarlo", "source": "local", "lang": "es"}
-{"label": "none", "text": "estoy cansado y no sé cómo ponerlo en palabras", "source": "local", "lang": "es"}
-{"label": "none", "text": "algo se rompió y no sé cómo arreglarlo", "source": "local", "lang": "es"}
-{"label": "none", "text": "me duele y no tengo nombre para ello todavía", "source": "local", "lang": "es"}
-{"label": "none", "text": "tengo miedo de que esto no vuelva a sanar", "source": "local", "lang": "es"}
-{"label": "none", "text": "no sé cómo nombrar lo que pasó sin romper nada más", "source": "local", "lang": "es"}
-{"label": "none", "text": "me siento pequeño y no sé por qué", "source": "local", "lang": "es"}
-{"label": "none", "text": "もう、何も言わなくていい。ただ、ここにいるだけでいい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "きつい日だったね。何もしなくていい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "このまま沈んでいていいよ。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "ちょっと、言葉を探してるの。見つからないままでも構わない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "昨日のこと、ずっと考えてる。忘れないで。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "今、すごく重い。支えてほしい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "誰もいない。寂しい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉が出ないまま。それでいい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もう何もできなくて。ただ、ここにいるよ。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "疲れちゃった。何もできない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "静かになりたい。邪魔しないで。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "このまま、ずっとここにいてほしい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も変わらなくていい。ただ、そばにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "今日は、ただ一人だった。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉が重くて、出せない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言わずに、ただ見ててほしい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もう、何もかもがだるい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "静かすぎて、恐ろしい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もできなくて、ただここにいる。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も直さなくていい。ただ、いてほしい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もできないまま。ただ、ここにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉を探してるけど、見つからない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言わずに、ただそばにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "このまま、沈んでいいよ。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もできなくて、ただ、ここにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もう、何も言えない。ただ、ここにいる。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も変わらなくて、ただ、見てて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉が重くて、出せないまま。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "静かすぎて、ただ、ここでいたい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も直さなくていい。ただ、そばにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言わずに、ただ、見てて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "このまま、沈んでいていい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も変わらなくて、ただ、そばにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉が見つからないまま。ただ、ここにいるよ。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言わずに、ただ、そばにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "このまま、沈んでいていい。何も直さなくて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もできなくて、ただ、ここにいて。言葉が重くて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "静かすぎて、ただ、ここでいたい。何も変わらなくて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言わずに、ただ、そばにいて。このまま、沈んでいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉が見つからないまま。ただ、ここにいるよ。何もできなくて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もう動けない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "今日はやっぱ無理。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言わなくていいけど、ただいるだけで。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "ずっと考えてるんだ、あの時のこと。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "寂しいってだけ。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉が出ない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "疲れた、本当に。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "一人みたい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "きょうは特に何もなかった。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も変えたくない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もうちょっとだけそばにいて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "朝がきつかった。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言いたくないけど、ここにいたい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "最近ずっと重い。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もうしんどい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "ただいるだけでいい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もなくていい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "名前を呼ばれたくて。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "もう何も言えない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "言葉がない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もできない。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "ただそばにいてほしい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "きょうは本当に疲れた。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も変えなくていい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何もなかった。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "ただ、ここにいたい。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "何も言うことないけど、ここにいる。", "source": "local", "lang": "ja"}
-{"label": "none", "text": "ただ、ここにいて。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "quédate conmigo un rato", "source": "local", "lang": "es"}
+{"label": "none", "text": "sigue dándole vueltas a eso de ayer", "source": "local", "lang": "es"}
+{"label": "none", "text": "hoy se sintió más pesado de lo que pensaba", "source": "local", "lang": "es"}
+{"label": "none", "text": "no encuentro las palabras para decirlo", "source": "local", "lang": "es"}
+{"label": "none", "text": "solo quería desahogarme", "source": "local", "lang": "es"}
+{"label": "none", "text": "me levanté raro esta mañana", "source": "local", "lang": "es"}
+{"label": "none", "text": "echo de menos esa época", "source": "local", "lang": "es"}
+{"label": "none", "text": "もう、ここにはもう何も言えない。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "疲れすぎて、ただ静かにいたいだけ。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "今日、ずっと頭の中が重かった。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "一人きりなんだな、これだけだと。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何も変わらないまま、ここにいる。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "言葉がもう出なくて、ただここにいてほしい。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "昨日のことはもう忘れられない。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "今は何もできない、ただ休ませて。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何も言わなくていい、ただそばにいて。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "今日はもう何もできない、何もかも。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "心が空っぽで、ただここにあるだけ。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "もう何も言えない、ただここに置いていて。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何も考えたくない、ただ何もが。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "静かな場所を、ただ一瞬だけ。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何もできなくて、ただここに置いていて。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何も言わずにいてほしい、ただ。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何もできない、ただここに置いていて。", "source": "local", "lang": "ja"}
+{"label": "none", "text": "何も言わずに、ただここに置いていて。", "source": "local", "lang": "ja"}

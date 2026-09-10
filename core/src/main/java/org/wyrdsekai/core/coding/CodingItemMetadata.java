@@ -43,12 +43,19 @@ public record CodingItemMetadata(
         String taskId,
         UUID artifactId,
         String kind,
-        String scriptedItemId) {
+        String scriptedItemId,
+        String placedRoomId) {
 
-    /** Backward-compatible constructor — no scripted item registered. */
+    /** Backward-compatible constructor — no scripted item registered, room unknown. */
     public CodingItemMetadata(String roomObjectId, String backend, String taskId,
                               UUID artifactId, String kind) {
-        this(roomObjectId, backend, taskId, artifactId, kind, null);
+        this(roomObjectId, backend, taskId, artifactId, kind, null, null);
+    }
+
+    /** Backward-compatible constructor — room unknown. */
+    public CodingItemMetadata(String roomObjectId, String backend, String taskId,
+                              UUID artifactId, String kind, String scriptedItemId) {
+        this(roomObjectId, backend, taskId, artifactId, kind, scriptedItemId, null);
     }
 
     /** True for built-output items (run / test / deploy verbs apply). */

@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.forge;
 
+import org.wyrdsekai.core.update.ActivityGauge;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.config.WyrdConfig;
@@ -82,6 +84,15 @@ public final class SleepWeightWrite {
     }
 
     private static void run(String agentName, Path script) throws Exception {
+        ActivityGauge.maintenanceStarted();   // the self-updater waits for the night's write
+        try {
+            runInner(agentName, script);
+        } finally {
+            ActivityGauge.maintenanceFinished();
+        }
+    }
+
+    private static void runInner(String agentName, Path script) throws Exception {
         var interpreter = interpreter();
         log.info("Sleep weight-write for '{}': {} {}", agentName, interpreter, script);
         var pb = new ProcessBuilder(interpreter, script.toString());

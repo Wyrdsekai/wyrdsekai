@@ -288,14 +288,20 @@ public class BackupOrchestrator {
             totalSize += dbResult.get().sizeBytes();
         }
 
-        // 2. Lucene search indexes.
+        // 2. Lucene search indexes. Segment files are write-once — Lucene never edits one in
+        //    place, it writes new ones and unlinks the old — so a snapshot can HARD-LINK them
+        //    instead of copying: a snapshot of an unchanged 174 GB index then costs seconds and
+        //    no space, where a copy took eight minutes, 174 GB, and every page of RAM as cache
+        //    (a household node with a whole-library index: five nightly copies had eaten 580 GB
+        //    and left 37 GB on the disk, 2026-09-10). Copy only what cannot be linked.
         if (searchDir != null && Files.isDirectory(searchDir)) {
             var searchBackupDir = backupDir.resolve("search." + backupId);
             try {
-                copyDirectoryRecursive(searchDir, searchBackupDir);
+                var linked = linkOrCopyDirectory(searchDir, searchBackupDir);
                 long searchSize = directorySize(searchBackupDir);
                 totalSize += searchSize;
-                log.info("Backup: Lucene search indexes ({} bytes) → {}", searchSize, searchBackupDir);
+                log.info("Backup: Lucene search indexes ({} bytes, {} file(s) hard-linked, {} copied) → {}",
+                    searchSize, linked.linked(), linked.copied(), searchBackupDir);
                 pruneByPrefix("search.", true);
                 sourceBuilder.append(" + search");
             } catch (IOException e) {
@@ -438,6 +444,49 @@ public class BackupOrchestrator {
     }
 
     // --- File utilities ---
+
+    /** How a directory snapshot was made: files hard-linked to the live ones, and files copied. */
+    record LinkOrCopy(int linked, int copied) {}
+
+    /**
+     * Snapshot a directory of write-once files by hard-linking each file to the live one,
+     * copying only where a link is refused (another filesystem, a filesystem without links).
+     * Right for a Lucene index and wrong for anything edited in place: a link shares the
+     * bytes, so a later in-place write would change the snapshot too. Refuses, rather than
+     * fills the disk, when nothing can be linked and the copy would not fit.
+     */
+    static LinkOrCopy linkOrCopyDirectory(Path source, Path target) throws IOException {
+        int linked = 0, copied = 0;
+        boolean linksWork = true;
+        List<Path> files;
+        try (var walk = Files.walk(source)) { files = walk.toList(); }
+        long need = 0;
+        for (var f : files) if (Files.isRegularFile(f)) need += Files.size(f);
+        for (var src : files) {
+            var dst = target.resolve(source.relativize(src));
+            if (Files.isDirectory(src)) { Files.createDirectories(dst); continue; }
+            Files.createDirectories(dst.getParent());
+            if (linksWork) {
+                try {
+                    Files.createLink(dst, src);
+                    linked++;
+                    continue;
+                } catch (UnsupportedOperationException | IOException e) {
+                    linksWork = false;
+                    long free = Files.getFileStore(target.getParent() != null && Files.exists(target.getParent()) ? target.getParent() : target).getUsableSpace();
+                    if (need > free) {
+                        deleteRecursive(target);
+                        throw new IOException("cannot hard-link the snapshot (" + e.getMessage() + ") and a copy of "
+                            + need + " bytes would not fit in the " + free + " free — skipped rather than fill the disk");
+                    }
+                    log.warn("Backup: hard links refused ({}); copying instead", e.getMessage());
+                }
+            }
+            Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
+            copied++;
+        }
+        return new LinkOrCopy(linked, copied);
+    }
 
     private static void copyDirectoryRecursive(Path source, Path target) throws IOException {
         try (var walk = Files.walk(source)) {

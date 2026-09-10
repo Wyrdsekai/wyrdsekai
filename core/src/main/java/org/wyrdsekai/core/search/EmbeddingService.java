@@ -57,6 +57,22 @@ public final class EmbeddingService implements AutoCloseable {
      * because SetFit tuning that sharpens classification degrades general retrieval —
      */
     public static final String CLASSIFIER_SELECTOR_ENV = "WYRDSEKAI_CLASSIFIER_ENCODER";
+    /**
+     * An embedding SERVER (llama.cpp {@code llama-server --embedding}, OpenAI-style
+     * {@code /v1/embeddings}) instead of the in-process ONNX session. Set when the model is
+     * served on a GPU beside the drive and voice servers. The in-process path embeds bge-m3
+     * at ~2 chunks/s on a CPU and does not scale with threads; a served model does hundreds
+     * per second and scales with {@code --parallel}. Index-time and query-time MUST use the
+     * same embedder, so switching this changes the model version string
+     * ({@link #currentModelVersion()}) and stale-vector checks fire as for any model change.
+     */
+    public static final String SERVER_URL_ENV = "WYRDSEKAI_EMBEDDING_URL";
+    public static final String SERVER_URL_PROP = "wyrdsekai.embedding.url";
+    private String serverUrl;                 // the first replica, for logs and served()
+    private List<String> serverUrls = List.of();   // all replicas; each call goes to the least-loaded one
+    private final AtomicInteger serverTurn = new AtomicInteger();
+    private final java.util.concurrent.ConcurrentHashMap<String, AtomicInteger> inFlight = new java.util.concurrent.ConcurrentHashMap<>();
+    private java.net.http.HttpClient http;
 
     private static volatile EmbeddingService instance;
 
@@ -141,6 +157,26 @@ public final class EmbeddingService implements AutoCloseable {
                 // loadModel() so dimension() and currentModelVersion() reflect the
                 // active choice if anyone reads them post-init.
                 svc.model = resolveActiveModel();
+                svc.serverUrl = resolveServerUrl();
+                if (svc.serverUrl != null) {
+                    var raw = System.getProperty(SERVER_URL_PROP);
+                    if (raw == null || raw.isBlank()) raw = System.getenv(SERVER_URL_ENV);
+                    svc.serverUrls = List.copyOf(serverUrlList(raw));
+                    svc.dimension = svc.model.dimension();
+                    svc.maxSeqLength = svc.model.maxSeqLength();
+                    svc.http = java.net.http.HttpClient.newBuilder()
+                        .connectTimeout(java.time.Duration.ofSeconds(10)).build();
+                    var probe = svc.remoteEmbed(List.of("dimension probe"), true).get(0);
+                    if (probe.size() != svc.dimension) {
+                        throw new IllegalStateException("Embedding server at " + svc.serverUrl
+                            + " emits " + probe.size() + " dims for '" + svc.model.id()
+                            + "', registry says " + svc.dimension + ". Lucene HNSW index requires fixed dimension.");
+                    }
+                    instance = svc;
+                    log.info("EmbeddingService initialized ({} via {} server(s) {}, {}d)",
+                        svc.model.version(), svc.serverUrls.size(), svc.serverUrls, svc.dimension);
+                    return instance;
+                }
                 if (!modelFilesPresent(svc.model)) {
                     if (svc.model != EmbeddingModel.bundledDefault()) {
                         log.warn("Embedding model '{}' selected but ONNX not found in "
@@ -291,9 +327,174 @@ public final class EmbeddingService implements AutoCloseable {
      * which rows still need re-embedding after a model swap.
      */
     public static String currentModelVersion() {
-        return instance != null
-            ? instance.model.version()
-            : EmbeddingModel.bundledDefault().version();
+        if (instance == null) return EmbeddingModel.bundledDefault().version();
+        // A served model is a DIFFERENT embedder (its own quantization and pooling), so its
+        // vectors never mix with in-process ones under the same name.
+        return instance.serverUrl != null ? instance.model.version() + "+server" : instance.model.version();
+    }
+
+    /** {@code wyrdsekai.embedding.url} (tests) or {@code WYRDSEKAI_EMBEDDING_URL}; null = in-process ONNX. */
+    static String resolveServerUrl() {
+        var v = System.getProperty(SERVER_URL_PROP);
+        if (v == null || v.isBlank()) v = System.getenv(SERVER_URL_ENV);
+        if (v == null || v.isBlank()) return null;
+        var first = serverUrlList(v).stream().findFirst().orElse(null);
+        return first;
+    }
+
+    /**
+     * A comma-separated list of replicas: one llama-server is single-threaded on its CPU
+     * side and tops out at tens of short texts per second whatever the GPU is doing; two
+     * or three processes on the same card scale that linearly. Each call goes to the replica
+     * with the fewest calls in flight (ties break round-robin): with cards of different
+     * speed, strict round-robin hands every replica an equal share and the slowest card sets
+     * the pace for all of them (gpu-host, 2026-09-05: three cards ran slower than two).
+     */
+    static List<String> serverUrlList(String v) {
+        var out = new ArrayList<String>();
+        if (v == null) return out;
+        for (var part : v.split(",")) {
+            var u = part.trim();
+            while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+            if (!u.isBlank()) out.add(u);
+        }
+        return out;
+    }
+
+    /** The least-loaded replica not yet tried by this call; null when every replica has been. */
+    private String pickServer(Set<String> tried) {
+        if (serverUrls.size() <= 1) return tried.contains(serverUrl) ? null : serverUrl;
+        String best = null;
+        int bestLoad = Integer.MAX_VALUE;
+        int start = Math.floorMod(serverTurn.getAndIncrement(), serverUrls.size());
+        for (int k = 0; k < serverUrls.size(); k++) {
+            var u = serverUrls.get((start + k) % serverUrls.size());
+            if (tried.contains(u)) continue;
+            int load = inFlight.computeIfAbsent(u, x -> new AtomicInteger()).get();
+            if (load < bestLoad) { bestLoad = load; best = u; }
+        }
+        return best;
+    }
+
+    /** Calls in flight per replica — what {@link #pickServer} balances on. */
+    Map<String, Integer> inFlightByReplica() {
+        var out = new LinkedHashMap<String, Integer>();
+        for (var u : serverUrls.isEmpty() ? List.of(serverUrl) : serverUrls) {
+            var c = inFlight.get(u);
+            out.put(u, c == null ? 0 : c.get());
+        }
+        return out;
+    }
+
+    /** Whether embeddings come from a server rather than the in-process session. */
+    public boolean served() { return serverUrl != null; }
+
+    /**
+     * POST {@code /v1/embeddings} with the texts; L2-normalizes what comes back. Blank
+     * texts become zero vectors. {@code strict} ⇒ a failed call throws (index-time: never
+     * write a zero vector as if it were an embedding); otherwise zero vectors (query-time:
+     * degrade to BM25).
+     */
+    List<List<Float>> remoteEmbed(List<String> texts, boolean strict) {
+        var out = new ArrayList<List<Float>>(texts.size());
+        var send = new ArrayList<String>();
+        var idx = new ArrayList<Integer>();
+        for (int i = 0; i < texts.size(); i++) {
+            var t = texts.get(i);
+            out.add(null);
+            if (t == null || t.isBlank()) { out.set(i, Collections.nCopies(dimension, 0f)); continue; }
+            int cap = Math.max(2000, maxSeqLength * 4);   // the server truncates by its own context; keep requests bounded
+            send.add(t.length() > cap ? t.substring(0, cap) : t);
+            idx.add(i);
+        }
+        if (send.isEmpty()) return out;
+        try {
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var body = mapper.writeValueAsString(Map.of("input", send, "model", model.id()));
+            // Failover: a replica that is down or wedged costs one attempt, not the batch.
+            java.net.http.HttpResponse<String> resp = null;
+            Exception last = null;
+            // Rounds over the replica list with a backoff between rounds: a rolling restart
+            // of the servers (every replica down for a few seconds) costs a pause, not the
+            // batch (gpu-host, 2026-09-04: two replicas moved at once, the job died).
+            int perRound = Math.max(1, serverUrls.size());
+            int rounds = strict ? 6 : 1;
+            var tried = new HashSet<String>();   // one attempt per replica per round
+            for (int a = 0; a < perRound * rounds && resp == null; a++) {
+                if (a > 0 && a % perRound == 0) {
+                    tried.clear();
+                    try { Thread.sleep(Math.min(30_000L, 2_000L * (a / perRound))); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                }
+                var url = pickServer(tried);
+                if (url == null) { tried.clear(); url = pickServer(tried); }
+                tried.add(url);
+                var load = inFlight.computeIfAbsent(url, x -> new AtomicInteger());
+                load.incrementAndGet();
+                try {
+                    var req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + "/v1/embeddings"))
+                        .timeout(java.time.Duration.ofSeconds(120))
+                        .header("Content-Type", "application/json")
+                        .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build();
+                    var r = http.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+                    if (r.statusCode() >= 500 || r.statusCode() == 429) {
+                        last = new IllegalStateException("embedding server " + url + " " + r.statusCode());
+                        log.debug("embedding replica {} answered {}; trying the next", url, r.statusCode());
+                        continue;
+                    }
+                    resp = r;
+                } catch (java.io.IOException e) {
+                    last = e;
+                    log.debug("embedding replica {} failed ({}); trying the next", url, e.toString());
+                } finally {
+                    load.decrementAndGet();
+                }
+            }
+            if (resp == null) throw last instanceof Exception ex ? ex : new IllegalStateException("no embedding replica answered");
+            if (resp.statusCode() == 400 && resp.body().contains("exceed_context_size")) {
+                // One text is longer than the server's slot. The in-process path truncates
+                // by tokens; a server can only tell us after the fact — so send the texts
+                // one at a time and shorten the offender by the ratio it reports.
+                if (send.size() > 1) {
+                    for (int k = 0; k < send.size(); k++) {
+                        out.set(idx.get(k), remoteEmbed(List.of(send.get(k)), strict).get(0));
+                    }
+                    return out;
+                }
+                var m = java.util.regex.Matcher.class.cast(
+                    java.util.regex.Pattern.compile("\"n_prompt_tokens\":(\\d+),\"n_ctx\":(\\d+)").matcher(resp.body()));
+                var text = send.get(0);
+                double ratio = m.find() ? Math.max(0.1, Double.parseDouble(m.group(2)) / Double.parseDouble(m.group(1)) * 0.9) : 0.5;
+                int keep = Math.max(200, (int) (text.length() * ratio));
+                if (keep >= text.length()) keep = text.length() / 2;
+                log.debug("embedding server: text of {} chars exceeds the slot; retrying with {} chars", text.length(), keep);
+                return remoteEmbed(List.of(text.substring(0, keep)), strict);
+            }
+            if (resp.statusCode() / 100 != 2) {
+                throw new IllegalStateException("embedding server " + resp.statusCode() + ": "
+                    + (resp.body().length() > 200 ? resp.body().substring(0, 200) : resp.body()));
+            }
+            var data = mapper.readTree(resp.body()).path("data");
+            if (!data.isArray() || data.size() != send.size()) {
+                throw new IllegalStateException("embedding server returned " + data.size() + " vectors for " + send.size() + " inputs");
+            }
+            for (int k = 0; k < send.size(); k++) {
+                var arr = data.get(k).path("embedding");
+                var v = new float[arr.size()];
+                float norm = 0;
+                for (int d = 0; d < v.length; d++) { v[d] = (float) arr.get(d).asDouble(); norm += v[d] * v[d]; }
+                norm = (float) Math.sqrt(norm);
+                var emb = new ArrayList<Float>(v.length);
+                for (float x : v) emb.add(norm > 0 ? x / norm : x);
+                out.set(idx.get(k), emb);
+            }
+            return out;
+        } catch (Exception e) {
+            if (strict) throw e instanceof RuntimeException re ? re : new IllegalStateException(e);
+            log.warn("Embedding server call failed ({} text(s)): {}", send.size(), e.getMessage());
+            for (var i : idx) out.set(i, Collections.nCopies(dimension, 0f));
+            return out;
+        }
     }
 
     // ── Selection ───────────────────────────────────────────────────────
@@ -353,6 +554,7 @@ public final class EmbeddingService implements AutoCloseable {
         if (text == null || text.isBlank()) {
             return Collections.nCopies(dimension, 0f);
         }
+        if (serverUrl != null) return remoteEmbed(List.of(text), false).get(0);
 
         try {
             // Tokenize with DJL HuggingFace tokenizer (Rust, exact parity)
@@ -453,6 +655,7 @@ public final class EmbeddingService implements AutoCloseable {
      */
     public List<List<Float>> embedBatch(List<String> texts) {
         if (texts == null || texts.isEmpty()) return List.of();
+        if (serverUrl != null) return remoteEmbed(texts, true);   // index-time callers: never a silent zero
         if (texts.size() == 1) return List.of(embed(texts.get(0)));
 
         try {

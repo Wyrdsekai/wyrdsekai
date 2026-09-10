@@ -5,6 +5,7 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
+import org.wyrdsekai.core.search.IngestEmbedding;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -142,6 +143,11 @@ public final class KnowledgePackIndexer {
     private void indexJsonlFile(Path jsonlFile, String packName,
                                  AtomicInteger indexed, AtomicInteger errors,
                                  Consumer<Integer> progress) throws IOException {
+        // Embed at ingest when the embedder is served (IngestEmbedding): packs that ship
+        // without vectors — every study share, most bundled packs — got text-only rows for
+        // five months because nothing here asked for a vector (2026-09-03).
+        final boolean embedAtIngest = IngestEmbedding.enabled();
+        var pending = new IngestEmbedding.Pending<Object[]>();
         try (var reader = new BufferedReader(new FileReader(jsonlFile.toFile()))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -176,15 +182,21 @@ public final class KnowledgePackIndexer {
                             null, null, "bundled-pack-default", null);
                     }
 
-                    luceneStore.insertKnowledgeBulk(
-                        id, packName,
-                        chunk.title() != null ? chunk.title() : "",
-                        chunk.content(),
-                        chunk.source() != null ? chunk.source() : "",
-                        subject, embedding, provenance);
+                    var title = chunk.title() != null ? chunk.title() : "";
+                    var source = chunk.source() != null ? chunk.source() : "";
+                    if (embedding == null && embedAtIngest) {
+                        // Text-only chunk, served embedder: batch it and write with a vector.
+                        pending.add(new Object[]{id, title, chunk.content(), source, subject, provenance},
+                            IngestEmbedding.textOf(title, chunk.content()));
+                        if (pending.full()) flushPending(pending, packName);
+                    } else {
+                        luceneStore.insertKnowledgeBulk(id, packName, title, chunk.content(),
+                            source, subject, embedding, provenance);
+                    }
 
                     int count = indexed.incrementAndGet();
                     if (count % COMMIT_BATCH_SIZE == 0) {
+                        if (!pending.isEmpty()) flushPending(pending, packName);
                         luceneStore.commitAll();
                         throttle();
                         if (progress != null) progress.accept(count);
@@ -199,6 +211,17 @@ public final class KnowledgePackIndexer {
                     }
                 }
             }
+            if (!pending.isEmpty()) flushPending(pending, packName);
+        }
+    }
+
+    /** Write the pending text-only chunks with their vectors (or text-only if the batch failed). */
+    private void flushPending(IngestEmbedding.Pending<Object[]> pending, String packName) {
+        for (var e : pending.drain()) {
+            var f = e.getKey();
+            var vec = e.getValue();
+            luceneStore.insertKnowledgeBulk((String) f[0], packName, (String) f[1], (String) f[2],
+                (String) f[3], (String) f[4], vec == null || vec.isEmpty() ? null : vec, (Provenance) f[5]);
         }
     }
 

@@ -32,6 +32,10 @@ public final class LlamaServerManager {
     private final int port;
     private final int contextSize;
     private final int gpuLayers;
+    private final int cacheRamMb;
+
+    /** llama-server's host-RAM prompt cache defaults to 8 GiB PER server; this is our cap. */
+    public static final int DEFAULT_CACHE_RAM_MB = 1024;
 
     private Process process;
     private InferenceClient client;
@@ -45,11 +49,18 @@ public final class LlamaServerManager {
      */
     public LlamaServerManager(String executable, String modelPath, int port,
                                int contextSize, int gpuLayers) {
+        this(executable, modelPath, port, contextSize, gpuLayers, DEFAULT_CACHE_RAM_MB);
+    }
+
+    /** @param cacheRamMb MiB of system RAM the child may spend on its prompt cache (0 = none) */
+    public LlamaServerManager(String executable, String modelPath, int port,
+                               int contextSize, int gpuLayers, int cacheRamMb) {
         this.executable = executable;
         this.modelPath = modelPath;
         this.port = port;
         this.contextSize = contextSize;
         this.gpuLayers = gpuLayers;
+        this.cacheRamMb = Math.max(0, cacheRamMb);
     }
 
     /**
@@ -91,16 +102,13 @@ public final class LlamaServerManager {
             throw new IOException("Model file not found: " + modelPath);
         }
 
-        var cmd = new ArrayList<String>();
-        cmd.add(executable);
-        cmd.add("--model"); cmd.add(modelPath);
-        cmd.add("--port"); cmd.add(String.valueOf(port));
-        if (gpuLayers > 0) {
-            cmd.add("--n-gpu-layers"); cmd.add(String.valueOf(gpuLayers));
-        }
-        // Calculate parallel slots based on available VRAM
-        int parallel = calculateParallel();
-        cmd.add("--parallel"); cmd.add(String.valueOf(parallel));
+        // Slots are sized from free VRAM — which only means something when the
+        // layers go to the GPU. With gpuLayers 0 the child is a CPU server, and
+        // the household node got `--parallel 8 --ctx-size 65536` for a 9B on CPU:
+        // eight 8K KV caches in system RAM for a server nothing routed to
+        // (2026-09-07). On CPU, one slot.
+        int parallel = gpuLayers > 0 ? calculateParallel() : 1;
+        if (gpuLayers <= 0) log.info("No GPU offload requested — using --parallel 1");
 
         // llama.cpp's --ctx-size is the TOTAL context, which the server divides
         // evenly across --parallel slots: n_ctx_slot = n_ctx / n_parallel. Every
@@ -118,9 +126,9 @@ public final class LlamaServerManager {
         // Multiply so each slot actually gets `contextSize`. This is exactly the
         // total GpuProbe already sized VRAM for, so it does not overcommit.
         int totalContext = Math.multiplyExact(contextSize, parallel);
-        cmd.add("--ctx-size"); cmd.add(String.valueOf(totalContext));
         log.info("llama-server context: {} per slot x {} slot(s) = --ctx-size {}",
             contextSize, parallel, totalContext);
+        var cmd = command(executable, modelPath, port, gpuLayers, parallel, totalContext, cacheRamMb);
 
         log.info("Starting llama-server: {}", String.join(" ", cmd));
 
@@ -159,6 +167,26 @@ public final class LlamaServerManager {
         process.destroyForcibly();
         throw new IOException("llama-server failed to become healthy within " +
             HEALTH_CHECK_TIMEOUT.toSeconds() + "s");
+    }
+
+    /**
+     * The child's command line. {@code --cache-ram} is always passed: llama-server's own
+     * default is 8 GiB of host RAM per server, which on a 12 GB household box was the
+     * difference between running and the OOM killer (the same cap the docker launchers carry).
+     */
+    static List<String> command(String executable, String modelPath, int port, int gpuLayers,
+                                int parallel, int totalContext, int cacheRamMb) {
+        var cmd = new ArrayList<String>();
+        cmd.add(executable);
+        cmd.add("--model"); cmd.add(modelPath);
+        cmd.add("--port"); cmd.add(String.valueOf(port));
+        if (gpuLayers > 0) {
+            cmd.add("--n-gpu-layers"); cmd.add(String.valueOf(gpuLayers));
+        }
+        cmd.add("--parallel"); cmd.add(String.valueOf(parallel));
+        cmd.add("--ctx-size"); cmd.add(String.valueOf(totalContext));
+        cmd.add("--cache-ram"); cmd.add(String.valueOf(Math.max(0, cacheRamMb)));
+        return cmd;
     }
 
     /**

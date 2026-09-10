@@ -1,6 +1,13 @@
 package org.wyrdsekai.server.http;
 
 import io.javalin.http.Context;
+import java.io.IOException;
+import org.wyrdsekai.core.item.PersonStudyReach;
+import org.wyrdsekai.core.item.StudyReach;
+import org.wyrdsekai.core.item.KnowledgeSearch;
+import org.wyrdsekai.core.library.ReadingLog;
+import org.wyrdsekai.core.library.RetrievalBench;
+import org.wyrdsekai.core.library.FindingsLedger;
 import org.wyrdsekai.core.library.StudyService;
 import org.wyrdsekai.core.home.HomeClients;
 import org.wyrdsekai.core.home.ActionGrants;
@@ -41,6 +48,10 @@ import java.util.concurrent.CompletableFuture;
  *   POST /api/library/proposals/{id}/approve           — approve (id or unique prefix); ingest runs async
  *   POST /api/library/proposals/{id}/reject            — reject with optional {"reason": "..."}
  *   GET  /api/library/misses                           — repeated library-search misses
+ *   GET  /api/library/bench                            — replay the reading log, score vs bench-gold.json
+ *   GET  /api/library/findings?owner=…                 — the findings tier (what a companion established)
+ *   POST /api/library/findings/{id}/accept|dispute|retire
+ *   POST /api/library/findings/review?owner=…          — run the mechanical review now
  */
 public final class LibraryKnowledgeRoutes {
 
@@ -72,6 +83,12 @@ public final class LibraryKnowledgeRoutes {
         app.post("/api/library/proposals/{id}/approve", this::handleApproveProposal);
         app.post("/api/library/proposals/{id}/reject", this::handleRejectProposal);
         app.get("/api/library/misses", this::handleMisses);
+        app.get("/api/library/bench", this::handleBench);
+        app.get("/api/library/findings", this::handleListFindings);
+        app.post("/api/library/findings/{id}/accept", ctx -> handleFindingState(ctx, FindingsLedger.State.ACCEPTED));
+        app.post("/api/library/findings/{id}/dispute", ctx -> handleFindingState(ctx, FindingsLedger.State.DISPUTED));
+        app.post("/api/library/findings/{id}/retire", ctx -> handleFindingState(ctx, FindingsLedger.State.RETIRED));
+        app.post("/api/library/findings/review", this::handleReviewFindings);
 
         // OPDS-K catalog feed
         app.get("/api/library/opds", this::handleOpdsCatalog);
@@ -186,6 +203,11 @@ public final class LibraryKnowledgeRoutes {
         status.put("totalPacks", packs.size());
         status.put("lcshTerms", lcshCount);
         status.put("packs", packs);
+        // Dense coverage, read from the vector index: the sizing fact behind any re-embed.
+        var vectors = new LinkedHashMap<String, Object>();
+        vectors.put("knowledge", store.countWithVectors(SearchCollections.KNOWLEDGE));
+        vectors.put("study", store.countWithVectors(SearchCollections.STUDY));
+        status.put("vectors", vectors);
 
         ctx.json(status);
     }
@@ -460,6 +482,162 @@ public final class LibraryKnowledgeRoutes {
      * Repeated library-search misses — what the household keeps asking that
      * the Library can't answer. Steward signal for new packs/acquisitions.
      */
+    /**
+     * GET /api/library/bench?k=10&limit=300
+     *
+     * <p>Replays the reading log's real queries through the production search path with
+     * recording OFF and scores them against {@code <library>/bench-gold.json} — see
+     * {@link RetrievalBench}. This is the number every retrieval change is judged by.
+     */
+    private void handleBench(Context ctx) {
+        var rl = LibraryServices.readingLog();
+        if (rl == null) {
+            ctx.status(503).json(Map.of("error", "Reading log not available on this node"));
+            return;
+        }
+        int k = parseIntOr(ctx.queryParam("k"), 10);
+        int limit = parseIntOr(ctx.queryParam("limit"), 300);
+        var owner = ctx.queryParam("owner");
+        var reach = owner == null || owner.isBlank()
+            ? StudyReach.NONE : PersonStudyReach.forPerson(owner);
+
+        List<RetrievalBench.Gold> gold;
+        try {
+            gold = RetrievalBench.loadGold(RetrievalBench.goldFile(LibraryServices.root()));
+        } catch (IOException e) {
+            ctx.status(400).json(Map.of("error", "bench-gold.json unreadable: " + e.getMessage()));
+            return;
+        }
+        var queries = rl.recent(limit).stream().map(ReadingLog.Entry::query).toList();
+        RetrievalBench.Searcher searcher = (q, kk) ->
+            KnowledgeSearch.search(store, q, kk, reach, null, false).stream()
+                .map(m -> new RetrievalBench.Hit(
+                    String.valueOf(m.get("id")),
+                    m.get("title") == null ? null : String.valueOf(m.get("title")),
+                    // KnowledgeSearch's "pack" is SearchResult.source(), a display name that
+                    // is the chunk id for pack chunks; the pack itself is the id's prefix.
+                    m.get("pack") == null ? null : packOf(String.valueOf(m.get("pack"))),
+                    m.get("text") == null ? null : String.valueOf(m.get("text")),
+                    m.get("score") instanceof Number n ? n.doubleValue() : 0.0))
+                .toList();
+        var report = RetrievalBench.run(queries, gold, searcher, k);
+
+        var out = new LinkedHashMap<String, Object>();
+        out.put("k", report.k());
+        out.put("askedTotal", report.askedTotal());
+        out.put("distinctQueries", report.distinctQueries());
+        out.put("zeroHit", report.zeroHit());
+        out.put("zeroHitRate", report.zeroHitRate());
+        out.put("repeated", report.repeated());
+        out.put("dictionaryTop", report.dictionaryTop());
+        out.put("labeled", report.labeled());
+        out.put("labeledMiss", report.labeledMiss());
+        out.put("missRate", Double.isNaN(report.missRate()) ? null : report.missRate());
+        out.put("goldFile", String.valueOf(RetrievalBench.goldFile(LibraryServices.root())));
+        out.put("rows", report.rows().stream().map(r -> {
+            var m = new LinkedHashMap<String, Object>();
+            m.put("query", r.query());
+            m.put("asked", r.askedTimes());
+            m.put("hits", r.hits());
+            m.put("topScore", r.topScore());
+            m.put("topPack", r.topPack());
+            m.put("dictionaryTop", r.dictionaryTop());
+            m.put("goldRank", r.goldRank());
+            return m;
+        }).toList());
+        ctx.json(out);
+    }
+
+    /**
+     * GET /api/library/findings?owner=&lt;did&gt;&state=draft|accepted|…&q=&lt;query&gt;&limit=50
+     * The findings tier ({@link FindingsLedger}) — what a companion established from reading.
+     */
+    private void handleListFindings(Context ctx) {
+        var owner = ctx.queryParam("owner");
+        if (owner == null || owner.isBlank()) {
+            ctx.status(400).json(Map.of("error", "owner (a DID) is required"));
+            return;
+        }
+        var stateParam = ctx.queryParam("state");
+        FindingsLedger.State state = null;
+        if (stateParam != null && !stateParam.isBlank() && !"all".equalsIgnoreCase(stateParam)) {
+            try { state = FindingsLedger.State.valueOf(stateParam.trim().toUpperCase()); }
+            catch (IllegalArgumentException e) {
+                ctx.status(400).json(Map.of("error", "unknown state " + stateParam));
+                return;
+            }
+        }
+        int limit = parseIntOr(ctx.queryParam("limit"), 50);
+        var q = ctx.queryParam("q");
+        var findings = q != null && !q.isBlank()
+            ? FindingsLedger.search(store, owner, q, limit)
+            : FindingsLedger.list(store, owner, state, limit);
+        var rows = findings.stream().map(f -> {
+            var m = new LinkedHashMap<String, Object>();
+            m.put("id", f.id());
+            m.put("state", f.state().key());
+            m.put("claimType", f.claimType().key());
+            m.put("confidence", f.confidence());
+            m.put("writer", f.writer());
+            m.put("query", f.query());
+            m.put("recordedAt", f.recordedAt() == null ? null : f.recordedAt().toString());
+            m.put("claim", f.claim());
+            m.put("sources", f.sources().stream().map(FindingsLedger.Source::line).toList());
+            m.put("reviewNote", f.reviewNote());
+            m.put("supersededBy", f.supersededBy());
+            m.put("version", f.version());
+            m.put("reviewStale", f.reviewStale());
+            return m;
+        }).toList();
+        ctx.json(Map.of("owner", owner, "count", rows.size(), "findings", rows));
+    }
+
+    /** POST /api/library/findings/{id}/accept|dispute|retire — body {"note": "..."} optional. */
+    private void handleFindingState(Context ctx, FindingsLedger.State state) {
+        var id = ctx.pathParam("id");
+        String note = null;
+        if (!ctx.body().isBlank()) {
+            try {
+                var body = ctx.bodyAsClass(Map.class);
+                if (body.get("note") != null) note = String.valueOf(body.get("note"));
+            } catch (Exception ignored) { /* no note */ }
+        }
+        if (note == null) note = "by steward";
+        if (FindingsLedger.setState(store, id, state, note, null)) {
+            ctx.json(Map.of("ok", true, "id", id, "state", state.key()));
+        } else {
+            ctx.status(404).json(Map.of("ok", false, "error", "no finding " + id));
+        }
+    }
+
+    /** POST /api/library/findings/review?owner=&lt;did&gt; — run the mechanical review now. */
+    private void handleReviewFindings(Context ctx) {
+        var owner = ctx.queryParam("owner");
+        if (owner == null || owner.isBlank()) {
+            ctx.status(400).json(Map.of("error", "owner (a DID) is required"));
+            return;
+        }
+        var r = FindingsLedger.reviewDrafts(store, owner);
+        ctx.json(Map.of("reviewed", r.reviewed(), "accepted", r.accepted(),
+            "keptDraft", r.keptDraft(), "retiredDuplicates", r.retiredDuplicates(), "disputed", r.disputed()));
+    }
+
+    /** "simple-wikipedia:27089" → "simple-wikipedia"; "doc:did:key:…:books:9f2" → "doc:…:books" (the study share). */
+    static String packOf(String sourceOrId) {
+        if (sourceOrId == null) return null;
+        if (sourceOrId.startsWith("doc:")) {
+            var parts = sourceOrId.split(":");
+            return parts.length >= 4 ? "study:" + parts[parts.length - 2] : "study";
+        }
+        int c = sourceOrId.indexOf(':');
+        return c > 0 ? sourceOrId.substring(0, c) : sourceOrId;
+    }
+
+    private static int parseIntOr(String s, int dflt) {
+        if (s == null || s.isBlank()) return dflt;
+        try { return Math.max(1, Integer.parseInt(s.trim())); } catch (NumberFormatException e) { return dflt; }
+    }
+
     private void handleMisses(Context ctx) {
         var rl = LibraryServices.readingLog();
         if (rl == null) {

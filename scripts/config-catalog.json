@@ -233,6 +233,16 @@
           "default": "10.0"
         },
         {
+          "key": "WYRDSEKAI_LIBRARY_SERVICE",
+          "description": "id of the MCP service that plays the library role (a research librarian or a peer library; LIBRARY_PROTOCOL.md)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_LIBRARY_SERVE_FINDINGS",
+          "description": "serve the companions' accepted findings on the library door (only those whose sources may travel)",
+          "default": "true"
+        },
+        {
           "key": "WYRDSEKAI_HOST_APPS",
           "description": "allowlist of host apps agents may launch",
           "default": ""
@@ -464,6 +474,11 @@
           "key": "WYRDSEKAI_EMBEDDING_URL",
           "description": "embedding-server URL",
           "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_EMBED_SERVER",
+          "description": "which embedding server wyrd start runs on :8202: llama (llama-server, the GGUF) or tei (Text Embeddings Inference, faster on NVIDIA)",
+          "default": "llama"
         },
         {
           "key": "WYRDSEKAI_EMBEDDING_MODEL",
@@ -751,6 +766,11 @@
       "title": "updates",
       "keys": [
         {
+          "key": "WYRDSEKAI_UPDATE",
+          "description": "releases: check (say when a newer one exists) / auto (install it at a quiet moment inside the window) / off",
+          "default": "check"
+        },
+        {
           "key": "WYRDSEKAI_UPDATE_CHANNEL",
           "description": "update channel",
           "default": ""
@@ -762,13 +782,13 @@
         },
         {
           "key": "WYRDSEKAI_UPDATE_INTERVAL",
-          "description": "update-check interval",
+          "description": "how often the node checks for a release (and polls a channel)",
           "default": "6h"
         },
         {
           "key": "WYRDSEKAI_UPDATE_WINDOW",
-          "description": "allowed update time window",
-          "default": ""
+          "description": "when auto mode may install, HH:MM-HH:MM local",
+          "default": "03:00-05:00"
         },
         {
           "key": "WYRDSEKAI_UPDATE_PIN",

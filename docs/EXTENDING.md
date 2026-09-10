@@ -151,6 +151,19 @@ companion calls, it changes what is true in the place they live.
 companion to make it for you — start with [AUTHORING.md](AUTHORING.md).
 [ROOMS.md](ROOMS.md) is the full API surface underneath it.
 
+Two rules keep a household's items from breaking each other:
+
+- **Every `world.*` call must exist on this node**, with a number of arguments an overload takes.
+  The loader checks this when it loads a script; a copy that fails never replaces a working copy
+  of the same item, and alone it loads with the fix in the log and under `misWired` in
+  `data/manifest_audit.json`. `wyrd items check [dir…]` runs the same check by hand over the
+  bundled items and the household's own (exit 1 on any mis-wired script), so a release or a
+  freshly written item can be gated on it.
+- **A same-named copy from another author replaces a loaded item only when its version is
+  newer.** Bundled items scan first; a household or agent-written item with the same name and a
+  different `author` stands aside unless its `version` is higher, and the audit lists it under
+  `shadowed`. Give a new item its own name; bump the version when a replacement is meant.
+
 ---
 
 ## Adding a new backend properly

@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/deb/build-deb.sh               # Uses build/dist/wyrdsekai-<version>/
-#   WYRDSEKAI_VERSION=0.2.2 ./packaging/deb/build-deb.sh
+#   WYRDSEKAI_VERSION=0.3.0 ./packaging/deb/build-deb.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.2.2}"
+VERSION="${WYRDSEKAI_VERSION:-0.3.0}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
@@ -389,6 +389,7 @@ Environment=WYRDSEKAI_LLAMA_PORT=11525
 Environment=WYRDSEKAI_LLAMA_HOST=127.0.0.1
 Environment=WYRDSEKAI_LLAMA_MODEL=/opt/wyrdsekai/data/models/wyrdsekai-3.5-4b-v10-q4km.gguf
 Environment=WYRDSEKAI_LLAMA_CTX=8192
+Environment=WYRDSEKAI_LLAMA_CACHE_RAM=1024
 Environment=WYRDSEKAI_LLAMA_THREADS=auto
 # V8 voice steering vectors — must match home-server's docker default (Gate-3 calibration).
 # Vectors bundled at /opt/wyrdsekai/data/vectors/v8/ by .deb postinstall. Skip
@@ -422,6 +423,7 @@ ExecStart=/bin/sh -c '\
         --port "$WYRDSEKAI_LLAMA_PORT" \
         --model "$WYRDSEKAI_LLAMA_MODEL" \
         --ctx-size "$WYRDSEKAI_LLAMA_CTX" \
+        --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
         --threads "$threads" \
         --jinja \
         --reasoning off \
@@ -755,6 +757,10 @@ if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     [ -n "$_sudo_home" ] && [ -d "$_sudo_home" ] && _link_home_datadir "$_sudo_home"
 fi
 
+# The kernel memory policy shipped in /etc/sysctl.d takes effect now, not at the next
+# boot (a no-op where sysctl is absent or the file was removed by the operator).
+sysctl -q -p /etc/sysctl.d/90-wyrdsekai.conf >/dev/null 2>&1 || true
+
 # On UPGRADE ($2 = the previously-installed version), bring the main service
 # back — an operator upgrading a RUNNING node expects it to keep running, not
 # silently stop (the pre-2026-07-23 behaviour). prerm stopped it so the new
@@ -771,6 +777,21 @@ if [ -n "$2" ]; then
         systemctl enable wyrdsekai 2>/dev/null || true
         if systemctl restart wyrdsekai 2>/dev/null; then
             echo "wyrdsekai: upgraded to this version — main service restarted."
+            # The inference containers are not part of the unit: they keep the
+            # previous package's llama-server flags until `wyrd start` reconciles
+            # them against the new docker-compose.yml (idempotent; recreates only
+            # what changed). Say so, rather than leaving the old flags running
+            # silently until the next reboot.
+            # Only when the compose file actually changed: prerm recorded the previous
+            # one's hash (an older prerm did not — then say nothing rather than guess).
+            prev_hash="$(cat /run/wyrdsekai.compose-hash 2>/dev/null || true)"
+            rm -f /run/wyrdsekai.compose-hash 2>/dev/null || true
+            new_hash="$(sha256sum /opt/wyrdsekai/docker-compose.yml 2>/dev/null | cut -c1-64 || true)"
+            if [ -n "$prev_hash" ] && [ "$prev_hash" != "$new_hash" ] \
+               && command -v docker >/dev/null 2>&1 \
+               && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx wyrdsekai-llama; then
+                echo "wyrdsekai: docker-compose.yml changed in this version — the inference containers still run the previous definition; run 'wyrd start' to reconcile them."
+            fi
         else
             echo "wyrdsekai: upgraded — could not auto-restart; run 'wyrd start'."
         fi
@@ -822,6 +843,9 @@ if systemctl is-active --quiet wyrdsekai 2>/dev/null; then
 else
     echo inactive > /run/wyrdsekai.upgrade-state 2>/dev/null || true
 fi
+# What the running containers were created from — postinst compares the new compose
+# file against it and only then says "run wyrd start".
+sha256sum /opt/wyrdsekai/docker-compose.yml 2>/dev/null | cut -c1-64 > /run/wyrdsekai.compose-hash || true
 
 # Stop always (clean jar swap on upgrade; clean shutdown on remove).
 for svc in wyrdsekai wyrdsekai-oracle wyrdsekai-rendezvous wyrdsekai-metasearch \
@@ -959,10 +983,23 @@ exit 0
 EOF
 chmod 755 "$DEB_ROOT/DEBIAN/postrm"
 
+# Kernel memory policy for a node whose big files are re-readable: model weights and
+# index segments are mmapped from disk, so under pressure the kernel should drop those
+# pages (a fast re-read) before it swaps out the server's own heap (a stall the
+# companion feels). The default swappiness of 60 does the opposite — a household node
+# grew 2 GB of swap in a day of normal load and model reloads (2026-09-10).
+mkdir -p "$DEB_ROOT/etc/sysctl.d"
+cat > "$DEB_ROOT/etc/sysctl.d/90-wyrdsekai.conf" << EOF
+# Wyrdsekai — prefer dropping file cache (mmapped models, index segments) over swapping
+# process memory. Installed by the wyrdsekai package; edit or remove as you see fit.
+vm.swappiness = 10
+EOF
+
 # conffiles — mark config and data as preserved across upgrades
 cat > "$DEB_ROOT/DEBIAN/conffiles" << EOF
 /opt/wyrdsekai/etc/application.conf
 /opt/wyrdsekai/etc/logback.xml
+/etc/sysctl.d/90-wyrdsekai.conf
 EOF
 
 # ── Build the .deb ──

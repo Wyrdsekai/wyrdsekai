@@ -49,6 +49,17 @@ public final class KnowledgeSearch {
     public static List<Map<String, Object>> search(WyrdLuceneStore store, String query,
                                                    int limit, StudyReach reach,
                                                    String callerDid) {
+        return search(store, query, limit, reach, callerDid, true);
+    }
+
+    /**
+     * Same search, with the reading-log side effect switchable: the retrieval bench replays
+     * her real queries through THIS path and must not write them back into the log it read
+     * them from (a bench that feeds its own input is a loop, not a measurement).
+     */
+    public static List<Map<String, Object>> search(WyrdLuceneStore store, String query,
+                                                   int limit, StudyReach reach,
+                                                   String callerDid, boolean record) {
         if (store == null || query == null || query.isBlank()) {
             log.warn("searchKnowledge skipped: luceneStore={}, query='{}'",
                 store != null ? "present" : "NULL", query);
@@ -123,7 +134,7 @@ public final class KnowledgeSearch {
             if (results.size() > limit) results.subList(limit, results.size()).clear();
 
             // gap-detection substrate.
-            var rl = LibraryServices.readingLog();
+            var rl = record ? LibraryServices.readingLog() : null;
             if (rl != null) {
                 if (results.isEmpty()) {
                     rl.recordMiss(query, callerDid);

@@ -32,16 +32,29 @@ public class McpEndpoint {
     private final McpToolRegistry toolRegistry;
 
     public McpEndpoint(ActorSystem<?> system) {
-        this.system = system;
-        this.toolRegistry = new McpToolRegistry();
+        this(system, new McpToolRegistry(), "/mcp");
     }
+
+    /** A door serving a specific registry at a specific path (e.g. the library at /mcp/library). */
+    public McpEndpoint(ActorSystem<?> system, McpToolRegistry registry, String path) {
+        this.system = system;
+        this.toolRegistry = registry;
+        this.path = path == null || path.isBlank() ? "/mcp" : path;
+    }
+
+    private final String path;
+
+    /** The tool registry this door serves — so other parts of the server can add tools. */
+    public McpToolRegistry toolRegistry() { return toolRegistry; }
 
     /** Register MCP routes on the Javalin app. */
     public void register(JavalinDefaultRoutingApi app) {
-        app.post("/mcp", this::handleMcp);
-        app.get("/.well-known/mcp/server-card.json", this::handleServerCard);
-        log.info("MCP endpoint registered at POST /mcp");
+        app.post(path, this::handleMcp);
+        if ("/mcp".equals(path)) app.get("/.well-known/mcp/server-card.json", this::handleServerCard);
+        log.info("MCP endpoint registered at POST {}", path);
     }
+
+    public String path() { return path; }
 
     private void handleMcp(Context ctx) {
         try {

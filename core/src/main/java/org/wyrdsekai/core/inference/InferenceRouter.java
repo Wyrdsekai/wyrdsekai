@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.inference;
 
+import org.wyrdsekai.core.update.ActivityGauge;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -269,16 +271,16 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                  InferenceClient.ChatRequest chatReq,
                                  ActorRef<InferResponse> replyTo,
                                  boolean localOnly,
-                                 boolean compacted,
+                                 int compactRounds,
                                  boolean fallbackAttempted) implements Command {
         InferFailure(String requestId, String error, String failedBackend,
                      InferenceClient.ChatRequest chatReq, ActorRef<InferResponse> replyTo) {
-            this(requestId, error, failedBackend, chatReq, replyTo, false, false, false);
+            this(requestId, error, failedBackend, chatReq, replyTo, false, 0, false);
         }
         InferFailure(String requestId, String error, String failedBackend,
                      InferenceClient.ChatRequest chatReq, ActorRef<InferResponse> replyTo,
                      boolean localOnly) {
-            this(requestId, error, failedBackend, chatReq, replyTo, localOnly, false, false);
+            this(requestId, error, failedBackend, chatReq, replyTo, localOnly, 0, false);
         }
     }
 
@@ -659,6 +661,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         }
 
         inferenceInFlightCount++;
+        ActivityGauge.inferenceStarted();
         var effectiveModel = resolveModel(model, backend);
         var messages = new ArrayList<InferenceClient.ChatMessage>();
         if (req.systemPrompt() != null && !req.systemPrompt().isBlank()) {
@@ -711,6 +714,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         }
 
         inferenceInFlightCount++;
+        ActivityGauge.inferenceStarted();
         var effectiveModel = resolveModel(model, backend);
         var chatReq = new InferenceClient.ChatRequest(effectiveModel,
             consolidateSystemMessages(req.messages()),
@@ -802,6 +806,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         }
 
         inferenceInFlightCount++;
+        ActivityGauge.inferenceStarted();
         var effectiveModel = resolveModel(model, backend);
         var grammar = req.grammar();
         var format = req.format();
@@ -941,6 +946,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         }
 
         inferenceInFlightCount++;
+        ActivityGauge.inferenceStarted();
         effectiveModel = resolveModel(effectiveModel, backend);
 
         // Dynamic API key injection: if the backend's client doesn't have a key
@@ -993,6 +999,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         int completionTokens = usage != null ? usage.completionTokens() : 0;
 
         inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
+        ActivityGauge.inferenceFinished();
         result.replyTo().tell(new InferOk(
                 result.requestId(), result.content(), promptTokens, completionTokens));
         drainQueue();
@@ -1084,24 +1091,38 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         // (16K window) 400s here; before #37 that dead-ended the whole turn
         // ("the threads of thought are tangled") and, in the 9B-down case, meant a
         // 4B-only node could not produce a turn at all. Shrink the prompt to the
-        // window the backend actually reported and retry ONCE on the same backend.
-        // The compacted flag makes this strictly single-shot — a second overflow
-        // falls through to the honest failure below.
+        // window the backend actually reported and retry on the same backend.
+        // Bounded at MAX_COMPACT_ROUNDS, each round with a doubled safety margin:
+        // the server's overshoot is exact but our estimate of what a removed
+        // layer is WORTH in tokens is not — a 16931-token prompt compacted by an
+        // estimated 2083 tokens came back at 16420, 36 over, and the single-shot
+        // rule failed it fast (household node, 2026-09-07 18:34).
         if (isContextOverflowError(failure.error())
-                && !failure.compacted()
+                && failure.compactRounds() < MAX_COMPACT_ROUNDS
                 && failure.chatReq() != null) {
             var backend = findBackendByName(failure.failedBackend());
             var window = parseAvailableContext(failure.error());
             if (backend != null && window > 0) {
-                var compacted = compactToFit(failure.chatReq(), window);
+                int round = failure.compactRounds() + 1;
+                var compacted = compactToFit(failure.chatReq(), window,
+                    parseRequestTokens(failure.error()), compactMarginMultiplier(round));
+                if (compacted != null && backend instanceof InferenceBackend.LlamaServer) {
+                    // The retry bypasses the shaping in dispatch; keep the template's contract.
+                    compacted = withMessages(compacted, ensureUserTurn(compacted.messages()));
+                }
+                if (compacted == null) {
+                    log.warn("Context overflow on '{}' — nothing left to compact after round {} of {}: {} (requestId={})",
+                        failure.failedBackend(), failure.compactRounds(), MAX_COMPACT_ROUNDS,
+                        describeShape(failure.chatReq()), failure.requestId());
+                }
                 if (compacted != null) {
                     log.warn("Context overflow on '{}' ({}) — compacting prompt to fit {} tokens "
-                            + "and retrying once (requestId={}).",
+                            + "and retrying (round {} of {}, requestId={}).",
                         failure.failedBackend(), summarize(failure.error()), window,
-                        failure.requestId());
+                        round, MAX_COMPACT_ROUNDS, failure.requestId());
                     healthStatus.put(failure.failedBackend(), true);  // backend is fine; the prompt wasn't
                     dispatchWithRetry(backend, compacted, failure.requestId(),
-                        failure.replyTo(), failure.localOnly(), true,
+                        failure.replyTo(), failure.localOnly(), round,
                         failure.fallbackAttempted());
                     return this;
                 }
@@ -1115,6 +1136,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                     ? failure.error().substring(0, 200) + "..." : failure.error());
             healthStatus.put(failure.failedBackend(), true);  // backend not actually unhealthy
             inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
+        ActivityGauge.inferenceFinished();
             failure.replyTo().tell(new InferError(failure.requestId(), failure.error()));
             drainQueue();
             return this;
@@ -1141,13 +1163,14 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 // 9B→4B hop, where a 16K-assembled prompt lands on an 8K voice model).
                 // fallbackAttempted=true bounds this at one cross-backend hop.
                 dispatchWithRetry(fallback, failure.chatReq(), failure.requestId(),
-                    failure.replyTo(), failure.localOnly(), failure.compacted(), true);
+                    failure.replyTo(), failure.localOnly(), failure.compactRounds(), true);
                 return this;
             }
         }
 
         // No fallback available — release slot and drain
         inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
+        ActivityGauge.inferenceFinished();
         failure.replyTo().tell(new InferError(failure.requestId(), failure.error()));
         drainQueue();
         return this;
@@ -1262,69 +1285,217 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     /**
-     * Shrink a chat request to fit {@code window} tokens, preserving what matters:
-     * the system message (the companion's identity and instructions) and the most
-     * recent messages (the turn actually being answered). History is dropped from the
-     * OLDEST end inward. If system + newest message alone still don't fit, the system
-     * message is truncated — never the newest user turn, which is the question.
+     * Shrink a chat request to fit {@code window} tokens. The server's verdict is the
+     * truth: the request overflowed by the number of tokens it reported, whatever our
+     * estimate says, so compaction removes at least that much plus a margin.
      *
-     * @return a compacted copy, or {@code null} if it cannot be made to fit
+     * <p>What goes first: history — the oldest non-system messages, never the last
+     * message (the turn being answered). What goes next: the largest system layers,
+     * trimmed from their ends — never the first message (the language pin / identity)
+     * and never the last. Only then, as a last resort, the first message itself.
+     *
+     * <p>A prompt assembled for her own time has NO user turn — twenty system layers and
+     * nothing else — and the first version of this returned null for that shape, so
+     * every own-time overflow fell through to "failing fast" and the never-silent guard
+     * spoke a tool's summary in her place (second-node, 2026-09-03→06: 40 overflows, 0
+     * compactions, while the code sat right here).
+     *
+     * @return a compacted copy, or {@code null} when nothing can be removed
      *         (caller then surfaces an honest failure).
      */
     static InferenceClient.ChatRequest compactToFit(
             InferenceClient.ChatRequest req, int window) {
-        if (req == null || req.messages() == null || req.messages().isEmpty()) return null;
-        // Reserve room for the completion plus a margin for chat-template overhead
-        // (role tags, BOS/EOS, tool schemas) that our char-based estimate can't see.
-        var reserve = (req.maxTokens() != null ? req.maxTokens() : 256) + CTX_SAFETY_MARGIN;
-        var budget = window - reserve;
-        if (budget <= 0) return null;
-
-        var msgs = req.messages();
-        var system = msgs.stream()
-            .filter(m -> "system".equalsIgnoreCase(m.role()))
-            .findFirst().orElse(null);
-        var rest = msgs.stream()
-            .filter(m -> !"system".equalsIgnoreCase(m.role()))
-            .toList();
-        if (rest.isEmpty()) return null;   // nothing but a system prompt — can't compact meaningfully
-
-        var newest = rest.getLast();
-        var systemCost = system == null ? 0 : estimateTokens(system.content());
-        var newestCost = estimateTokens(newest.content());
-
-        // Floor case: even system + newest overflow. Keep the newest turn intact and
-        // truncate the system prompt down to whatever room is left.
-        if (systemCost + newestCost > budget) {
-            if (system == null || newestCost >= budget) return null;
-            var room = budget - newestCost;
-            var truncated = truncateToTokens(system.content(), room);
-            if (truncated.isBlank()) return null;
-            return withMessages(req, List.of(
-                new InferenceClient.ChatMessage("system", truncated), newest));
-        }
-
-        // Otherwise walk backwards from the newest, keeping as much history as fits.
-        var kept = new ArrayList<InferenceClient.ChatMessage>();
-        var used = systemCost;
-        for (int i = rest.size() - 1; i >= 0; i--) {
-            var m = rest.get(i);
-            var cost = estimateTokens(m.content());
-            if (used + cost > budget) break;
-            used += cost;
-            kept.addFirst(m);
-        }
-        if (kept.isEmpty()) kept.add(newest);
-
-        var out = new ArrayList<InferenceClient.ChatMessage>();
-        if (system != null) out.add(system);
-        out.addAll(kept);
-        if (out.size() == msgs.size()) return null;   // nothing actually dropped — don't loop
-        return withMessages(req, out);
+        return compactToFit(req, window, 0);
     }
 
-    /** Chat-template/tool-schema overhead our char-based estimate cannot see. */
-    private static final int CTX_SAFETY_MARGIN = 512;
+    static InferenceClient.ChatRequest compactToFit(
+            InferenceClient.ChatRequest req, int window, int reportedTokens) {
+        return compactToFit(req, window, reportedTokens, 1);
+    }
+
+    /** How many times an overflowing prompt is compacted and retried before the honest failure. */
+    static final int MAX_COMPACT_ROUNDS = 3;
+
+    /** Round 1 removes the margin once, round 2 twice, round 3 four times. */
+    static int compactMarginMultiplier(int round) {
+        return 1 << Math.max(0, Math.min(round, MAX_COMPACT_ROUNDS) - 1);
+    }
+
+    /** {@code marginMultiplier} scales the safety margin — a later round after a retry that still overflowed. */
+    static InferenceClient.ChatRequest compactToFit(
+            InferenceClient.ChatRequest req, int window, int reportedTokens, int marginMultiplier) {
+        if (req == null || req.messages() == null || req.messages().isEmpty()) return null;
+        int margin = ctxSafetyMargin(window) * Math.max(1, marginMultiplier);
+        var reserve = (req.maxTokens() != null ? req.maxTokens() : 256) + margin;
+        var budget = window - reserve;
+        if (budget <= 0) return null;
+        var msgs = new ArrayList<>(req.messages());
+        int estimated = msgs.stream().mapToInt(m -> estimateTokens(m.content())).sum();
+        // Remove at least what the server said we were over by (plus the margin), and at
+        // least what our own estimate says — whichever asks for more. When the server
+        // overflowed on a prompt our estimate liked, shrink by the margin anyway.
+        int need = Math.max(estimated - budget,
+            reportedTokens > 0 ? reportedTokens - window + margin : 0);
+        if (need <= 0) need = margin;
+        int removed = 0;
+
+        // 1. History: the oldest non-system message that is neither the last message
+        //    nor the last user turn. The chat template raises on a prompt with no user
+        //    turn, and llama-server shaping (ensureUserTurn) puts its synthetic one at
+        //    position 1 — exactly where "oldest non-system" looks first. Live 2026-09-06:
+        //    seven of eight own-time compactions came back "No user query found".
+        while (removed < need && msgs.size() > 1) {
+            int lastUser = lastUserIndex(msgs);
+            int idx = -1;
+            for (int k = 0; k < msgs.size() - 1; k++) {
+                if ("system".equalsIgnoreCase(msgs.get(k).role()) || k == lastUser) continue;
+                idx = k;
+                break;
+            }
+            if (idx < 0) break;
+            removed += estimateTokens(msgs.get(idx).content());
+            msgs.remove(idx);
+        }
+
+        // 2. System layers between the first and the last message, largest first,
+        //    trimmed from the end down to a head.
+        while (removed < need) {
+            int idx = -1, best = 0;
+            for (int k = 1; k < msgs.size() - 1; k++) {
+                var m = msgs.get(k);
+                if (!"system".equalsIgnoreCase(m.role())) continue;
+                int t = estimateTokens(m.content());
+                if (t > best) { best = t; idx = k; }
+            }
+            if (idx < 0 || best <= COMPACT_HEAD_TOKENS) break;
+            int keep = Math.max(COMPACT_HEAD_TOKENS, best - (need - removed));
+            var m = msgs.get(idx);
+            var head = truncateToTokens(m.content(), keep);
+            int left = estimateTokens(head);
+            if (head.isBlank() || left >= best) { removed += best; msgs.remove(idx); continue; }
+            msgs.set(idx, new InferenceClient.ChatMessage(m.role(), head));
+            removed += best - left;
+        }
+
+        // 3. Last resort: the first message (system) itself, never the last one.
+        if (removed < need && msgs.size() >= 2
+                && "system".equalsIgnoreCase(msgs.getFirst().role())) {
+            var first = msgs.getFirst();
+            int t = estimateTokens(first.content());
+            int keep = t - (need - removed);
+            if (keep > COMPACT_HEAD_TOKENS) {
+                var head = truncateToTokens(first.content(), keep);
+                if (!head.isBlank()) {
+                    removed += t - estimateTokens(head);
+                    msgs.set(0, new InferenceClient.ChatMessage(first.role(), head));
+                }
+            }
+        }
+        // 4. Whatever is left over budget lives in a message the steps above protect: the last
+        //    user turn, or a first message that is not a system layer. Two turns after a
+        //    restart (household node 2026-09-08 16:29, 17133 and 17200 tokens against 16384)
+        //    had no history to drop and a small system prompt; round 1 freed 153 tokens,
+        //    round 2 nothing, and she failed fast on a prompt that a shear would have fitted.
+        //    Cut the middle out of the largest message, keeping its head (what it is) and
+        //    its tail (the question is usually last), until the budget is met.
+        while (removed < need && !msgs.isEmpty()) {
+            int idx = -1, best = 0;
+            for (int k = 0; k < msgs.size(); k++) {
+                int t = estimateTokens(msgs.get(k).content());
+                if (t > best) { best = t; idx = k; }
+            }
+            if (idx < 0 || best <= COMPACT_SHEAR_MIN_TOKENS) break;
+            int keep = Math.max(COMPACT_SHEAR_MIN_TOKENS, best - (need - removed));
+            if (keep >= best) break;
+            var m = msgs.get(idx);
+            var sheared = shearToTokens(m.content(), keep);
+            int left = estimateTokens(sheared);
+            if (left >= best) break;
+            msgs.set(idx, new InferenceClient.ChatMessage(m.role(), sheared, m.toolCalls(), m.toolCallId()));
+            removed += best - left;
+        }
+        if (removed <= 0) return null;
+        return withMessages(req, msgs);
+    }
+
+    /** A trimmed layer keeps at least this many tokens, so its heading survives. */
+    private static final int COMPACT_HEAD_TOKENS = 8;
+    /** A sheared message keeps at least this many tokens between its head and its tail. */
+    static final int COMPACT_SHEAR_MIN_TOKENS = 64;
+    static final String COMPACT_ELISION = "\n[… the middle of this was cut to fit the context window …]\n";
+
+    /** Keep the head and the tail of {@code s}, about {@code tokens} in all, with an elision mark between. */
+    static String shearToTokens(String s, int tokens) {
+        if (s == null) return "";
+        int total = estimateTokens(s);
+        int mark = estimateTokens(COMPACT_ELISION);
+        if (total <= tokens || tokens <= mark) return s;
+        int keep = tokens - mark;
+        var head = truncateToTokens(s, keep / 2);
+        var tail = tailToTokens(s, keep - keep / 2);
+        return head + COMPACT_ELISION + tail;
+    }
+
+    /** The last {@code tokens} worth of {@code s}, by the same accounting as {@link #truncateToTokens}. */
+    private static String tailToTokens(String s, int tokens) {
+        if (s == null || tokens <= 0) return "";
+        if (estimateTokens(s) <= tokens) return s;
+        int budget = 0;
+        int i = s.length();
+        while (i > 0) {
+            int cp = s.codePointBefore(i);
+            budget += isCjk(cp) ? 3 : 1;
+            if (budget > tokens * 3) break;
+            i -= Character.charCount(cp);
+        }
+        return s.substring(i);
+    }
+
+    /** One line naming where the tokens of a request live, for the log when compaction cannot fit it. */
+    static String describeShape(InferenceClient.ChatRequest req) {
+        if (req == null || req.messages() == null) return "no messages";
+        var sb = new StringBuilder(req.messages().size() + " message(s) [");
+        for (int k = 0; k < req.messages().size(); k++) {
+            var m = req.messages().get(k);
+            if (k > 0) sb.append(", ");
+            sb.append(m.role()).append(':').append(estimateTokens(m.content()));
+        }
+        sb.append("], tools=").append(req.tools() == null ? 0 : req.tools().size());
+        return sb.toString();
+    }
+
+    /** Index of the newest user-role message, or -1. */
+    static int lastUserIndex(List<InferenceClient.ChatMessage> msgs) {
+        for (int k = msgs.size() - 1; k >= 0; k--) {
+            var m = msgs.get(k);
+            if (m != null && "user".equalsIgnoreCase(m.role())) return k;
+        }
+        return -1;
+    }
+
+    /**
+     * Chat-template and tool-schema overhead our char-based estimate cannot see: a
+     * fixed 512 plus a sixteenth of the window (the 16K drive overflowed by up to a
+     * thousand tokens on prompts the estimate called safe).
+     */
+    static int ctxSafetyMargin(int window) {
+        return 512 + Math.max(0, window) / 16;
+    }
+
+    /**
+     * llama.cpp also reports the size of the request that overflowed:
+     * {@code request (16869 tokens) exceeds ...}. Returns 0 when absent.
+     */
+    static int parseRequestTokens(String errMsg) {
+        if (errMsg == null) return 0;
+        var m = CTX_REQUEST.matcher(errMsg);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) { return 0; }
+        }
+        return 0;
+    }
+    private static final Pattern CTX_REQUEST = Pattern.compile(
+        "request \\((\\d{3,7}) tokens\\)", Pattern.CASE_INSENSITIVE);
 
     /**
      * Clip to a token budget using the same script-aware accounting as
@@ -1378,7 +1549,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                    String requestId,
                                    ActorRef<InferResponse> replyTo,
                                    boolean localOnly,
-                                   boolean compacted,
+                                   int compactRounds,
                                    boolean fallbackAttempted) {
         var self = getContext().getSelf();
         backend.chatCompletion(chatReq)
@@ -1386,7 +1557,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                     renderContent(resp), backend.name(), resp.usage(), replyTo)))
             .exceptionally(ex -> {
                 self.tell(new InferFailure(requestId, ex.getMessage(), backend.name(),
-                    chatReq, replyTo, localOnly, compacted, fallbackAttempted));
+                    chatReq, replyTo, localOnly, compactRounds, fallbackAttempted));
                 return null;
             });
     }

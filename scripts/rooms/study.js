@@ -532,6 +532,8 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_MCP_STRICT_GRANTS", "strict MCP grant enforcement", "false"],
     ["WYRDSEKAI_ACTION_STRICT_GRANTS", "CONSENT-tier autonomous actions need an owner grant", "false"],
     ["WYRDSEKAI_MCP_DAILY_SPEND_CAP", "hard per-agent daily USD cap on metered MCP services", "10.0"],
+    ["WYRDSEKAI_LIBRARY_SERVICE", "id of the MCP service that plays the library role (a research librarian or a peer library; LIBRARY_PROTOCOL.md)", ""],
+    ["WYRDSEKAI_LIBRARY_SERVE_FINDINGS", "serve the companions' accepted findings on the library door (only those whose sources may travel)", "true"],
     ["WYRDSEKAI_HOST_APPS", "allowlist of host apps agents may launch", ""],
     ["WYRDSEKAI_HOST_OPEN_ROOTS", "allowlisted host filesystem roots", ""]
   ]},
@@ -581,6 +583,7 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_OPENROUTER_ENABLED", "OpenRouter cloud backend", "false"],
     ["WYRDSEKAI_CLAUDE_CLI_ENABLED", "Claude CLI backend (OAuth, no API key)", "false"],
     ["WYRDSEKAI_EMBEDDING_URL", "embedding-server URL", ""],
+    ["WYRDSEKAI_EMBED_SERVER", "which embedding server wyrd start runs on :8202: llama (llama-server, the GGUF) or tei (Text Embeddings Inference, faster on NVIDIA)", "llama"],
     ["WYRDSEKAI_EMBEDDING_MODEL", "retrieval embedding model id", "(registry default)"],
     ["WYRDSEKAI_PREDICTION_MODEL", "model id for the prediction subsystem", ""]
   ]},
@@ -642,10 +645,11 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_LIBRARY_RELEVANCE_FLOOR", "library retrieval relevance floor", "0.35"]
   ]},
   { id: "updates", title: "updates", keys: [
+    ["WYRDSEKAI_UPDATE", "releases: check (say when a newer one exists) / auto (install it at a quiet moment inside the window) / off", "check"],
     ["WYRDSEKAI_UPDATE_CHANNEL", "update channel", ""],
     ["WYRDSEKAI_UPDATE_POLICY", "prompt or auto updates", "prompt"],
-    ["WYRDSEKAI_UPDATE_INTERVAL", "update-check interval", "6h"],
-    ["WYRDSEKAI_UPDATE_WINDOW", "allowed update time window", ""],
+    ["WYRDSEKAI_UPDATE_INTERVAL", "how often the node checks for a release (and polls a channel)", "6h"],
+    ["WYRDSEKAI_UPDATE_WINDOW", "when auto mode may install, HH:MM-HH:MM local", "03:00-05:00"],
     ["WYRDSEKAI_UPDATE_PIN", "pin to a specific version", ""],
     ["WYRDSEKAI_VERSION_CACHE", "cached versions kept for rollback", "3"]
   ]},

@@ -5,6 +5,8 @@ import io.javalin.router.JavalinDefaultRoutingApi;
 import java.lang.management.ManagementFactory;
 import org.wyrdsekai.common.model.AppVersion;
 import org.wyrdsekai.core.update.UpdateChannelPoller;
+import org.wyrdsekai.core.update.SelfUpdate;
+import org.wyrdsekai.core.update.ReleaseCheck;
 import org.wyrdsekai.core.update.UpdateConfig;
 
 import java.nio.file.Files;
@@ -24,11 +26,21 @@ public final class UpdateRoutes {
 
     private final UpdateConfig config;
     private final UpdateChannelPoller poller; // nullable if polling disabled
+    private final SelfUpdate selfUpdate;       // nullable in a source checkout
+    private final Path installRoot;            // nullable in a source checkout
+    private final Path dataDir;
     private volatile Path packagePath; // set after build
 
     public UpdateRoutes(UpdateConfig config, UpdateChannelPoller poller) {
+        this(config, poller, null, null, null);
+    }
+
+    public UpdateRoutes(UpdateConfig config, UpdateChannelPoller poller, SelfUpdate selfUpdate, Path installRoot, Path dataDir) {
         this.config = config;
         this.poller = poller;
+        this.selfUpdate = selfUpdate;
+        this.installRoot = installRoot;
+        this.dataDir = dataDir;
     }
 
     /** Set the path to the built package (called after `wyrdsekai update --publish`). */
@@ -38,6 +50,7 @@ public final class UpdateRoutes {
 
     public void register(JavalinDefaultRoutingApi app) {
         app.get("/api/update/status", this::handleStatus);
+        app.post("/api/update/check", this::handleCheck);
         app.get("/api/update/manifest", this::handleManifest);
         app.get("/api/update/package", this::handlePackageDownload);
         app.get("/api/update/health", this::handleHealth);
@@ -50,6 +63,13 @@ public final class UpdateRoutes {
         status.put("buildHash", appVer.buildHash());
         status.put("wireProtocol", appVer.wireProtocol());
         status.put("buildTimestamp", appVer.buildTimestamp().toString());
+
+        // The release this node runs, the latest one published, and what the self-updater
+        // last decided (ReleaseCheck / SelfUpdate) — what `wyrd status` and `wyrd doctor` read.
+        var release = ReleaseCheck.status(installRoot, dataDir);
+        status.put("release", release.toMap());
+        if (selfUpdate != null) status.put("selfUpdate", selfUpdate.state());
+        status.put("siblings", siblings());
 
         // Update config
         var configMap = new LinkedHashMap<String, Object>();
@@ -80,6 +100,28 @@ public final class UpdateRoutes {
         }
 
         ctx.json(status);
+    }
+
+    /** Ask GitHub now (not the day-old cache) and, in auto mode, take the turn the schedule would. */
+    private void handleCheck(Context ctx) {
+        if (ReleaseCheck.mode().equals("off")) { ctx.json(Map.of("ok", false, "reason", "WYRDSEKAI_UPDATE=off")); return; }
+        try { Files.deleteIfExists(ReleaseCheck.cacheFile(ReleaseCheck.REPO, dataDir)); } catch (Exception ignored) { }
+        var out = new LinkedHashMap<String, Object>();
+        out.put("ok", true);
+        out.put("release", ReleaseCheck.status(installRoot, dataDir).toMap());
+        if (selfUpdate != null) out.put("decision", selfUpdate.tick());
+        ctx.json(out);
+    }
+
+    /** The latest release of each sibling program, so a household can see when its librarian or coder is behind. */
+    private Map<String, Object> siblings() {
+        var m = new LinkedHashMap<String, Object>();
+        if (ReleaseCheck.mode().equals("off") || dataDir == null) return m;
+        for (var repo : new String[] {ReleaseCheck.CODEZAIKU_REPO, ReleaseCheck.RESEARCHZOSHO_REPO}) {
+            var id = repo.substring(repo.indexOf('/') + 1);
+            m.put(id, Map.of("latest", ReleaseCheck.latestCached(repo, dataDir).orElse("")));
+        }
+        return m;
     }
 
     private void handleManifest(Context ctx) {

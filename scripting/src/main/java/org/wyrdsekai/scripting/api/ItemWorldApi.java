@@ -554,6 +554,33 @@ public class ItemWorldApi {
             return provider.journalWrite(content, opts == null ? Map.of() : opts);
         }
 
+        /**
+         * The object form: {@code world.journal.write({title, body})}. Scripts wrote it this way
+         * for as long as the string form has existed (research_assistant, and eight failures a
+         * week on the household node: "no applicable overload"). The title heads the entry; the
+         * text is whichever of {@code body}, {@code content}, {@code text}, {@code entry} is set;
+         * every other key travels as an option.
+         */
+        @HostAccess.Export
+        public Map<String, Object> write(Map<String, Object> entry) {
+            caps.require("journal.write");
+            if (entry == null || entry.isEmpty()) return provider.journalWrite("", Map.of());
+            var opts = new java.util.LinkedHashMap<String, Object>();
+            String title = null, body = null;
+            for (var e : entry.entrySet()) {
+                var k = e.getKey(); var v = e.getValue();
+                switch (k) {
+                    case "title" -> title = v == null ? null : String.valueOf(v);
+                    case "body", "content", "text", "entry" -> { if (body == null && v != null) body = String.valueOf(v); }
+                    default -> opts.put(k, v);
+                }
+            }
+            var content = title == null || title.isBlank() ? (body == null ? "" : body)
+                : body == null || body.isBlank() ? title : title + "\n\n" + body;
+            if (title != null && !title.isBlank()) opts.putIfAbsent("title", title);
+            return provider.journalWrite(content, opts);
+        }
+
         @HostAccess.Export
         public List<Map<String, Object>> search(String query) {
             return provider.journalSearch(query, 10);
@@ -572,6 +599,10 @@ public class ItemWorldApi {
         public List<Map<String, Object>> recent(int n) {
             return provider.journalRecent(Math.max(1, Math.min(n, 50)));
         }
+
+        /** {@code world.journal.recent()} — the last ten; a script that names no count means "the recent ones". */
+        @HostAccess.Export
+        public List<Map<String, Object>> recent() { return recent(10); }
     }
 
     // ─── Notes API (§4.2) ────────────────────────────────────────

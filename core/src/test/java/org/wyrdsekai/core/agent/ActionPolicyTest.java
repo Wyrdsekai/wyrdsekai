@@ -257,4 +257,22 @@ class ActionPolicyTest {
         assertFalse(noWorkspace.contains("(in "),
             "blank workspace should not render a location clause, got: " + noWorkspace);
     }
+    /**
+     * A templated room is her own verb (VISIBLE, tier 1); untemplated authoring stays
+     * CONSENT (tier 3). Before this, every CreateRoom resolved to "create_room" and the
+     * templated entry never matched — three refusals in one night (2026-09-06).
+     */
+    @Test
+    void a_templated_room_is_her_own_verb_at_tier_1() {
+        var templated = new ActionParser.AgentAction.CreateRoom(
+            "quiet-corner", "A small unadorned corner with one chair.", null, null, "empty");
+        var raw = new ActionParser.AgentAction.CreateRoom(
+            "quiet-corner", "A small unadorned corner with one chair.", null, null, null);
+        assertEquals("create_room_from_template", ActionPolicy.actionTypeOf(templated));
+        assertEquals("create_room", ActionPolicy.actionTypeOf(raw));
+        assertEquals(1, ActionPolicy.forAction(ActionPolicy.actionTypeOf(templated)).requiredTier());
+        assertEquals(3, ActionPolicy.forAction(ActionPolicy.actionTypeOf(raw)).requiredTier());
+        assertEquals(ActionPolicy.AutonomyTier.VISIBLE,
+            ActionPolicy.AUTONOMY_TIERS.get(ActionPolicy.actionTypeOf(templated)));
+    }
 }

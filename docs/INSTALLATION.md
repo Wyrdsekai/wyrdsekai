@@ -171,8 +171,16 @@ also saving it mode-`0600` to `/etc/wyrdsekai/steward-bootstrap.invite`. It
 expires in 24 hours. Keep that terminal output.
 
 A fresh install does **not** auto-start the service — it needs `wyrd setup`
-first. Upgrades (`dpkg -i` over an existing install) stop the service, swap
-jars, and bring it back exactly as it was.
+first. Upgrades (`dpkg -i` over an existing install, or `wyrd update now`,
+which fetches this platform's package from the GitHub release and verifies it
+against the release's `SHA256SUMS` first) snapshot the databases, stop the
+service, swap jars, and bring it back exactly as it was. `wyrd update` says
+what release runs and what the latest is; `wyrd update auto on` lets the node
+install a newer release itself at a quiet moment inside its window (see
+[CONFIGURATION.md](CONFIGURATION.md#updates)). The package also sets
+`vm.swappiness=10` in `/etc/sysctl.d/90-wyrdsekai.conf` so the kernel drops
+mmapped model pages before swapping out the server; it is a conffile, yours to
+edit or remove.
 
 Systemd units shipped: `wyrdsekai` (the zone — enabled by `wyrd start`),
 `wyrdsekai-oracle` (enabled by default, `:7073`), `wyrdsekai-nats` (disabled;

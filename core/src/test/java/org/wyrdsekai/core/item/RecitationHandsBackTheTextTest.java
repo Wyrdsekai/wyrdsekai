@@ -87,13 +87,15 @@ class RecitationHandsBackTheTextTest {
         var s = librarySection();
 
         assertThat(s).contains("var summary = world.llm.analyze(combined, instruction);");
-        assertThat(s).contains("return { findings: summary, sources: sources };");
+        // Since 2026-09-03 the receipts carry chunk ids in a SEPARATE field (source_ids) for
+        // the findings ledger; the spoken/remembered sources line is unchanged.
+        assertThat(s).contains("return { findings: summary, sources: sources, source_ids: sourceIds };");
     }
 
     /** Sources travel with the text either way, so a quotation stays attributable. */
     @Test
     void the_verbatim_answer_is_still_sourced() throws Exception {
-        assertThat(librarySection()).contains("sources: sources, verbatim: true");
+        assertThat(librarySection()).contains("sources: sources, source_ids: sourceIds, verbatim: true");
     }
 
     /**

@@ -137,7 +137,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         }
         var primary = toRoomObject(artifact);
         if (primary != null) {
-            var outcome = stampRegistry(primary, artifact);
+            var outcome = stampRegistry(primary, artifact, zb.roomId());
             if (outcome != null && outcome.knownBroken()) {
                 primary = markUnfinished(primary, outcome.problems());
             }
@@ -154,7 +154,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 var rb = toRoomObject(ba);
                 if (rb != null) {
                     roomObjects.add(rb);
-                    stampRegistry(rb, ba);   // build artifact: never a scripted item
+                    stampRegistry(rb, ba, zb.roomId());   // build artifact: never a scripted item
                 }
             }
         }
@@ -181,7 +181,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
      * matching {@code .js} (or didn't follow the manifest contract), we
      * fall through to the legacy router path silently.</p>
      */
-    private static RegistrationOutcome stampRegistry(RoomObject roomObject, CodingArtifact artifact) {
+    private static RegistrationOutcome stampRegistry(RoomObject roomObject, CodingArtifact artifact, String placedRoomId) {
         if (roomObject == null || artifact == null) return null;
         var kind = artifact instanceof SourceArtifact ? "codex" : "artifact";
         CodingItemRegistry.get().stamp(new CodingItemMetadata(
@@ -189,7 +189,9 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             artifact.backend(),
             artifact.taskId(),
             artifact.artifactId(),
-            kind));
+            kind,
+            null,
+            placedRoomId));
         if (artifact instanceof SourceArtifact src) {
             return tryRegisterScriptedItem(roomObject, src);
         }

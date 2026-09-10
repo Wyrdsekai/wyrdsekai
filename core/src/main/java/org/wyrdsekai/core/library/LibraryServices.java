@@ -16,12 +16,14 @@ public final class LibraryServices {
 
     private static volatile ArrivalTable arrivalTable;
     private static volatile ReadingLog readingLog;
+    private static volatile Path root;
 
     private LibraryServices() {}
 
     /** Initialize both stores under the supplied root. Idempotent. */
     public static synchronized void init(Path root) {
         if (root == null) return;
+        LibraryServices.root = root;
         if (arrivalTable == null) arrivalTable = new ArrivalTable(root);
         if (readingLog == null) readingLog = new ReadingLog(root);
     }
@@ -32,9 +34,13 @@ public final class LibraryServices {
     /** Returns the reading log, or {@code null} if {@link #init(Path)} hasn't run. */
     public static ReadingLog readingLog() { return readingLog; }
 
+    /** The library data root the arrival table and reading log live under (null before init). */
+    public static Path root() { return root; }
+
     /** Test-only: clear singletons so tests can re-init. */
     public static synchronized void reset() {
         arrivalTable = null;
         readingLog = null;
+        root = null;
     }
 }
