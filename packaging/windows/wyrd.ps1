@@ -116,7 +116,7 @@ $V8Default = @(
 $GooseRepo    = "aaif-goose/goose"   # repo moved block/goose -> aaif-goose/goose
 $GooseTag     = "v1.34.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuRepo = "Wyrdsekai/codezaiku"
-$CodeZaikuTag  = "v0.3.0"             # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuTag  = "v0.3.1"             # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuDir  = Join-Path $DataDir "coding-cli-bundle\codezaiku"
 # The tarball carries its own top-level codezaiku/ dir, so the launcher lands
 # nested — same shape BackendExecutableResolver searches on the Java side.

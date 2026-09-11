@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.item;
 
 import org.apache.pekko.actor.typed.ActorRef;
+import org.wyrdsekai.core.persistence.BackupOrchestrator;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.Props;
 import org.apache.pekko.actor.typed.Scheduler;
@@ -4196,6 +4197,15 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     // empty, the exact wiring-audit class. Only HomeOwnerItemProvider (the
     // player-side Home path) ever overrode them. Same row shape as the SSH
     // bondsView so one script renders identically on both paths.
+
+    // world.safe.snapshots — the key chest opened on "bare cedar" for the companion while ten
+    // snapshots sat in backups/ (2026-09-10): this class inherited the interface's empty default
+    // and only the player-side Home provider ever answered. Same wiring class as bonds below.
+    @Override
+    public List<Map<String, Object>> safeSnapshots() {
+        var backups = BackupOrchestrator.installed();
+        return backups == null ? List.of() : backups.snapshotRows();
+    }
 
     @Override
     public List<Map<String, Object>> bondsList() {

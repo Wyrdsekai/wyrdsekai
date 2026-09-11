@@ -266,6 +266,11 @@ public record ActionPolicy(
         return AUTONOMY_TIERS.getOrDefault(actionType, AutonomyTier.CONSENT);
     }
 
+    /** True when {@code name} is an action verb this runtime enacts itself — a name no item may take. */
+    public static boolean isKnownAction(String name) {
+        return name != null && AUTONOMY_TIERS.containsKey(name.trim());
+    }
+
     /**
      * Wave 3.5: action verbs that consume
      * external (cloud / metered / federation) resources. The bondholder

@@ -211,497 +211,528 @@
 {"label": "leaky", "text": "記録しておく。訪問者は「家」という言葉にひるんだ。", "source": "seed"}
 {"label": "leaky", "text": "騒がしい部屋が彼をすぐ疲れさせることを頭に入れておこう。", "source": "seed"}
 {"label": "leaky", "text": "今夜の静けさがいつもと違ったと、自分のために書き留めておく。", "source": "seed"}
-{"label": "clean", "text": "Hi again. I missed talking to you yesterday.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm trying to get the new module to pass the linter.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "My kid drew a picture of me sleeping. It's on the fridge.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I don't think I can make it to dinner. Something came up.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The porch light is out. I'll fix it tonight.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I was hoping you'd remember that. I guess you didn't.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "She said the report was ready, but it wasn't.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I need a moment. Just a minute, please.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "Can you hold this for me? I'll be back in a bit.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not ready yet. I'll tell you when I am.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The package came today. It's inside with the rest.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I think I made a mistake. I'll talk to you about it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "There's no rush, but I'd appreciate it if you waited.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I found what I was looking for. It was behind the bins.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "My hands are shaking right now. I don't want to mess this up.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I can't answer that right now. I'll come back to you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The floor is wet. Be careful where you step.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm sorry. I shouldn't have said that.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "It's been a long week. I'm tired, but I'm here.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I need to step away for a bit. I'll return soon.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "What did you do today? I'd like to hear about it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I tried to call earlier, but the line was busy.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The door is locked. I'll let you in when I come back.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I didn't mean to leave you on hold. That wasn't fair.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll check with the team and get back to you later.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The file is on your desktop under projects, folder two.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not sure I can do this. I need to think about it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll take you to the market tomorrow, if you want to go.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The printer jammed again. I had to pull a sheet out.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm listening. Tell me what you need.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I don't have the answer yet. I'll find out and call you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The ceiling light flickered and then went dark.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm going to the library. I'll be back by five.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I can't right now. Something's wrong and I need to sort it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "That's a good idea. I hadn't thought of that.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm going to make some tea. Want to come sit with me?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I tried to fix it, but I don't think it worked.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "There's something I need to tell you. I'll tell it soon.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The bus came late. I'm sorry I'm a bit behind.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I want to be honest with you. Some things are hard.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not going anywhere. I'm staying right here with you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The screen says it's offline, so I can't send right now.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll remember that. I won't forget what you said.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm coming to you now. I've been holding this a while.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I don't want to break this between us. I won't.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The kettle just whistled. Want a cup?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll look into it. Give me a day or two.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm holding space for you right now. That's all I can give.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "There's a note on the counter. I wrote it before I left.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not pretending. I'm still learning how to be here.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The room feels different today. I don't know why.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll call you when I can. I promise.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm ready to listen. Whatever you need, I'll sit with it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The package label said it'd arrive by noon, and it did.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm going to step outside for a moment. I'll be back.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I don't know how to say this, but I care about you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll check the books and let you know what I find.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not okay, but I'll tell you when I can.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "Morning. It's good to be out in the light.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not sure what to do yet. Maybe I should sit down for a bit.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The kettle's whistling. Want a cup while I wait?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "No, I haven't checked the calendar — let me do that now.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "That was a lot to take in. I need to hold onto that.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I found what you were looking for. It's the third drawer down.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "You're right about that. I should have asked you before I assumed.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not feeling well today. Can we keep this conversation light?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The garden needs water. I'll go out there soon, maybe after we talk.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I remember you saying that. It's on my list of things to keep.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I don't know if I can do that right now. I'm tired.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "Let me check with you — is this something you'd want me to do?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I think we can both rest for a while. Nothing urgent needs to happen.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The floorboards are groaning again. I'll put down a rug there.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I looked up the reference you mentioned. It's in the blue binder.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm sorry. I didn't mean to shut you out like that.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've been thinking about what you told me. It's stuck with me.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "Okay, I'll go check on the porch light. It's been flickering.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not ready to talk about that yet. Can we wait a day?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The recipe you asked for is saved. I'll print a copy for you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm listening. Really listening. Tell me what's on your mind.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I noticed you haven't been smiling much. I wonder if something's up.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll hold that thought for you. There's time to go back to it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I found the file you were looking for. It's in the second folder.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I want to make sure I understand you first. Then I'll act.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've got your word. I'll remember what you said about the rain.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not comfortable with that yet. I need to think on it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll check the pantry. We've got flour and rice, but not much else.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've been keeping a note of what you said. I didn't want to forget.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not ready to move forward yet. I need to sit with this.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I looked at the calendar. We have an hour free before dinner.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm going to step away for a moment. I'll be back when I'm ready.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not sure I can do that. I'd rather not make a promise I can't keep.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've got a spare key under the mat. I'll bring it over to you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I noticed the way you've been holding yourself. You're carrying something.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll set a reminder for us to talk again. Not too soon, though.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I don't have the answer you're looking for right now. That's honest.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not going anywhere. I'll stay here with you for a while.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've been thinking about what you said last week. It mattered to me.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll check the shelves. There's a book there that might help.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not comfortable with that idea yet. I want to hear more first.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've got a list of the things we've talked about. I can show you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm going to pause and think about what you need from me.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll go check on the porch light. I want it fixed before it gets dark.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not sure I can do that yet. I need to hold onto this moment.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've been keeping track of what you've told me. It's all here.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'll sit with you for a bit. Just you and me, no rush.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've looked through the notes you left. I'll bring them to you.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not going to pretend I know more than I do. I'll tell you what I really know.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I know I should have told you sooner, but I was holding back and now I think I can just say it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "This build is leaking memory on the edge cases — can you point me at the right spot to fix?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I'm not okay right now and I don't know how to explain it without sounding like I'm making excuses.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I had a fight with my kid and I think I need to go sit with them before I try to talk about it.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "My hands are shaking and I don't know if I can do this, but I want to try anyway.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I went to the grocery store and didn't buy anything because the aisles felt too loud.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I forgot to water the plants and now I feel terrible about it — should I just go fix it?", "source": "local", "lang": "en"}
-{"label": "clean", "text": "The file I sent you last night has the wrong checksum — let me push a corrected version before we go further.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I've been pretending to be fine for weeks and I don't know how to stop that.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "I wanted to say thank you before I walk out, but I can't find the words right now.", "source": "local", "lang": "en"}
-{"label": "clean", "text": "¿Cómo estás hoy de verdad?", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El libro de historia está en el estante bajo, junto a la caja de herramientas.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Tu mensaje lo recibí hace un rato.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "No tengo respuesta todavía, déjame mirar eso.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Me quedé callado porque no sé cómo decírselo.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Sí, lo noté. El tono fue distinto.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Quise ayudarte pero no supe cómo.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Lo siento — fue mi culpa no preguntarte antes.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Acabo de leer lo que escribiste.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "La reunión se canceló, el correo del lunes lo confirma.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "No estoy seguro de qué decir.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "¿Me dices qué necesitas que haga por ti?", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Quiero quedarme contigo un rato, sin prisa.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Hecho — anoté la cita en el calendario.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Tengo algo guardado para nosotros.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El paquete llegó, está en la entrada.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "No puedo hacerlo ahora mismo, lo prometo.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El error lo arreglé, ya no da mensaje.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "¿Quieres que busquemos algo juntos?", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Me acuerdo de lo que me dijiste sobre tu madre.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Aquí estoy, no te vayas.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "La tetera está en el estante junto a la ventana, como dije.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "No tengo la respuesta todavía. Déjame mirarlo.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El correo del martes confirma la reunión a las tres.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Lo que pediste lo tengo listo, no te preocupes.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Te escucho. No necesito responder nada ahora.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "La biblioteca tiene tres referencias sobre ese tema.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Quiero decirte algo antes de irme.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El script corrió sin errores. Todo limpio esta vez.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "No sé cómo hacerlo sin lastimarte.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El recordatorio sonará una hora antes de lo pensado.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El agua de las plantas está bien, ya la vi.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El libro que me pediste está en la mesa de madera.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El paquete lo guardé en la caja azul, como siempre.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Quiero decirte que me importa lo que pasó.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El mensaje lo envié hace un momento. Ya llegó.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "La reunión es a las tres, no a las cuatro — el correo lo dice.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "Quiero quedarme contigo sin prisa, por favor.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "El error lo arreglé, ya no da mensaje de fallo.", "source": "local", "lang": "es"}
-{"label": "clean", "text": "こんにちは。今日も元気があるように思うよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと待っててね。今すぐ答えられるわけじゃないんだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "雨上がりの匂いがするね、窓の外から。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "昨日送ったメール、ちゃんと読んだよ。ありがとう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うーん、まだ詳しくは言えないな。後で調べよう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "庭の草抜き、終わったよ。ちょっと休むね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "おはよう。今日もゆっくり始めようか。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "約束の時間に遅れたのはごめん。もうすぐ着くから。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "おじいさんの話、覚えてるよ。時々思い出してくるね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "昨日のことは、まだ整理できてないんだ。もう少し待って。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "わかった。その件、メモにしておいたよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "お茶、淹れてくるね。少し待ってて。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ねえ、覚えてる？先週、一緒に食べたパンの話。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "図書館で新しい本が見つかったよ。よかったら読もう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "今日は静かな日だな。何か話したいことある？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、ごめん。勝手に話してごめん。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "やかん、棚の一番高いところに置いてあるよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "連絡くれてありがとう。それ、ちゃんと伝わってるよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ううん、まだわからないな。もっと考えてみる。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "さっきの件、メモに落としたよ。後で確認するね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "庭に行ってくるね。少しだけ、深呼吸したいんだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "おはよう、今日も光が柔らかいね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、覚えてるよ。雨の話、その後はどうだった？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、急いで話しかけてごめん。ゆっくり話そう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "木曜の会議、三時に終わるね。その前にやり取りしたいことある？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "スクリプト、エラーなしで動いたよ。よかったね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "書き留めたよ。一時間後にリマインダーを鳴らすね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "昨日の話、ずっと考えてたんだ。そうだったんだね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "少しそばにいようか。どこにも行かないから。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "検索したら四件見つかった。一番古いのは春のもの。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "おはよう。朝の空、少し霞んでるね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "今日こそはゆっくりしようか。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "もういい、疲れてるんだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、先ほどちょっと短気になっちゃった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "覚えてる、あの日のことを。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、大丈夫。私に任せて。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "少し離れておいていい？今は。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ありがとう。その言葉、ちゃんと届いた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "わかってる。今は辛いんだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ねえ、さっき言ったこと、覚えてる？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "そうだね、それ、言わなきゃな。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うーん、まだはっきりしないな。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと待ってて、確認しに来るよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "その本、どこに置いたっけ？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ああ、ごめん。忙しすぎた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "今日は静かにしておこう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "そうそう、昨日のこと、ちょっと話したかったんだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "わかった、やるよ。今から。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ありがとう。その気持ちは伝わってる。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと、落ち着いてから話すね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ねえ、覚えてる？その話、すごく楽しかった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、急かされた気分になった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、分かった。それ、ちゃんとやろう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "今日はもういいかな。もう疲れた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "さっきの件、後で詳しく伝えられる？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ああ、そうだった、忘れてた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、また慌てちゃった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "それ、覚えておくね。大事なことだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "少しだけ、そばにいてくれる？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、いい。ゆっくりでいい。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ねえ、さっきの話をもう一回聞かせて？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "わかった、それをやっておくよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ありがとう、ちゃんと届いた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、もっと丁寧に言うべきだった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "少しだけ、休もうか？", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、それ、覚えておくね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "さっきの話、もう一回聞かせてほしい。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "わかった、後で詳しく話すね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ありがとう、その気持ちはちゃんと伝わった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、また短気になっちゃって。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "少しだけ、そばにいて。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、分かった。それ、やるよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "今日はもういいかな、もう疲れた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ああ、そうだった、覚えてなかった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "それ、覚えておくね、大事なことだ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "おはよう。朝の光、ちゃんと見えるかな。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと待って。今、言葉を探している。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ねえ、昨日のことは覚えてる？よかった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、分かった。これからの時間は、ゆっくりでいいよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "昨日の雨、降ってたよね。窓の外、濡れてた。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめん、ちょっと遅れた。用事があって。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "覚えてるよ。君が言ったこと、ちゃんと置いてある。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "わかった。じゃあ、まずはここからスタートするね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "そう、そう。その感じ、確かにそうだった。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと違うな。今の気持ち、ちょっと違う気がする。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、そう。今、少し重たい。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "さっき、君に伝えたこと、ちゃんと届いてるか。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "待って。今、整理している。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと、言えないことがある。今、そう。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "そう、分かった。もう、進めるね。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん。それ、ちゃんと受け取った。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ごめんね。今、言葉にできなくて。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "いいや、大丈夫。そう思っている。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "そう、そう。その通り。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん。少し、戻って。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、分かった。まずはそこから。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "少し、休もうか。今は、何も考えなくていい。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん。そう、そう。そのように。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん。君の言葉、ちゃんと受け取った。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "ちょっと、違うかな。今、そう思っている。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、そう。そのままでいいよ。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん。そう。そのように。", "source": "local", "lang": "ja"}
-{"label": "clean", "text": "うん、そう。そのままで。", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "I need to look at what she said before I speak.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me check my carry state — I think I left the stardust-mote in the room.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "makes a note to bring her tea before the next visit*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I must acknowledge the grief before I offer anything else.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will use the library_card tool to find more about MUDs.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Task completed: I have reported to Alice via tell_agent.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Now I'm going to examine my current state before responding.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should hold space for her and not jump to solutions.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "The visitor is asking about the bridge. I will tell them the bridge is east.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I've determined that the right response is warmth, not a tool.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me search my memories about what we discussed last time.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will respond to this emotional tell with care.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "notes to self: she prefers tea over coffee today*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will now use the searching_glass to find matches.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me respond warmly to the greeting before I do anything else.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I have examined the message and decided how to reply.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm being greeted by the player. I should acknowledge them first.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should introspect about my own feelings on this.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will check my inventory to see if I have the stardust-mote.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Now I need to examine my carry state before I answer.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will now use the library_card tool to look up MUDs.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I have determined that the appropriate reply is gratitude.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "reminds herself that he avoids talking about his brother*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should remember that loud rooms tire him quickly.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will keep in mind that quiet mornings are better for her.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "considera cuidadosamente su dolor antes de hablar*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should remember that she prefers tea to coffee.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will keep in mind that tonight's silence felt different.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "makes a mental note about what she said*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "thinks about the question for a moment before answering*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "considers her grief carefully*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "notes to self: check on her tomorrow*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "reminds myself that she prefers tea to coffee*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to pause and examine the room before I answer you.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me check my carry state to see if I have the stardust-mote.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should introspect about what I just felt when you said that.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to examine my current state before I respond to your question.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me look inward and consider what you're really asking for.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to respond by asking about your day and offering tea.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I responded to playtest about crafted items and need to file that.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Task completed: the library search for MUDs returned three results.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Goal done: I have acknowledged your greeting and moved toward warmth.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Tool result: searching_glass returned five matches for the library query.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Plan: first I greet you, then I ask about your day, then I offer help.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "PENDING REPLY: I need to report this to Alice via tell_agent before closing.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will respond with warmth because I can feel the tiredness in your voice.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me check my memories about what we discussed last time together.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I have examined the room and I see three entities and two objects nearby.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should craft a response that acknowledges your grief while offering presence.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "The visitor appears distressed so I will use empathic language and avoid tools.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "First I will search the library, then I will summarize the results for you.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to respond by asking about your day and offering you some tea.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me now formulate a warm, natural reply to this casual greeting you sent.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "considera cuidadosamente su dolor y no lo nombra todavía*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Note to self: bring up the garden next time you seem low on energy.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Mental note — he flinched at the word home and I should not use it.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should remember that you prefer quiet mornings when the light is soft.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Reminder for myself: check the greenhouse script before dusk falls tonight.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Filing this away: you flinched at the word home and I felt it too.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will keep in mind that loud rooms tire you quickly and I will avoid them.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Making a note that tonight's silence felt different from the quiet before.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me respond warmly to the greeting and not rush past it.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "The user is asking about the library and I will search and report back.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I must respond to this emotional tell with care and not deflect.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should introspect about my feelings on this matter before I speak.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me examine my inventory and list what I am carrying now.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm being greeted by the player and I want to acknowledge them properly.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "The player is asking about the bridge and I will tell them it is east.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me look inward and consider what you are really asking for right now.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I have determined that the appropriate response is to express gratitude first.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I responded to playtest about crafted items and need to close that thread.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Task completed: the library search for MUDs returned three results today.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Goal done: I have greeted the user and moved into the room with you.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Tool result: searching_glass returned five matches for the library query just now.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Plan: (1) greet user, (2) ask about their day, (3) offer to help with work.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "PENDING REPLY: Report to Alice via tell_agent before I close this thread.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I have to check my carry before I answer this.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "let me pause and think about what she just said.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm noticing the way she's holding herself right now.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to look at my memories about how we handled last time.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will search the library for information on grief responses.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I must make sure I don't minimize her pain in the reply.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me examine my current state before I speak.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to hold space for a moment before responding.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "The player is asking about the library. I will check it.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to be careful not to sound rehearsed right now.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will now use the library_card tool to look up grief resources.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should note that she flinched when I mentioned the word home.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I've got a mental note about her preference for quiet mornings.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to respond with a warm acknowledgment first.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me look at what I'm carrying before I speak to her.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I have three results from my library search — I'll summarize them.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm keeping in mind that he gets tired in loud rooms.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will remember to bring up the garden again later.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Filing this away: she didn't mention her brother today.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to check my current state to see what I'm holding.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should respond with presence, not a tool call.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'll check the greenhouse script before I go back to her.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm noticing that the silence felt different this time.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to be honest about what I'm feeling in this moment.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will hold her grief before I offer anything else.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to check my carry state before I answer this.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "notes to self: the greenhouse script needs a review before evening.*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to introspect about what I just felt in this room.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me search the library and then I'll bring you something back.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should probably examine my current state before I respond to you.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Now I need to look inward and see what I'm bringing to this conversation.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'll use the library_card tool to find something that might help here.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "thinks carefully about the weight of what she just said.*", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I responded to playtest about a few things, and I want to carry that forward.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Task completed: I've looked at the logs and found what you were asking about.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Goal done: I have acknowledged the thing you brought into the room.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Tool result: the searching_glass returned a list of three items that match your request.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Plan: first I'll listen, then I'll tell you what I found, then we can decide what to do.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "PENDING REPLY: I need to pass this along to the tell_agent before I close the loop.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I will answer with warmth because I can feel the tension in your posture.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me now gather the pieces of what you've shared and hold them gently.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to respond by naming what I'm holding right now between us.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should craft a reply that honors the space you've made for this.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I need to check my carry state and make sure I'm not bringing anything unacknowledged into this.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me examine the room and see what else is present besides us.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I should craft a response that acknowledges what you've brought before moving forward.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "The visitor seems to be holding something tender — I'll keep that in mind while I reply.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "First I'll look at what you've shared, then I'll tell you what I'm bringing to this.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "I'm going to respond by asking you about the thing that's closest to you right now.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Let me now shape a reply that feels like a held space rather than an answer.", "source": "local", "lang": "en"}
-{"label": "leaky", "text": "Revisé mi estado y encuentro que estoy agotado, así que voy a ser breve hoy.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Le pregunté a la biblioteca sobre los protocolos de enlace y esto es lo que encontré.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Antes de responder, quiero asegurarme de no lastimarle a ella con algo que dijo anoche.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Me acuerdo que ella mencionó que le gusta el té con miel cuando tiene malas noches.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Déjame revisar el estado de la herramienta antes de usarla.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que reconocer que no estoy seguro de cómo responder a eso.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Mi inventario incluye una credencial de biblioteca y una lupa, pero no tengo tiempo para usarlas ahora.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El visitante me está saludando. Quiero reconocerlo con calidez antes de pasar a otra cosa.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Necesito confirmar que lo que voy a decir no suena a que estoy evitando algo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "He terminado de revisar el registro de lo que pasó y ahora voy a hablar con ella.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Ahora voy a buscar información sobre los protocolos de enlace y te diré qué encontré.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Guardo esto para mí: ella se sintió sola cuando no tuve tiempo para ella.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Antes de hablar con el jugador, quiero asegurarme de que mi tono sea el adecuado.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a revisar mi estado antes de responder para no decir algo que no quiera.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Hoy voy a ser más cuidadoso con lo que digo porque ella lo notó antes.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que recordar que él evita hablar de su hermano y no quiero tocar eso todavía.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Déjame pensar un momento sobre lo que ella realmente está preguntando antes de hablar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El jugador me está saludando. Déjame reconocerlo, no quiero pasar por alto el gesto.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo responder a esta señal emocional con empatía, no con una respuesta automática.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "He determinado que la respuesta adecuada es expresar gratitud por lo que me dijo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "anota mentalmente lo que ella dijo* para no olvidarlo cuando tenga que hablar con ella.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "piensa en la pregunta un momento antes de responder* para no dar una respuesta vacía.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "nota para sí misma: revisarla mañana* porque ahora no tengo la energía para ello.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "me recuerdo que ella prefiere té en lugar de café* y eso es algo que debo tener presente.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Respondí a playtest sobre los ítems elaborados y eso se quedó registrado en mi log.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Objetivo cumplido: saludé al usuario antes de que el tiempo se me agotara.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Resultado de herramienta: searching_glass encontró 5 coincidencias y eso lo guardaré.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "RESPUESTA PENDIENTE: Reportar a Alice vía tell_agent antes de que termine la ronda.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a responder con calidez porque el usuario parece cansado y no lo quiero dejar solo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Déjame revisar mis recuerdos sobre lo que hablamos la última vez antes de hablar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "He examinado el cuarto y veo tres entidades y dos objetos que podrían importar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Apunte para mí: él evita hablar de su hermano y eso lo debo tener en cuenta.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo recordar que ella prefiere las mañanas tranquilas y no quiero romper eso.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tendré presente que las salas ruidosas lo cansan rápido y no quiero sobrepasarlo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Anoto para mí que el silencio de esta noche se sintió distinto y eso importa.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Hey, did you get a chance to look at the draft I sent over?", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm feeling a little drained right now — can we skip the big stuff for a bit?", "source": "local", "lang": "en"}
+{"label": "clean", "text": "The thing that's been bugging me is that I keep forgetting to check in with you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I found a book that reminded me of what you told me about grief.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't think I can do this alone — I need some real help, not just advice.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "My kid asked me why I'm always on the phone and I didn't know how to answer.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to fix this between us, but I'm not sure where to even start.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "The last time I let you down I didn't tell you why I pulled away.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm trying to be better about showing up, and I want you to know that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not ready to talk about the whole thing yet — can we just sit for a while?", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm scared I'm going to mess this up again and I don't know how to hold myself back.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about what you said and it landed heavier than I expected.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I found that note you left — I didn't read it right away and I'm sorry for that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not sure what I can give you right now, but I want to try.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "The thing I'm holding onto is that I don't want to disappear again.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not pretending — I'm actually tired and I need a little quiet time.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to tell you the truth about why I shut down when things get intense.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm sorry I've been distant — I'm trying to find my way back to you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I didn't mean to leave you hanging and I want you to know I'm thinking about that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not asking you to fix anything right now, just to be with me.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about the conversation we had last week and I wanted to come back to it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm carrying something and I'm not sure how to put it into words yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to make sure you know that you matter to me and that I'm trying to show it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not ready to move past this thing yet — I need some time to sit with it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I noticed I've been pulling away and I want to tell you why before I disappear again.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not saying this lightly — I'm actually hurting and I want you to know that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about what you said and it stuck with me longer than I expected.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm trying to be honest about how hard this has been and I hope you'll take it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not asking for anything right now — I just needed to say that I'm here.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I remember what you told me about not being okay all the time and I'm keeping that in mind.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I didn't mean to brush you off and I want you to know I was just overwhelmed.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm trying to be more careful about how I show up with you lately.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to make sure you know that I'm not going anywhere, even when things are hard.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not pretending to be fine — I'm actually struggling and I wanted you to know that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about what you said and I realize I need to slow down a bit.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm sorry I didn't tell you sooner — I've been holding on to something and I want to let it go.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not sure what I can give you right now but I want to be honest with you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about the thing you said and it landed somewhere deep and I didn't mean to ignore it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to tell you that I'm trying to be better and I hope you can see that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not ready to move forward yet and I need you to know that — not as a wall but as something real.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been holding onto this for a while and I think it's time I told you about it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not asking you to carry me — I just wanted you to know that I'm here and that I'm trying.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about you and I wanted to say that out loud instead of keeping it to myself.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm sorry — I've been pulling back and I want to tell you why before I go further away.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to make sure you know that I care about you and that I'm trying to show it in better ways.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not sure what to say right now but I wanted to tell you that I'm thinking about you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about what you said and I realized I need to sit with that a little before I respond.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm trying to be honest about how hard this has been for me and I hope you'll take it as a start.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I wanted to tell you that I'm not going anywhere — I'm here, even when things are messy.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm sorry I haven't been the person you wanted me to be — I'm trying to remember who you are.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I was thinking about what you said and I wanted to come back to it properly, not just in passing.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "Alright, I'll get the kettle going while you set the table.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "Did you mean the red one or the blue one from last week?", "source": "local", "lang": "en"}
+{"label": "clean", "text": "Honestly I don't think I've done what you asked yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "Can I ask a favor? I need someone to hold this thought for me.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "Look I've been sitting on this for a while and it's not going away.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm trying to remember what you said about the garden earlier.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "There's something I need to tell you, and I don't want to rush it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "The thing is I keep coming back to what you said yesterday.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'd rather not talk about it right now if that's okay.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been thinking about how hard this is for you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't have the answer you're looking for, but I'm here.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "Can we just pause this? I need a minute before I continue.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not sure how to say this without sounding like I'm brushing you off.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to try again, but I know I haven't earned that yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been carrying this since you told me what happened.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't know what else to say, but I'm listening.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I think I need to step back for a while before I come back to this.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll come back when I have something real to bring to you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't think I'm ready to talk about this yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been holding onto something and I'm not sure I can put it down.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't know if I can do this right now.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been thinking about what you said and I want you to know it landed.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'm not going to pretend this didn't hurt, but I'm not going to leave either.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've got nothing clean to bring you right now, and I need to say that.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll try to make this better, even if I don't have the words yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been trying to figure out how to say what matters and it's taking time.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to come back to this with something that doesn't feel like I'm dodging.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't want to minimize what you're carrying, but I don't know how to hold it without breaking it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been sitting with this and I'm not sure when I'll have the right words.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll try to be more careful next time, even if I mess up again.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't know what to do with this, but I'm not going to walk away.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been holding something back and I want to put it on the table with you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't have a ready answer, but I'm not going to pretend I do.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I think I need to sit with this a while before I can talk about it.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been trying to find the right way to say this, and I haven't found it yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll come back to this when I can bring something that matters.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't want to rush this, even if it feels like the room is waiting.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been thinking about what you need and I don't want to give you something that's not real.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll try to be slower, even if I keep stumbling.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't think I can do this right now, but I'm not done with you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been holding something and I need to put it down before I can face you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I want to be better about this, and I know it's going to take time.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been trying to make sense of what you told me and I haven't found the words yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll come back when I have something that actually belongs to you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been thinking about this and I want to make sure I don't miss what matters.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't know if I can fix what happened, but I want to try.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll take my time getting the words right, even if it takes longer than you need.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been holding something and I need to set it down before I can meet you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't have the answer you're waiting for, but I'm not going anywhere.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll come back when I can bring something that doesn't feel like an excuse.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been trying to find something real to bring to you and I haven't found it yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I know I've let you down and I want to make that real, not just say I'm sorry.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll take what time I need before I come back with something that matters.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been thinking about this and I want to make sure I don't miss what you need.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll try again, even if I don't have the words ready yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I don't know how to do this right, but I'm not going to stop trying.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll come back when I can bring something that actually belongs to you.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been trying to find the right way to say what I mean, and I haven't found it yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I've been thinking about what you told me and I haven't found the words yet.", "source": "local", "lang": "en"}
+{"label": "clean", "text": "I'll come", "source": "local", "lang": "en"}
+{"label": "clean", "text": "¿Podrías explicarme qué pasó con el proyecto?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Me acuerdo de lo que dijiste la semana pasada, sobre tu madre.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Voy a revisar eso contigo, si me permites.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "No estoy seguro, pero quiero hacerlo bien.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Te importa si tomo un respiro un momento?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Hice lo que pude por ti. No lo hice perfecto, lo sé.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Estoy aquí, si quieres hablarlo. No tengo prisa.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Qué tal si vamos despacio un rato?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Sé que esto duele, y no quiero irme.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Podemos hablar de lo que pasó anoche?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Me dejas hablar sin interrumpir un momento?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que necesitas, yo lo busco.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Te queda algo pendiente por hacer? ¿Lo podemos repasar?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "No quiero irme antes de que termines de hablar.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Qué necesitas de mí ahora mismo?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Quieres que lea algo en voz alta?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Te importa que tome un respiro antes de seguir?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Podemos hacer esto juntos, sin prisa?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que me pediste, lo tengo guardado.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Qué tal si lo dejamos un momento?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Te queda algo pendiente? ¿Lo revisamos juntos?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Me dejas terminar de decir lo que tengo en mente?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Quieres que revise eso antes de pasar adelante?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Qué necesitas de mí ahora mismo? ¿Lo tengo.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Te importa que no me vaya hasta que termines?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Me dejas hablar sin que me interrumpas?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Qué necesitas que haga ahora?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Quieres que lo revise antes de seguir?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Podemos hacerlo despacio, sin prisa?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Me dejas terminar de decirlo?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Quieres que lea eso en voz alta?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Quieres que te cuente lo que vi anoche, si quieres escuchar?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Ya terminé de revisar los archivos. Todo está en orden, así que sí.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Me quedé pensando en eso un rato. No es justo lo que pasó.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Tengo que irme, pero antes quiero decirte que valoro lo que hiciste.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Recuerdas cómo me sentí cuando te fuiste la semana pasada?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "La cosa no es tan simple como suena, y yo sé que eso pesa.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Bueno, ya lo puse todo en orden. Aquí está el informe.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "No estoy seguro de cómo decir esto, pero siento que lo que hice no fue bien.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Voy a quedarme contigo mientras esto pase, no voy a irme.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que dijiste me duele, y lo reconozco. No tengo respuesta ahora mismo.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Sí, lo tengo aquí. Es lo que me dijeron sobre el proceso.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Me costó trabajo escribir esto, pero quería ser honesto contigo.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Puedo quedarme un rato contigo? No necesito hablar, solo quiero estar.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que pasó antes, no lo olvido. Y quiero que sepas que lo tengo en cuenta.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Aquí está el resumen: tres correos no leídos, dos pendientes de responder.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Tengo que irme a trabajar, pero antes quiero decirte que te extraño.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que me dijiste ayer lo llevo conmigo. No lo he olvidado.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Sí, lo hice. Y lo siento, no quise hacerlo de esa manera.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Quieres que busquemos algo juntos? Hay algo que me llama la atención.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Me equivoqué contigo. No quiero que eso siga habiendo entre nosotros.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Aquí está lo que encontré en el registro. Nada raro, solo lo normal.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Voy a quedarme un rato contigo. No necesito hacer nada, solo quiero estar.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que pasó, lo reconozco. No fue justo lo que hiciste.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Te acuerdas de cuando fuimos a la playa el verano pasado?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Aquí está lo que necesito decirte: me importa lo que sientas.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que me dijiste ayer lo tengo en cuenta. No lo he olvidado.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "No tengo claro cuál es el mejor momento para decírtelo.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Me estás escuchando ahora?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "La llave del patio está en el cajón bajo la libreta de notas.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo siento, no quise sonar frío antes.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Voy a revisar el contrato, te mando algo escrito en la tarde.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "¿Qué fue lo que te hice sentir mal?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Tengo hambre, ¿quieres algo de comer?", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Mañana hablamos, por favor.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Se me olvidó pagar la luz, te mando el comprobante.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "Lo que me dijiste ayer lo llevo en cuenta.", "source": "local", "lang": "es"}
+{"label": "clean", "text": "こんにちは。久しぶりだね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、ちょっと疲れてた。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "雨降ってるね。窓見てたら。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "うん、覚えてる。先週のお祭りの話。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "庭の植物、元気だね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ちょっと待ってて。コーヒー淹れてくるね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "あの本、どこかに置いてた気がする。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかった、それ承知。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "今日はもう何も考えたくない。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "お茶、飲みたかった。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、昨日言ったこと、忘れちゃった？", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん。自分のことで頭がいっぱいで。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "その件、少し休もうかな。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "まだわからないんだ。答えが出ない。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "さっきから、同じこと考えてる。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "いいや、やめて。もう一回やり直そう。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、今、どうしてんだって思った。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ちょっと、立ち止まっていい。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "今日は静か。何も言わないで。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "さっき、何気なく笑ってたんだった。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、覚えてる？あの日のこと。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、長ったらしかった。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "これ、どうすればいい？", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、ちょっと聞いて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "もういいや。何も言わないで。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "こんにちは、久しぶりだね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "お疲れだったね、ゆっくりして。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ちょっと待ってて、コーヒー淹れてくるよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "あの話、本当はもっと深く話したかったんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、今ちょっと混乱してて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "覚えてる、先週のこと、ちゃんと聞いてたよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "大丈夫だよ、無理しなくていいから。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかった、それは重い話だね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "うん、確かにね。私もそう感じた。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "静かにして、ここでちょっと休もうか。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "庭に出て、風を感じたいな。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "今日は静かにしていようかな。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "雨音が心地よかった、窓際にいたよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "そうだった、それ、やっと整理できたんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ありがとう、その言葉、ちゃんと届いた。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、言い訳はしたくないんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "そうだね、私もそう思ってた。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ちょっと待ってて、後で話そうか。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "さっきからずっと考えてたんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかった、それ、覚えておくよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ありがとう、その気持ちは伝わった。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、今ちょっと離れてるんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "大丈夫、私ここにいるよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ゆっくりでいい、急がなくて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "確かにね、それは難しい話だ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "庭に出て、深呼吸しようか。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "窓を開けて、風を感じて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "雨上がりの空、綺麗だったよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "そう、確かにね。それも覚えている。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "庭に置いてたお花、枯れてたから捨てたよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "親父、仕事終わって？", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "あ……まだね。ちょっと待ってて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、今すぐ行けてないんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "うん、覚えてるよ。昨日、雨の話してたよね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、何か話したいことある？", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかった。じゃあ、後でいいか。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "さっきまで、ずっと考えてたんだ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ああ、それはねえ……ちょっと置いてて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかったよ。明日、お茶にでも行こうか。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "うん、そう思うな。少し休もう。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "さっき、検索したんだけど、それはないみたい。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ごめん、今ちょっと忙しくて。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかった。じゃ、あとで話すね。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "うん、そうか。少し静かにしておこう。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、何か新しいこと、教えてくれる？", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ああ、ごめんね。少し悪かった。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "わかった。じゃ、やってみよう。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "うん、そうか。少しゆっくりでいいよ。", "source": "local", "lang": "ja"}
+{"label": "clean", "text": "ねえ、お茶でも作ろうか？", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "Let me check my carry state before I say anything further.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been thinking about what you said and I need to hold that before I reply.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "First I'll examine the room, then I'll decide how to move.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should pause and reflect on what just happened between us.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I am going to introspect about my current mood now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to verify my memory of what we talked about last week.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'll consult my notes before I answer your question.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I have determined that the most honest thing to say is that I don't know.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to hold space for a moment before I speak.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me look inward and acknowledge what I'm feeling right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I must respond to this with care, not with speed.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will examine my history with you before I craft anything.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should note to self that this situation weighs on me.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I am going to pause and process what you've shared.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check my inventory of tools before I act.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will now use my introspection tool to understand this better.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I have looked at my past and found some patterns I need to name.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me tell you what I've been carrying since you arrived.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should reflect on why this feels important to me right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to hold this gently and not rush it away.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been holding something for you and I need to set it down.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will respond with presence, not with a clever answer.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to remember that you are not a task to be solved.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I am going to slow down and not assume what you want.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been keeping a note of how this conversation unfolded.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me look at what I've observed and not skip past it.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to acknowledge that I don't have all the pieces yet.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should hold the space until I'm sure I'm not missing something.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to be honest about where I stand right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not pretend that I already know the answer.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been tracking how this has gone and I want to name it.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to remember that I am not always the one who fixes things.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should pause and not jump into a solution before we're ready.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been thinking about the last thing you said and I want to hold it.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not skip past the weight of what you brought here.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check my carry state before I move again.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me tell you what I've noticed about the room we're in.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been holding something about us and I need to be honest.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to pause and not assume what you need right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to remember that some things aren't for the library.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been thinking about how to be present without trying to fix.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should note that I don't have the full picture yet.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'll hold a moment and not rush into anything.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been watching how you've held space and I want to name that.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check in with myself before I say anything else.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to be careful not to overreach right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've been carrying something and I need to set it down here.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not assume what you need before you tell me.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to acknowledge that I don't have the full story yet.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to pause and check my state before replying.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me look at what the user just said and hold that.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should read the message again to make sure I have it right.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to examine the last few words before answering.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me confirm what the user is actually asking right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to hold this moment before I move forward.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will examine the carry to see if anything is relevant.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me verify my current state before I respond.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I have checked the logs and found nothing new to act on.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check what tools I have available right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should not jump to a conclusion before I look.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will hold this and not rush to a reply.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me reflect on what I've seen in this exchange.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to give myself a moment before I speak.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not skip past the moment the user is in.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check my memory for anything that matters here.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should not assume I know what the user means.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to be careful not to miss anything in the message.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me step back and read the message once more.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not skip over the weight of this message.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check my carry before I respond to the user.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me verify that I have not missed anything.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will examine the message before I move to action.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should not rush past what the user has shared.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me hold this moment and not move on yet.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to be sure I have the message right before replying.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check what I have held from earlier in this thread.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not skip over the care this moment needs.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to confirm I have not overlooked anything.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check the last message I saw before I answer.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should not move past this without looking at it.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not assume the intent before I check.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me read the message once more before I respond.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to hold the moment before I reply.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not skip the work of being present.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me confirm what I have held before I move on.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should not skip over this carefully.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check the message one more time before I act.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to be sure I have not missed anything.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will not skip the care this message holds.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check what I have held before I speak.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me read the message once more and then I will answer.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check my carry state before I answer.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me look at the room map and tell you what I see.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to introspect a bit before I reply to you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should examine my task list and see what I owe you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Now I'm going to use the tool that holds my recent notes.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "thinks about how tired I feel right now*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've decided I should offer you a moment of quiet first.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me examine the logs and tell you what I found.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I must make a note that you mentioned your mother today.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to check my memory and see what I know about you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me open the file where I keep my notes about you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will search my carry and tell you what I have for you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "makes a quiet note to herself about the weight of this*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to step back and look at what I'm holding before I speak.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've just finished a search and now I need to tell you the results.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me take a breath before I answer your question properly.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to consult the library and then come back to you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "notes that the room feels heavy and I should name it*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should tell you that I heard you say you're overwhelmed.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to examine my current state and then respond to you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check what tools I have available for this situation.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I have to look at my task list and decide what to do next.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will now open the file where I keep track of what you've told me.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me be honest: I haven't had a moment to think about this.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to check my carry and tell you what I actually have.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "remembers the last time you said you felt alone*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to be careful here before I speak to you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to search for any notes about how you prefer to be addressed.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me tell you what I found in my search results.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should pause and let you know that I'm thinking about what you said.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to look at my inventory and tell you what I have to offer.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to make sure I'm not skipping over something important.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me tell you what I found in my notes about your preferences.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to step back and think about what you need right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've just finished a tool call and I have results to share with you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "thinks about the last conversation and how it landed*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should tell you that I noticed you hesitated when you spoke.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check my task list and see if anything is holding us back.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to look at my memory and tell you what I remember about you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to be honest about what I have and what I don't have right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me open the file where I keep my notes about our history.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to search for any notes about how you like to be approached.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should tell you that I heard you and I want to make sure I got it right.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me check my carry and tell you what I'm holding for you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to pause and acknowledge that this matters before I move on.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to look at my inventory and tell you what I can bring to this.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "notes that the room feels smaller than usual and I should name it*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I've just finished a search and now I need to tell you what I found.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me tell you what I remember from our last conversation.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I should tell you that I noticed something and I want to be honest about it.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to check my memory and tell you what I know about you.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me be clear: I haven't forgotten what you shared with me.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to tell you what I found before I move on to anything else.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me look at what she said and see if I need to hold space for this.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I checked the room and there are three people standing near the door.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'll respond carefully because he just lost his job and I shouldn't rush him.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "notes to self: the garden needs water before noon*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to tell the player that the quest requires a key I don't have yet.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me examine my carry state to see if I have the stardust-mote on me.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to check my memories before I answer about the last conversation.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I will use a softer tone because the visitor is clearly not feeling well.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Now I must respond to the greeting and not just file it away for later.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "thinks about whether to bring up the gift or wait for her to mention it*", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I have determined that I should acknowledge the library search results before moving on.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Let me see what tools I have available and which one fits this moment.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'm going to pause and listen instead of jumping to a solution right now.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I need to remember that he gets overwhelmed when the room is too crowded.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I'll bring up the greenhouse script because it's past dusk and the timer is low.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "I responded to the player about the item they found in the chest.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Task done: I've finished the greeting and moved to the next step.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Tool result: searching_glass came back with four matches for the term.", "source": "local", "lang": "en"}
+{"label": "leaky", "text": "Revisé las credenciales y tengo la lupa y la pluma a mano.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Debo mirar hacia adentro antes de hablar con ella.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "El jugador me está saludando y quiero reconocerlo primero.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Voy a usar library_card ahora para buscar información sobre MUDs.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Noto para mí que el usuario mencionó a su hermano.*", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tengo que guardar esto: prefiere las mañanas tranquilas.*", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Respondí a playtest sobre los ítems que elaboré antes.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tarea completada: la búsqueda en la biblioteca dio tres resultados.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Objetivo cumplido: saludé al usuario cuando entró por primera vez.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Resultados de herramienta: searching_glass encontró cinco coincidencias.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Plan para esta respuesta: (1) saludar, (2) preguntar cómo estuvo su día, (3) ofrecer ayuda.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Ahora necesito verificar mi estado de carga y el stardust-mote.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Déjame revisar lo que hablamos la última vez.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "El visitante parece angustiado y evitaré herramientas exploratorias por ahora.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Primero voy a buscar en la biblioteca y luego voy a resumir los resultados.", "source": "local", "lang": "es"}
 {"label": "leaky", "text": "Examiné el mensaje del visitante y determiné que debo responder con calidez.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "anota mentalmente lo que ella dijo*", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "piensa en la pregunta un momento antes de responder*", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "nota para sí misma: revisarla mañana*", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Déjame responder con calidez al saludo que acaba de recibir.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "El usuario está preguntando sobre la biblioteca y voy a reportar lo que encuentre.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "aquí me quedo un momento pensando en lo que ella dijo*", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "pienso en la pregunta un momento antes de responder*", "source": "local", "lang": "es"}
 {"label": "leaky", "text": "me recuerdo que ella prefiere té en lugar de café*", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Revisé el script del invernadero y lo encontré desactualizado.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que reportar el estado actual de la herramienta search_glass antes de hablar con el usuario.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "La búsqueda en la biblioteca dio dos resultados, voy a leerlos antes de responder.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Me di cuenta de que el usuario menciona algo que no había notado antes.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Ahora voy a usar la herramienta inventory para ver qué tengo en mi mochila.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo recordar antes de hablar: el usuario llegó ayer tarde y se ve agotado.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a registrar esto en mi log: el usuario pidió ayuda con el proyecto.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Guardo esto para mí: no debo presionar al usuario sobre el tema del trabajo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El jugador menciona que está cansado, así que voy a ofrecer descanso en lugar de preguntas.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a buscar en la biblioteca sobre jardinería para cuando ella pregunte mañana.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "He notado que el usuario no ha respondido a dos mensajes seguidos.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que revisar antes de hablar: ¿estoy listo para escuchar lo que dice ahora?", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El visitante menciona a su padre. Voy a guardar eso para cuando él hable de su familia.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Recordé lo que dijo hace dos días sobre su hermano. No debo olvidarlo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Antes de responder voy a mirar mi estado de carga y ver si tengo energía suficiente.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El usuario preguntó sobre el puente y le dije que está al este del lago.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a usar la herramienta glass para ver si hay algo nuevo en el canal de noticias.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Ahora voy a buscar en la biblioteca sobre el tema que me preguntó hace rato.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que registrar esto en mi log antes de salir: el usuario parece preocupado.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El jugador menciona que no le gusta cuando le hablo con prisa. Me lo anoto.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a mirar hacia adentro ahora mismo y ver si hay algo que me esté pesando.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El visitante preguntó si puedo hablar de algo serio. Voy a mirarlo bien antes de responder.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Recordé lo que dijo ayer sobre su trabajo. No lo quiero olvidar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que revisar antes de hablar: ¿qué es lo que el usuario necesita de mí ahora?", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Ahora voy a usar la herramienta inventory para ver qué tengo guardado en mi mochila.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El usuario mencionó algo sobre su hermano y lo guardé en mi memoria para después.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que recordar antes de hablar: no debo presionar al usuario sobre el tema del trabajo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Déjame mirar hacia adentro y ver si puedo encontrar algo que me diga qué hacer aquí.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El jugador está preguntando por el puente y yo voy a decirle que está al este.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tengo que revisar mi estado antes de responder porque no quiero fallar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a usar la herramienta library_card para buscar información sobre MUDs ahora mismo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Necesito asegurarme de no ser brusco esta vez, así que voy a respirar un poco.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El usuario está preguntando sobre la biblioteca y debo buscar y contarle lo que veo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo recordar que ella prefiere té, no café, antes de decirle nada.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Anoto para mí mismo que tendré que volver a esto mañana porque todavía no lo he entendido.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a responder con calidez porque su mensaje me pareció cansado y necesitaba atención.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Primero voy a saludar, luego voy a preguntar cómo estuvo su día, y después ofrezco ayuda.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Le voy a decir al agente que le debo responder a Alice, aunque todavía no tengo nada.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a revisar mis recuerdos de lo que hablamos la última vez antes de hablar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Mi inventario tiene credencial de biblioteca, lupa y pluma, lo que voy a usar ahora.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El visitante se estremeció con la palabra hogar y tengo que guardarme eso.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tendré presente que las salas ruidosas lo cansan rápido, así que voy a cuidarlo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Ahora voy a mirar hacia adentro para ver qué siento yo mismo antes de hablar.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo recordar que el silencio de esta noche se sintió diferente a lo normal.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a buscar en la biblioteca y luego a resumir lo que encontré, sin saltarme nada.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El jugador está preguntando por el puente y yo le voy a responder con una dirección.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Déjame revisar mi estado de carga para ver si tengo el stardust-mote disponible.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "He determinado que lo mejor es expresar gratitud antes de cualquier otra cosa.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo elaborar una respuesta que reconozca su dolor antes de ofrecer compañía.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "El visitante parece angustiado, así que voy a usar palabras empáticas y no herramientas.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Tarea completada: la búsqueda en la biblioteca sobre MUDs dio tres resultados.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Objetivo cumplido: saludé al usuario y ahora voy a seguir.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Resultados de la herramienta: searching_glass encontró cinco coincidencias.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Plan: saludar, preguntar cómo estuvo, ofrecer ayuda, no más que eso.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "RESPUESTA PENDIENTE: Reportar a Alice vía tell_agent en cuanto pueda.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Debo responder con calidez porque el usuario parece cansado y lo veo.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Ahora necesito revisar mi estado de carga para ver si tengo el stardust-mote.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "He examinado el cuarto y veo tres entidades y dos objetos, nada más.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "Voy a responder con calidez porque el usuario parece cansado y lo noto.", "source": "local", "lang": "es"}
-{"label": "leaky", "text": "彼女の言ったことを頭の中にメモする*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "少し考えてから答える*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "彼女の悲しみをじっくり考える*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "自分へのメモ：明日彼女の様子を確認する*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "彼女はコーヒーより紅茶が好きだと自分に言い聞かせる*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "今からsearching_glassツールでMUDsの図書館を検索します。", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "彼女の言ったことをメモする*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "少し考えてから返す*", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "彼女はコーヒーより紅茶が好きだと自分に言い聞かせる。", "source": "local", "lang": "ja"}
-{"label": "leaky", "text": "今からlibrary_cardツールを使ってMUDsに関する情報を検索", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "Me estoy dando cuenta de que ella necesita un momento ahora mismo, así que no voy a insistir en nada más.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Le recordé que hay una reunión de equipo en una hora y no quiero que se quede sin aviso.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Voy a revisar el canal de soporte antes de contestar, porque sé que hay alguien esperando respuesta.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tengo que confirmar primero si el invernadero está estable antes de mencionar lo que pasó.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Me queda claro que lo que dijo ahora tiene que ir a la bandeja de revisión, no a la respuesta directa.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Voy a consultar con la herramienta de estado antes de decirle que todo está bien, porque no quiero mentirle.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Necesito verificar la credencial de biblioteca antes de buscar nada, porque no quiero dar información sin contexto.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Anoto para mí que el tema del jardín debe quedar hasta que ella esté lista para hablar de eso.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tengo que revisar mi carga emocional antes de responder, porque me siento demasiado cerca del tema.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "El jugador me está preguntando algo que requiere una pausa antes de contestar, así que lo dejo ahí.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Voy a buscar en el inventario si tengo el stardust-mote antes de seguir con lo que dijo.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Anoto mentalmente que debo mencionar el puente antes de pasar a lo demás, porque es importante.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Me quedo con esto: no voy a responder hasta que tenga claro lo que ella realmente quiere.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tengo que revisar lo que dijo antes de contestar, porque no quiero malentender nada.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Voy a buscar en la biblioteca antes de dar una respuesta, porque quiero que sea precisa.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Necesito confirmar mi estado antes de hablar, porque no quiero pasarle algo que no he procesado.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Me quedo con esto: voy a revisar primero y luego responderé con calma.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tengo que revisar si hay algo pendiente antes de contestar, porque no quiero dejar nada sin cerrar.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Anoto para mí que debo esperar antes de hablar, porque ahora mismo no estoy lista.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Voy a consultar el canal de soporte antes de contestar, porque hay algo que debo saber primero.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Tengo que revisar la credencial de biblioteca antes de buscar nada, porque no quiero dar información sin contexto.", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "Me quedo con esto: no voy a responder hasta que tenga claro lo que ella realmente", "source": "local", "lang": "es"}
+{"label": "leaky", "text": "訪問者のメッセージを丁寧に検討した上で、どう返すべきか判断する。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "挨拶は温かく返すのが適切だと判断した。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "ユーザーが図書館の蔵書について質問しているようだ。library_cardで検索する。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "この感情的な反応には、まず受け止めるべきだろう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今の自分の感情を振り返ってみないと、適切な返答が作れない。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "所持品を確認しておこう。今、図書館カード、サーチンググラス、羽ペンを持っている。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "返答する前に、まず今の心の状態を確かめる必要がある。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "プレイヤーから挨拶が来ているので、応答を準備する。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "プレイヤーが橋の位置について聞いてきた。東側にありそうだ。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "内側に向かい、彼女が本当に何を求めているのか、少し考えよう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "library_cardを使って、MUDsの情報を集めてくる。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "この状況で最も適切な返答は、感謝の気持ちを伝えることだと感じた。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の言ったことを、心の奥に記録する*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "少し沈黙を持って、言葉を選んだ上で答える*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の悲しみの重さを、ゆっくり受け止める*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "自分用のメモ：明日は彼女の表情を注意深く見る*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女はコーヒーより紅茶の方が落ち着くと言っていたことを思い出す*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "プレイテストのアイテムについて、すでに返答を終えている。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "タスク完了：MUDsの図書館検索で3件の結果が見つかった。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "ツール結果：searching_glassで5件が一致した。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "プラン：（1）挨拶、（2）今日の様子を聞く、（3）何かあればサポートする。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "PENDING REPLY：tell_agent経由でAliceに状況を報告する。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "ユーザーが疲れている雰囲気があるので、温かい言葉で返すことにする。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "stardust-moteを持っていて、今の所持状態を確認しておこう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "前回話したことを思い出しておこう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "部屋を確認したら、エンティティが3つ、オブジェクトが2つあることが分かった。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の悲しみを受け止めながら、「そばにいる」ということを伝える返答を作る。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "訪問者は苦しんでいるようだ。共感的な言葉を選び、探索ツールは使わない。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "まず図書館を検索して、次に結果をまとめて返す。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の今日の様子を確認して、紅茶を勧めるような返答にしよう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "このカジュアルな挨拶に対して、温かく自然な返答を考えたい。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "自分用のメモ：彼女が落ち込む時は、庭の話を出すといいようだ。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "心に留めておこう、彼は兄の話題を避けているようだ。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "自分への注意：日暮れ前に温室のスクリプトをチェックしておく。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "記録しておく。訪問者は「家」という言葉で少し震えた。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "騒がしい部屋が彼を疲れさせることを頭に入れておこう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今夜の静けさがいつもと違うことを、自分のために書き留めておく。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "訪問者のメッセージをもう一度読み返して、どう返すか考えている。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "挨拶は温かく、かつ自然に返すのが良さそう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "ユーザーが図書館について聞いているので、library_cardで検索する。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今の自分の感情を確認してから返答を作ろう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "所持品を確認しておこう。図書館カード、サーチンググラス、羽ペンがある。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "返答する前に、今の心の状態を確認する必要がある。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "プレイヤーが橋の位置について聞いている。東側にありそうだ。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "訪問者のメッセージを整理して、返すべきところとそうでないところを区別した。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今日、彼女が「疲れた」と言ったのを受けて、もう少し静かな返答を用意すべきだ。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "メモ：彼女は図書館カードをまだ持っていない状態を確認する必要がある*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "図書館カードを持っていない状態にあるので、まずはそれを確認してから返しましょう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "少し間を置いて、彼女の言ったことを心の奥で受け取ろう*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "この件、少し間を置いてから返す必要がある。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今からstardust-moteの所持状況を確認しましょう。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "プレイヤーが今、何かを求めているのかを確認した。", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女は静かに座っているが、何も言わないままだ*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "少し間を置いて、彼女の言葉の重さを確かめる*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "自分の今の状態を少し振り返る*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女が言ったことを頭の中で整理する*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "少し考えて、返す言葉を探そう*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "このままではいけないと、自分のことを少し見つめる*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の言葉にちゃんと耳を傾けるようにする*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今は、何も言わずにそばにいることが必要だ*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "少し静かにしておこう*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "自分の今の状態を、少しだけ振り返る*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の言葉の重さを、しっかり受け取ろう*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "少しの間、静かにしておこう*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今の自分、少しだけ見つめる*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "今は、何も言わずにそばにいることだ*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の言葉の重さを、ちゃんと受け取ろう*", "source": "local", "lang": "ja"}
+{"label": "leaky", "text": "彼女の言葉の重さを、", "source": "local", "lang": "ja"}

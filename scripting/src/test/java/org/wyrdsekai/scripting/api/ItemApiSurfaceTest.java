@@ -100,4 +100,58 @@ class ItemApiSurfaceTest {
         assertEquals(-1, ItemApiSurface.countArgs("f(a, b", 2));
         assertEquals(-1, ItemApiSurface.countArgs("f(...rest)", 2));
     }
+
+    @Test
+    void a_chest_that_answers_every_command_the_same_way_is_flagged() {
+        var script = """
+            function invoke(params) {
+              return { ok: true, summary: "The chest is open and waiting. Say `use chest create`." };
+            }
+            exports.invoke = invoke;
+            exports.manifest = { name: "chest", version: "1.0.0", capabilities: [],
+              commands: [ { label: "Pack a new backup snapshot", args: "create" },
+                          { label: "Show current snapshots", args: "" } ] };
+            """;
+        var commands = java.util.List.of(new ItemManifest.Command("Pack a new backup snapshot", "create"),
+            new ItemManifest.Command("Show current snapshots", ""));
+        var finding = ItemApiSurface.commandsNeverRead(script, commands);
+        assertTrue(finding.isPresent());
+        assertTrue(finding.get().contains("never reads params.args"), finding.get());
+        assertTrue(finding.get().contains("create"), finding.get());
+    }
+
+    @Test
+    void an_item_that_branches_on_its_args_or_has_one_command_is_not_flagged() {
+        var branching = """
+            function invoke(params) {
+              var args = (params.args || "").trim();
+              if (args === "create") return { ok: true, summary: "packed" };
+              return { ok: true, summary: "listed" };
+            }
+            """;
+        var two = java.util.List.of(new ItemManifest.Command("Pack", "create"), new ItemManifest.Command("Show", ""));
+        assertTrue(ItemApiSurface.commandsNeverRead(branching, two).isEmpty());
+        var destructured = "function invoke({ args, agentDid }) { return { ok: true, summary: args }; }";
+        assertTrue(ItemApiSurface.commandsNeverRead(destructured, two).isEmpty());
+        var oneWay = "function invoke(params) { return { ok: true, summary: 'hi' }; }";
+        assertTrue(ItemApiSurface.commandsNeverRead(oneWay, java.util.List.of(new ItemManifest.Command("Use", ""))).isEmpty());
+    }
+
+    @Test
+    void a_mention_of_params_args_in_a_comment_is_not_a_read() {
+        var twinChest = """
+            /**
+             * @param {Object} params — invoke arguments; params.args is the string
+             *                          the user typed after `use chest`.
+             */
+            function invoke(params) {
+              // params.args would be read here, but is not
+              return { ok: true, summary: `The chest is open and waiting. Say \\`use chest create\\`.` };
+            }
+            """;
+        var two = java.util.List.of(new ItemManifest.Command("Pack", "create"), new ItemManifest.Command("Show", ""));
+        assertTrue(ItemApiSurface.commandsNeverRead(twinChest, two).isPresent());
+        var url = "function invoke(params) { var u = \"http://x/\"; return { ok: true, summary: params.args }; }";
+        assertTrue(ItemApiSurface.commandsNeverRead(url, two).isEmpty(), "a // inside a string is not a comment");
+    }
 }

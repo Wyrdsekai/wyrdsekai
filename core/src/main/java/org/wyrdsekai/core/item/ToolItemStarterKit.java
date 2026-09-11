@@ -678,7 +678,8 @@ public final class ToolItemStarterKit {
                     new ToolParam("description", "string",
                         "The full task in plain words, with any paths named", true, null),
                     new ToolParam("workspace", "string",
-                        "Optional directory to work in (under granted open-roots)",
+                        "Leave this out unless the person named a directory on this machine — the "
+                            + "task then gets its own scratch directory. A path you invent is refused.",
                         false, null))),
 
             ToolItem.builtin("introspect", "Introspect",

@@ -1393,9 +1393,12 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
 
     @Override
     public List<Map<String, Object>> safeSnapshots() {
-        if (backupOrchestrator == null) return List.of();
+        // The SSH Study built this provider without withBackups(); the node's orchestrator
+        // answers when none was handed over (2026-09-10).
+        var backups = backupOrchestrator != null ? backupOrchestrator : BackupOrchestrator.installed();
+        if (backups == null) return List.of();
         try {
-            var snaps = backupOrchestrator.listSnapshots();
+            var snaps = backups.listSnapshots();
             var out = new ArrayList<Map<String, Object>>(snaps.size());
             for (var s : snaps) {
                 var m = new LinkedHashMap<String, Object>();

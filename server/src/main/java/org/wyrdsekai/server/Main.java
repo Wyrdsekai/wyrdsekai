@@ -910,6 +910,7 @@ public class Main {
             if (backupEnabled) {
                 var backupDir = SystemPaths.dataDir().resolve("backups");
                 backupOrchestrator = new BackupOrchestrator(backupDir);
+                BackupOrchestrator.install(backupOrchestrator);   // world.safe.snapshots on every item path
                 var maxSnapshots = config.getInt("wyrdsekai.backup.max-snapshots");
                 backupOrchestrator.setMaxSnapshots(maxSnapshots);
 
@@ -1051,6 +1052,7 @@ public class Main {
             var maintBackups = backupOrchestrator != null
                 ? backupOrchestrator
                 : new BackupOrchestrator(SystemPaths.dataDir().resolve("backups"));
+            if (BackupOrchestrator.installed() == null) BackupOrchestrator.install(maintBackups);
             MaintenanceService.init(jdbcUrl, dialect, authService, maintBackups,
                 SystemPaths.dataDir(),
                 Path.of(config.getString("wyrdsekai.db.path")),
@@ -2915,14 +2917,35 @@ public class Main {
                         var ptRelayUrl = cfg.peerTrainingRelayUrl();
                         var ptRelayUser = cfg.peerTrainingRelayUser();
                         var ptRelayPass = cfg.peerTrainingRelayToken();
-                        if (ptRelayUrl != null && !ptRelayUrl.isBlank() && ptRelayPass != null) {
+                        // Same dual-mode rule as every other relay leg: the node's NKey
+                        // when WYRDSEKAI_RELAY_USE_NKEY=true, the household password only
+                        // as the fallback (sibling of the MCP relay leg, 2026-09-10).
+                        NodeIdentity ptRelayIdentity = null;
+                        if ("true".equalsIgnoreCase(
+                                System.getenv().getOrDefault("WYRDSEKAI_RELAY_USE_NKEY", "false"))) {
+                            try {
+                                ptRelayIdentity = NodeIdentity.loadOrGenerate(Path.of(
+                                    System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR",
+                                        System.getProperty("user.home") + "/.wyrdsekai"))
+                                    .resolve("node-identity.json"));
+                            } catch (Exception e) {
+                                log.warn("Peer-training relay: NKey requested but identity load failed — "
+                                    + "falling back to password mode: {}", e.getMessage());
+                            }
+                        }
+                        if (ptRelayUrl != null && !ptRelayUrl.isBlank()
+                                && (ptRelayIdentity != null || ptRelayPass != null)) {
                             try {
                                 var optsB = new Options.Builder()
                                     .server(ptRelayUrl)
                                     .connectionName("wyrd-peer-training-relay-" + trainingNodeId)
                                     .maxReconnects(-1)
-                                    .reconnectWait(Duration.ofSeconds(2))
-                                    .userInfo(ptRelayUser, ptRelayPass);
+                                    .reconnectWait(Duration.ofSeconds(2));
+                                if (ptRelayIdentity != null) {
+                                    optsB.authHandler(ptRelayIdentity.nkeyAuthHandler());
+                                } else {
+                                    optsB.userInfo(ptRelayUser, ptRelayPass);
+                                }
                                 var ptRelayConn = Nats.connect(optsB.build());
                                 var ptRelayTransport = new NatsPeerTrainingTransport(ptRelayConn);
                                 var ptRelaySvc = new TrainingPeerService(
@@ -4393,9 +4416,34 @@ public class Main {
                                     default -> relayLog.debug("Relay NATS event: {}", type);
                                 }
                             });
-                        if (relayUser != null && !relayUser.isBlank()
+                        // dual-mode, same rule as RelayBridge and
+                        // RelaySessionTransport: prefer the node's NKey when
+                        // WYRDSEKAI_RELAY_USE_NKEY=true. This leg was the only one left
+                        // dialling with the household password after an NKey enrolment —
+                        // the deprecated record had to be kept alive just for it (2026-09-10).
+                        NodeIdentity mcpRelayIdentity = null;
+                        if ("true".equalsIgnoreCase(
+                                System.getenv().getOrDefault("WYRDSEKAI_RELAY_USE_NKEY", "false"))) {
+                            try {
+                                var mcpIdDir = Path.of(
+                                    System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR",
+                                        System.getProperty("user.home") + "/.wyrdsekai"));
+                                mcpRelayIdentity = NodeIdentity.loadOrGenerate(
+                                    mcpIdDir.resolve("node-identity.json"));
+                            } catch (Exception e) {
+                                relayLog.warn("Relay NATS: NKey requested but identity load failed — "
+                                    + "falling back to password mode: {}", e.getMessage());
+                            }
+                        }
+                        if (mcpRelayIdentity != null) {
+                            optsBuilder.authHandler(mcpRelayIdentity.nkeyAuthHandler());
+                            relayLog.info("Relay NATS: NKey auth (pubkey={}…)",
+                                mcpRelayIdentity.nkeyPublicKey().substring(0, 8));
+                        } else if (relayUser != null && !relayUser.isBlank()
                             && relayPass != null && !relayPass.isBlank()) {
                             optsBuilder.userInfo(relayUser, relayPass);
+                            relayLog.info("Relay NATS: password auth (user={}) — DEPRECATED, "
+                                + "enrol with `wyrd relay register-nkey <invite-url>`", relayUser);
                         }
                         var relayConn = Nats.connect(optsBuilder.build());
                         var mcpNatsRelay = new McpNatsHandler(

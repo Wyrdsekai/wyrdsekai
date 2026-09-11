@@ -1,6 +1,8 @@
 package org.wyrdsekai.scripting.api;
 
 import org.graalvm.polyglot.HostAccess;
+import java.util.LinkedHashSet;
+import java.util.Optional;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -84,6 +86,40 @@ public final class ItemApiSurface {
      * knows and a member it does not have. Comments are stripped first. Calls into namespaces
      * the surface does not know (adapters) are not reported.
      */
+    /** invoke() reads what was typed: {@code params.args}, {@code params["args"]}, or a destructured {@code args}. */
+    private static final Pattern READS_ARGS = Pattern.compile(
+        "params\\s*\\.\\s*args|params\\s*\\[\\s*[\"']args[\"']\\s*\\]|\\{[^}]*\\bargs\\b[^}]*\\}\\s*=\\s*params|\\(\\s*\\{[^)]*\\bargs\\b");
+
+    /**
+     * An item that lists several commands but never reads what was typed does the same thing
+     * whatever is asked of it — {@code use chest create} answered with the very sentence that
+     * said to type {@code use chest create} (household node, 2026-09-10). Empty when the commands
+     * are honoured, or when there is only one way to use the item.
+     */
+    /** Comment patterns for the args check — a {@code //} after a quote or colon is a URL in a string, not a comment. */
+    private static final Pattern ARGS_BLOCK_COMMENT = Pattern.compile("/\\*[\\s\\S]*?\\*/");
+    private static final Pattern ARGS_LINE_COMMENT = Pattern.compile("(?m)(^|[^:\"'])//[^\\n]*");
+
+    static String withoutComments(String script) {
+        var s = ARGS_BLOCK_COMMENT.matcher(script).replaceAll(" ");
+        return ARGS_LINE_COMMENT.matcher(s).replaceAll("$1");
+    }
+
+    public static Optional<String> commandsNeverRead(String script, List<ItemManifest.Command> commands) {
+        if (script == null || commands == null) return Optional.empty();
+        var distinct = new LinkedHashSet<String>();
+        for (var c : commands) if (c != null) distinct.add(c.args() == null ? "" : c.args().trim());
+        if (distinct.size() < 2) return Optional.empty();
+        // Code, not commentary: the twin chest's only mention of params.args was the JSDoc line
+        // saying what it is — and the check read it as a read.
+        if (READS_ARGS.matcher(withoutComments(script)).find()) return Optional.empty();
+        var shown = new ArrayList<String>();
+        for (var a : distinct) shown.add(a.isEmpty() ? "\"\"" : a);
+        return Optional.of("manifest declares " + distinct.size() + " commands (args: "
+            + String.join(", ", shown) + ") but invoke() never reads params.args — every command "
+            + "does the same thing. Read params.args and branch on it, or declare a single command.");
+    }
+
     public static List<Unresolved> check(String script) {
         var out = new ArrayList<Unresolved>();
         if (script == null || script.isBlank()) return out;

@@ -1,6 +1,9 @@
 package org.wyrdsekai.core.persistence;
 
 import org.slf4j.Logger;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -35,6 +38,18 @@ public class BackupOrchestrator {
         long sizeBytes,
         String source
     ) {}
+
+    /**
+     * The node's orchestrator, for every item path that reads {@code world.safe.snapshots()}.
+     * The key chest opened on "bare cedar" for the companion while ten snapshots sat in
+     * backups/ (2026-09-10): only the player-side Home provider was ever handed the
+     * orchestrator, so the item's provider on every other path answered with the interface's
+     * empty default. One holder, set once at boot, read by all of them.
+     */
+    private static volatile BackupOrchestrator installed;
+
+    public static void install(BackupOrchestrator orchestrator) { installed = orchestrator; }
+    public static BackupOrchestrator installed() { return installed; }
 
     private final Path backupDir;
     private int maxSnapshots = 5;
@@ -182,6 +197,22 @@ public class BackupOrchestrator {
             log.error("Failed to list snapshots: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /** The snapshot list as an item sees it — one row shape on every path. */
+    public List<Map<String, Object>> snapshotRows() {
+        var snaps = listSnapshots();
+        var out = new ArrayList<Map<String, Object>>(snaps.size());
+        for (var s : snaps) {
+            var m = new LinkedHashMap<String, Object>();
+            m.put("id", s.backupId());
+            m.put("location", s.location() != null ? s.location().toString() : null);
+            m.put("timestamp", s.timestamp() != null ? s.timestamp().toString() : null);
+            m.put("sizeBytes", s.sizeBytes());
+            m.put("source", s.source());
+            out.add(m);
+        }
+        return out;
     }
 
     /** Get the most recent snapshot. */

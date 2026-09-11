@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.item;
 
+import org.wyrdsekai.core.agent.ActionPolicy;
+
 import org.wyrdsekai.scripting.api.ItemApiSurface;
 import org.wyrdsekai.scripting.api.ItemManifestParser;
 
@@ -46,11 +48,21 @@ public final class ItemWiringCli {
                 try { script = Files.readString(p); } catch (IOException e) { System.out.println("BROKEN  " + p + ": unreadable (" + e.getMessage() + ")"); broken++; continue; }
                 var manifest = ItemManifestParser.parse(script);
                 var name = manifest == null ? p.getFileName().toString() : manifest.name();
-                var bad = ItemApiSurface.check(script);
+                var bad = new ArrayList<String>();
+                for (var u : ItemApiSurface.check(script)) bad.add(u.reason());
+                if (manifest != null) {
+                    ItemApiSurface.commandsNeverRead(script,
+                        manifest.commands() == null ? List.of() : manifest.commands()).ifPresent(bad::add);
+                    if (!ScriptedItemLoader.isBundledPath(p) && !ScriptedItemLoader.isSystemAuthor(manifest.author())
+                            && ActionPolicy.isKnownAction(manifest.name())) {
+                        bad.add("'" + manifest.name() + "' is the name of a builtin action — an item by that "
+                            + "name can never be reached (the builtin always wins). Give it its own name.");
+                    }
+                }
                 if (bad.isEmpty()) { if (!quiet) System.out.println("ok      " + name + "  (" + p + ")"); continue; }
                 broken++;
                 System.out.println("MIS-WIRED " + name + "  (" + p + ")");
-                for (var u : bad) System.out.println("    " + u.reason());
+                for (var r : bad) System.out.println("    " + r);
             }
         }
         System.out.println(files + " item script(s) checked in " + dirs.size() + " dir(s): " + broken + " mis-wired");

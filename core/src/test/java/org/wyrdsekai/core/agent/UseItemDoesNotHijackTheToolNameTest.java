@@ -39,7 +39,7 @@ class UseItemDoesNotHijackTheToolNameTest {
         var src = Files.readString(ACTOR);
         var start = src.indexOf("private JsonNode unwrapUseItem");
         assertTrue(start > 0, "unwrapUseItem not found");
-        var unwrap = src.substring(start, Math.min(src.length(), start + 4000));
+        var unwrap = src.substring(start, Math.min(src.length(), start + 12000));
 
         assertTrue(unwrap.contains("if (!rewritten.has(\"mode\")) rewritten.set(\"mode\""),
             "a nested `action` must be carried across as `mode`, not copied onto the node where it "

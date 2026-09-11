@@ -40,10 +40,13 @@ class UseItemNameSpellingTest {
         var src = Files.readString(ACTOR);
         var start = src.indexOf("private JsonNode unwrapUseItem");
         assertTrue(start > 0, "unwrapUseItem not found");
-        var unwrap = src.substring(start, Math.min(src.length(), start + 4000));
-        assertTrue(unwrap.contains("wantedKey.equals(toolNameKey(t.function().name()))"),
-            "permitted-scope must match on the spelling-insensitive key");
-        assertTrue(unwrap.contains("target = t.function().name();"),
+        var unwrap = src.substring(start, Math.min(src.length(), start + 12000));
+        // The key comparison lives in hatchNameFor (2026-09-10: it also drops a placement suffix);
+        // the hatch must go through it and take the tool's real name back.
+        assertTrue(unwrap.contains("hatchNameFor(target, scopedNames)"),
+            "permitted-scope must match on the spelling-insensitive key (hatchNameFor)");
+        assertTrue(unwrap.contains("target = resolved;"),
             "a key match must rewrite the target to the tool's real name, or dispatch misses");
+        assertEquals("key_chest", CompanionActor.hatchNameFor("Key Chest", java.util.List.of("key_chest")));
     }
 }

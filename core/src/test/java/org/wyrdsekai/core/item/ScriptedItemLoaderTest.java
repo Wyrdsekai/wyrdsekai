@@ -315,4 +315,37 @@ class ScriptedItemLoaderTest {
         assertEquals(household.resolve("journal.js"), loaded.getFirst().sourcePath());
         assertTrue(loaded.getFirst().scriptSource().contains("recent(7)"));
     }
+
+    @Test
+    void an_agent_built_item_may_not_take_the_name_of_a_builtin_action() throws IOException {
+        // The companion built "craft_from_template" — the verb she had meant to call — and it was
+        // kept as a dead item beside the real action (household node, 2026-09-11).
+        var agentBuilt = """
+            exports.manifest = {
+              name: "craft_from_template",
+              version: "1.0.0",
+              description: "a bonded object that arrives with its own history",
+              author: "did:wyrd:openhands",
+              capabilities: []
+            };
+            function invoke(p) { return { ok: true }; }
+            """;
+        Files.writeString(itemsDir.resolve("craft_from_template.js"), agentBuilt);
+        var loaded = loader.reloadAll();
+        assertTrue(loaded.stream().noneMatch(d -> d.itemId().equals("craft_from_template")),
+            "an item named after a builtin action is not loaded");
+        assertTrue(loader.register(itemsDir.resolve("craft_from_template.js")).isEmpty(),
+            "register() says it did not register, so the bridge places it as inert");
+        var audit = loader.wiringAudit();
+        assertTrue(audit.stream().anyMatch(e -> e.itemId().equals("craft_from_template")
+            && e.unresolved().getFirst().contains("Give it its own name")), audit.toString());
+
+        // The runtime's own items are exempt — a bundled item may carry a verb's name.
+        var ours = agentBuilt.replace("did:wyrd:openhands", "did:wyrd:system").replace("craft_from_template", "go_to_room");
+        Files.writeString(itemsDir.resolve("go_to_room.js"), ours);
+        assertTrue(loader.reloadAll().stream().anyMatch(d -> d.itemId().equals("go_to_room")));
+        // And an ordinary agent-built name is untouched.
+        Files.writeString(itemsDir.resolve("gift_of_work.js"), agentBuilt.replace("craft_from_template", "gift_of_work"));
+        assertTrue(loader.reloadAll().stream().anyMatch(d -> d.itemId().equals("gift_of_work")));
+    }
 }

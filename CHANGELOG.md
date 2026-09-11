@@ -4,7 +4,65 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.3.1] — 2026-09-11
+
+A point release for the companion's own reach: what she names, she can use; what she is
+forced to choose between includes declining; what did not happen is not reported as done.
+
+### Fixed
+- **She can find her way back to a room she made.** `go_to_room` matched only the exits of
+  the room she was standing in, so a room she had built the day before, two doors away, did
+  not exist to it, and she made it again: nine rooms in three days, most of them the same
+  room. Now a room anywhere in the zone is found by its name, with the doors between from the
+  map, and her own home is reachable by its id however the model spells it. A room's name is
+  cut at its first seam when the model pads it with the description (a 675-character room
+  name, an id the length of a paragraph, every door list in every prompt carrying all of it);
+  the rest becomes the description. Asking to make a room that already exists walks her to
+  it instead.
+- **Tired is not the same as not missing anyone.** Below the rest line the decide step chose
+  rest unconditionally, and her energy sat below it all day, so "check in on someone I care
+  about" lost to rest on every tick of a two-day absence and never became a note on anyone's
+  desk. A relational want that weighs enough now goes out at low energy; everything else
+  rests. A want that came due while she was mid-thought is held and enacted at the next tick
+  she is free instead of dropped.
+- **The phone door on the relay now uses the node's NKey too.** After `wyrd relay
+  register-nkey`, the Between bridge and the session transport switched to NKey auth but the
+  MCP relay leg kept dialling with the deprecated household password, so the password record
+  had to stay alive just for it. It follows the same rule as the other two legs now: NKey when
+  `WYRDSEKAI_RELAY_USE_NKEY=true`, password only as the fallback, and it says which it used.
+  The peer-training relay leg follows the same rule.
+- **The key chest shows the companion the household's snapshots.** It opened on "bare cedar" for
+  her while ten snapshots sat in the backups directory: only the player-side Home provider was
+  ever handed the backup orchestrator, so on every other path, the companion's and the ssh
+  Study's, the item read an empty default. One holder now answers on all of them.
+- **A forced "act or decline" surface always offers decline.** When her reply named work she had
+  not yet reached for, the loop narrowed her tools to the build tools and required a call, but
+  decline was on that surface only when the ranker happened to rank it, and eight times in a
+  week it did not: one tool, required. Every build that week came through that door. Decline is
+  added whenever it is missing.
+- **A refused dispatch is reported to the loop as refused.** The handler spoke the refusal and
+  returned; the loop was then told the action executed, and she announced a build that never
+  started a second after saying it could not. The observation now carries what happened and how
+  to proceed. The dispatch schema also says to leave the workspace out unless a person named a
+  directory, which is where an invented path came from.
+- **`use_item` reaches what she names.** A placed item is listed to her by its object name, and a
+  second copy of the same item gets "-2" while the tool is still "chest"; a fixture of the room
+  is not a tool; an action she is told to use, such as `workbench_submit`, is an action rather
+  than an item. All three were refused as "not permitted", 63 times in a week, when nothing
+  about permission was in question. The placement suffix is dropped, a fixture is examined, a
+  known action is passed through, and the refusal names the nearest tools instead.
+- **An item that declares commands it never reads is flagged.** A chest that answered every
+  command, including `create`, with the sentence telling you to type `create` passed every
+  check. The loader and `wyrd items check` now report a manifest with several commands whose
+  `invoke()` never reads `params.args`.
+- **A forced build surface offers the template tools, not only the workshop.** When her
+  reply named something to make, the forced surface held the coding dispatch and decline;
+  she said "I meant to call craft_from_template" and the gift went to the coding backend
+  instead. `craft_from_template` and `create_room_from_template` are on that surface now.
+- **An item may not take the name of a builtin action.** The tool list bakes the runtime's
+  own actions in and drops a loaded script with the same id, so an item named
+  `craft_from_template` could never be reached and sat as a dead object in a room. The loader
+  refuses such an item with the fix in the message, and `wyrd items check` reports it.
 
 ## [0.3.0] — 2026-09-10
 

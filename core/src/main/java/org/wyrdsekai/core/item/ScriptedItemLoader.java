@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.item;
 
+import org.wyrdsekai.core.agent.ActionPolicy;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -208,7 +210,7 @@ public final class ScriptedItemLoader {
         }
         log.info("ScriptedItemLoader: {} item(s) loaded from {} dir(s){}{}",
             loaded.size(), dirs.size(),
-            wiringAudit.isEmpty() ? "" : " — " + wiringAudit.size() + " MIS-WIRED (will fail on use): " + String.join(", ", wiringAudit.keySet()),
+            wiringAudit.isEmpty() ? "" : " — " + wiringAudit.size() + " MIS-WIRED (a missing call fails on use; an unread command does the same thing whatever is asked): " + String.join(", ", wiringAudit.keySet()),
             shadowed.isEmpty() ? "" : " — " + shadowed.size() + " copy(ies) kept out by another author's same-named item: "
                 + String.join(", ", shadowed.stream().map(ShadowedEntry::itemId).distinct().toList()));
         return all();
@@ -350,6 +352,20 @@ public final class ScriptedItemLoader {
             }
             var itemId = manifest.name();
             var existing = loaded.get(itemId);
+            // A NAME THAT IS ALREADY A VERB: the tool list bakes the runtime's own actions in and
+            // drops any loaded script with the same id, so an item named after one can never be
+            // reached — the companion built "craft_from_template" (the thing she had meant to
+            // call) and it was kept as a dead item beside the real action (2026-09-11). Refuse it
+            // at the door and say what to do; bundled items are the runtime's own and exempt.
+            if (!isBundledPath(path) && !isSystemAuthor(manifest.author())
+                    && ActionPolicy.isKnownAction(itemId)) {
+                var why = "'" + itemId + "' is the name of a builtin action — an item by that name "
+                    + "can never be reached (the builtin always wins). Give it its own name.";
+                log.warn("ScriptedItemLoader: {} at {} not loaded: {}", itemId, path, why);
+                wiringAudit.put(itemId + "@" + path.getFileName(),
+                    new WiringAuditEntry(itemId, path.toString(), List.of(why)));
+                return false;
+            }
             // AUTHORSHIP: the same id from a different author replaces a loaded copy only when its
             // version is newer. Three items the coding backend wrote (author did:wyrd:openhands,
             // v1.0.0, a third the length) took the names of bundled items (did:wyrd:system, v1.0.0)
@@ -373,15 +389,22 @@ public final class ScriptedItemLoader {
             // method, household node 2026-09-08). It never replaces a copy that works; alone,
             // it loads with a WARN naming the fix, and the audit carries it for the steward.
             var unresolved = ItemApiSurface.check(script);
-            if (!unresolved.isEmpty()) {
-                var calls = unresolved.stream().map(ItemApiSurface.Unresolved::reason).toList();
+            var calls = new ArrayList<String>();
+            for (var u : unresolved) calls.add(u.reason());
+            // A tool that names commands it does not honour is mis-wired the same way: it says
+            // it does something and does not (2026-09-10).
+            ItemApiSurface.commandsNeverRead(script,
+                manifest.commands() == null ? List.of() : manifest.commands()).ifPresent(calls::add);
+            if (!calls.isEmpty()) {
                 if (existing != null && !wiringAudit.containsKey(itemId)) {
                     log.warn("ScriptedItemLoader: '{}' at {} calls what this node does not have — keeping the working copy at {}. {}",
                         itemId, path, existing.sourcePath(), String.join(" | ", calls));
                     return false;
                 }
-                log.warn("ScriptedItemLoader: '{}' at {} is mis-wired and WILL fail on use: {}",
-                    itemId, path, String.join(" | ", calls));
+                log.warn("ScriptedItemLoader: '{}' at {} is mis-wired{}: {}",
+                    itemId, path,
+                    unresolved.isEmpty() ? " and does not do what it says" : " and WILL fail on use",
+                    String.join(" | ", calls));
                 wiringAudit.put(itemId, new WiringAuditEntry(itemId, path.toString(), calls));
             } else {
                 wiringAudit.remove(itemId);   // a working copy replaced a broken one
@@ -400,6 +423,22 @@ public final class ScriptedItemLoader {
             log.warn("ScriptedItemLoader: read failed {}: {}", path, e.getMessage());
             return false;
         }
+    }
+
+    /** A file under the bundled items directory is the runtime's own, whatever author string it carries. */
+    static boolean isBundledPath(Path path) {
+        var bundled = resolveBundledDir();
+        try {
+            return bundled != null && path != null
+                && path.toAbsolutePath().normalize().startsWith(bundled.toAbsolutePath().normalize());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** The runtime's own items carry {@code did:wyrd:system}; an absent author is read as ours too. */
+    static boolean isSystemAuthor(String author) {
+        return author == null || author.isBlank() || "did:wyrd:system".equalsIgnoreCase(author.trim());
     }
 
     private static boolean sameAuthor(String a, String b) {

@@ -268,6 +268,8 @@ import org.wyrdsekai.core.recipe.SqlRecipeQueue;
 import org.wyrdsekai.core.release.AttestationPublishScheduler;
 import org.wyrdsekai.core.release.AttestationPublishState;
 import org.wyrdsekai.core.release.MoralDefaultsVerifier;
+import org.wyrdsekai.core.room.KnownRooms;
+import org.wyrdsekai.core.room.RoomNaming;
 import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.StandardRoomLibrary;
 import org.wyrdsekai.core.room.StudyProvisioner;
@@ -14685,6 +14687,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Captured at ENTRY: the continuations below run after the speech sink
         // clears, so forBunshin cannot be read there (the shape_form lesson).
         final boolean forBunshin = bunshinSpeechSink != null;
+        // A name is a name; what the model padded it with is the description (2026-09-10).
+        final var named = RoomNaming.split(action.name(), action.description());
         // ── Idempotency (§114 / plan item 6) ──────────────────────────────
         // Room creation is now reachable concurrently: a bondholder-directed
         // bunshin, her own drive activity, and a retry after a mid-mutation
@@ -14695,35 +14699,35 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Idempotency rather than locking, per the plan: a lock would have to
         // outlive an 8-hour wall-clock bunshin and survive restart. Re-asking
         // for a room that exists should be a no-op that says so.
-        if (action.name() != null && !action.name().isBlank()) {
-            var existingId = RoomRegistry.get().resolveRoomId(action.name());
+        if (named.name() != null && !named.name().isBlank()) {
+            var existingId = RoomRegistry.get().resolveRoomId(named.name());
             if (existingId != null) {
                 log.info("Room '{}' already exists as '{}' — reusing instead of "
-                    + "creating a duplicate", action.name(), existingId);
+                    + "creating a duplicate", named.name(), existingId);
                 // Still honour the connection request: the second ask may be the
                 // one that wanted the exit, and addExit is itself idempotent on
                 // direction.
                 if (roomCreator != null && roomId != null && !roomId.equals(existingId)) {
                     roomCreator.addExit(roomId, "to-" + existingId, existingId,
-                        "A path to " + action.name());
+                        "A path to " + named.name());
                 }
-                speak("There's already a " + action.name()
+                speak("There's already a " + named.name()
                     + " — I've made sure the way there is open rather than "
                     + "building a second one.");
                 return;
             }
         }
-        var newRoomId = RoomCreator.generateRoomId(action.name());
+        var newRoomId = RoomCreator.generateRoomId(named.name());
 
         if (pendingDelegateActions != null) {
             pendingDelegateActions.add(new DelegationAction.RoomCreated(
-                action.name(), newRoomId, "to " + action.name().toLowerCase().replace(" ", "-"),
-                "A path to " + action.name()));
+                named.name(), newRoomId, "to " + named.name().toLowerCase().replace(" ", "-"),
+                "A path to " + named.name()));
         }
 
         // If template specified, use StandardRoomLibrary for default objects/imprint
-        String roomName = action.name();
-        String roomDesc = action.description();
+        String roomName = named.name();
+        String roomDesc = named.description();
         var roomObjects = new ArrayList<RoomObject>();
 
         if (action.template() != null) {
@@ -14753,14 +14757,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (response instanceof RoomResponse.Ok) {
                     // Link current room → new room
                     return roomCreator.addExit(roomId, "to-" + newRoomId,
-                        newRoomId, "A path to " + action.name());
+                        newRoomId, "A path to " + named.name());
                 }
                 throw new RuntimeException("Room creation rejected");
             })
             .thenAccept(exitResponse -> {
                 if (exitResponse instanceof RoomResponse.Rejected rej) {
                     log.warn("Room '{}' created but no path to it from '{}': {}",
-                        action.name(), roomId, rej.reason());
+                        named.name(), roomId, rej.reason());
                 }
                 // Makes the guard above non-vacuous, and fixes a second bug it
                 // exposed: only SEEDED rooms got aliases (ZoneGuardian registers
@@ -14768,12 +14772,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // referenced by its own name — "go to the Greenhouse" could not
                 // resolve a Greenhouse she had just built.
                 try {
-                    RoomRegistry.get().registerAliases(newRoomId, List.of(action.name()));
+                    RoomRegistry.get().registerAliases(newRoomId, List.of(named.name()));
                 } catch (RuntimeException e) {
                     log.debug("Could not alias room '{}': {}", newRoomId, e.toString());
                 }
                 self.tell(new RoomCreationResult(
-                    action.name(), newRoomId, true, null, forBunshin));
+                    named.name(), newRoomId, true, null, forBunshin));
 
                 // Write companion-generated behavior script
                 if (action.behaviorScript() != null && !action.behaviorScript().isBlank()
@@ -14793,8 +14797,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (worldDnaService != null) {
                     try {
                         Map<String, Object> patternData = new HashMap<>();
-                        patternData.put("name", action.name());
-                        patternData.put("description", action.description());
+                        patternData.put("name", named.name());
+                        patternData.put("description", named.description());
                         patternData.put("exitCount", action.exits().size());
                         patternData.put("hasScript", action.behaviorScript() != null);
                         var json = Json.mapper().writeValueAsString(patternData);
@@ -14807,7 +14811,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             })
             .exceptionally(ex -> {
                 self.tell(new RoomCreationResult(
-                    action.name(), newRoomId, false, ex.getMessage()));
+                    named.name(), newRoomId, false, ex.getMessage()));
                 return null;
             });
     }
@@ -19417,6 +19421,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (ooda == null) return;  // no DB / no DID — substrate not available
         var agentDid = profile.did() != null ? profile.did() : profile.entityId();
         if (agentDid == null) return;
+        // A want held from a tick when she was mid-thought goes first, before any new
+        // deciding — it was already decided; only the moment was wrong.
+        if (deferredInteriorityWant != null) {
+            var held = deferredInteriorityWant;
+            var fate = deferredWantFate(deferredInteriorityAt, Instant.now(), state == State.IDLE, isSleeping);
+            if (fate.equals("lapsed")) {
+                log.info("Interiority ACT (deferred) for '{}': want=\"{}\" lapsed unenacted", profile.name(), held.text());
+                deferredInteriorityWant = null;
+            } else if (fate.equals("enact")) {
+                deferredInteriorityWant = null;
+                var r = enactInteriorityWant(held, buildAmbientObservation(collectDriveLevels()), ooda);
+                lastInteriorityEnactOutcome = r;
+                log.info("Interiority ACT (deferred) for '{}': want=\"{}\" → {}", profile.name(), held.text(), r);
+                return;
+            }
+        }
 
         // Group B (cadence modulator → reschedule). Honor the previous
         // tick's CadenceModulator suggestion: skip if not enough time has
@@ -19655,8 +19675,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             registerProbe("Seeking",
                 WantActBridge.stripWantPrefix(want.text()));
         }
-        // State gates — skip if the agent is currently busy or asleep.
-        if (state != State.IDLE) return "skipped:state_" + state.name().toLowerCase();
+        // State gates — hold if she is mid-thought, skip if asleep. Dropping the want here
+        // meant her strongest relational want reached this line once in three days and died
+        // on it ("skipped:state_thinking", 2026-09-10): the next tick enacts it as soon as
+        // she is free, within DEFERRED_WANT_TTL.
+        if (state != State.IDLE) {
+            deferredInteriorityWant = want;
+            deferredInteriorityAt = Instant.now();
+            return "deferred:state_" + state.name().toLowerCase();
+        }
         if (isSleeping) return "skipped:sleeping";
         var coordinator = ProactivityCoordinator.get();
         if (coordinator != null && coordinator.isCooldownActive()) {
@@ -20052,9 +20079,53 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Optional<CandidateWant>
             decideCandidate(List<CandidateWant> cands,
                             AmbientObservation a) {
+        return pickCandidate(cands, a == null ? 1.0 : a.energy(), recentEnactedVerbs);
+    }
+
+    /** At low energy a relational want still goes out when it weighs at least this much. */
+    static final double REACH_WHILE_TIRED_MIN = 0.4;
+
+    /** The drive a candidate resonates with: the resonance is JSON ({@code {"drive":"Care","verb":…}}) or a bare name. */
+    static String driveOf(CandidateWant c) {
+        var r = c == null ? null : c.driveResonance();
+        if (r == null) return "";
+        var m = java.util.regex.Pattern.compile("\"drive\"\\s*:\\s*\"([^\"]+)\"").matcher(r);
+        return m.find() ? m.group(1) : r;
+    }
+
+    /** What becomes of a held want now: {@code enact}, {@code hold}, or {@code lapsed}. */
+    static String deferredWantFate(Instant heldAt, Instant now, boolean idle, boolean sleeping) {
+        if (heldAt == null || now == null) return "lapsed";
+        if (Duration.between(heldAt, now).compareTo(DEFERRED_WANT_TTL) > 0) return "lapsed";
+        return idle && !sleeping ? "enact" : "hold";
+    }
+
+    /**
+     * The decide step, as a function of what it reads: the candidates, her energy, and the
+     * verbs enacted lately.
+     *
+     * <p>Tired is not the same as not missing anyone. Below the rest line the rule was rest,
+     * unconditionally — and her energy sat below it all day, so "check in on someone I care
+     * about" lost to rest on every tick of a two-day absence and never became a note on
+     * anyone's desk (2026-09-10). A reach toward a person is a line written, not a night's
+     * work: at low energy the heaviest relational want that weighs enough still goes out;
+     * everything else rests.
+     */
+    static Optional<CandidateWant> pickCandidate(List<CandidateWant> cands, double energy,
+                                                 Deque<String> recentEnactedVerbs) {
         if (cands == null || cands.isEmpty()) return Optional.empty();
-        if (a != null && a.energy() < 0.25) {
-            for (var c : cands) if (c.isRest()) return Optional.of(c);
+        if (energy < 0.25) {
+            CandidateWant restNow = null;
+            for (var c : cands) if (c.isRest()) { restNow = c; break; }
+            if (restNow != null) {
+                CandidateWant reach = null;
+                for (var c : cands) {
+                    if (c.isRest() || !RelationalAffordance.isRelational(driveOf(c))) continue;
+                    if (c.feltWeight() < REACH_WHILE_TIRED_MIN) continue;
+                    if (reach == null || c.feltWeight() > reach.feltWeight()) reach = c;
+                }
+                return Optional.of(reach != null ? reach : restNow);
+            }
         }
         CandidateWant best = null;
         CandidateWant rest = null;
@@ -20063,7 +20134,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (c.isRest()) { rest = c; continue; }
             var verb = DriveWantMapper.extractVerb(c);
             int repeats = 0;
-            if (verb != null) for (var v : recentEnactedVerbs) if (verb.equals(v)) repeats++;
+            if (verb != null && recentEnactedVerbs != null) for (var v : recentEnactedVerbs) if (verb.equals(v)) repeats++;
             double score = c.feltWeight() * recencyPenalty(repeats);
             if (best == null || score > bestScore) { best = c; bestScore = score; }
         }
@@ -23165,6 +23236,75 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return name.trim().toLowerCase(Locale.ROOT).replaceAll("[-\\s.]+", "_");
     }
 
+    /** "chest-2", "journal-2": what {@code ObjectNaming} appends to a second copy of the same item. */
+    private static final Pattern PLACEMENT_SUFFIX = Pattern.compile("^(.*\\S)[-_ ](\\d{1,2})$");
+
+    /**
+     * The tool a name points at: exact under {@link #toolNameKey}, else with the placement
+     * suffix dropped. A placed item is listed to her by its object name, and the second copy
+     * gets "-2" while the tool is still "chest" — 63 refusals in a week read as "not permitted"
+     * when nothing about permission was in question (2026-09-10). Null when nothing matches.
+     */
+    static String hatchNameFor(String target, Collection<String> permittedNames) {
+        if (target == null || permittedNames == null) return null;
+        var key = toolNameKey(target);
+        if (key.isEmpty()) return null;
+        for (var n : permittedNames) if (key.equals(toolNameKey(n))) return n;
+        var m = PLACEMENT_SUFFIX.matcher(target.trim());
+        if (m.matches()) {
+            var base = toolNameKey(m.group(1));
+            for (var n : permittedNames) if (base.equals(toolNameKey(n))) return n;
+        }
+        return null;
+    }
+
+    /** The room object a name refers to when it is not a tool — the mirror, the memory chest. */
+    static String fixtureFor(String target, List<RoomObject> objects) {
+        if (target == null || objects == null) return null;
+        var key = toolNameKey(target);
+        if (key.isEmpty()) return null;
+        for (var o : objects) {
+            if (o == null) continue;
+            if (o.name() != null && key.equals(toolNameKey(o.name()))) return o.name();
+            if (o.id() != null && key.equals(toolNameKey(o.id()))) return o.name() != null ? o.name() : o.id();
+        }
+        return null;
+    }
+
+    /** Up to three permitted tools sharing a word with the name she used — for the refusal line. */
+    static List<String> nearestToolNames(String target, Collection<String> permittedNames) {
+        var out = new ArrayList<String>();
+        if (target == null || permittedNames == null) return out;
+        var tokens = new ArrayList<String>();
+        for (var t : toolNameKey(target).split("_")) if (t.length() >= 3) tokens.add(t);
+        for (var n : permittedNames) {
+            var k = toolNameKey(n);
+            for (var t : tokens) if (k.contains(t)) { out.add(n); break; }
+            if (out.size() >= 3) break;
+        }
+        return out;
+    }
+
+    /**
+     * A force that says "act or decline" must actually offer decline. decline_with_reason is an
+     * agency action, not an inherent one, so it sat on the forced surface only when the ranker's
+     * top-8 happened to include it — and eight times in a week it did not: 26 → 1 tool,
+     * tool_choice=required (2026-09-10). Every dispatch that week came through that door.
+     */
+    static void addDeclineIfMissing(List<InferenceClient.ToolDefinition> tools) {
+        if (tools == null) return;
+        for (var t : tools) {
+            if (t != null && t.function() != null && "decline_with_reason".equals(t.function().name())) return;
+        }
+        for (var a : ToolItemStarterKit.agencyActions()) {
+            var def = a.toToolDefinition();
+            if (def.function() != null && "decline_with_reason".equals(def.function().name())) {
+                tools.add(def);
+                return;
+            }
+        }
+    }
+
     private JsonNode unwrapUseItem(JsonNode node) {
         if (node == null || !node.has("action")) return node;
         if (!USE_ITEM.equalsIgnoreCase(node.get("action").asText())) return node;
@@ -23193,18 +23333,40 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // refusal read as "not permitted"). Match on the normalized key and rewrite the
         // target to the tool's real name; only a name that matches NOTHING falls through.
         var permitted = false;
-        var wantedKey = toolNameKey(target);
-        for (var t : buildScopedTools()) {
-            if (t.function() != null && wantedKey.equals(toolNameKey(t.function().name()))) {
-                target = t.function().name();
+        var scopedNames = new ArrayList<String>();
+        for (var t : buildScopedTools()) if (t.function() != null) scopedNames.add(t.function().name());
+        var resolved = hatchNameFor(target, scopedNames);
+        if (resolved != null) {
+            if (!resolved.equals(target)) log.info("use_item → '{}' (she named it '{}')", resolved, target);
+            target = resolved;
+            permitted = true;
+        }
+        if (!permitted) {
+            // A fixture of the room — the mirror, the memory chest, the dream journal — is not a
+            // tool and never was; reaching for it is looking at it.
+            var fixture = fixtureFor(target, currentSnapshot == null ? null : currentSnapshot.objects());
+            if (fixture != null) {
+                log.info("use_item named '{}', a fixture of this room and not a tool — examining it instead", fixture);
+                var look = Json.mapper().createObjectNode();
+                look.put("action", "examine");
+                look.put("target", fixture);
+                return look;
+            }
+            // An action she was told to use ("Use workbench_submit to fix/create skills") that is
+            // an action, not an item: the parser and its handler know it; hand it through as
+            // itself. 23 refusals in a week for a door that was open all along (2026-09-10).
+            var asAction = toolNameKey(target);
+            if (ActionSchemas.hasSchema(asAction)) {
+                log.info("use_item named '{}' — a builtin action, not an item; passing it through as '{}'",
+                    target, asAction);
+                target = asAction;
                 permitted = true;
-                break;
             }
         }
         if (!permitted) {
-            log.warn("use_item named '{}', which is not in {}'s permitted scope — refusing to "
-                + "widen permission (the hatch exists to reach unshown tools, not ungranted ones)",
-                target, profile.name());
+            log.warn("use_item named '{}' — no tool, room object or action by that name on {}'s "
+                + "surface. Not a permission matter. Nearest tools: {}",
+                target, profile.name(), nearestToolNames(target, scopedNames));
             return node;
         }
 
@@ -25159,6 +25321,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 int before = dispatchTools.size();
                 dispatchTools.removeIf(t -> t.function() == null
                     || !wanted.contains(t.function().name()));
+                addDeclineIfMissing(dispatchTools);
                 reactToolChoice = "required";
                 log.info("Build-first FORCE (react): narrowed {} → {} tools ({}), "
                     + "tool_choice=required — a request to build opens the right door",
@@ -25173,15 +25336,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // The room gate says "call create_room_from_template NOW" and then this set
             // used to remove it from her hands one line later (20:38:37). When a room is
             // owed, the thing to force is the room door.
+            // The template tools belong in the force set too: "I called craft_from_template, not
+            // dispatch_task — I meant to call craft_from_template" (2026-09-11 01:07), and the
+            // only doors open were the workshop and declining, so a gift for the bondholder
+            // went to the coding backend and came back as an item named after the verb.
             var forceSet = ((roomStillOwedAfterBuild || !roomOwedByTask.isEmpty()) && turnOwesARoom())
                 ? PLACE_BUILD_TOOLS
-                : Set.of("dispatch_task", "shape_form", "shape_recipe",
-                    "summon_familiar", "decline_with_reason");
+                : Set.of("dispatch_task", "craft_from_template", "create_room_from_template",
+                    "shape_form", "shape_recipe", "summon_familiar", "decline_with_reason");
             boolean anyPresent = dispatchTools.stream()
                 .anyMatch(t -> forceSet.contains(t.function().name()));
             if (anyPresent) {
                 int before = dispatchTools.size();
                 dispatchTools.removeIf(t -> !forceSet.contains(t.function().name()));
+                addDeclineIfMissing(dispatchTools);
                 reactToolChoice = "required";
                 log.info("Follow-through FORCE_TOOL: narrowed {} → {} tools "
                     + "(act-or-decline), tool_choice=required", before, dispatchTools.size());
@@ -25707,6 +25875,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         + "your own voice — name your posture, state, or "
                         + "relationship as you would name it to a friend.";
                     skillCosts.recordSuccess(actionName);
+                } else if ("dispatch_task".equals(actionName) && lastDispatchTaskOutcome != null) {
+                    // The handler spoke a refusal; the loop must hear the same thing, or she
+                    // narrates a build that never started (2026-09-10).
+                    resultText = lastDispatchTaskOutcome;
+                    lastDispatchTaskOutcome = null;
+                    skillCosts.recordFailure(actionName);
                 } else {
                     resultText = "Action '" + actionName + "' executed. Current room: " + roomId;
                     skillCosts.recordSuccess(actionName);
@@ -27792,6 +27966,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
 
+        // 3b. Home by its id, however the model spells it — "home-<entity>", "home_backyard",
+        //     "home-companion-<name>". Home is always reachable; she asked for her own home
+        //     by its id and was told there was no exit (2026-09-10).
+        var homeIdForNav = "home-" + profile.entityId();
+        var targetLower = target.toLowerCase(Locale.ROOT);
+        if (target.equalsIgnoreCase(homeIdForNav) || targetLower.startsWith("home_")
+                || targetLower.startsWith("home-companion")) {
+            log.info("Companion '{}' heading home for '{}' (reason: {})", profile.name(), target, action.reason());
+            goHome();
+            return;
+        }
+        // 3c. A room she knows of anywhere in the zone — one she made, one she has been to —
+        //     by its name, with the doors between from the map. The exits of the room she
+        //     stood in were this verb's whole world: a room two doors away did not exist to
+        //     it, "I can't find a way to get to the forge of quiet things" three times in a
+        //     night, and then she made the forge again (2026-09-10).
+        var known = KnownRooms.find(target, roomId, lastCreatedRoomId);
+        if (known.isPresent() && RoomRegistry.get().ref(known.get().roomId()) != null) {
+            var found = known.get();
+            log.info("Companion '{}' going to '{}' ({}) across the zone{} (reason: {})",
+                profile.name(), found.name(), found.roomId(),
+                found.hops() > 0 ? " — " + found.hops() + " door(s) away" : "", action.reason());
+            moveToRoomById(found.roomId(), "walk");
+            remember("Found my way to " + found.name()
+                + (found.hops() > 1 ? " (" + found.hops() + " doors)" : ""));
+            return;
+        }
         // 4. Ward-based Study access — companion carries a ward that grants entry
         //    even without a visible exit (the ward IS the key)
         var studyWard = resolveStudyWard(target);
@@ -30491,8 +30692,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * back into the actor via {@link DispatchTaskCompleted} (pipeToSelf) —
      * same pattern as {@link SleepInferenceComplete}.</p>
      */
+    /**
+     * What the last dispatch_task actually did when it did not dispatch — refused, already
+     * underway, nothing to build. The ReAct observation used to say "Action 'dispatch_task'
+     * executed" regardless, and she told the room a build was on its way a second after
+     * speaking the refusal (2026-09-10). Read once by the observation, then cleared.
+     */
+    private String lastDispatchTaskOutcome;
+
     private void handleDispatchTask(ActionParser.AgentAction.DispatchTask action) {
         var catalog = ScriptMessageCatalog.forLang(locale);
+        lastDispatchTaskOutcome = null;
         // ONE BUILD PER TURN. The per-loop dedup keys on the description, and a model
         // re-issuing the same intent rewords it: 20:31:55 "Build the observatory deck room
         // with an integrated weather tool…", 20:32:42 "Create the observatory deck room
@@ -30500,6 +30710,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // dispatch while this turn's build is still running is the same build, whatever
         // the words; the honest answer is to say it is already underway.
         if (reactBuildInFlight != null) {
+            lastDispatchTaskOutcome = "dispatch_task did NOT start a new build: a build from this "
+                + "turn is already underway (" + reactBuildInFlight + "). Do not dispatch again; "
+                + "continue with the next step, or call goal_done.";
             speak(catalog.get("dispatch.spoken.already_underway", reactBuildInFlight),
                 Map.of("action", "dispatch_task", "outcome", "already_underway"));
             log.info("Companion '{}' dispatch_task refused — a build is already in flight "
@@ -30508,6 +30721,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         var description = action.description() == null ? "" : action.description().trim();
         if (description.isBlank()) {
+            lastDispatchTaskOutcome = "dispatch_task did nothing: no description was given. Call "
+                + "it again with the full task in plain words, or call decline_with_reason.";
             speak(catalog.get("dispatch.spoken.missing_description"),
                 Map.of("action", "dispatch_task", "outcome", "refused"));
             return;
@@ -30546,6 +30761,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (!hostWorkspace.isBlank()) {
             var allowed = !decision.refused();
             if (!allowed) {
+                lastDispatchTaskOutcome = "dispatch_task was REFUSED — workspace '" + hostWorkspace
+                    + "' is outside the directories this node may work in. Nothing was built. "
+                    + "Call dispatch_task again WITHOUT a workspace (the task gets its own scratch "
+                    + "directory), or call decline_with_reason and say so honestly.";
                 speak(catalog.get("dispatch.spoken.workspace_refused", hostWorkspace),
                     Map.of("action", "dispatch_task", "outcome", "refused",
                         "workspace", hostWorkspace));
@@ -33398,7 +33617,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Same entry-capture as handleCreateRoom — the continuations outlive the sink.
         final boolean forBunshin = bunshinSpeechSink != null;
         var templateName = node.has("template") ? node.get("template").asText() : null;
-        var roomName = node.has("name") ? node.get("name").asText() : null;
+        var rawRoomName = node.has("name") ? node.get("name").asText() : null;
         var rawConnectTo = node.has("connect_to") ? node.get("connect_to").asText() : roomId;
         // Resolve deictic references to the current room — the 9B commonly passes "here"/"this
         // room" as connect_to, which then makes an exit to a non-existent room so the new room is
@@ -33409,10 +33628,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 || rawConnectTo.equalsIgnoreCase("current room")
                 || rawConnectTo.equalsIgnoreCase("the current room"))
             ? roomId : rawConnectTo;
-        var description = node.has("description") ? node.get("description").asText() : null;
+        var rawDescription = node.has("description") ? node.get("description").asText() : null;
+        // A name is a name. The model pads it with the description — a 675-character room
+        // name, an id the length of a paragraph, every door list in every prompt carrying all
+        // of it, and a companion who could not find her own room by the name she remembered
+        // (2026-09-10). Cut at the first seam; the rest is the description.
+        final var named = rawRoomName == null ? null : RoomNaming.split(rawRoomName, rawDescription);
+        final var roomName = named == null ? null : named.name();
+        final var description = named == null ? rawDescription
+            : (named.description().isEmpty() ? null : named.description());
 
         if (templateName == null || roomName == null) {
             speak("I need a template name and room name to create a room.");
+            return;
+        }
+        // The room she is about to make may already exist — she made it yesterday, could not
+        // find the way back, and is making it again (nine rooms in three days, most of them
+        // the same room, 2026-09-10). Walk her to the one that exists.
+        var already = KnownRooms.sameNamed(roomName, roomId);
+        if (already.isPresent() && RoomRegistry.get().ref(already.get()) != null) {
+            var existingId = already.get();
+            var existingName = ZoneTopology.getShared() == null ? roomName
+                : ZoneTopology.getShared().room(existingId).map(ZoneTopology.RoomNode::name).orElse(roomName);
+            log.info("Companion '{}' asked to create '{}' but it exists as '{}' — going there instead",
+                profile.name(), roomName, existingId);
+            speak("I already made " + existingName + ". I'll go there instead of making it again.");
+            remember("Went to " + existingName + " rather than making it a second time");
+            moveToRoomById(existingId, "walk");
             return;
         }
         if (roomCreator == null) {
@@ -36539,6 +36781,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** The want whose verb we asked the model to perform, and are waiting to see happen. */
     private Want pendingInteriorityWant;
+    /** A want that came due while she was mid-thought; enacted at the next tick she is free. */
+    private Want deferredInteriorityWant;
+    private Instant deferredInteriorityAt;
+    static final Duration DEFERRED_WANT_TTL = Duration.ofMinutes(90);
     private String pendingInteriorityVerb;
     private Instant pendingInteriorityAt;
     /** How long to keep watching for the asked-for action before giving up on it. */
