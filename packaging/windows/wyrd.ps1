@@ -116,7 +116,7 @@ $V8Default = @(
 $GooseRepo    = "aaif-goose/goose"   # repo moved block/goose -> aaif-goose/goose
 $GooseTag     = "v1.34.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuRepo = "Wyrdsekai/codezaiku"
-$CodeZaikuTag  = "v0.3.1"             # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuTag  = "v0.3.3"             # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuDir  = Join-Path $DataDir "coding-cli-bundle\codezaiku"
 # The tarball carries its own top-level codezaiku/ dir, so the launcher lands
 # nested — same shape BackendExecutableResolver searches on the Java side.
@@ -2960,7 +2960,7 @@ function Read-ResearcherAnswer { param($Question, $Default, [switch]$Yes)
 function Install-ResearchZosho { param([switch]$Yes)
     $have = Get-ResearchZoshoCmd
     if ($have) { Write-Ok "ResearchZosho already installed: $have"; return $have }
-    if (-not (Get-Command java -ErrorAction SilentlyContinue)) { Write-Warn2 "ResearchZosho needs Java 21 or newer on PATH; its installer will say so." }
+    # No Java warning here: since ResearchZosho 0.1.6 its installer takes the build that carries its own runtime when Java 21 is missing.
     $tmp = Join-Path $env:TEMP "wyrd-researchzosho-install.ps1"
     Write-Info "Fetching the ResearchZosho installer from $ResearchZoshoInstallUrl"
     try { Invoke-WebRequest -Uri $ResearchZoshoInstallUrl -OutFile $tmp -TimeoutSec 120 } catch { Write-Err2 "Could not fetch the installer: $($_.Exception.Message)"; return $null }

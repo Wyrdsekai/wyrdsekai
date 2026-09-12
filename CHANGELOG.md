@@ -4,6 +4,24 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+- **The bundled CodeZaiku is 0.3.3.** Its installer and `wyrd coding update codezaiku` take the
+  build that carries its own Java runtime when the machine has no Java 21, and the librarian's
+  does the same from ResearchZosho 0.1.6; `wyrd researcher setup` no longer warns about Java.
+- **The librarian's desk reads a write-up in pieces and says where a run is.** `read <id>` asks
+  the librarian (0.1.7) for the answer alone, capped, and says how much stayed on the shelf,
+  so a long report no longer overflows her turn; `jobs` shows a running job's phase, round and
+  workers, or that it is waiting for a sleeping model server.
+- **A third way to link the librarian:** `wyrd researcher link --stdio "npx -y
+  @wyrdsekai/researchzosho-mcp"`, the launcher both siblings publish on npm.
+
+### Fixed
+- **MCP.md no longer claims a general MCP door at `POST /mcp`.** The household serves one
+  surface, the library door at `POST /mcp/library`; the world door stays closed until calls
+  carry a caller identity, and the document now says so.
+
 ## [0.3.1] — 2026-09-11
 
 A point release for the companion's own reach: what she names, she can use; what she is

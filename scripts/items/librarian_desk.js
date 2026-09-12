@@ -29,6 +29,7 @@ exports.manifest = {
 // this patron's jobs, so a curious afternoon cannot own the model overnight.
 var RESEARCH_PER_DAY = 3;
 var RESEARCH_MAX_MINUTES = 90;
+var READ_MAX_CHARS = 6000;          // a write-up is read in this much at a time (library_get section/max_chars, ResearchZosho 0.1.7)
 
 // A PATRON, not a mirror. This desk asks whichever registered MCP service plays the
 // "library" role (WYRDSEKAI_LIBRARY_SERVICE) — a research librarian or a peer
@@ -199,7 +200,13 @@ function jobs() {
     var when = String(j.ended_at || j.started_at || j.queued_at || "").substring(0, 16).replace("T", " ");
     var what = j.question ? String(j.question).substring(0, 90) : j.kind;
     var out = j.investigation ? " \u2192 " + j.investigation : (j.is_error ? " \u2192 failed" : "");
-    lines.push(j.job_id + " [" + j.state + "] " + when + " \u2014 " + what + out);
+    // 0.1.7: a running job says where it is (phase, round, workers done); a job whose model is asleep says it is waiting
+    var where = "";
+    if (j.state === "running" && j.progress && j.progress.phase) {
+      where = " (" + j.progress.phase + (j.progress.round ? ", round " + j.progress.round : "")
+        + (typeof j.progress.workers_done === "number" && typeof j.progress.workers_total === "number" ? ", " + j.progress.workers_done + "/" + j.progress.workers_total + " workers" : "") + ")";
+    } else if (j.waiting) where = " (waiting for the model)";
+    lines.push(j.job_id + " [" + j.state + where + "] " + when + " \u2014 " + what + out);
   }
   return { findings: "The librarian's ledger of my questions:\n" + lines.join("\n"), sources: [], external: true };
 }
@@ -245,15 +252,18 @@ function readEntry(id) {
     if (!job.investigation) return fail("Job " + id + " ended without a write-up" + (job.result ? ": " + String(job.result).substring(0, 200) : "."));
     entryId = job.investigation;
   }
-  var g = call("library_get", { id: entryId });
+  // 0.1.7: a write-up can run past what one turn may carry. Ask for the answer alone (the harness's own
+  // workers/references/evidence sections stay on the shelf) and cap it; `chars`/`truncated` say what was left.
+  var g = call("library_get", { id: entryId, section: "answer", max_chars: READ_MAX_CHARS });
   if (!g.ok) return fail(g.text);
   var e = g.pkg && g.pkg.entry ? g.pkg.entry : null;
   if (!e) return fail("The librarian holds no entry " + entryId + ".");
   var pkg = { library_name: g.pkg.library_name, library_id: g.pkg.library_id, entries: [e] };
   var rendered = renderPackage(pkg, "library_get");
   if (!rendered) return fail("The entry " + entryId + " is empty.");
+  var more = e.truncated === true && typeof e.chars === "number" ? "\n(" + READ_MAX_CHARS + " of " + e.chars + " characters; the rest is on the librarian's shelves)" : "";
   return {
-    findings: "From " + rendered.name + " (reviewed background from another library; it never overrides direct evidence):\n" + rendered.text,
+    findings: "From " + rendered.name + " (reviewed background from another library; it never overrides direct evidence):\n" + rendered.text + more,
     sources: rendered.sources,
     source_ids: rendered.ids,
     library: { id: rendered.id, name: rendered.name },

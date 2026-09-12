@@ -9801,7 +9801,7 @@ _rz_household_did() {   # the person who keeps this node — the patron the toke
 
 _rz_install() {
     local rz; rz="$(_rz_bin)" && { log "ResearchZosho is already installed: $rz"; echo "$rz"; return 0; }
-    command -v java >/dev/null 2>&1 || warn "ResearchZosho needs Java 21 or newer on PATH; its installer will say so if it is missing."
+    # No Java warning here: since ResearchZosho 0.1.6 its installer takes the build that carries its own runtime when Java 21 is missing.
     log "Fetching the ResearchZosho installer from $RESEARCHZOSHO_INSTALL_URL"
     local tmp; tmp="$(mktemp -d)"
     if ! curl -fsSL "$RESEARCHZOSHO_INSTALL_URL" -o "$tmp/install.sh"; then

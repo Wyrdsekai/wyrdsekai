@@ -56,14 +56,24 @@ be a container or a plain child process. `McpServiceRegistry` and
 
 ---
 
-## Calling in: the household as an MCP server
+## Calling in: what the household serves
 
-`server/…/mcp/` exposes the world. `McpToolRegistry` and `McpAppRegistry` decide
-what is visible; `JsonSchemaGenerator` derives the schemas advertised to callers
-so the wire contract is generated from the code rather than hand-maintained
-beside it. `McpEndpoint` serves HTTP; `McpNatsHandler` serves the same surface
-over the Between, which is how a phone reaches its household through a relay
-without an inbound port.
+The household is not a general-purpose MCP server, and there is no door at
+`POST /mcp`. The world's tools act as a person; served over plain HTTP they
+would act as nobody, unauthenticated, and so that door is deliberately not
+opened until calls carry a caller identity the way the librarian's do (a
+bearer token that names one person and their grants).
+
+What is served is one narrow surface: **the library door at `POST
+/mcp/library`**, the household's library speaking `LIBRARY_PROTOCOL.md`. It
+answers with knowledge packs licensed to travel and the roster companions'
+accepted findings whose every source may travel; the steward's shelves and
+study shares never answer an outside patron. `McpEndpoint` serves it;
+`McpToolRegistry` and `McpAppRegistry` decide what is visible, and
+`JsonSchemaGenerator` derives the advertised schemas from the code rather than
+a hand-maintained copy. The phone reaches its own household differently:
+`McpNatsHandler` serves the phone's surface over the Between, through a relay,
+with the household's own session identity and no inbound port.
 
 `TunnelSessionHandler` owns relay tunnel sessions. Session ids are 128-bit
 CSPRNG values, validated for shape, with a live-session ceiling — a tunnel id is
@@ -149,6 +159,7 @@ wyrd researcher setup            # install if missing → its setup → the serv
 wyrd researcher link             # a librarian already running here (http://127.0.0.1:4649)
 wyrd researcher link http://box:4649 --token <token>
 wyrd researcher link --stdio "ssh -T box researchzosho mcp"
+wyrd researcher link --stdio "npx -y @wyrdsekai/researchzosho-mcp"   # the launcher on npm: installs the librarian if needed
 wyrd researcher status
 wyrd researcher update           # the librarian's own updater: latest release, verified, restarted
 ```

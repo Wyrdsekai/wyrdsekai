@@ -2,7 +2,7 @@
 #
 #   irm https://wyrdsekai.org/install.ps1 | iex
 #
-# Downloads the latest release artifact from GitHub ($env:WYRDSEKAI_VERSION = '0.3.0'
+# Downloads the latest release artifact from GitHub ($env:WYRDSEKAI_VERSION = '0.3.1'
 # installs that release instead), verifies it against the release's SHA256SUMS,
 # and installs it. Nothing here is served from wyrdsekai.org except this script -
 # the installer and the checksums both come from the same GitHub release, so this
@@ -20,7 +20,7 @@ if (-not $Version) {
         $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'wyrdsekai-install'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 20
         $Version = "$($rel.tag_name)"; if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
     } catch { }
-    if (-not $Version) { Die "could not find the latest release. Set `$env:WYRDSEKAI_VERSION = '0.3.0' and re-run." }
+    if (-not $Version) { Die "could not find the latest release. Set `$env:WYRDSEKAI_VERSION = '0.3.1' and re-run." }
 }
 Say "release $Version"
 $Base    = "https://github.com/$Repo/releases/download/v$Version"
