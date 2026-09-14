@@ -46,7 +46,18 @@ case "$OS" in
 esac
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# A failed sudo (or any abort) used to take the 1.5 GB download with it. Keep the
+# artifact where the person can find it and re-run; clean up only after success.
+_finish() {
+    if [ -n "${ART:-}" ] && [ -f "$TMP/$ART" ]; then
+        KEEP="${HOME:-/tmp}/Downloads"; mkdir -p "$KEEP" 2>/dev/null || KEEP=/tmp
+        if mv "$TMP/$ART" "$KEEP/$ART" 2>/dev/null; then
+            say "kept the download at $KEEP/$ART — install it with: sudo dpkg -i \"$KEEP/$ART\" (or the matching installer for .pkg/.tar.gz)"
+        fi
+    fi
+    rm -rf "$TMP"
+}
+trap _finish EXIT
 cd "$TMP"
 
 say "downloading $ART (~1.2-1.7 GB)…"
@@ -64,11 +75,13 @@ case "$ART" in
     *.deb)
         say "installing (needs sudo)…"
         sudo dpkg -i "$ART" || { sudo apt-get -f install -y && sudo dpkg -i "$ART"; }
+        rm -f "$ART"
         say "installed. Next:  wyrd setup"
         ;;
     *.pkg)
         say "installing (needs sudo)…"
         sudo installer -pkg "$ART" -target /
+        rm -f "$ART"
         say "installed. Next:  wyrd setup"
         ;;
     *.tar.gz)
@@ -76,6 +89,7 @@ case "$ART" in
         sudo mkdir -p /opt
         sudo tar -xzf "$ART" -C /opt
         sudo mv /opt/wyrdsekai-${VERSION} /opt/wyrdsekai 2>/dev/null || true
+        rm -f "$ART"
         say "unpacked. Next:  sudo /opt/wyrdsekai/bin/wyrd setup"
         ;;
 esac

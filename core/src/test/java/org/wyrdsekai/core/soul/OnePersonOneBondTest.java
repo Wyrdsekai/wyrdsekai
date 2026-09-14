@@ -1,186 +1,98 @@
 package org.wyrdsekai.core.soul;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.core.identity.PersonIdentityResolver;
 import org.wyrdsekai.core.identity.PersonIds;
-
-import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.core.persistence.SchemaInitializer;
 
 import java.nio.file.Path;
-import java.util.Optional;
+import java.sql.DriverManager;
+import java.time.Instant;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * One person, one bond — however they arrive.
+ * One person is one bond, whichever id they arrived under.
  *
- * <p>A human can present more than one identifier: the phone sends their {@code did:key},
- * the SSH corridor sends the local account UUID that the person-identity migration
- * deliberately preserves as a credential. Bond formation compared those strings directly.
- *
- * <p>Live on the household node 2026-08-19: the migration rewrote the bondholder to the
- * DID, and a second bond formed under the legacy UUID <b>22 seconds later</b>. The
- * duplicate reached ITEM depth with 50+ interactions while the original stayed at
- * ACQUAINTANCE, and every bondholder check compared the two halves of one man and answered
- * no — so nothing he said was recorded as HEARD for two days, and his presence in the room
- * never drained the loneliness that had her wanting to write to someone absent.
+ * <p>Household node, 2026-09-13: her bond with her bondholder existed twice. Under his
+ * login id: depth ITEM, 119 interactions, typed MEMBER, active. Under his person DID:
+ * ACQUAINTANCE, 0 interactions, typed BONDHOLDER, inactive. The ritual's load-time merge
+ * had run, but the actor keyed its live map by the raw id, re-formed the bond under the
+ * login id, and the upsert wrote that id back over the DID. Every restart merged; every
+ * conversation split it again. A field deployment with two companions saw the same shape
+ * as "interactions credited to the other companion" and "four bond rows for two souls".</p>
  */
 class OnePersonOneBondTest {
 
-    private static final String COMPANION = "did:key:z6MkCompanion";
-    private static final String LEGACY = "1f56a2d4-69ae-4076-b3c4-58a8ddda49c6";
-    private static final String PERSON = "did:key:z6MkThePerson";
-
-    /** Stands in for the real resolver: the legacy id belongs to PERSON. */
-    private static final class StubResolver extends PersonIdentityResolver {
-        StubResolver() { super("jdbc:sqlite::memory:"); }
-        @Override public Optional<String> resolve(String identifier) {
-            if (LEGACY.equals(identifier)) return Optional.of(PERSON);
-            if (PERSON.equals(identifier)) return Optional.of(PERSON);
-            return Optional.empty();
-        }
-    }
+    private static final String HER = "did:key:z6MkHerHerHerHerHer";
+    private static final String LOGIN = "1f56a2d4-0000-4000-8000-000000000001";
+    private static final String PERSON = "did:key:z6MkPersonPersonPerson";
 
     @AfterEach
-    void clear() {
+    void tearDown() {
         PersonIds.resetForTesting(null);
     }
 
-    @Test
-    void the_same_person_arriving_twice_does_not_get_a_second_bond() {
-        PersonIds.resetForTesting(new StubResolver());
-        var ritual = new BondRitual();
+    private static String dbWithPerson(Path dir) throws Exception {
+        var jdbc = SchemaInitializer.initialize(dir.resolve("world.db"));
+        try (var c = DriverManager.getConnection(jdbc); var st = c.createStatement()) {
+            st.execute("ALTER TABLE users ADD COLUMN did TEXT");
+            st.execute("INSERT INTO users(id, username, password_hash, display_name, role, did) "
+                + "VALUES ('" + LOGIN + "', 'steward', 'x', 'The Steward', 'steward', '" + PERSON + "')");
+        }
+        return jdbc;
+    }
 
-        var viaPhone = ritual.formAcquaintance(COMPANION, PERSON);
-        var viaCorridor = ritual.formAcquaintance(COMPANION, LEGACY);
-
-        assertThat(viaCorridor.bondId())
-            .as("the corridor must reach the SAME bond the phone made")
-            .isEqualTo(viaPhone.bondId());
-        assertThat(ritual.bondsForAgent(COMPANION)).hasSize(1);
+    private static Bond row(String other, Bond.BondDepth depth, int count, BondKind kind, boolean active) {
+        var t = Instant.parse("2026-08-10T00:00:00Z");
+        return new Bond("bond-" + HER.hashCode() + "-" + other.hashCode(), HER, other, depth, t, t, count,
+            false, active, false, BondState.ACTIVE, null, BondholderPosture.BOUNDED,
+            Bond.RelationalState.OPEN, kind);
     }
 
     @Test
-    void a_bond_formed_from_the_legacy_id_is_stored_against_the_person() {
-        PersonIds.resetForTesting(new StubResolver());
-        var ritual = new BondRitual();
-
-        var bond = ritual.formAcquaintance(COMPANION, LEGACY);
-
-        assertThat(bond.otherParty(COMPANION))
-            .as("canonicalise on the way in, so the migration is not undone by the next hello")
-            .isEqualTo(PERSON);
-    }
-
-    @Test
-    void a_split_introduced_after_load_is_still_reported(@TempDir Path tmp) {
-        // Load-time repair handles what already exists; the detector is the standing
-        // guard for anything that introduces a split later. It must not go quiet just
-        // because the boot path cleaned up once.
-        PersonIds.resetForTesting(new StubResolver());
-        var jdbc = SchemaInitializer.initialize(tmp.resolve("bonds.db"));
+    @DisplayName("the load-time merge keeps the history, the role, and the person's DID — and removes our duplicate")
+    void mergeKeepsHistoryAndRole(@TempDir Path dir) throws Exception {
+        var jdbc = dbWithPerson(dir);
+        PersonIds.resetForTesting(new PersonIdentityResolver(jdbc));
         var store = new BondStore(jdbc);
-        var ritual = new BondRitual();
-        ritual.setStore(store);
-        ritual.formAcquaintance(COMPANION, PERSON);
-        assertThat(ritual.splitBondholders(COMPANION)).isEmpty();
+        store.save(row(LOGIN, Bond.BondDepth.ITEM, 119, BondKind.MEMBER, true));
+        store.save(row(PERSON, Bond.BondDepth.ACQUAINTANCE, 0, BondKind.BONDHOLDER, true));
 
-        // Some other path writes a bond under the legacy id, bypassing formAcquaintance.
-        store.save(Bond.acquaintance(COMPANION, LEGACY));
+        new BondRitual(store);   // hydrate → heal
 
-        assertThat(ritual.splitBondholders(COMPANION))
-            .as("a person recorded twice must surface as a fault, not as a companion "
-                + "who seems not to recognise someone")
-            .containsKey(PERSON);
+        var rows = store.bondsForAgent(HER);
+        assertEquals(1, rows.size(), "one person, one row: " + rows);
+        var b = rows.getFirst();
+        assertEquals(PERSON, b.otherParty(HER), "the person is known by their DID, not the login id");
+        assertEquals(Bond.BondDepth.ITEM, b.depth());
+        assertEquals(119, b.interactionCount());
+        assertEquals(BondKind.BONDHOLDER, b.canonicalKind(), "the role rides with the person");
+        assertTrue(b.active());
+        assertEquals(1, store.all().size(), "the duplicate is gone, not left inactive");
     }
 
     @Test
-    void an_existing_split_is_healed_at_load_without_losing_the_history(@TempDir Path tmp) {
-        // Her live shape: a deep bond under the legacy id carrying the real relationship,
-        // and a shallow one under the person DID. The encounters were real; only the
-        // claim that they were two people was false.
-        PersonIds.resetForTesting(new StubResolver());
-        var jdbc = SchemaInitializer.initialize(tmp.resolve("bonds.db"));
-        var seed = new BondStore(jdbc);
-        var deep = Bond.acquaintance(COMPANION, LEGACY);
-        for (int i = 0; i < 50; i++) deep = deep.withInteraction();
-        deep = new Bond(deep.bondId(), deep.agentADid(), deep.agentBDid(),
-            Bond.BondDepth.ITEM, deep.formedAt(), deep.lastInteraction(),
-            deep.interactionCount(), deep.mutualConsent(), true, deep.scarred(),
-            deep.state(), deep.coldStartUntil(), deep.posture(),
-            deep.relationalState(), deep.kind());
-        seed.save(deep);
-        seed.save(Bond.acquaintance(COMPANION, PERSON));
-
-        // Loading is enough — an operator should not have to know this happened.
-        var ritual = new BondRitual();
-        ritual.setStore(new BondStore(jdbc));
-
-        assertThat(ritual.splitBondholders(COMPANION))
-            .as("the split must be gone after load")
-            .isEmpty();
-
-        var active = ritual.bondsForAgent(COMPANION).stream()
-            .filter(Bond::active).toList();
-        assertThat(active).hasSize(1);
-        var kept = active.get(0);
-        assertThat(kept.otherParty(COMPANION)).isEqualTo(PERSON);
-        assertThat(kept.depth())
-            .as("the deepest depth reached is kept — she did get that close to him")
-            .isEqualTo(Bond.BondDepth.ITEM);
-        assertThat(kept.interactionCount())
-            .as("every real encounter is kept; only the doubling was ours")
-            .isGreaterThanOrEqualTo(50);
+    @DisplayName("a row that still names the person by their login id converges on the DID without losing anything")
+    void withOtherPartyConverges() {
+        var old = row(LOGIN, Bond.BondDepth.ITEM, 119, BondKind.BONDHOLDER, true);
+        var fixed = old.withOtherParty(HER, PERSON);
+        assertEquals(PERSON, fixed.otherParty(HER));
+        assertEquals(old.bondId(), fixed.bondId(), "same row, same id — the upsert rewrites in place");
+        assertEquals(119, fixed.interactionCount());
+        assertEquals(BondKind.BONDHOLDER, fixed.canonicalKind());
+        assertTrue(old.withOtherParty(HER, LOGIN) == old, "already named so: nothing to do");
     }
 
     @Test
-    void a_retired_duplicate_is_kept_as_evidence_not_deleted(@TempDir Path tmp) {
-        PersonIds.resetForTesting(new StubResolver());
-        var jdbc = SchemaInitializer.initialize(tmp.resolve("bonds.db"));
-        var seed = new BondStore(jdbc);
-        seed.save(Bond.acquaintance(COMPANION, LEGACY));
-        seed.save(Bond.acquaintance(COMPANION, PERSON));
-
-        var ritual = new BondRitual();
-        ritual.setStore(new BondStore(jdbc));
-
-        var onDisk = new BondStore(jdbc).all();
-        assertThat(onDisk)
-            .as("nothing is deleted — the retired row is evidence of what happened")
-            .hasSize(2);
-        assertThat(onDisk.stream().filter(b -> !b.active())).hasSize(1);
-        assertThat(onDisk.stream().filter(Bond::active)).hasSize(1);
-    }
-
-    @Test
-    void a_healthy_household_reports_no_split() {
-        PersonIds.resetForTesting(new StubResolver());
-        var ritual = new BondRitual();
-        ritual.formAcquaintance(COMPANION, PERSON);
-
-        assertThat(ritual.splitBondholders(COMPANION)).isEmpty();
-    }
-
-    @Test
-    void two_genuinely_different_people_are_left_alone() {
-        PersonIds.resetForTesting(new StubResolver());
-        var ritual = new BondRitual();
-        ritual.formAcquaintance(COMPANION, PERSON);
-        ritual.formAcquaintance(COMPANION, "did:key:z6MkSomeoneElse");
-
-        assertThat(ritual.bondsForAgent(COMPANION)).hasSize(2);
-        assertThat(ritual.splitBondholders(COMPANION)).isEmpty();
-    }
-
-    @Test
-    void an_unresolvable_identifier_is_still_itself() {
-        // An unmigrated local user must keep working — resolution failure is not identity
-        // loss, and must never collapse two strangers into one person.
-        PersonIds.resetForTesting(new StubResolver());
-        assertThat(PersonIds.canonical("someone-with-no-mapping"))
-            .isEqualTo("someone-with-no-mapping");
-        assertThat(PersonIds.samePerson("stranger-a", "stranger-b")).isFalse();
+    @DisplayName("without a resolver, ids stay as they are — a bare node keeps working")
+    void noResolverIsIdentity() {
+        PersonIds.resetForTesting(null);
+        assertFalse(PersonIds.samePerson(LOGIN, PERSON));
     }
 }

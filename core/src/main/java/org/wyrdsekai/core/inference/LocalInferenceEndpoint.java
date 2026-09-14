@@ -110,8 +110,7 @@ public final class LocalInferenceEndpoint {
 
     private static String configuredUrl() {
         try {
-            var v = WyrdConfig.get().resolve("WYRDSEKAI_INFERENCE_URL", "inference.url",
-                () -> null);
+            var v = WyrdConfig.get().configuredInferenceUrl();
             return v == null || v.isBlank() ? null : v.replaceAll("/v1/?$", "");
         } catch (RuntimeException e) {
             return null;

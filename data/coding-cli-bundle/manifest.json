@@ -13,15 +13,15 @@
     },
     "goose": {
       "bundled": false,
-      "version": "1.34.1",
+      "version": "1.50.0",
       "comment": "Repo moved block/goose -> aaif-goose/goose under AAIF/Linux Foundation. Asset naming uses Rust target triples; Windows uses .zip upstream — build helper substitutes per-platform suffix. Provider auth: NOT GOOSE_PROVIDER_KEY (wyrdsekai invention); upstream Goose reads ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY directly per provider. Adapter maps coding.backends.goose.provider -> correct env var.",
       "distribution": "github_release",
-      "download_url_template": "https://github.com/aaif-goose/goose/releases/download/v1.34.1/goose-{rust_triple}.tar.gz",
+      "download_url_template": "https://github.com/aaif-goose/goose/releases/download/v1.50.0/goose-{rust_triple}.tar.gz",
       "sha256_per_platform": {
-        "linux-x64": "31088690f1680d653c7c350daee73d643d78b2f71d717fff04cbbac2586a9240",
-        "linux-arm64": "359de49f333127abcfcd7debe86949af03aa0c1bd678c86d1cd1ce77dbf8b7c0",
-        "darwin-arm64": "2df188a17c0fe538dba936fc2eb6edb14802de58677af149a77548158c4d3c67",
-        "darwin-x64": "2544a0630e51b701d093222097c25729b7edb0cc319fa5f2491ae9d75de028e2",
+        "linux-x64": "6389eea4440178de006fa148d466ac411021315ff7f72b1014beae2d445851e2",
+        "linux-arm64": "febd71a6a25c3aff7dbcf566f78d2864e87d886c33c4ef1fee2f67fedd334063",
+        "darwin-arm64": "6f1f1fb56868996af2652e8b5334d29f970e56836e200c4ff57e92de2496fccb",
+        "darwin-x64": "4bfb0238d8ec54343f683ef28506d609e5889861f0fd2f6a3c91fb8b02aa7dd7",
         "windows-x64": "TODO_RUN_BUILD_HELPER"
       },
       "size_mb": 80,
@@ -35,16 +35,16 @@
     "codezaiku": {
       "bundled": true,
       "path": "data/coding-cli-bundle/codezaiku/",
-      "version": "0.3.3",
+      "version": "0.3.5",
       "comment": "BUNDLED DEFAULT as of 0.2.0. CodeZaiku (was CodePlane) - Apache-2.0, Wyrdsekai/codezaiku. ONE platform-independent tarball because it is a JVM app, so there is no per-platform asset and every platform key carries the SAME sha - the one artifact named five times, because the installer keys on <platform>-<arch> and has no platform-independent key. It ships bin/codezaiku and bin/codezaiku.bat, so all five are genuinely supported. Needs a JRE 21+; the .deb declares that dependency and the tarball does not, which is why the upstream installer points apt users at the .deb. Its own installer defaults to a PER-USER prefix (~/.local), so the binary often sits outside a service PATH - BackendExecutableResolver searches the data-dir owner's home for exactly this reason. Model routing travels only via CODEZAIKU_DRIVE / CODEZAIKU_MODEL, which the adapter sets from the node's own inference endpoint like every other backend. The download_url/sha are not dead weight on a bundled entry: packaging/build-dist.sh fetches and verifies against THEM to stage the bundle, so a release cannot ship a codezaiku that differs from what this manifest attests.",
       "distribution": "github_release",
-      "download_url_template": "https://github.com/Wyrdsekai/codezaiku/releases/download/v0.3.3/codezaiku-0.3.3.tar.gz",
+      "download_url_template": "https://github.com/Wyrdsekai/codezaiku/releases/download/v0.3.5/codezaiku-0.3.5.tar.gz",
       "sha256_per_platform": {
-        "linux-x64": "2cc5f55d77452ee07fc66e9b9ee3acf9d05d16eab4aeeda434bd067eae0c0ad5",
-        "linux-arm64": "2cc5f55d77452ee07fc66e9b9ee3acf9d05d16eab4aeeda434bd067eae0c0ad5",
-        "darwin-arm64": "2cc5f55d77452ee07fc66e9b9ee3acf9d05d16eab4aeeda434bd067eae0c0ad5",
-        "darwin-x64": "2cc5f55d77452ee07fc66e9b9ee3acf9d05d16eab4aeeda434bd067eae0c0ad5",
-        "windows-x64": "2cc5f55d77452ee07fc66e9b9ee3acf9d05d16eab4aeeda434bd067eae0c0ad5"
+        "linux-x64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
+        "linux-arm64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
+        "darwin-arm64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
+        "darwin-x64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
+        "windows-x64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48"
       },
       "size_mb": 23,
       "auth": {
@@ -70,15 +70,15 @@
     },
     "codex": {
       "bundled": false,
-      "version": "0.128.0",
+      "version": "0.154.0",
       "distribution": "github_release",
-      "download_url_template": "https://github.com/openai/codex/releases/download/rust-v0.128.0/codex-{rust_triple_musl}.tar.gz",
+      "download_url_template": "https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-{rust_triple_musl}.tar.gz",
       "sha256_per_platform": {
-        "linux-x64": "886b85e6118c0b43234437ca007fbe923611a53b103d00e0d3ae74aefb20e23a",
-        "linux-arm64": "3161b4d5304feaf7befbb0fcb41bf9a7ee40e31ba7e3ef36d40a00aa3ba6cbd0",
-        "darwin-arm64": "f068202e8a898c240c8c068401bccd30ba7b56f61f5ffcd1483d545d47aaf3d5",
-        "darwin-x64": "c7a08d2011f77e88402a173c473ceec37307a710a681cddd26357c33a025a961",
-        "windows-x64": "11ab2d657093dfa856ce5328a0987bfe147a9d0fb08099d30e974cb8d3dbb402"
+        "linux-x64": "d7e18b2597ae8f242f5f31ee9e90deef48dbc9edd634d9868fb6435d08c07f02",
+        "linux-arm64": "583b48df32804213bdcd338c2e5adb06b34340821fa757a726cc0a524fa33c27",
+        "darwin-arm64": "344310a0a591c1b192e04feff304321a69907c9498baaac331ca7e16ebcef9d7",
+        "darwin-x64": "1219c837d8f813b493a424c125c0038b5d9ca16279bc6d3fe6ce037a3e18a6e7",
+        "windows-x64": "4e96740782869faff9d424806d4419afd2ee51ea5ece6cec462912b7098497a1"
       },
       "size_mb": 30,
       "tos_warning": "Subject to OpenAI Usage Policies and pricing",
@@ -96,7 +96,7 @@
     },
     "claude-sdk": {
       "bundled": false,
-      "version": "2.1.128",
+      "version": "2.1.270",
       "comment": "Distributed via npm @anthropic-ai/claude-code; reuses ClaudeCliInference.java pattern. Headless OAuth: claude login --no-browser (paste-this-URL device flow).",
       "distribution": "npm",
       "npm_package": "@anthropic-ai/claude-code",
@@ -117,7 +117,7 @@
     },
     "gemini-cli": {
       "bundled": false,
-      "version": "0.40.1",
+      "version": "0.59.0",
       "min_version": "0.40.1",
       "min_version_reason": "CVSS-10 RCE; original patches in 0.39.1 / 0.40.0-preview.3, cherry-pick floor v0.40.1 (2026-04-30)",
       "distribution": "npm",
@@ -139,7 +139,7 @@
     },
     "cline": {
       "bundled": false,
-      "version": "2.18.0",
+      "version": "3.0.61",
       "comment": "Distributed via npm `cline` (cline.bot/blog/announcing-cline-cli-2-0). GitHub releases publish only the .vsix IDE extension. Headless argv: cline -y \"<task>\" or cline --json \"<task>\" with prompt as POSITIONAL.",
       "distribution": "npm",
       "npm_package": "cline",
@@ -158,7 +158,7 @@
     },
     "continue": {
       "bundled": false,
-      "version": "1.5.45",
+      "version": "1.5.47",
       "comment": "Distributed via npm @continuedev/cli; binary name `cn`; requires Node.js 20+. Headless argv: cn -p \"<prompt>\" with prompt as POSITIONAL. Source: docs.continue.dev/cli/quickstart + docs.continue.dev/guides/cli.",
       "distribution": "npm",
       "npm_package": "@continuedev/cli",

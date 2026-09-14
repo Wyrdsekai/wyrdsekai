@@ -302,9 +302,10 @@ companion that can think. The MSI ships no llama.cpp binary (it is fetched to
 match your GPU — cpu/vulkan/cuda), so setup finishes by GPU-detecting,
 downloading the right llama.cpp build, and pulling the model. If you plan to
 use a remote household node or a cloud backend instead, set
-`WYRDSEKAI_SKIP_INFERENCE_INSTALL=1` before running setup, then point
-`WYRDSEKAI_LLAMA_URL` at the remote `:8200` (or set a cloud API key in the
-Key Chest). `wyrd inference install` re-runs the local flow any time.
+`WYRDSEKAI_SKIP_INFERENCE_INSTALL=1` before running setup, then run
+`wyrd inference remote http://<node-ip>:8200` (it probes the URL before saving
+it) or set a cloud API key in the Key Chest. `wyrd inference install` re-runs
+the local flow any time.
 
 Uninstall from **Settings → Apps**, or with
 `msiexec /x Wyrdsekai-0.1.5.msi`. This removes `C:\Program Files\Wyrdsekai`

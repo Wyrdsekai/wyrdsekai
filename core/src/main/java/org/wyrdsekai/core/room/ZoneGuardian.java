@@ -1125,7 +1125,8 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
 
     /**
      * Provision a Home room for a companion agent.
-     * Every soul-bearing companion gets a private Home room at birth.
+     * Every soul-bearing companion gets a private Home room at birth — private in the
+     * ward table, not only in this sentence: see {@link HomeWardGate#sealHome}.
      * The room is created idempotently (safe to call on restart).
      */
     private void provisionHomeRoom(AgentProfile profile, String preferredRoomId,
@@ -1158,6 +1159,12 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
             } else {
                 // Room already exists (idempotent) — that's fine
                 log.debug("Home room {} already exists for {}", homeSpec.roomId(), profile.name());
+            }
+            // Hers, whichever branch: the seal is written at birth and checked again at
+            // every boot, so a Home made before the lock existed is sealed on upgrade.
+            var gate = HomeWardGate.get();
+            if (gate != null) {
+                gate.sealHome(homeSpec.roomId(), profile.entityId(), profile.did());
             }
         }).exceptionally(ex -> {
             log.warn("Failed to create home room for {}: {}", profile.name(), ex.getMessage());

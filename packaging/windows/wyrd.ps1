@@ -1359,6 +1359,33 @@ function Test-LlamaHealth {
     } catch { return $false }
 }
 
+# What answers at an inference URL: 'llama-server' (/health), 'ollama' (/api/tags),
+# 'openai' (/v1/models only) or 'none'. Parity with bin/wyrd _probe_inference_protocol:
+# `wyrd inference remote` probes before it persists, so a typo never becomes a silent
+# companion with no brain.
+function Test-InferenceProtocol {
+    param([string]$Url)
+    $u = $Url.TrimEnd('/')
+    foreach ($probe in @(@('/health', 'llama-server'), @('/api/tags', 'ollama'), @('/v1/models', 'openai'))) {
+        try {
+            $r = Invoke-WebRequest -Uri ($u + $probe[0]) -UseBasicParsing -TimeoutSec 5
+            if ($r.StatusCode -eq 200) { return $probe[1] }
+        } catch { }
+    }
+    return 'none'
+}
+
+# Seconds from a duration like 90s, 30m, 2h, 1d or a bare number; $null when it is not one.
+function ConvertTo-DurationSeconds {
+    param([string]$Text)
+    if ($Text -match '^(\d+)s$') { return [int]$Matches[1] }
+    if ($Text -match '^(\d+)m$') { return [int]$Matches[1] * 60 }
+    if ($Text -match '^(\d+)h$') { return [int]$Matches[1] * 3600 }
+    if ($Text -match '^(\d+)d$') { return [int]$Matches[1] * 86400 }
+    if ($Text -match '^\d+$')    { return [int]$Text }
+    return $null
+}
+
 # ── Oracle forecasting sidecar (oracle-core) ──────────────────────────────────
 $script:SawVenvlessPython = $null
 function Test-PythonHasVenv {
@@ -1900,9 +1927,11 @@ function Invoke-Inference {
             Write-Host "Inference configuration:"
             $enabled = if ($conf.Contains('WYRDSEKAI_LLAMA_ENABLED')) { $conf['WYRDSEKAI_LLAMA_ENABLED'] } else { "(unset)" }
             $url     = if ($conf.Contains('WYRDSEKAI_LLAMA_URL')) { $conf['WYRDSEKAI_LLAMA_URL'] } else { "(unset)" }
+            $infUrl  = if ($conf.Contains('WYRDSEKAI_INFERENCE_URL')) { $conf['WYRDSEKAI_INFERENCE_URL'] } else { "(unset)" }
             $backend = if ($conf.Contains('WYRDSEKAI_LLAMA_BACKEND')) { $conf['WYRDSEKAI_LLAMA_BACKEND'] } else { "(not installed)" }
             Write-Host "  WYRDSEKAI_LLAMA_ENABLED = $enabled"
             Write-Host "  WYRDSEKAI_LLAMA_URL     = $url"
+            Write-Host "  WYRDSEKAI_INFERENCE_URL = $infUrl"
             Write-Host "  llama.cpp backend       = $backend"
             $model = Resolve-ModelPath
             Write-Host ("  model                   = {0}" -f $(if ($model) { Split-Path $model -Leaf } else { "(none in $ModelsDir)" }))
@@ -1911,10 +1940,10 @@ function Invoke-Inference {
                 Write-Host ("  drive :$DrivePort           = {0}" -f $(if (Get-LlamaPid -File $LlamaPidFile) { "running (/health=$(Test-LlamaHealth -Port $DrivePort))" } else { "stopped" }))
                 Write-Host ("  voice :$VoicePort           = {0}" -f $(if (Get-LlamaPid -File $VoicePidFile) { "running" } else { "stopped" }))
             }
-            if ($enabled -ne 'true' -and $url -eq '(unset)' -and -not $conf.Contains('ANTHROPIC_API_KEY')) {
+            if ($enabled -ne 'true' -and $url -eq '(unset)' -and $infUrl -eq '(unset)' -and -not $conf.Contains('ANTHROPIC_API_KEY')) {
                 Write-Warn2 "No inference backend configured — companion can't think yet."
                 Write-Host  "  Local (recommended):  wyrd inference install"
-                Write-Host  "  Remote household node: wyrd config set WYRDSEKAI_LLAMA_URL http://<node-ip>:$DrivePort"
+                Write-Host  "  Remote household node: wyrd inference remote http://<node-ip>:$DrivePort"
                 Write-Host  "  Cloud key:             wyrd config set ANTHROPIC_API_KEY sk-..."
             }
         }
@@ -1933,6 +1962,53 @@ function Invoke-Inference {
         }
         "start" { Import-ConfEnv; Start-LlamaServer }
         "stop"  { Stop-LlamaServer; Write-Ok "Local inference stopped." }
+        "remote" {
+            # wyrd inference remote <url> - point companions at another node's llama-server
+            # or an Ollama. Probed first; saved under the key the server reads
+            # (WYRDSEKAI_INFERENCE_URL) and the one this CLI has always shown.
+            $url = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+            if (-not $url) {
+                Write-Err2 "usage: wyrd inference remote <url>"
+                Write-Err2 "  example: wyrd inference remote http://198.51.100.20:$DrivePort"
+                exit 2
+            }
+            $url = $url.TrimEnd('/')
+            $proto = Test-InferenceProtocol $url
+            if ($proto -eq 'none') {
+                Write-Err2 "$url answers neither llama-server (/health, /v1/models) nor Ollama (/api/tags) - not saved."
+                Write-Err2 "Check the host and port (no trailing /v1), and that the server is up."
+                exit 1
+            }
+            Write-Ok "Detected $proto at $url"
+            if ($proto -eq 'ollama') { Write-Info "Companions will use the chat models Ollama lists at $url/api/tags." }
+            Set-ConfKey -Key "WYRDSEKAI_INFERENCE_URL" -Value $url
+            Set-ConfKey -Key "WYRDSEKAI_LLAMA_URL"     -Value $url
+            # The local llama-server is not started while a remote one is the brain;
+            # 'wyrd inference install' turns the local stack back on.
+            Set-ConfKey -Key "WYRDSEKAI_LLAMA_ENABLED" -Value "false"
+            Write-Ok "Inference points at $url - 'wyrd restart' to apply. The local llama-server stays off; 'wyrd inference install' brings it back."
+        }
+        "pause" {
+            # The steward takes the GPU for a while. Companions are told once, calmly,
+            # and hold still; nothing times out. Durations: 90s, 30m, 2h, 1d (default 1h).
+            $dur = if ($Rest.Count -ge 2) { $Rest[1] } else { '1h' }
+            $reason = if ($Rest.Count -gt 2) { ($Rest[2..($Rest.Count-1)] -join ' ') } else { '' }
+            $secs = ConvertTo-DurationSeconds $dur
+            if ($null -eq $secs) { Write-Err2 "Duration like 90s, 30m, 2h or 1d - got '$dur'"; exit 2 }
+            $body = @{ seconds = $secs; reason = $reason } | ConvertTo-Json -Compress
+            try {
+                $resp = Invoke-RestMethod -Method Post -Uri "$(Get-ApiBase)/api/inference/pause" -ContentType 'application/json' -Body $body -TimeoutSec 10
+            } catch { Write-Err2 "The server did not answer at $(Get-ApiBase) - is it running?"; exit 1 }
+            $why = if ($reason) { " - $reason" } else { '' }
+            Write-Ok "Inference paused for $dur$why. Companions will say so once and wait. Resume early: wyrd inference resume"
+            if ($resp.pausedUntil) { Write-Host "  paused until $($resp.pausedUntil)" }
+        }
+        "resume" {
+            try {
+                Invoke-RestMethod -Method Post -Uri "$(Get-ApiBase)/api/inference/resume" -TimeoutSec 10 | Out-Null
+            } catch { Write-Err2 "The server did not answer at $(Get-ApiBase) - is it running?"; exit 1 }
+            Write-Ok "Inference resumed."
+        }
         "share" {
             # Household inference auto-share "offer" toggle.
             $arg = if ($Rest.Count -ge 2) { $Rest[1] } else { "status" }
@@ -1947,7 +2023,7 @@ function Invoke-Inference {
                 }
             }
         }
-        default { Write-Err2 "usage: wyrd inference [status|install [cpu|vulkan|cuda] [--skip-model]|start|stop|share [on|off|status]]"; exit 2 }
+        default { Write-Err2 "usage: wyrd inference [status|install [cpu|vulkan|cuda] [--skip-model]|start|stop|remote <url>|pause [dur] [reason]|resume|share [on|off|status]]"; exit 2 }
     }
 }
 
@@ -1968,6 +2044,24 @@ function Invoke-Doctor {
     Write-Host ("  web search   : {0}" -f $(if (Test-Path $MetasearchExe) { "metasearch ($MetasearchDir)" } else { "DuckDuckGo fallback (run 'wyrd search install' for metasearch)" }))
     $serverPid = Get-ServerPid
     Write-Host ("  server       : {0}" -f $(if ($serverPid) { "running (pid $serverPid), /health=$(Test-Health)" } else { "stopped" }))
+    # The inference queue in plain words (parity with bin/wyrd doctor): the companion's
+    # in-fiction line for a backed-up queue is hers; the numbers are the steward's.
+    if ($serverPid) {
+        try {
+            $h = Invoke-RestMethod -Uri "$(Get-ApiBase)/health" -TimeoutSec 3
+            $inf = $h.inference
+            if ($inf) {
+                $p95 = [double]$inf.p95LatencyMs / 1000.0
+                $line = ("{0} in flight, {1} waiting (max {2}); p95 {3:N1}s over {4} requests" -f $inf.inFlight, $inf.queued, $inf.maxConcurrency, $p95, $inf.latencySamples)
+                if ($inf.paused) { $line += "; PAUSED until $($inf.pausedUntil) ($($inf.pauseReason))" }
+                if ([int]$inf.queued -ge 5) {
+                    Write-Warn2 "inference    : $line - companions answer slowly; raise WYRDSEKAI_INFERENCE_CONCURRENCY only if the server has slots"
+                } else {
+                    Write-Host ("  inference    : {0}" -f $line)
+                }
+            }
+        } catch { }
+    }
     Write-Host ("  port $RestPort   : {0}" -f $(if (Test-PortListening) { "listening" } else { "free" }))
     # Releases: this node, and the two programs it leans on
     if ((Get-UpdateMode) -ne 'off') {
@@ -2020,11 +2114,20 @@ Data:
   restore [<name>]      list backups, or restore one (server must be stopped)
   state dump            unified JSON snapshot of every household state store
   recover <key> <pass>  reset the steward password via the recovery key
+  soul list | rename <old> <new> | archive <name> [why]
+                        the souls this node keeps (rename/archive with the server stopped)
+
+Visitors (the MCP door):
+  visitors [list]                      who is in, as what, through which door
+  visitors dismiss|vouch|unvouch <user> walk a visitor out; let an account in at the Nexus; take that back
 
 Inference:
   inference status                     show backend + local llama state
   inference install [cpu|vulkan|cuda]  GPU-detect, fetch llama.cpp + model, enable local
   inference start | stop               manage the local llama-server(s)
+  inference remote <url>               point companions at a remote llama-server or Ollama (probed first)
+  inference pause [90s|30m|2h|1d] [why] borrow the GPU: companions are told once and hold still
+  inference resume                     give it back early
   model [status|verify|update <id>|rollback <id>|check|history]
                                        release-index model lifecycle (models-index.json)
 
@@ -2681,6 +2784,57 @@ function Invoke-State {
         Write-Host (_T 'state.help.walks_1')
         Write-Host (_T 'state.help.walks_2')
         Write-Host (_T 'state.help.walks_3')
+    }
+}
+
+# `wyrd soul list | rename <old-name> <new-name> | archive <name> [reason]` - the souls
+# this node keeps. Renaming changes the name on the manifest; the server resolves a
+# configured name to the soul that answers to it, so a renamed companion is spawned,
+# not reborn. Parity with bin/wyrd do_soul.
+function Invoke-Soul {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
+    if ($sub -notin @('list', 'rename', 'archive')) {
+        Write-Host "Usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason]"
+        exit 64
+    }
+    if ($sub -ne 'list' -and (Get-ServerPid)) {
+        Write-Err2 "Stop the server first (wyrd stop): a running companion holds her name."
+        exit 1
+    }
+    $soulArgs = if ($Rest.Count -ge 1) { @($Rest) } else { @('list') }
+    $rc = Invoke-WyrdJavaClassStream -Class "org.wyrdsekai.core.soul.SoulAdminMain" -JavaArgs $soulArgs
+    if ($rc -ne 0) { exit $rc }
+}
+
+# `wyrd visitors [list] | dismiss <username> | vouch <username> | unvouch <username>` -
+# who is in through the MCP door, and the steward's say over it. A vouched account
+# enters at the Nexus; anyone else lands at the Docks. Dismissing walks a visitor out
+# mid-visit and its token stops working. Parity with bin/wyrd do_visitors.
+function Invoke-Visitors {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
+    $who = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+    $base = Get-ApiBase
+    switch ($sub) {
+        "list" {
+            try { $d = Invoke-RestMethod -Uri "$base/api/mcp/sessions" -TimeoutSec 5 }
+            catch { Write-Err2 "The server did not answer at $base - is it running?"; exit 1 }
+            $sessions = @($d.sessions)
+            if ($sessions.Count -eq 0) { Write-Host "Nobody is in through the MCP door."; return }
+            Write-Host ("{0,-18} {1,-28} {2,-8} {3,-18} {4}" -f 'USER', 'AS', 'KIND', 'DOOR', 'ROOM')
+            foreach ($x in $sessions) {
+                Write-Host ("{0,-18} {1,-28} {2,-8} {3,-18} {4}" -f $x.username, $x.displayName, $x.kind, $x.door, $x.room)
+            }
+        }
+        { $_ -in @('dismiss', 'vouch', 'unvouch') } {
+            if (-not $who) { Write-Err2 "Usage: wyrd visitors $sub <username>"; exit 2 }
+            $body = @{ username = $who } | ConvertTo-Json -Compress
+            try {
+                $resp = Invoke-RestMethod -Method Post -Uri "$base/api/mcp/$sub" -ContentType 'application/json' -Body $body -TimeoutSec 10
+            } catch { Write-Err2 "The server refused or did not answer (is it running? does the account exist?)"; exit 1 }
+            $msg = if ($resp.message) { $resp.message } elseif ($resp.error) { $resp.error } else { ($resp | ConvertTo-Json -Compress) }
+            Write-Host $msg
+        }
+        default { Write-Host "Usage: wyrd visitors [list] | dismiss <username> | vouch <username> | unvouch <username>"; exit 64 }
     }
 }
 
@@ -3815,6 +3969,8 @@ switch ($Command.ToLower()) {
     "update"    { Invoke-Update }
     "version"   { Invoke-Version }
     "state"     { Invoke-State }
+    "soul"      { Invoke-Soul }
+    "visitors"  { Invoke-Visitors }
     "invite"    { Invoke-InviteCmd }
     "key"       { Invoke-KeyCmd }
     "journal"   { Invoke-Journal }

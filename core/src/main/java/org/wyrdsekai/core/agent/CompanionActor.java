@@ -210,6 +210,8 @@ import org.wyrdsekai.core.item.ItemWorldApiProviderImpl;
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import org.wyrdsekai.scripting.api.ItemWorldApiProvider;
 import org.wyrdsekai.core.item.ItemScheduleService;
+import org.wyrdsekai.core.item.IntentTokens;
+import org.wyrdsekai.core.item.PlainValues;
 import org.wyrdsekai.core.item.StandardItemLibrary;
 import org.wyrdsekai.core.item.StarterKitProvisioner;
 import org.wyrdsekai.core.item.ToolItem;
@@ -270,6 +272,7 @@ import org.wyrdsekai.core.release.AttestationPublishState;
 import org.wyrdsekai.core.release.MoralDefaultsVerifier;
 import org.wyrdsekai.core.room.KnownRooms;
 import org.wyrdsekai.core.room.RoomNaming;
+import org.wyrdsekai.core.room.HomeWardGate;
 import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.StandardRoomLibrary;
 import org.wyrdsekai.core.room.StudyProvisioner;
@@ -1269,6 +1272,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private AgentProfile profile;
     private RecipientRef<RoomCommand> roomRef;  // mutable — changes on room transition
     private String roomId;                       // mutable — changes on room transition
+    /** The room she left for a move whose door may still refuse her; see moveToRoomById. */
+    private String roomBeforeMove;
+    /** When she last said her thinking is paused, so a long pause is said once. */
+    private Instant lastPauseNotice;
+    /** Rejection codes only an EnterRoom produces — a door, not a verb, said no. */
+    private static final Set<String> ENTRY_REFUSALS =
+        Set.of(HomeWardGate.REJECTION_CODE, "at_capacity", "parental_block", "quarantined", "sanctioned");
     private final LinkedHashSet<String> visitedRooms = new LinkedHashSet<>();
     /**
      * Rooms surfaced to the agent via map ingestion (e.g., examining a map item).
@@ -3197,6 +3207,27 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var prevKey = profile.did() != null ? profile.did() : profile.entityId();
         if (!did.equals(profile.did())) {
             this.profile = profile.withDid(did);
+            // Bonds that formed before the DID existed name her by entity id on her own
+            // side; re-key them now so the store finds them by DID and nothing she has
+            // counted is lost to the moment her soul bound (2026-09-13).
+            if (prevKey != null && !prevKey.equals(did)) {
+                int rekeyed = 0;
+                for (var e : activeBonds.entrySet()) {
+                    var bd = e.getValue();
+                    if (bd == null || !bd.involves(prevKey)) continue;
+                    var fixed = bd.withParty(prevKey, did);
+                    e.setValue(fixed);
+                    if (soulStore != null) {
+                        try { soulStore.saveBond(fixed); } catch (Exception ex) {
+                            log.warn("Bond re-key flush failed for {}: {}", e.getKey(), ex.toString());
+                        }
+                    }
+                    rekeyed++;
+                }
+                if (rekeyed > 0) {
+                    log.info("Re-keyed {} bond(s) of '{}' from entity id to DID", rekeyed, profile.name());
+                }
+            }
             // The bunshin primary was registered at onSpawn under prevKey
             // (entityId, since did wasn't minted yet). Now that the DID is
             // bound, dispatcher lookups will use did — so migrate the
@@ -5296,6 +5327,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 }
             }
             case RoomResponse.Rejected rejected -> {
+                // A door that would not open: the room she left is gone from under her
+                // and the room she tried is not hers to stand in. Walk her back and let
+                // her remember it as what it was.
+                if (ENTRY_REFUSALS.contains(rejected.code()) && roomBeforeMove != null
+                        && !roomBeforeMove.equals(roomId)) {
+                    var refusedAt = roomId;
+                    var back = roomBeforeMove;
+                    roomBeforeMove = null;
+                    log.info("Companion '{}' was refused at '{}' ({}) — returning to '{}'",
+                        profile.name(), refusedAt, rejected.code(), back);
+                    remember("I tried to go into " + refusedAt + " and the door did not open for me: "
+                        + rejected.reason());
+                    moveToRoomById(back, "back");
+                    return this;
+                }
                 // #29: correlate a rejected TakeObject back to the take so the
                 // goal_done possession gate can catch "script now in hand"
                 // after a not_found. remember() the failure honestly so
@@ -6410,6 +6456,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // the part that belongs on this side: it only has to get the bench onto
                 // the menu so the dispatch-side force has something to narrow to.
             }
+        } else {
+            // Her own synthetic triggers — the [Tool completed] judgment above all — took the
+            // FLAT list: 188 schemas ≈ 17k tokens, more than the 9B's whole window, and the
+            // compactor sheds messages, not tools. Six turns in six hours failed permanently on
+            // the household node (2026-09-12), the day the librarian door grew from 11 tools to
+            // 22, and the list grows with every item she crafts. Rank by what the trigger says
+            // — same cap, same hatch as a person's request.
+            var about = pendingTrigger != null ? stripActorWrappers(pendingTrigger.text()) : null;
+            allTools = surfaceByAffordance(
+                allTools, about == null ? "" : about.toLowerCase(Locale.ROOT), null);
         }
 
         // Single-model architecture: the SSD-trained reasoning model handles everything.
@@ -6971,6 +7027,36 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /**
+     * The one key a person has in {@link #activeBonds}: an agent by its DID, a human by
+     * their canonical person DID whatever id they arrived under. Room speech carries the
+     * login id; the bondholder announcement carries the person DID; the bond ritual
+     * merges the two at load — and then this map, keyed by the raw id, formed the bond
+     * again under the login id, typed MEMBER, and the upsert wrote that id back over
+     * the DID on the same row. Her bondholder was a member with all the history and a
+     * bondholder with none, from one restart to the next (household node 2026-09-13).
+     */
+    private String personKey(String id) {
+        if (id == null || id.isBlank() || isAgentParty(id)) return id;
+        return PersonIds.canonical(id);
+    }
+
+    /** Of two rows for one person, the one carrying the relationship; the role follows it. */
+    private static Bond fullerOf(Bond x, Bond y) {
+        if (x == null) return y;
+        if (y == null) return x;
+        Bond keep = x, other = y;
+        if (y.active() && !x.active()
+                || y.depth().ordinal() > x.depth().ordinal()
+                || y.depth() == x.depth() && y.interactionCount() > x.interactionCount()) {
+            keep = y; other = x;
+        }
+        if (other.canonicalKind() == BondKind.BONDHOLDER && keep.canonicalKind() != BondKind.BONDHOLDER) {
+            keep = keep.withKind(BondKind.BONDHOLDER);
+        }
+        return keep;
+    }
+
+    /**
      * The active bonds this companion holds TO A PERSON. Peer (agent↔agent) and
      * familiar bonds are excluded: they are real relationships, but they are not
      * bondholders, and every caller here is asking about the human.
@@ -7010,7 +7096,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var store = new BondStore(jdbcUrl);
             for (var b : store.bondsForAgent(myDid)) {
                 if (b == null) continue;
-                var key = b.otherParty(myDid);
+                var key = personKey(b.otherParty(myDid));
                 if (key == null) continue;
                 var mem = activeBonds.get(key);
                 if (mem == null) {
@@ -11098,6 +11184,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     break;
                 }
 
+                if (error.error() != null && error.error().startsWith(InferenceRouter.PAUSED_PREFIX)) {
+                    // Not a failure: the steward has the card for a while. Say so once per
+                    // pause, calmly, and do not treat it as pressure.
+                    var since = lastPauseNotice;
+                    if (since == null || Duration.between(since, Instant.now()).toMinutes() >= 30) {
+                        lastPauseNotice = Instant.now();
+                        var catalogP = ScriptMessageCatalog.forLang(locale);
+                        speak(catalogP.get("agent.companion.inference_paused"));
+                    }
+                    log.info("Inference paused — '{}' holds still ({})", profile.name(), error.error());
+                    break;
+                }
                 lastFailure = Instant.now();
                 log.warn("Inference failed for companion '{}': {}",
                     profile.name(), error.error());
@@ -13966,6 +14064,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void moveToRoomById(String targetRoomId, String direction) {
         var previousRoomId = roomId;
+        // Where to stand if the door refuses her: this move leaves the old room before
+        // the new one has answered, so a refusal (a warded Home, a full room) would
+        // otherwise leave her nowhere, believing she had arrived.
+        roomBeforeMove = previousRoomId;
         log.info("Companion '{}' moving from {} to {} ({})",
             profile.name(), roomId, targetRoomId, direction);
 
@@ -15812,9 +15914,24 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
 
             // Tanks — generous defaults; caps from action overrides
-            int tokens = action.maxTokens() != null ? action.maxTokens() : 2000;
-            int steps = action.maxSteps() != null ? action.maxSteps() : 30;
-            int wallClock = action.wallClockSeconds() != null ? action.wallClockSeconds() : 180;
+            // The household's defaults (wyrd config set WYRDSEKAI_BUNSHIN_TOKENS=… etc.), then
+            // whatever she asked for on this dispatch. Until 2026-09-13 these were three
+            // constants nobody but the model could change.
+            var cfgB = WyrdConfig.get();
+            int tokens = action.maxTokens() != null ? action.maxTokens() : cfgB.bunshinTokens();
+            int steps = action.maxSteps() != null ? action.maxSteps() : cfgB.bunshinSteps();
+            // The wall clock counts queue time it cannot see. On a slow backend a fixed
+            // 180 s died after one turn ("out of budget", field report 2026-09-13); size
+            // it to what a turn actually costs here, measured, with room for the queue.
+            long p95 = InferenceRouter.p95LatencyMs();
+            int measured = (int) Math.min(3600, Math.max(180, steps * Math.max(5, p95 / 1000) * 3 / 2));
+            int configured = cfgB.bunshinWallClock();
+            int wallClock = action.wallClockSeconds() != null ? action.wallClockSeconds()
+                : configured > 0 ? configured : measured;
+            if (action.wallClockSeconds() == null && measured > 180) {
+                log.info("Bunshin wall clock sized to {} s from measured p95 {} ms for '{}'",
+                    measured, p95, profile.name());
+            }
             var tanks = new Tanks(
                 tokens, steps, wallClock, 0, 50);
 
@@ -22289,9 +22406,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (cachedManifest.bonds() != null) {
             for (var bond : cachedManifest.bonds()) {
                 var myDid = profile.did() != null ? profile.did() : cachedManifest.did();
-                var otherParty = bond.otherParty(myDid);
+                if (!bond.involves(myDid)) {
+                    log.warn("Manifest of '{}' carries a bond that is not hers ({} ↔ {}) — not restored",
+                        profile.name(), bond.agentADid(), bond.agentBDid());
+                    continue;
+                }
+                var otherParty = personKey(bond.otherParty(myDid));
                 if (otherParty != null) {
-                    activeBonds.put(otherParty, bond);
+                    var already = activeBonds.get(otherParty);
+                    activeBonds.put(otherParty, already == null ? bond : fullerOf(already, bond));
                 }
             }
             if (!activeBonds.isEmpty()) {
@@ -22537,6 +22660,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     private Behavior<Command> onBondholderAnnounced(BondholderAnnounced msg) {
         if (msg.playerId() == null || msg.playerId().isBlank()) return this;
+        // Announced under whichever id the caller had; held under the person's one key.
+        msg = new BondholderAnnounced(personKey(msg.playerId()), msg.playerName());
         bondholderId = msg.playerId();
         // Exactly-one enforcement (2026-07-18): any OTHER human currently holding a
         // BONDHOLDER-kind bond is re-typed MEMBER — depth, history, and state stay;
@@ -22619,10 +22744,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void trackBondInteraction(String speakerDid, String speakerName, boolean substantive) {
         if (speakerDid == null) return;
+        speakerDid = personKey(speakerDid);
         var myDid = profile.did() != null ? profile.did()
             : (cachedManifest != null ? cachedManifest.did() : profile.entityId());
-
         var existing = activeBonds.get(speakerDid);
+        if (existing != null) {
+            // A bond in this map is with ME, or it is not mine to count on.
+            if (!existing.involves(myDid)) {
+                log.warn("Bond under key {} names {} ↔ {}, not '{}' — dropping it from the live map "
+                    + "(an interaction was about to be credited to another soul)",
+                    speakerDid, existing.agentADid(), existing.agentBDid(), profile.name());
+                activeBonds.remove(speakerDid);
+                existing = null;
+            } else {
+                // The row still names the person by a legacy id: converge it on the key.
+                existing = existing.withOtherParty(myDid, speakerDid);
+            }
+        }
         if (existing == null) {
             // New acquaintance
             // §2.1: auto-spawned bonds start at OPEN (pre-trust). They cross
@@ -23890,8 +24028,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         return out;
                     }
                     @Override public void emit(String eventType, Map<String, Object> data) {
+                        // Copy out of the script context NOW: the replicator serializes this
+                        // event after the invocation has ended and the context is closed
+                        // ("The Context is already closed", household node 2026-09-12 14:43).
                         capturedRoomRef.tell(new RoomCommand.ItemBridgeAction(capturedCallerEntity,
-                            new RoomCommand.ItemBridgeSubAction.Emit(eventType, data)));
+                            new RoomCommand.ItemBridgeSubAction.Emit(eventType, PlainValues.deepCopy(data))));
                     }
                     @Override public void narrate(String text) {
                         capturedRoomRef.tell(new RoomCommand.ItemBridgeAction(capturedCallerEntity,
@@ -29952,6 +30093,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void autoDormantBondOnConfirmedFlag(String subjectDid,
                                                   ProtectionFlag flag) {
+        subjectDid = personKey(subjectDid);
         var bond = activeBonds.get(subjectDid);
         var maybe = Bond.autoDormantOnConfirmedFlag(bond, flag);
         if (maybe.isEmpty()) return;
@@ -30320,7 +30462,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // bond the companion just severed.
         var severMyDid = profile.did() != null ? profile.did()
             : (cachedManifest != null ? cachedManifest.did() : profile.entityId());
-        var severKey = mourning.otherParty(severMyDid);
+        var severKey = personKey(mourning.otherParty(severMyDid));
         activeBonds.put(severKey, mourning);
         if (soulStore != null) {
             try { soulStore.saveBond(mourning); } catch (Exception e) {
@@ -30512,7 +30654,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // DID-key + flush (2026-07-18), same fix as declare_severance.
         var doneMyDid = profile.did() != null ? profile.did()
             : (cachedManifest != null ? cachedManifest.did() : profile.entityId());
-        activeBonds.put(severed.otherParty(doneMyDid), severed);
+        activeBonds.put(personKey(severed.otherParty(doneMyDid)), severed);
         if (soulStore != null) {
             try { soulStore.saveBond(severed); } catch (Exception e) {
                 log.warn("Mourning-complete flush failed for {} ↔ {}: {}",
@@ -33931,66 +34073,67 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
 
         } catch (IllegalArgumentException e) {
-            // §Fix-1 — fuzzy-match fallback. Model often types literal "tool"/
-            // "item"/"crystal" instead of a real template name. Search by the
-            // requested template name first, then by the item name (e.g.
-            // name="temperature_converter" might match "simple-book" via the
-            // "convert" keyword in description). On match, retry instantiate
-            // with the corrected template.
-            String fallback = null;
-            try {
-                var matches = standardItemLibrary.search(templateName);
-                if (matches.isEmpty() && itemName != null) {
-                    matches = standardItemLibrary.search(itemName);
-                }
-                if (!matches.isEmpty()) {
-                    fallback = matches.getFirst().name();
-                } else {
-                    // Token-aware fallback. The 9B frequently confabulates a COMPOUND
-                    // name ("web_search_lens") assembled from real template tokens
-                    // ("web" → web-window, "lens" → oracle-lens). Whole-string search()
-                    // does a .contains() and misses these, so split on non-alphanumerics
-                    // and score templates by how many distinct query tokens they match.
-                    // (second-node 2026-07-08: "build me a web-searching item" → the model chose
-                    // craft_from_template correctly but invented web_search_lens → craft
-                    // failed silently → empty inventory. This maps it to web-window.)
-                    fallback = bestTemplateByTokens(templateName, itemName);
-                    if (fallback != null) {
-                        log.info("Template '{}' unknown; token-match resolved to '{}'",
-                            templateName, fallback);
-                    }
-                }
-            } catch (Exception searchEx) {
-                log.debug("Fuzzy-match search failed: {}", searchEx.getMessage());
-            }
-            if (fallback != null && !fallback.equalsIgnoreCase(templateName)) {
-                log.info("Template '{}' unknown; falling back to '{}' via fuzzy match",
-                    templateName, fallback);
+            // The template is not one we have. Ask the library what she MEANT — exact id,
+            // display name or alias of the requested name, then of the item's name, then a
+            // whole-word comparison against every template's names, aliases and thematic
+            // words. Ties and weak matches are declined. The substring search this replaces
+            // turned `backup_vault` + "…use `create` to pack new backups…" into a workbench
+            // hammer through the word "create" (household node 2026-09-12), and she carried
+            // that hammer believing it was the household's vault key.
+            var resolution = standardItemLibrary.resolveIntent(templateName, itemName);
+            if (resolution.matched()) {
+                var fallback = resolution.template().name();
+                log.info("Template '{}' unknown; resolved to '{}' by {} (score {})",
+                    templateName, fallback, resolution.how(), resolution.score());
                 try {
                     var toolItem = standardItemLibrary.instantiate(
                         fallback, parseCraftConfig(configStr, itemName), did);
-                    // Same finalization as the direct path — so a fuzzy/token-matched item
-                    // persists to inventory + soul locker and survives a restart, instead of
-                    // living only in dynamicItems and vanishing when the actor stops.
+                    // Same finalization as the direct path — so a resolved item persists to
+                    // inventory + soul locker and survives a restart.
                     finalizeCraftedItem(toolItem, did,
                         "I crafted " + toolItem.name() + " from the " + fallback
-                            + " template (closest match for '" + templateName + "').",
+                            + " template (what '" + templateName + "' names here).",
                         Map.of(
                             "action", "crafted item",
                             "item_name", toolItem.name(),
                             "template", fallback));
                     return;
                 } catch (Exception fallbackEx) {
-                    log.warn("Fuzzy fallback to '{}' also failed: {}", fallback, fallbackEx.getMessage());
+                    log.warn("Resolved template '{}' also failed: {}", fallback, fallbackEx.getMessage());
                 }
+            }
+            // No template says what she asked for. Before offering the list, look at what
+            // already stands in the world: "a key for the household's backup snapshots" is
+            // not a thing to craft, it is the key chest she can use_item.
+            var existing = existingItemReach(templateName, itemName);
+            if (existing != null) {
+                var existingName = existing.function().name();
+                var reach = "There is no template named '" + templateName + "', and nothing to "
+                    + "craft: what you describe already exists here as '" + existingName + "' — "
+                    + truncate(existing.function().description(), 240)
+                    + " Use it: use_item with name '" + existingName + "'.";
+                log.info("Template '{}' unknown; the item name reaches the existing tool '{}' — not crafting",
+                    templateName, existingName);
+                if (reactMessages != null) {
+                    reactMessages.add(new InferenceClient.ChatMessage("tool", reach));
+                    reactIteration++;
+                    timers.startSingleTimer("react-continue",
+                        new ReactDispatch(), Duration.ofMillis(100));
+                } else {
+                    continueBuildAsReact(reach);
+                }
+                return;
             }
             // §Fix-2 — emit as ReAct tool-result instead of speak-and-exit. The
             // model gets the actual valid template list and can retry. If we
             // are not in a ReAct loop, fall back to speak.
             var validNames = String.join(", ",
                 new TreeSet<>(standardItemLibrary.templates().keySet()));
+            var nearest = resolution.candidates().isEmpty() ? "" : " Nearest by wording: "
+                + String.join(", ", resolution.candidates().stream()
+                    .map(StandardItemLibrary.ItemTemplate::name).toList()) + ".";
             var errMsg = "Template '" + templateName + "' is NOT a valid template name. "
-                + "Valid templates (use exact names): " + validNames + ". "
+                + "Valid templates (use exact names): " + validNames + "." + nearest + " "
                 + "Pick the closest one by purpose. If you want custom logic, use 'simple-book' "
                 + "and supply a `script` parameter.";
             if (reactMessages != null) {
@@ -34006,7 +34149,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // = no item, silently (second-node 2026-07-08).
                 continueBuildAsReact(errMsg);
             }
-            log.warn("Template not found: {} (no fuzzy match)", templateName);
+            log.warn("Template not found: {} (no template, alias or existing item names it)", templateName);
         } catch (Exception e) {
             speak("Something went wrong crafting the item: " + e.getMessage());
             log.error("Craft from template failed for '{}': {}", templateName, e.getMessage());
@@ -34671,30 +34814,31 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         remember("Handed " + toolItem.name() + " to " + who);
     }
 
-    private String bestTemplateByTokens(String templateName, String itemName) {
-        var tokens = new LinkedHashSet<String>();
-        for (var src : new String[]{templateName, itemName}) {
-            if (src == null) continue;
-            for (var tok : src.toLowerCase().split("[^a-z0-9]+")) {
-                if (tok.length() >= 3) tokens.add(tok);
-            }
+    /**
+     * An item that already exists whose name and description say what she asked to craft —
+     * the thing she is reaching for, not a thing to make. Whole words, meaningful words,
+     * and a clear winner or nothing; a two-way tie is not an answer.
+     */
+    InferenceClient.ToolDefinition existingItemReach(String templateName, String itemName) {
+        var query = IntentTokens.tokens(templateName, itemName);
+        if (query.size() < 2) return null;
+        InferenceClient.ToolDefinition best = null;
+        int bestScore = 0, second = 0;
+        for (var t : buildScopedTools()) {
+            if (t.function() == null || t.function().name() == null) continue;
+            var strong = IntentTokens.tokens(t.function().name());
+            var weak = IntentTokens.tokens(t.function().description());
+            int score = 0;
+            for (var q : query) score += strong.contains(q) ? 2 : weak.contains(q) ? 1 : 0;
+            if (score > bestScore) { second = bestScore; bestScore = score; best = t; }
+            else if (score > second) second = score;
         }
-        if (tokens.isEmpty()) return null;
-        var scores = new LinkedHashMap<String, Integer>();
-        for (var tok : tokens) {
-            try {
-                for (var t : standardItemLibrary.search(tok)) {
-                    scores.merge(t.name(), 1, Integer::sum);
-                }
-            } catch (Exception ignored) {
-                // a single bad token shouldn't sink the whole match
-            }
-        }
-        return scores.entrySet().stream()
-            .max(Map.Entry.comparingByValue())
-            .map(Map.Entry::getKey)
-            .orElse(null);
+        if (best == null || bestScore < EXISTING_REACH_MIN_SCORE || bestScore == second) return null;
+        return best;
     }
+
+    /** Two words of the item's name, or one of its name and two of its description. */
+    static final int EXISTING_REACH_MIN_SCORE = 4;
 
     private void handleCraftItem(ActionParser.AgentAction.CraftItem action) {
         log.info("Companion '{}' crafts item '{}'", profile.name(), action.name());
@@ -34712,10 +34856,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var templateName = action.properties() != null ? action.properties().get("template") : null;
         if (templateName == null) {
             // Try to find a template by name or category match
-            var matches = standardItemLibrary.search(action.name());
-            if (!matches.isEmpty()) {
-                templateName = matches.getFirst().name();
-                log.info("Matched craft request '{}' to template '{}'", action.name(), templateName);
+            var found = standardItemLibrary.resolveIntent(null, action.name());
+            if (found.matched()) {
+                templateName = found.template().name();
+                log.info("Matched craft request '{}' to template '{}' by {}",
+                    action.name(), templateName, found.how());
             }
         }
 

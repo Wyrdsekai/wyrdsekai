@@ -309,7 +309,7 @@
   "inference.help.dual_header": "Inferencia dual (voz 4B + habilidades 9B):",
   "inference.help.example_local_auto": "  wyrd inference local                            # selecciona modelo según el hardware",
   "inference.help.example_local_path": "  wyrd inference local /opt/models/qwen3-4b.gguf  # GGUF explícito",
-  "inference.help.example_remote": "  wyrd inference remote http://home-server:8200          # HTTP directo al vecino",
+  "inference.help.example_remote": "  wyrd inference remote http://198.51.100.20:8200          # HTTP directo al vecino",
   "inference.help.example_voice_adapter": "  wyrd inference voice-adapter ~/.wyrdsekai/adapters/wyrd-voice/adapter.gguf",
   "inference.help.example_zone": "  wyrd inference zone home                        # NATS a través del relay",
   "inference.help.examples_header": "Ejemplos:",
@@ -325,7 +325,7 @@
   "inference.local.recommended": "Modelo recomendado para este host: {0}",
   "inference.local.started_pid": "llama-server iniciado (pid {0})",
   "inference.local.using_bin": "llama-server: {0}",
-  "inference.remote.example": "  Ejemplo: wyrd inference remote http://home-server:8200",
+  "inference.remote.example": "  Ejemplo: wyrd inference remote http://198.51.100.20:8200",
   "inference.remote.usage": "Uso: wyrd inference remote <url>",
   "inference.status.backend": "Backend de inferencia: {0}",
   "inference.status.cores_ram": "  Núcleos: {0}   RAM: {1} GB",
@@ -1146,5 +1146,7 @@
   "doctor.disk_tight": "Disco al {0}% — una copia del índice de búsqueda podría no caber; revisa la línea de copias y `wyrd doctor` tras limpiar",
   "doctor.backups": "Copias: {0} en {1} entradas ({2}); el índice se enlaza (hard link) por instantánea desde 0.3.0, así que una nueva no ocupa espacio",
   "doctor.swap": "Swap: {0} MB de {1} MB en uso (pico de memoria del servicio desde el arranque: {2})",
-  "doctor.swappiness": "vm.swappiness={0}: el núcleo pasa memoria de procesos a swap antes de soltar páginas de modelos mapeados; el paquete fija 10 (/etc/sysctl.d/90-wyrdsekai.conf)"
+  "doctor.swappiness": "vm.swappiness={0}: el núcleo pasa memoria de procesos a swap antes de soltar páginas de modelos mapeados; el paquete fija 10 (/etc/sysctl.d/90-wyrdsekai.conf)",
+  "doctor.state_notes": "Estado: {0} atributo(s) aún viven en dos almacenes por diseño (hoja de ruta de consolidación, no un fallo) — `wyrd state dump --summary` los lista",
+  "doctor.state_errors": "El volcado de estado informó errores:"
 }

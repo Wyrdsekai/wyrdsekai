@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -116,6 +117,11 @@ public final class AuthService {
      * @return session on success, empty if credentials invalid
      */
     public Optional<Session> login(String username, String password) {
+        if (password == null || password.getBytes(StandardCharsets.UTF_8).length > 72) {
+            // bcrypt verifies at most 72 bytes and THROWS past that; a client that let a
+            // description fall into this slot got an HTTP 500 for it (2026-09-13).
+            return Optional.empty();
+        }
         try (var conn = getConnection()) {
             var sql = "SELECT id, password_hash FROM users WHERE username = ?";
             try (var stmt = conn.prepareStatement(sql)) {

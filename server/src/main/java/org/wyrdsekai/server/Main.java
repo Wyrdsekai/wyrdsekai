@@ -112,6 +112,7 @@ import org.wyrdsekai.core.room.ZoneTopology;
 // ClusterSharding removed — rooms use RoomRegistry + child actors
 import org.wyrdsekai.core.agent.AgentProfile;
 import org.wyrdsekai.core.agent.Companions;
+import org.wyrdsekai.core.agent.SoulNames;
 import org.wyrdsekai.core.agent.CompanionActor;
 import org.wyrdsekai.core.agent.CompanionSpawner;
 import org.wyrdsekai.core.agent.CompanionCapabilityRegistry;
@@ -278,6 +279,7 @@ import org.wyrdsekai.core.home.NotificationHomeEventListener;
 import org.wyrdsekai.core.home.Residency;
 import org.wyrdsekai.core.home.ResidencyStore;
 import org.wyrdsekai.core.home.WardGrantSync;
+import org.wyrdsekai.core.room.HomeWardGate;
 import org.wyrdsekai.core.home.ZoneDirectory;
 import org.wyrdsekai.core.identity.AccountStore;
 import org.wyrdsekai.core.identity.HouseholdStore;
@@ -353,6 +355,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -368,6 +371,7 @@ import java.net.ServerSocket;
 import java.security.MessageDigest;
 import java.time.Clock;
 import org.wyrdsekai.hermod.TaskEnvelope;
+import org.wyrdsekai.core.household.QuietHours;
 
 /**
  * Wyrdsekai server entry point.
@@ -984,6 +988,10 @@ public class Main {
         }
 
         var wardService = new WardService(jdbcUrl, dialect);
+        // The lock on a companion's Home door — RoomActor asks it on every entry.
+        HomeWardGate.install(wardService);
+        // Quiet hours, kept by the rooms for visitors (WYRDSEKAI_QUIET_HOURS=22:00-07:00).
+        QuietHours.configure(WyrdConfig.get().quietHours());
         var inventoryService = new InventoryService(jdbcUrl, dialect);
         var metadataService = new RoomMetadataService(jdbcUrl, dialect);
         var bridgeDataProvider = new BridgeDataProviderImpl(wardService, metadataService, authService);
@@ -3628,8 +3636,15 @@ public class Main {
         // (wyrd start prompts and persists WYRDSEKAI_COMPANION_NAME; default
         // remains "Wyrd"). The name shapes entityId + system prompt, so the
         // soul is born with it rather than renamed after the fact.
-        final var defaultCompanion = Companions.defaultCompanion(
-            System.getenv("WYRDSEKAI_COMPANION_NAME"));
+        // A name is a label on a soul, not its key (2026-09-13): the configured name
+        // resolves to the soul that answers to it, renames the one unclaimed soul born
+        // here when the name has changed, and births only when nobody is meant.
+        final var soulsDirForNames = SystemPaths.dataDir().resolve("souls");
+        final var claimedIds = new HashSet<String>();
+        final var envName1 = System.getenv("WYRDSEKAI_COMPANION_NAME");
+        final var envName2 = System.getenv("WYRDSEKAI_COMPANION_NAME_2");
+        final var defaultCompanion = SoulNames.forEnvName(envName1, false,
+            Collections.singletonList(envName2), finalSoulStore2, soulsDirForNames, claimedIds);
 
         // Optional second companion (steward opted in at first boot and named
         // it; wyrd start persists WYRDSEKAI_COMPANION_NAME_2). Born archetype
@@ -3638,7 +3653,8 @@ public class Main {
         final var secondNameEnv = System.getenv("WYRDSEKAI_COMPANION_NAME_2");
         AgentProfile secondProfile = null;
         if (secondNameEnv != null && !secondNameEnv.isBlank()) {
-            var candidate = Companions.additionalCompanion(secondNameEnv);
+            var candidate = SoulNames.forEnvName(secondNameEnv, true,
+                Collections.singletonList(envName1), finalSoulStore2, soulsDirForNames, claimedIds);
             if (candidate.entityId().equals(defaultCompanion.entityId())) {
                 log.warn("WYRDSEKAI_COMPANION_NAME_2 '{}' collides with the first "
                     + "companion's entityId — skipping second spawn", secondNameEnv);
@@ -3690,8 +3706,10 @@ public class Main {
                     if (p == null || p.entityId() == null) continue;
                     if (!"agent".equals(p.entityType())) continue;
                     if (!spawnedIds.add(p.entityId())) continue;      // already spawned
-                    var reborn = Companions.additionalCompanion(p.name());
-                    if (!reborn.entityId().equals(p.entityId())) continue; // name→id drift; skip
+                    // Her own entity id, whatever her name derives to now — a renamed soul
+                    // used to be skipped here as "name→id drift" and vanished from the world.
+                    var reborn = Companions.forPersistedSoul(p.name(), p.entityId(),
+                        p.archetype() != null ? p.archetype() : "random");
                     var didFile = soulsDir.resolve(p.entityId() + ".did");
                     boolean locallyBorn = false;
                     try {

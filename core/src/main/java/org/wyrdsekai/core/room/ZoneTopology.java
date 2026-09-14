@@ -7,6 +7,7 @@ import org.wyrdsekai.common.model.TopologySnapshot.MapNode;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.function.Function;
 
 /**
  * Queryable directed graph of room topology within a zone (§N1).
@@ -446,6 +447,16 @@ public final class ZoneTopology {
      * Uses a tree-style layout since rooms are a graph, not a grid.
      */
     public String renderTextMap(String centerRoomId, int radius, Set<String> visitedRooms) {
+        return renderTextMap(centerRoomId, radius, visitedRooms, id -> null);
+    }
+
+    /**
+     * The map with people on it: {@code occupants} answers a room id with the names to
+     * print beside it (already filtered — private rooms give null), and the key
+     * {@code "*elsewhere*"} with a footer of people the map may not place by room.
+     */
+    public String renderTextMap(String centerRoomId, int radius, Set<String> visitedRooms,
+                                Function<String, String> occupants) {
         var center = rooms.get(centerRoomId);
         if (center == null) return "Unknown location.";
 
@@ -454,17 +465,23 @@ public final class ZoneTopology {
         // This implementation uses a simple indented tree format which is
         // universally readable (works in all terminals, screen readers).
         var sb = new StringBuilder();
-        sb.append("[* ").append(center.name()).append("]\n");
+        sb.append("[* ").append(center.name()).append("]");
+        var here = occupants.apply(centerRoomId);
+        if (here != null && !here.isBlank()) sb.append("  — ").append(here);
+        sb.append("\n");
 
         var seen = new HashSet<String>();
         seen.add(centerRoomId);
-        renderTreeBranches(sb, centerRoomId, radius, visitedRooms, seen, "");
+        renderTreeBranches(sb, centerRoomId, radius, visitedRooms, seen, "", occupants);
 
+        var elsewhere = occupants.apply("*elsewhere*");
+        if (elsewhere != null && !elsewhere.isBlank()) sb.append("\n").append(elsewhere).append("\n");
         return sb.toString().stripTrailing();
     }
 
     private void renderTreeBranches(StringBuilder sb, String roomId, int remainingDepth,
-                                     Set<String> visitedRooms, Set<String> seen, String prefix) {
+                                     Set<String> visitedRooms, Set<String> seen, String prefix,
+                                     Function<String, String> occupants) {
         var node = rooms.get(roomId);
         if (node == null || remainingDepth <= 0) return;
 
@@ -486,11 +503,14 @@ public final class ZoneTopology {
 
             var arrow = hasReturn(roomId, targetId) ? "--" : "->";
             sb.append(prefix).append(connector).append(exit.direction())
-                .append(arrow).append("[").append(name).append("]\n");
+                .append(arrow).append("[").append(name).append("]");
+            var who = occupants.apply(targetId);
+            if (who != null && !who.isBlank()) sb.append("  — ").append(who);
+            sb.append("\n");
 
             if (remainingDepth > 1 && target != null) {
                 renderTreeBranches(sb, targetId, remainingDepth - 1,
-                    visitedRooms, seen, prefix + childPrefix);
+                    visitedRooms, seen, prefix + childPrefix, occupants);
             }
         }
     }

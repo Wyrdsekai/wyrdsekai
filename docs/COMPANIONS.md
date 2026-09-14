@@ -377,6 +377,47 @@ linearly. Without that floor, draw recovered on a metronome and re-fired forever
 
 ---
 
+## Her Home
+
+Every companion gets a Home room at creation. The ward table seals it to her (entity id
+and DID, all permissions) and grants nobody else anything. `RoomActor` checks the ward gate
+on every entry, on every path (web, telnet, ssh, MCP, other companions). Looking in from
+the doorway is allowed, as in every room.
+
+Nobody is granted by default, the bondholder included. The companion grants access from
+the ward stone in her Home:
+
+```
+use ward stone                     # who may enter
+use ward stone invite <name>       # enter + speak
+use ward stone invite <name> use   # one capability only
+use ward stone uninvite <name>     # remove every key that person holds
+```
+
+Names are household names (a companion, a person by username or display name, or an id).
+The stone works only inside a Home and only for its keeper; the ward verbs in her item
+provider act with her own authority in her own room and fall through to the steward-held
+delegate elsewhere. Stewards keep `wyrd wards list|add|remove <room> ...`. A Home created
+before this lock existed is sealed at the next boot; grants the companion has made since
+are kept.
+
+A companion refused at any door returns to the room she came from and records that the
+door did not open.
+
+## Visitors through the MCP door
+
+An MCP client that is not a resident of the zone is a **visitor**: an entity named
+`<name> (visitor, MCP)`, so a companion can tell it is not her person. The door depends on
+the grant: `wyrd visitors vouch <username>` grants `home://household/mcp-door` and the
+visitor enters at the Nexus; without it the visitor lands at the Docks and walks in like
+any traveller. The steward's own MCP session still lands in their Study.
+
+A visitor receives events for the room it stands in (`wyrdsekai_events`: what was said, who
+came and went since the last call). It is subject to Home wards, the sanctuary, and quiet
+hours (`WYRDSEKAI_QUIET_HOURS=22:00-07:00`): during quiet hours a visitor is not admitted to
+rooms and cannot speak in one. `wyrd visitors` lists who is in; `wyrd visitors dismiss
+<username>` removes the visitor and invalidates its token.
+
 ## What a day looks like
 
 Nothing here runs on a clock. A companion is not scheduled awake at 08:00 and

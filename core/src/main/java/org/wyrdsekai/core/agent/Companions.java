@@ -145,6 +145,27 @@ public final class Companions {
      * a free-sampled TemperamentSeed — so siblings are distinct particulars
      * rather than twins of the first.
      */
+    /**
+     * The profile for a soul that already exists: her name as it is now, the entity id she
+     * was born with (which may no longer derive from the name — a rename keeps the id), and
+     * her archetype. A restart spawns her, not a new companion (2026-09-13).
+     */
+    public static AgentProfile forPersistedSoul(String name, String entityId, String archetype) {
+        var n = (name == null || name.isBlank()) ? DEFAULT_NAME : name.trim();
+        return new AgentProfile(
+            n,
+            entityId,
+            "agent",
+            NEXUS_COMPANION.description(),
+            promptFor(n),
+            NEXUS_COMPANION.contextWindowTokens(),
+            NEXUS_COMPANION.maxResponseTokens(),
+            NEXUS_COMPANION.temperature(),
+            null,
+            archetype
+        );
+    }
+
     public static AgentProfile additionalCompanion(String name) {
         var n = (name == null || name.isBlank()) ? "Wisp" : name.trim();
         var slug = n.toLowerCase().replaceAll("[^a-z0-9_-]", "");

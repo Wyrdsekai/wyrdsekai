@@ -397,7 +397,7 @@ public final class AuthRoutes {
 
         var req = Json.mapper().readValue(ctx.body(), RedeemRequest.class);
         if (req.code() == null || req.code().isBlank()) {
-            ctx.status(400).json(new ErrorResponse("Invite code required"));
+            ctx.status(400).json(new ErrorResponse("Invite code required — send it as the JSON field \"code\""));
             return;
         }
         if (req.username() == null || req.username().isBlank()

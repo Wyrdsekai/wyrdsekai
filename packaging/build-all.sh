@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.3.1}"
+VERSION="${WYRDSEKAI_VERSION:-0.3.2}"
 
 info()  { echo -e "\033[36m[pack]\033[0m $*"; }
 ok()    { echo -e "\033[32m[pack]\033[0m $*"; }
@@ -79,8 +79,20 @@ echo ""
 # for emergency builds (or use BAKE_SKIP_HEADS=… for a partial skip).
 if [[ -z "${WYRDSEKAI_SKIP_BAKE:-}" ]]; then
     if $BUILD_DIST; then
+        # The bake needs the 9B drive on :8200. Start it for the bake and stop it
+        # after, unless it was already up — the build box's GPU is nobody's by
+        # default (scripts/bake-server.sh; restart policy stays OFF either way).
+        BAKE_SERVER_STARTED_HERE=false
+        if ! curl -fsS -m 3 http://127.0.0.1:8200/health >/dev/null 2>&1; then
+            info "Bake server :8200 is down — starting it for the bake"
+            "$PROJECT_DIR/scripts/bake-server.sh" start
+            BAKE_SERVER_STARTED_HERE=true
+        fi
         info "Running release-time evolution bake (B1)..."
         "$SCRIPT_DIR/build-evolved-artifact.sh"
+        if $BAKE_SERVER_STARTED_HERE; then
+            "$PROJECT_DIR/scripts/bake-server.sh" stop
+        fi
         echo ""
     fi
 else

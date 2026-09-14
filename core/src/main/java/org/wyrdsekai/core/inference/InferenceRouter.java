@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.inference;
 
 import org.wyrdsekai.core.update.ActivityGauge;
+import org.wyrdsekai.core.scheduler.InferenceMetrics;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -31,7 +32,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
@@ -467,8 +470,121 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * Default: 1 (serialize all requests — safe for Ollama/single-GPU).
      * Set higher for backends with continuous batching (SGLang=128, vLLM=64).
      */
-    private final int maxConcurrency = Integer.parseInt(
-        System.getenv().getOrDefault("WYRDSEKAI_INFERENCE_CONCURRENCY", "1"));
+    private final int maxConcurrency;
+
+    /**
+     * How many requests may be in flight at once. {@code WYRDSEKAI_INFERENCE_CONCURRENCY}
+     * when set; otherwise one per configured backend — a node with a drive server AND a
+     * voice server can have one request at each. The constant 1 put two companions on a
+     * 32-core host behind one slot: a standing queue of 20 and "the threads of thought
+     * are tangled" for an evening (field report, 2026-09-13).
+     */
+    static int concurrencyFor(List<InferenceBackend> backends) {
+        var env = System.getenv("WYRDSEKAI_INFERENCE_CONCURRENCY");
+        if (env != null && !env.isBlank()) {
+            try { return Math.max(1, Integer.parseInt(env.trim())); } catch (NumberFormatException ignored) { }
+        }
+        return Math.max(1, backends == null ? 1 : backends.size());
+    }
+
+    // ── What the rest of the node may ask about the queue, without a message ──
+    /** A point-in-time view for /health, `wyrd doctor` and the steward's eye. */
+    public record Snapshot(int inFlight, int queued, int maxConcurrency, Instant pausedUntil,
+                           String pauseReason, long p95LatencyMs, long avgLatencyMs, int samples) {
+        public Map<String, Object> asMap() {
+            var m = new LinkedHashMap<String, Object>();
+            m.put("inFlight", inFlight);
+            m.put("queued", queued);
+            m.put("maxConcurrency", maxConcurrency);
+            m.put("paused", pausedUntil != null && pausedUntil.isAfter(Instant.now()));
+            if (pausedUntil != null) m.put("pausedUntil", pausedUntil.toString());
+            if (pauseReason != null) m.put("pauseReason", pauseReason);
+            m.put("p95LatencyMs", p95LatencyMs);
+            m.put("avgLatencyMs", avgLatencyMs);
+            m.put("latencySamples", samples);
+            return m;
+        }
+    }
+    private static volatile int snapInFlight, snapQueued, snapMax = 1;
+    private static volatile Instant pausedUntil;
+    private static volatile String pauseReason;
+    private static final InferenceMetrics.Aggregator LATENCY = new InferenceMetrics.Aggregator(500, Duration.ofMinutes(10));
+    private final Map<String, Long> startedAt = new HashMap<>();
+
+    public static Snapshot snapshot() {
+        var s = LATENCY.summary();
+        return new Snapshot(snapInFlight, snapQueued, snapMax, pausedUntil, pauseReason,
+            s.p95Ms(), (long) s.avgLatencyMs(), s.sampleCount());
+    }
+
+    /** The 95th-percentile chat latency over the last minutes, or 0 when nothing has run. */
+    public static long p95LatencyMs() {
+        return LATENCY.summary().p95Ms();
+    }
+
+    /**
+     * The steward takes the card for a while. Requests are refused with a {@code PAUSED:}
+     * error the companions recognise and speak about honestly, instead of timing out into
+     * tangled threads; item scripts still run. Resume early with {@link #resume()}.
+     */
+    public static void pause(Duration forHowLong, String reason) {
+        pausedUntil = Instant.now().plus(forHowLong);
+        pauseReason = reason == null || reason.isBlank() ? "the household needs the hardware" : reason;
+        log.warn("Inference PAUSED until {} — {}", pausedUntil, pauseReason);
+    }
+
+    public static void resume() {
+        if (pausedUntil != null) log.info("Inference resumed");
+        pausedUntil = null;
+        pauseReason = null;
+    }
+
+    public static boolean isPaused() {
+        var p = pausedUntil;
+        return p != null && p.isAfter(Instant.now());
+    }
+
+    /** The error text a paused request gets — the actor keys on the prefix. */
+    public static final String PAUSED_PREFIX = "PAUSED:";
+
+    private static String pausedMessage() {
+        return PAUSED_PREFIX + " inference is paused until " + pausedUntil + " (" + pauseReason + ")";
+    }
+
+    private void updateSnapshot() {
+        snapInFlight = inferenceInFlightCount;
+        snapQueued = inferenceQueue.size();
+        snapMax = maxConcurrency;
+    }
+
+    /**
+     * A request takes its slot here, whichever door it came through. The start stamp
+     * lives with the slot: until 2026-09-14 only the fallback path stamped it, so the four
+     * ordinary dispatches completed with nothing to measure — {@code /health} on the
+     * household node showed 0 samples and one request forever in flight while companions
+     * talked all day, and the bunshin wall clock sized itself from a p95 of zero.
+     */
+    private void beginRequest(String requestId) {
+        inferenceInFlightCount++;
+        startedAt.putIfAbsent(requestId, System.nanoTime());
+        updateSnapshot();
+        ActivityGauge.inferenceStarted();
+    }
+
+    /** The slot is given back and the snapshot reflects it — after the decrement, not before. */
+    private void endRequest() {
+        inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
+        updateSnapshot();
+        ActivityGauge.inferenceFinished();
+    }
+
+    private void recordLatency(String requestId, String backendName, boolean ok, int tokensIn, int tokensOut) {
+        var t0 = startedAt.remove(requestId);
+        if (t0 == null) return;
+        long ms = (System.nanoTime() - t0) / 1_000_000L;
+        LATENCY.record(new InferenceMetrics(backendName == null ? "?" : backendName, defaultModel == null ? "?" : defaultModel,
+            ms, tokensIn, tokensOut, ok, Instant.now()));
+    }
 
     private record QueuedRequest(int priority, Command command) {}
 
@@ -510,6 +626,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                             Duration healthCheckInterval) {
         super(context);
         this.backends = new ArrayList<>(backends);
+        this.maxConcurrency = concurrencyFor(backends);
+        snapMax = this.maxConcurrency;
         this.healthStatus = new HashMap<>();
         this.defaultModel = defaultModel;
         this.resourceMeter = resourceMeter;
@@ -531,8 +649,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         var names = backends.stream()
                 .map(b -> b.name() + "(" + b.type() + ", pri=" + b.priority() + ")")
                 .toList();
-        log.info("InferenceRouter started — {} backend(s): {}, default model: {}",
-                backends.size(), names, defaultModel);
+        log.info("InferenceRouter started — {} backend(s): {}, default model: {}, concurrency: {}",
+                backends.size(), names, defaultModel, maxConcurrency);
         if (capabilityRegistry != null) {
             log.info("CapabilityRegistry active — capabilities: {}",
                     capabilityRegistry.availableCapabilities());
@@ -634,6 +752,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     private Behavior<Command> onInferRequest(InferRequest req) {
+        if (isPaused()) {
+            req.replyTo().tell(new InferError(req.requestId(), pausedMessage()));
+            return this;
+        }
         if (inferenceInFlightCount >= maxConcurrency) {
             if (inferenceQueue.size() >= MAX_QUEUE_SIZE) {
                 req.replyTo().tell(new InferError(req.requestId(),
@@ -660,8 +782,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             return;
         }
 
-        inferenceInFlightCount++;
-        ActivityGauge.inferenceStarted();
+        beginRequest(req.requestId());
         var effectiveModel = resolveModel(model, backend);
         var messages = new ArrayList<InferenceClient.ChatMessage>();
         if (req.systemPrompt() != null && !req.systemPrompt().isBlank()) {
@@ -713,8 +834,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             return this;
         }
 
-        inferenceInFlightCount++;
-        ActivityGauge.inferenceStarted();
+        beginRequest(req.requestId());
         var effectiveModel = resolveModel(model, backend);
         var chatReq = new InferenceClient.ChatRequest(effectiveModel,
             consolidateSystemMessages(req.messages()),
@@ -773,6 +893,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 req.requestId(), inferenceInFlightCount, maxConcurrency);
         }
 
+        if (!isItemScript && isPaused()) {
+            req.replyTo().tell(new InferError(req.requestId(), pausedMessage()));
+            return this;
+        }
         if (!isItemScript && inferenceInFlightCount >= maxConcurrency) {
             if (inferenceQueue.size() >= MAX_QUEUE_SIZE) {
                 req.replyTo().tell(new InferError(req.requestId(),
@@ -784,9 +908,16 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 req.requestId(), pri, inferenceInFlightCount, maxConcurrency,
                 inferenceQueue.size() + 1);
             inferenceQueue.add(new QueuedRequest(pri, req));
+            updateSnapshot();
+            if (inferenceQueue.size() == 10) {
+                log.warn("Inference is backing up: {} waiting, {} in flight (max {}), p95 {} ms — "
+                    + "the steward can see this in `wyrd doctor` and /health",
+                    inferenceQueue.size(), inferenceInFlightCount, maxConcurrency, p95LatencyMs());
+            }
             return this;
         }
         executeChatRequest(req);
+        updateSnapshot();
         return this;
     }
 
@@ -805,8 +936,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             return;
         }
 
-        inferenceInFlightCount++;
-        ActivityGauge.inferenceStarted();
+        beginRequest(req.requestId());
         var effectiveModel = resolveModel(model, backend);
         var grammar = req.grammar();
         var format = req.format();
@@ -857,6 +987,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         // blocked by the companion's inference slot or they deadlock.
         boolean isItemScript = req.requestId() != null && req.requestId().startsWith("item-");
 
+        if (!isItemScript && isPaused()) {
+            req.replyTo().tell(new InferError(req.requestId(), pausedMessage()));
+            return this;
+        }
         if (!isItemScript && inferenceInFlightCount >= maxConcurrency) {
             if (inferenceQueue.size() >= MAX_QUEUE_SIZE) {
                 req.replyTo().tell(new InferError(req.requestId(),
@@ -945,8 +1079,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             return;
         }
 
-        inferenceInFlightCount++;
-        ActivityGauge.inferenceStarted();
+        beginRequest(req.requestId());
         effectiveModel = resolveModel(effectiveModel, backend);
 
         // Dynamic API key injection: if the backend's client doesn't have a key
@@ -998,8 +1131,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         int promptTokens = usage != null ? usage.promptTokens() : 0;
         int completionTokens = usage != null ? usage.completionTokens() : 0;
 
-        inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
-        ActivityGauge.inferenceFinished();
+        recordLatency(result.requestId(), result.backendName(), true, promptTokens, completionTokens);
+        endRequest();
         result.replyTo().tell(new InferOk(
                 result.requestId(), result.content(), promptTokens, completionTokens));
         drainQueue();
@@ -1135,8 +1268,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 failure.error() != null && failure.error().length() > 200
                     ? failure.error().substring(0, 200) + "..." : failure.error());
             healthStatus.put(failure.failedBackend(), true);  // backend not actually unhealthy
-            inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
-        ActivityGauge.inferenceFinished();
+            recordLatency(failure.requestId(), failure.failedBackend(), false, 0, 0);
+        endRequest();
             failure.replyTo().tell(new InferError(failure.requestId(), failure.error()));
             drainQueue();
             return this;
@@ -1169,8 +1302,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         }
 
         // No fallback available — release slot and drain
-        inferenceInFlightCount = Math.max(0, inferenceInFlightCount - 1);
-        ActivityGauge.inferenceFinished();
+        recordLatency(failure.requestId(), failure.failedBackend(), false, 0, 0);
+        endRequest();
         failure.replyTo().tell(new InferError(failure.requestId(), failure.error()));
         drainQueue();
         return this;
@@ -1414,8 +1547,74 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             msgs.set(idx, new InferenceClient.ChatMessage(m.role(), sheared, m.toolCalls(), m.toolCallId()));
             removed += best - left;
         }
+        // 5. The tools. Every schema rides along on every turn, and on a full menu they are
+        //    most of the prompt: 188 schemas ≈ 17k tokens against a 16,384 window left the
+        //    messages nothing to give (household node 2026-09-12, six permanent overflows in
+        //    six hours). Keep the head of the list — it arrives ranked — plus the escape
+        //    hatch; if that is still too much, or the list was short already, send none:
+        //    a turn she can speak beats a turn that errors. Only once the messages have
+        //    nothing more to give — an earlier round that shrank a message keeps its tools.
+        var tools = req.tools();
+        boolean toolsDropped = false;
+        if (removed <= 0 && tools != null && !tools.isEmpty()) {
+            int toolTokens = estimateToolTokens(tools);
+            var kept = keepRankedHead(tools, COMPACT_TOOL_HEAD);
+            int keptTokens = estimateToolTokens(kept);
+            if (kept.size() < tools.size() && toolTokens - keptTokens >= need - removed) {
+                removed += toolTokens - keptTokens;
+                tools = kept;
+            } else {
+                removed += toolTokens;
+                tools = null;
+                toolsDropped = true;
+            }
+        }
         if (removed <= 0) return null;
-        return withMessages(req, msgs);
+        return withMessagesAndTools(req, msgs, tools, toolsDropped);
+    }
+
+    /** How many ranked tools survive a compaction that has to shed schemas. */
+    static final int COMPACT_TOOL_HEAD = 8;
+    static final String ESCAPE_HATCH_TOOL = "use_item";
+
+    /** The first {@code k} tools in their given (ranked) order, plus the escape hatch wherever it sat. */
+    static List<InferenceClient.ToolDefinition> keepRankedHead(
+            List<InferenceClient.ToolDefinition> tools, int k) {
+        if (tools == null) return null;
+        var out = new ArrayList<InferenceClient.ToolDefinition>();
+        InferenceClient.ToolDefinition hatch = null;
+        for (var t : tools) {
+            var nm = t != null && t.function() != null ? t.function().name() : null;
+            if (ESCAPE_HATCH_TOOL.equals(nm)) hatch = t;
+            else if (out.size() < k) out.add(t);
+        }
+        if (hatch != null) out.add(hatch);
+        return out;
+    }
+
+    private static final ObjectMapper TOOL_TOKEN_MAPPER = new ObjectMapper();
+
+    /** Roughly what {@code tools} cost on the wire, by the same estimate the messages use. */
+    static int estimateToolTokens(List<InferenceClient.ToolDefinition> tools) {
+        if (tools == null || tools.isEmpty()) return 0;
+        int total = 0;
+        for (var t : tools) {
+            try {
+                total += estimateTokens(TOOL_TOKEN_MAPPER.writeValueAsString(t));
+            } catch (Exception e) {
+                total += estimateTokens(String.valueOf(t));
+            }
+        }
+        return total;
+    }
+
+    private static InferenceClient.ChatRequest withMessagesAndTools(
+            InferenceClient.ChatRequest r, List<InferenceClient.ChatMessage> msgs,
+            List<InferenceClient.ToolDefinition> tools, boolean toolsDropped) {
+        return new InferenceClient.ChatRequest(
+            r.model(), msgs, r.maxTokens(), r.temperature(), r.topP(), r.stop(),
+            r.grammar(), r.format(), tools, toolsDropped ? null : r.toolChoice(),
+            r.presencePenalty(), r.repeatPenalty(), r.registerMix());
     }
 
     /** A trimmed layer keeps at least this many tokens, so its heading survives. */
@@ -1552,6 +1751,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                    int compactRounds,
                                    boolean fallbackAttempted) {
         var self = getContext().getSelf();
+        startedAt.putIfAbsent(requestId, System.nanoTime());
         backend.chatCompletion(chatReq)
             .thenAccept(resp -> self.tell(new InferResult(requestId,
                     renderContent(resp), backend.name(), resp.usage(), replyTo)))

@@ -227,3 +227,20 @@ inside.
 Tests worth reading before you change any of it — they encode intent the types
 do not: `McpGrantFlowIntegrationTest`, `McpToolOutputQuarantineTest`,
 `McpSpendCapTest`, `McpTransportTest`.
+
+## Visitors, the map, and room events
+
+A non-resident MCP login is a **visitor**: an entity named `<name> (visitor, MCP)`. It
+enters at the Nexus when the steward has vouched for the account (`wyrd visitors vouch
+<username>`, which grants `home://household/mcp-door` with capability `use`), otherwise at
+the Docks.
+
+- `GET /api/mcp/events?since=<seq>` returns what was said and who entered or left the
+  visitor's room since `seq`.
+- `POST /api/mcp/logout` removes the visitor from the room.
+- `POST /api/mcp/dismiss` (`wyrd visitors dismiss <username>`) ends a visit and invalidates
+  the token.
+- Quiet hours (`WYRDSEKAI_QUIET_HOURS`) block room entry and speech for visitors. Residents
+  and companions are not affected.
+- `map` lists who is in each public room. Anyone in a private room is shown as "at home",
+  "in their Study" or "resting", never by room name.

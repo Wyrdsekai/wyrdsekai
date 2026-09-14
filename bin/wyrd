@@ -1145,7 +1145,7 @@ start_inference() {
             : # MLX drive path took :8200; log emitted inside helper.
         elif [[ -f "$drive_model" ]]; then
             log "$(_t start_inference.starting_metal) (drive=$(basename "$drive_model") :8200)"
-            nohup "$llama" -m "$drive_model" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+            nohup "$llama" -m "$drive_model" --port 8200 -c "$(( ${WYRDSEKAI_DRIVE_CTX:-16384} * ${WYRDSEKAI_DRIVE_PARALLEL:-1} ))" -np "${WYRDSEKAI_DRIVE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                 -ngl "$gpu_layers" --host 0.0.0.0 \
                 ${drive_extra[@]+"${drive_extra[@]}"} \
                 > "$DATA_DIR/.llama-server.log" 2>&1 &
@@ -1188,13 +1188,13 @@ start_inference() {
                 fi
                 if [[ -n "$v8_csv" ]]; then
                     log "starting voice llama-server (model=$(basename "$voice_model") :8201 +V8 vectors)"
-                    nohup "$llama" -m "$voice_model" --port 8201 -c 4096 -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    nohup "$llama" -m "$voice_model" --port 8201 -c "$(( 4096 * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "$gpu_layers" --host 0.0.0.0 \
                         --control-vector-scaled "$v8_csv" \
                         > "$DATA_DIR/.llama-server-voice.log" 2>&1 &
                 else
                     warn "voice :8201 starting WITHOUT V8 vectors — bundled vectors missing at $DATA_DIR/vectors/v8 (set WYRDSEKAI_V8_VECTORS or reinstall)"
-                    nohup "$llama" -m "$voice_model" --port 8201 -c 4096 -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    nohup "$llama" -m "$voice_model" --port 8201 -c "$(( 4096 * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "$gpu_layers" --host 0.0.0.0 \
                         > "$DATA_DIR/.llama-server-voice.log" 2>&1 &
                 fi
@@ -1409,7 +1409,7 @@ start_inference() {
                 local llama
                 if llama=$(find_llama_server); then
                     log "$(_t start_inference.starting_native)"
-                    nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    nohup "$llama" -m "$model_path" --port 8200 -c "$(( ${WYRDSEKAI_DRIVE_CTX:-16384} * ${WYRDSEKAI_DRIVE_PARALLEL:-1} ))" -np "${WYRDSEKAI_DRIVE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "${WYRDSEKAI_GPU_LAYERS:-99}" --host 0.0.0.0 \
                         > "$DATA_DIR/.llama-server.log" 2>&1 &
                     echo "$!" > "$DATA_DIR/.llama-server.pid"
@@ -1423,7 +1423,7 @@ start_inference() {
             local llama
             if llama=$(find_llama_server); then
                 log "$(_t start_inference.starting_native)"
-                nohup "$llama" -m "$model_path" --port 8200 -c "${WYRDSEKAI_DRIVE_CTX:-16384}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                nohup "$llama" -m "$model_path" --port 8200 -c "$(( ${WYRDSEKAI_DRIVE_CTX:-16384} * ${WYRDSEKAI_DRIVE_PARALLEL:-1} ))" -np "${WYRDSEKAI_DRIVE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                     -ngl "${WYRDSEKAI_GPU_LAYERS:-99}" --host 0.0.0.0 \
                     > "$DATA_DIR/.llama-server.log" 2>&1 &
                 echo "$!" > "$DATA_DIR/.llama-server.pid"
@@ -1665,10 +1665,37 @@ _doctor_preflight_processes() {
 # shown in the prompt text". Non-tty stdin skips straight to the default
 # so piped/headless runs never hang. read returns 0 the moment a line
 # arrives; >128 on each 1s timeout tick.
+# Enters pressed during a long download queue up on stdin and answer the NEXT prompt
+# (field report 2026-09-13: they cost a steward his own name and the companion's).
+# Throw away whatever is waiting before asking anything.
+_drain_stdin() {
+    [[ -t 0 ]] || return 0
+    local _junk
+    while read -r -t 0 2>/dev/null; do
+        read -r -t 0.2 _junk 2>/dev/null || break
+    done
+    return 0
+}
+
+# A question that makes a person — a name — gets a long countdown at a terminal (ten
+# minutes, WYRDSEKAI_NAME_PROMPT_SECS to change it) with queued Enters cleared first, and
+# the short one off a terminal so unattended installs still finish. The field report
+# (2026-09-13): "the wizard moved too fast so we had to edit stuff afterwards" — and the
+# edit afterwards upset the companion whose config was changed under her.
+_prompt_wait() {
+    local _text="$1" _fallback_secs="${2:-60}"
+    if [[ -t 0 ]]; then
+        _prompt_countdown "$_text" "${WYRDSEKAI_NAME_PROMPT_SECS:-600}"
+    else
+        _prompt_countdown "$_text" "$_fallback_secs"
+    fi
+}
+
 _prompt_countdown() {
     local _text="$1" _left="${2:-30}"
     _PROMPT_REPLY=""
     [[ -t 0 ]] || return 0
+    _drain_stdin
     # Draw on the terminal itself, not stdout. Setup output is routinely piped
     # (installer wrapper, sudo, curl|bash), and a \r redraw through a
     # line-buffered pipe never renders — the line freezes at "auto in 30s"
@@ -1679,7 +1706,7 @@ _prompt_countdown() {
     local _out=/dev/tty
     [[ -w /dev/tty ]] || _out=/dev/stdout
     while (( _left > 0 )); do
-        printf "\r%s (auto in %2ds) " "$_text" "$_left" > "$_out"
+        printf "\r%s (auto in %3ds) " "$_text" "$_left" > "$_out"
         if read -t 1 -r _PROMPT_REPLY; then break; fi
         _left=$((_left - 1))
     done
@@ -1736,6 +1763,25 @@ _ensure_nvidia_container_runtime() {
     fi
 }
 
+# One first-run flow at a time. `wyrd setup` sat at a prompt in one terminal while
+# `wyrd start` in another saw "no env file" and ran setup again: two downloads of
+# every model, two inits (field report 2026-09-13). The lock lives with the data
+# dir; `wait` blocks on it, `nowait` refuses.
+_take_setup_lock() {
+    [[ "${_WYRD_SETUP_LOCKED:-0}" == "1" ]] && return 0
+    command -v flock >/dev/null 2>&1 || return 0
+    local f="$DATA_DIR/.setup.lock"
+    mkdir -p "$DATA_DIR" 2>/dev/null || f=/tmp/wyrdsekai-setup.lock
+    exec 9>"$f" 2>/dev/null || return 0
+    if ! flock -n 9; then
+        [[ "${1:-nowait}" == "wait" ]] || return 1
+        warn "Another 'wyrd setup' or 'wyrd start' is running — waiting for it to finish."
+        flock 9
+    fi
+    _WYRD_SETUP_LOCKED=1
+    return 0
+}
+
 do_setup() {
     # Sub-dispatch: `wyrd setup <something>` may target a specific backend
     # rather than running the full first-run flow. Each sub-target owns its
@@ -1745,6 +1791,10 @@ do_setup() {
         openclaw)  shift; do_setup_openclaw "$@"; return $? ;;
         --help|-h) _setup_help; return 0 ;;
     esac
+    if ! _take_setup_lock nowait; then
+        err "Another 'wyrd setup' (or a 'wyrd start' running setup) is in progress — finish that one first."
+        return 1
+    fi
 
     # `--auto-yes` / `-y`: opt in to non-interactive, hardware-driven choices
     # for things that would otherwise just print a hint (e.g. embedding-model
@@ -1888,11 +1938,11 @@ if cands:
                     IFS=$'\t' read -r _hub_name _hub_host <<< "$_hub"
                     echo "$(_t setup.lan.join_offer "$_hub_name" "$_hub_host")"
                     local _ans=""
-                    read -rp "$(_t setup.lan.join_prompt)" _ans || true
+                    _drain_stdin; read -rp "$(_t setup.lan.join_prompt)" _ans || true
                     # Default-yes: Enter / y / yes proceeds; only an explicit n/no skips.
                     if [[ ! "$_ans" =~ ^[Nn][Oo]?$ ]]; then
                         local _hh_key=""
-                        read -rp "$(_t setup.lan.join_key_prompt)" _hh_key || true
+                        _drain_stdin; read -rp "$(_t setup.lan.join_key_prompt)" _hh_key || true
                         if [[ -n "$_hh_key" ]]; then
                             if do_join "$_hub_host" --household-key "$_hh_key"; then
                                 log "$(_t setup.lan.join_ok "$_hub_name")"
@@ -2236,7 +2286,7 @@ if cands:
     WYRD_SETUP_EMBED_SERVER="${WYRD_SETUP_EMBED_SERVER:-}"
     if [[ -z "$WYRD_SETUP_EMBED_SERVER" && "$(recommend_tier)" != "cpu-only" ]] && docker info --format '{{.Runtimes}}' 2>/dev/null | grep -q nvidia; then
         local _tei_default="Y" _tei_ans="y"
-        if [[ -t 0 ]]; then read -r -p "Serve embeddings with Text Embeddings Inference (image $(_tei_tag); several times faster than llama-server on this card)? [Y/n] " _tei_ans || true; fi
+        if [[ -t 0 ]]; then _drain_stdin; read -r -p "Serve embeddings with Text Embeddings Inference (image $(_tei_tag); several times faster than llama-server on this card)? [Y/n] " _tei_ans || true; fi
         [[ -z "$_tei_ans" ]] && _tei_ans="$_tei_default"
         if [[ "$_tei_ans" =~ ^[Yy] ]]; then WYRD_SETUP_EMBED_SERVER=tei; log "Embedding server: Text Embeddings Inference (WYRDSEKAI_EMBED_SERVER=tei)"; else WYRD_SETUP_EMBED_SERVER=llama; fi
     fi
@@ -2805,11 +2855,12 @@ ENVEOF
     echo "$(_t setup.complete.connect)"
     echo "$(_t setup.complete.browser "$PORT")"
     # Report the file that actually takes effect, not the one we happened to write.
+    local _effective_conf="$ENV_FILE"
     if [[ "$MODE" == "package" && -f "$CANONICAL_CONF" ]]; then
-        echo "$(_t setup.complete.config "$CANONICAL_CONF")"
-    else
-        echo "$(_t setup.complete.config "$ENV_FILE")"
+        _effective_conf="$CANONICAL_CONF"
     fi
+    echo "$(_t setup.complete.config "$_effective_conf")"
+    _setup_summary "$_effective_conf"
     echo ""
 
     # ── First Encounter ──
@@ -3242,6 +3293,27 @@ _stop_ssh_tunnel() {
 # name is set or the steward marker exists. Shared by the source-mode AND the
 # systemd (.deb) start paths so a fresh .deb install names the companion too
 # (the systemd branch used to return before this ran — second-node 2026-07-02).
+# What the wizard decided, on one screen, slow enough to read — the prompts go by
+# fast and a reader should not have to reconstruct the outcome from the scrollback
+# (field report 2026-09-13).
+_setup_summary() {
+    local conf="$1"
+    [[ -f "$conf" ]] || return 0
+    echo ""
+    echo "  What was set up (from $conf):"
+    local k v
+    for k in WYRDSEKAI_COMPANION_NAME WYRDSEKAI_COMPANION_NAME_2 WYRDSEKAI_ZONE_ID WYRDSEKAI_PORT \
+             WYRDSEKAI_INFERENCE_MODE WYRDSEKAI_INFERENCE_URL WYRDSEKAI_LLAMA_MODEL WYRDSEKAI_LLAMA_VOICE_MODEL \
+             WYRDSEKAI_LLAMA_VOICE_ENABLED WYRDSEKAI_EMBEDDING_MODEL WYRDSEKAI_INFERENCE_CONCURRENCY \
+             WYRDSEKAI_LIBRARY_STARTER WYRDSEKAI_UPDATE; do
+        v=$(grep -E "^${k}=" "$conf" 2>/dev/null | tail -1 | cut -d= -f2-)
+        [[ -n "$v" ]] && printf "    %-34s %s\n" "$k" "$v"
+    done
+    echo "  Change any of these with:  wyrd config set KEY=VALUE   (then: wyrd restart)"
+    echo "  Rename a companion later:  wyrd soul rename <old> <new>  — same soul, new name"
+    echo ""
+}
+
 _bootstrap_companion_names() {
     # Write to the file the LAUNCH PATH actually reads: under systemd (.deb) the
     # unit's EnvironmentFile is /etc/wyrdsekai/wyrdsekai.conf, NOT the source-mode
@@ -3256,7 +3328,7 @@ _bootstrap_companion_names() {
     if [[ ! -f "$DATA_DIR/.steward-bootstrapped" ]] \
             && ! grep -q '^WYRDSEKAI_COMPANION_NAME=' "$_cn_conf" 2>/dev/null; then
         local _cn_name="wyrd"
-        _prompt_countdown "  $(_t start.bootstrap.companion_name_prompt)" 60
+        _prompt_wait "  $(_t start.bootstrap.companion_name_prompt)" 60
         if [[ -n "$_PROMPT_REPLY" ]]; then
             _cn_name=$(printf '%s' "$_PROMPT_REPLY" | tr -cd 'A-Za-z0-9_-')
             [[ -n "$_cn_name" ]] || _cn_name="wyrd"
@@ -3278,12 +3350,12 @@ _bootstrap_companion_names() {
             # Whatever the heuristic was worth, a countdown must not answer yes
             # to that on the operator's behalf. Creating a companion is a
             # deliberate act; `wyrd companion new` is there for later.
-            _prompt_countdown "  $(_t start.bootstrap.companion_second_prompt) [y/N]" 30
+            _prompt_wait "  $(_t start.bootstrap.companion_second_prompt) [y/N]" 30
             _cn2_reply="${_PROMPT_REPLY:-n}"
         fi
         if [[ "$_cn2_reply" =~ ^[YyＹｙ] ]]; then
             local _cn2_name="wisp"
-            _prompt_countdown "  $(_t start.bootstrap.companion_second_name_prompt)" 60
+            _prompt_wait "  $(_t start.bootstrap.companion_second_name_prompt)" 60
             if [[ -n "$_PROMPT_REPLY" ]]; then
                 _cn2_name=$(printf '%s' "$_PROMPT_REPLY" | tr -cd 'A-Za-z0-9_-')
                 [[ -n "$_cn2_name" ]] || _cn2_name="wisp"
@@ -3309,7 +3381,7 @@ _bootstrap_steward_invite() {
     local _bs_marker="$DATA_DIR/.steward-bootstrapped"
     if [[ ! -f "$_bs_marker" ]]; then
         local _bs_name="steward"
-        _prompt_countdown "  $(_t start.bootstrap.name_prompt)" 30
+        _prompt_wait "  $(_t start.bootstrap.name_prompt)" 30
         if [[ -n "$_PROMPT_REPLY" ]]; then
             _bs_name=$(printf '%s' "$_PROMPT_REPLY" | tr -cd 'A-Za-z0-9_-')
             [[ -n "$_bs_name" ]] || _bs_name="steward"
@@ -3391,17 +3463,39 @@ local_inference_wanted() {
 
 # cloud mode needs a target. Prompt on a TTY (persisting via the same drop-in
 # mechanism `wyrd inference remote` uses); warn loudly otherwise.
+# What speaks at this URL: llama-server (/health), Ollama (/api/tags), another
+# OpenAI-compatible server (/v1/models), or nothing. The server does the same probe
+# at boot; saying it here means a wrong URL is refused at the door, not discovered
+# a week later from "Inference backends: 1".
+_probe_inference_protocol() {
+    local url="${1%/}"
+    curl -sf -m 5 "$url/health" >/dev/null 2>&1 && { echo llama-server; return 0; }
+    curl -sf -m 5 "$url/api/tags" >/dev/null 2>&1 && { echo ollama; return 0; }
+    curl -sf -m 5 "$url/v1/models" >/dev/null 2>&1 && { echo openai; return 0; }
+    echo none
+    return 1
+}
+
 _ensure_cloud_inference_url() {
     [[ -n "${WYRDSEKAI_INFERENCE_URL:-}" ]] && return 0
     if [[ -t 0 && -t 1 ]]; then
         echo ""
         warn "WYRDSEKAI_INFERENCE_MODE=cloud but WYRDSEKAI_INFERENCE_URL is unset."
         local _cloud_url=""
-        read -r -p "Inference endpoint URL (e.g. https://host:8200): " _cloud_url || true
+        _drain_stdin; read -r -p "Inference endpoint URL (e.g. https://host:8200): " _cloud_url || true
         if [[ -n "$_cloud_url" ]]; then
-            write_inference_drop_in "$_cloud_url"
-            export WYRDSEKAI_INFERENCE_URL="$_cloud_url"
-            return 0
+            _cloud_url="${_cloud_url%/}"
+            local _proto
+            _proto=$(_probe_inference_protocol "$_cloud_url")
+            if [[ "$_proto" == "none" ]]; then
+                warn "$_cloud_url answers neither llama-server nor Ollama — not saved."
+            else
+                log "Detected $_proto at $_cloud_url"
+                write_inference_drop_in "$_cloud_url"
+                "$0" config set "WYRDSEKAI_INFERENCE_URL=$_cloud_url" >/dev/null 2>&1 || true
+                export WYRDSEKAI_INFERENCE_URL="$_cloud_url"
+                return 0
+            fi
         fi
     fi
     warn "Inference mode is 'cloud' but WYRDSEKAI_INFERENCE_URL is unset — companions have no brain."
@@ -3452,6 +3546,7 @@ ensure_inference() {
 }
 
 do_start() {
+    _take_setup_lock wait
     # First-run guard: a fresh install that never ran `wyrd setup` has no env
     # file, so starting would proceed with no config (no model path, no zone
     # name) and fail cryptically downstream. Treat `wyrd start` as "get me
@@ -4263,7 +4358,7 @@ _update_now() {   # [VERSION] [--yes]
     _is_release_version "$want" || { err "not a release version: $want"; return 1; }
     if [[ "$want" == "${installed%%[~-]*}" ]] && _is_release_version "$installed"; then log "$(_t update.now.already "$want")"; return 0; fi
     if [[ "$yes" != "1" ]] && [[ -t 0 ]]; then
-        local ans; read -r -p "$(_t update.now.confirm "$want" "$installed") [y/N] " ans
+        local ans; _drain_stdin; read -r -p "$(_t update.now.confirm "$want" "$installed") [y/N] " ans
         [[ "$ans" =~ ^[Yy] ]] || { log "$(_t update.now.cancelled)"; return 0; }
     fi
     local file; file="$(_release_download_verify "$want")" || return 1
@@ -4478,20 +4573,53 @@ except Exception:
     echo ""
     log "$(_t doctor.state_header)"
     local state_summary
+    # The inference queue in plain words. The companion's in-fiction line for a
+    # backed-up queue is hers; the numbers are the steward's (field report 2026-09-13).
+    local inf_json
+    inf_json=$(curl -sf -m 3 "http://localhost:${WYRDSEKAI_PORT:-7070}/health" 2>/dev/null || true)
+    if [[ -n "$inf_json" ]]; then
+        local inf_line
+        inf_line=$(printf '%s' "$inf_json" | python3 -c '
+import json,sys
+d=json.load(sys.stdin).get("inference") or {}
+if not d: sys.exit(0)
+q=d.get("queued",0); f=d.get("inFlight",0); m=d.get("maxConcurrency","?")
+p95=d.get("p95LatencyMs",0); n=d.get("latencySamples",0)
+s="inference: %d in flight, %d waiting (max %s); p95 %.1fs over %d requests" % (f,q,m,p95/1000.0,n)
+if d.get("paused"): s+="; PAUSED until %s (%s)" % (d.get("pausedUntil","?"), d.get("pauseReason",""))
+print(("WARN " if q>=5 else "OK ")+s)
+' 2>/dev/null || true)
+        if [[ "$inf_line" == WARN* ]]; then
+            warn "${inf_line#WARN }  — companions answer slowly; raise WYRDSEKAI_INFERENCE_CONCURRENCY only if the server has slots (LLAMA_*_PARALLEL)"
+            _wbump
+        elif [[ -n "$inf_line" ]]; then
+            log "${inf_line#OK }"
+        fi
+    fi
     state_summary=$(do_state dump --summary 2>/dev/null || true)
     if [[ -z "$state_summary" ]]; then
         warn "$(_t doctor.state_unavailable)"
         _wbump
     else
-        # Surface every fragmentation alert (⚠ markers) at WARN severity.
+        # The ⚠ markers in the state summary are the F7b consolidation roadmap —
+        # attributes that still live in two stores by design (bonds mirrored into
+        # the manifest, voice profiles only in the manifest, …). They are notes on
+        # where the data lives, not faults, and a field report (2026-09-13) read
+        # them as "persistent fragmentation warnings" the steward could not fix.
+        # Say what they are; count only a real detail_error as a warning.
         local alerts
         alerts=$(echo "$state_summary" | grep -E '^\s+⚠\s' || true)
+        local errors
+        errors=$(echo "$state_summary" | grep -iE 'detail_error|error:' || true)
+        if [[ -n "$errors" ]]; then
+            warn "$(_t doctor.state_errors)"
+            echo "$errors" | head -6 | sed 's/^/    /'
+            _wbump
+        fi
         if [[ -n "$alerts" ]]; then
             local n
             n=$(echo "$alerts" | grep -c .)
-            warn "$(_t doctor.state_alerts "$n")"
-            echo "$alerts" | head -6 | sed 's/^/    /'
-            _wbump
+            log "$(_t doctor.state_notes "$n")"
         else
             log "$(_t doctor.state_no_alerts)"
         fi
@@ -6167,6 +6295,85 @@ do_naming_admin() {
 #
 # Read-only walker that emits a unified JSON snapshot of every household
 # state store. Forcing function for — surfaces
+# `wyrd soul list | rename <old> <new> | archive <name> [reason]` — the souls on this
+# node by name. A rename keeps the soul (same DID, same entity id, same history) and
+# changes the name on the manifest; the server resolves a configured name to the soul
+# that answers to it, so a renamed companion is spawned, not reborn (2026-09-13).
+do_soul() {
+    local sub="${1:-list}"
+    case "$sub" in
+        list|rename|archive) ;;
+        *) echo "Usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason]"; return 64 ;;
+    esac
+    if [[ "$sub" != "list" ]] && is_server_running 2>/dev/null; then
+        err "Stop the server first (wyrd stop): a running companion holds her name."
+        return 1
+    fi
+    _run_core_main org.wyrdsekai.core.soul.SoulAdminMain "$@"
+}
+
+# `wyrd visitors [list] | dismiss <username> | vouch <username> | unvouch <username>` —
+# who is in through the MCP door, and the steward's say over it. A vouched account enters
+# at the Nexus; anyone else lands at the Docks. Dismissing walks a visitor out mid-visit
+# and its token stops working (2026-09-13).
+do_visitors() {
+    local sub="${1:-list}" who="${2:-}"
+    local base="http://localhost:${WYRDSEKAI_PORT:-7070}"
+    case "$sub" in
+        list)
+            curl -sf "$base/api/mcp/sessions" 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin); s=d.get("sessions",[])
+if not s: print("Nobody is in through the MCP door."); sys.exit(0)
+print("%-18s %-28s %-8s %-18s %s" % ("USER","AS","KIND","DOOR","ROOM"))
+for x in s: print("%-18s %-28s %-8s %-18s %s" % (x.get("username"),x.get("displayName"),x.get("kind"),x.get("door"),x.get("room")))
+' || err "The server did not answer at :${WYRDSEKAI_PORT:-7070} — is it running?"
+            ;;
+        dismiss|vouch|unvouch)
+            [[ -n "$who" ]] || { err "Usage: wyrd visitors $sub <username>"; return 2; }
+            local resp
+            resp=$(curl -sf -X POST -H 'Content-Type: application/json' -d "{\"username\": \"$who\"}" "$base/api/mcp/$sub") \
+                || { err "The server refused or did not answer (is it running? does the account exist?)"; return 1; }
+            printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d)' 2>/dev/null || echo "$resp"
+            ;;
+        *) echo "Usage: wyrd visitors [list] | dismiss <username> | vouch <username> | unvouch <username>"; return 64 ;;
+    esac
+}
+
+# Run a main class from core against this node's data, with the installed (or freshly
+# built) jars on the classpath. Shared by `wyrd soul`; `wyrd state dump` predates it.
+_run_core_main() {
+    local main_class="$1"; shift
+    local SERVER_LIB
+    if [[ "$MODE" == "source" ]]; then
+        if [[ ! -d "$PROJECT_ROOT/server/build/install/server" ]]; then
+            (cd "$PROJECT_ROOT" && "$GRADLE" :server:installDist -q) \
+                || { err "$(_t common.build_failed)"; return 1; }
+        fi
+        SERVER_LIB="$PROJECT_ROOT/server/build/install/server/lib"
+    else
+        SERVER_LIB="$REAL_BIN/../lib/server"
+        [[ ! -d "$SERVER_LIB" ]] && SERVER_LIB="$REAL_BIN/../lib"
+    fi
+    [[ ! -d "$SERVER_LIB" ]] && { err "$(_t common.server_libs_missing "$SERVER_LIB")"; return 1; }
+    find_java || { err "$(_t common.java_missing)"; return 1; }
+    local CP
+    CP=$(echo "$SERVER_LIB"/*.jar | tr ' ' ':')
+    if [[ "$MODE" == "source" ]]; then
+        local CORE_CLS="$PROJECT_ROOT/core/build/classes/java/main"
+        local COMMON_CLS="$PROJECT_ROOT/common/build/classes/java/main"
+        [[ -d "$CORE_CLS" ]] && CP="$CORE_CLS:$CP"
+        [[ -d "$COMMON_CLS" ]] && CP="$COMMON_CLS:$CP"
+    fi
+    "$JAVA_CMD" \
+        -Djava.net.preferIPv4Stack=true \
+        --add-opens java.base/java.lang.reflect=ALL-UNNAMED \
+        --add-opens java.base/java.lang=ALL-UNNAMED \
+        --add-opens java.base/sun.nio.ch=ALL-UNNAMED \
+        -cp "$CP" \
+        "$main_class" "$@"
+}
+
 # fragmentation that's invisible when each store is inspected in isolation.
 do_state() {
     local sub="${1:-help}"
@@ -7336,7 +7543,7 @@ do_relay() {
             if [[ -n "$current_url" ]]; then
                 echo "$(_t relay.setup.current_url "$current_url")"
             fi
-            read -rp "$(_t relay.setup.prompt_url)" relay_url
+            _drain_stdin; read -rp "$(_t relay.setup.prompt_url)" relay_url
             if [[ -z "$relay_url" ]]; then
                 echo "$(_t relay.setup.cancel_no_url)"
                 return 1
@@ -7347,7 +7554,7 @@ do_relay() {
             if [[ -n "$current_token" ]]; then
                 echo "$(_t relay.setup.current_token "${current_token:0:8}")"
             fi
-            read -rp "$(_t relay.setup.prompt_token)" relay_token
+            _drain_stdin; read -rp "$(_t relay.setup.prompt_token)" relay_token
             if [[ -z "$relay_token" ]]; then
                 echo "$(_t relay.setup.cancel_no_token)"
                 return 1
@@ -7600,7 +7807,7 @@ print(p.get('ca_fp', '').replace(':', '').lower())
                 echo ""
                 echo "$(_t relay.join.selfserve_confirm "$jss_fp")"
                 local jss_reply=""
-                read -r -p "  [y/N] " jss_reply
+                _drain_stdin; read -r -p "  [y/N] " jss_reply
                 if [[ ! "$jss_reply" =~ ^[Yy] ]]; then
                     err "$(_t relay.join.selfserve_declined)"
                     return 1
@@ -9742,7 +9949,7 @@ _rz_bin() {   # the researchzosho launcher, or nothing (RESEARCHZOSHO_BIN overri
 _rz_ask() {   # _rz_ask <question> <default>  — prints the answer; --yes takes the default
     local q="$1" d="$2" a
     if [[ "${RZ_YES:-0}" == "1" ]]; then echo "$d"; return 0; fi
-    read -r -p "$q [$d] " a </dev/tty || a=""
+    _drain_stdin; read -r -p "$q [$d] " a </dev/tty || a=""
     echo "${a:-$d}"
 }
 
@@ -9800,9 +10007,12 @@ _rz_household_did() {   # the person who keeps this node — the patron the toke
 }
 
 _rz_install() {
-    local rz; rz="$(_rz_bin)" && { log "ResearchZosho is already installed: $rz"; echo "$rz"; return 0; }
+    # stdout is the return value here (callers do rz="$(_rz_install)"), so every word
+    # for the person goes to stderr — the "already installed" line used to be captured
+    # and executed as a command (field report 2026-09-13).
+    local rz; rz="$(_rz_bin)" && { log >&2 "ResearchZosho is already installed: $rz"; echo "$rz"; return 0; }
     # No Java warning here: since ResearchZosho 0.1.6 its installer takes the build that carries its own runtime when Java 21 is missing.
-    log "Fetching the ResearchZosho installer from $RESEARCHZOSHO_INSTALL_URL"
+    log >&2 "Fetching the ResearchZosho installer from $RESEARCHZOSHO_INSTALL_URL"
     local tmp; tmp="$(mktemp -d)"
     if ! curl -fsSL "$RESEARCHZOSHO_INSTALL_URL" -o "$tmp/install.sh"; then
         err "Could not fetch the installer. Install ResearchZosho by hand (https://researchzosho.org) and run: wyrd researcher setup"
@@ -10011,6 +10221,9 @@ do_researcher() {
             "$rz" update now "$@" ;;
         install)
             RZ_YES=0; [[ "${1:-}" == "--yes" ]] && RZ_YES=1
+            if [[ "${EUID:-$(id -u)}" == "0" && -z "${SUDO_USER:-}" || -n "${SUDO_USER:-}" ]]; then
+                warn "Running under sudo — ResearchZosho installs per user (~/.local/bin); run 'wyrd researcher setup' as yourself."
+            fi
             local rz; rz="$(_rz_install)" || return 1
             log "Run its setup next: $rz setup   (or all at once: wyrd researcher setup)"
             ;;
@@ -10027,6 +10240,9 @@ do_researcher() {
                     *) shift ;;
                 esac
             done
+            if [[ "${EUID:-$(id -u)}" == "0" && -z "${SUDO_USER:-}" || -n "${SUDO_USER:-}" ]]; then
+                warn "Running under sudo — ResearchZosho installs per user (~/.local/bin); run 'wyrd researcher setup' as yourself."
+            fi
             local rz; rz="$(_rz_install)" || return 1
             echo
             log "ResearchZosho's own setup asks where the library goes, which model reads, and whether it runs as a service."
@@ -10813,7 +11029,7 @@ PY
                     [[ -z "$cid" ]] && { err "$(_t federate.join.request.no_challenge "$req_resp")"; return 1; }
                     info "$(_t federate.join.request.challenge_issued)"
                     info "$(_t federate.join.request.ask_admin)"
-                    read -rp "$(_t federate.join.request.code_prompt)" code
+                    _drain_stdin; read -rp "$(_t federate.join.request.code_prompt)" code
                     [[ -z "$code" ]] && { err "$(_t federate.join.request.no_code)"; return 1; }
                     result=$(curl -sf -X POST "$pair_url/api/pair/verify" \
                         -H "Content-Type: application/json" \
@@ -11004,7 +11220,7 @@ do_login() {
     local user="${1:-}" pass="${2:-}"
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
     if [[ -z "$user" ]]; then
-        read -rp "$(_t login.username_prompt)" user
+        _drain_stdin; read -rp "$(_t login.username_prompt)" user
     fi
     if [[ -z "$pass" ]]; then
         read -rsp "$(_t login.password_prompt)" pass
@@ -12230,7 +12446,20 @@ EOF
                 err "$(_t inference.remote.example)"
                 return 1
             fi
+            url="${url%/}"
+            local proto
+            proto=$(_probe_inference_protocol "$url")
+            if [[ "$proto" == "none" ]]; then
+                err "$url answers neither llama-server (/health, /v1/models) nor Ollama (/api/tags) — not saved."
+                err "Check the host and port (no trailing /v1), and that the server is up: curl -s $url/v1/models"
+                return 1
+            fi
+            log "Detected $proto at $url"
+            [[ "$proto" == "ollama" ]] && log "Companions will use the chat models Ollama lists at $url/api/tags."
             write_inference_drop_in "$url"
+            # The CLI reads the conf, not the systemd drop-in — write both, or every
+            # `wyrd start` asks for the URL again (field report 2026-09-13).
+            "$0" config set "WYRDSEKAI_INFERENCE_URL=$url" >/dev/null 2>&1 || true
             # Persist the mode so setup/start stop launching the local stack.
             "$0" config set WYRDSEKAI_INFERENCE_MODE=cloud >/dev/null 2>&1 || true
             ;;
@@ -12263,6 +12492,34 @@ EOF
                     ;;
                 *) err "Usage: wyrd inference share [on|off|status]"; return 1 ;;
             esac
+            ;;
+
+        pause)
+            # The steward takes the card for a while. Companions are told once, calmly,
+            # and hold still; nothing times out into "tangled threads". Durations: 90s,
+            # 30m, 2h, 1d (default 1h). `wyrd inference resume` gives it back early.
+            local dur="${2:-1h}"; shift 2 2>/dev/null || shift $#
+            local reason="$*"
+            local secs
+            case "$dur" in
+                *s) secs="${dur%s}" ;;
+                *m) secs=$(( ${dur%m} * 60 )) ;;
+                *h) secs=$(( ${dur%h} * 3600 )) ;;
+                *d) secs=$(( ${dur%d} * 86400 )) ;;
+                ''|*[!0-9]*) err "Duration like 90s, 30m, 2h or 1d — got '$dur'"; return 2 ;;
+                *) secs="$dur" ;;
+            esac
+            local rjson; rjson=$(printf '%s' "$reason" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+            local body; body=$(printf '{"seconds": %s, "reason": %s}' "$secs" "$rjson")
+            local resp; resp=$(curl -sf -X POST -H 'Content-Type: application/json' -d "$body" "http://localhost:${WYRDSEKAI_PORT:-7070}/api/inference/pause") \
+                || { err "The server did not answer at :${WYRDSEKAI_PORT:-7070} — is it running?"; return 1; }
+            log "Inference paused for $dur${reason:+ — $reason}. Companions will say so once and wait. Resume early: wyrd inference resume"
+            printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("  paused until", d.get("pausedUntil","?"))' 2>/dev/null || true
+            ;;
+        resume)
+            curl -sf -X POST "http://localhost:${WYRDSEKAI_PORT:-7070}/api/inference/resume" >/dev/null \
+                || { err "The server did not answer at :${WYRDSEKAI_PORT:-7070} — is it running?"; return 1; }
+            log "Inference resumed."
             ;;
 
         status)
@@ -12832,7 +13089,7 @@ do_voice() {
                 log "$(_t voice.enable.starting_metal "$port")"
                 local gpu_layers="${WYRDSEKAI_GPU_LAYERS:-99}"
                 nohup "$llama" -m "$voice_model_file" --lora "$adapter_file" \
-                    --port "$port" -c "${LLAMA_VOICE_CTX:-4096}" -np 1 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    --port "$port" -c "$(( ${LLAMA_VOICE_CTX:-4096} * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                     -ngl "$gpu_layers" --host 0.0.0.0 --jinja \
                     --reasoning off --reasoning-budget 0 \
                     > "$DATA_DIR/.llama-voice.log" 2>&1 &
@@ -13361,6 +13618,8 @@ case "${1:-help}" in
     safety)     do_naming_admin safety "${@:2}" ;;
     discover)   do_discover "${@:2}" ;;
     state)      do_state "${@:2}" ;;
+    soul)       do_soul "${@:2}" ;;
+    visitors)   do_visitors "${@:2}" ;;
     embed-migrate) do_embed_migrate "${@:2}" ;;
     embedding-model) do_embedding_model "${@:2}" ;;
     uninstall)  do_uninstall ;;
@@ -13395,7 +13654,9 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.inference)"
         echo "  coding       Manage coding-CLI backends: list/status/install/uninstall/update <backend>"
         echo "  researcher   ResearchZosho, the research librarian: setup (the wizard) / install / link / status / update / unlink"
-        echo "  items        Scripted items: check — every item's world.* calls against the API this build serves"
+        echo "  items        Scripted items: check — every item's world.* calls against the API this build serves
+  soul         Souls by name: list / rename <old> <new> (same soul, new name) / archive <name>
+  visitors     The MCP door: list / vouch <user> (enters at the Nexus) / unvouch / dismiss <user>"
         echo "$(_t usage.cmd.invite)"
         echo "$(_t usage.cmd.invite_2)"
         echo "$(_t usage.cmd.cred)"

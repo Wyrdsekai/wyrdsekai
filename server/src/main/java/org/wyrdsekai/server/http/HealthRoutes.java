@@ -1,11 +1,14 @@
 package org.wyrdsekai.server.http;
 
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.wyrdsekai.common.model.AppVersion;
+import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.observability.EngineRoomService;
 
 import java.lang.management.ManagementFactory;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -142,6 +145,22 @@ public final class HealthRoutes {
                 """);
         });
 
+        // The steward takes the card for a while: `wyrd inference pause 2h [reason]`.
+        app.post("/api/inference/pause", ctx -> {
+            var body = ctx.body();
+            long seconds = 3600; String reason = null;
+            try {
+                var node = JsonMapper.builder().build().readTree(body == null || body.isBlank() ? "{}" : body);
+                if (node.hasNonNull("seconds")) seconds = Math.max(1, node.get("seconds").asLong());
+                if (node.hasNonNull("reason")) reason = node.get("reason").asText();
+            } catch (Exception ignored) { }
+            InferenceRouter.pause(Duration.ofSeconds(seconds), reason);
+            ctx.json(InferenceRouter.snapshot().asMap());
+        });
+        app.post("/api/inference/resume", ctx -> {
+            InferenceRouter.resume();
+            ctx.json(InferenceRouter.snapshot().asMap());
+        });
         app.get("/health", ctx -> {
             var response = new LinkedHashMap<String, Object>();
 
@@ -159,6 +178,9 @@ public final class HealthRoutes {
             var status = actorSystemUp ? "UP" : "DOWN";
             response.put("status", status);
             response.put("timestamp", Instant.now().toString());
+            // The inference queue in plain numbers — what the in-fiction "threads of
+            // thought are tangled" line hides from the steward.
+            response.put("inference", InferenceRouter.snapshot().asMap());
             var appVer = AppVersion.get();
             response.put("version", appVer.version());
             response.put("buildHash", appVer.buildHash());

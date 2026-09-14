@@ -308,7 +308,7 @@
   "inference.help.dual_header": "デュアル推論 (4B 音声 + 9B スキル):",
   "inference.help.example_local_auto": "  wyrd inference local                            # ハードウェアに応じて自動選択",
   "inference.help.example_local_path": "  wyrd inference local /opt/models/qwen3-4b.gguf  # GGUF を明示指定",
-  "inference.help.example_remote": "  wyrd inference remote http://home-server:8200          # 隣接ノードに直接 HTTP 接続",
+  "inference.help.example_remote": "  wyrd inference remote http://198.51.100.20:8200          # 隣接ノードに直接 HTTP 接続",
   "inference.help.example_voice_adapter": "  wyrd inference voice-adapter ~/.wyrdsekai/adapters/wyrd-voice/adapter.gguf",
   "inference.help.example_zone": "  wyrd inference zone home                        # リレー経由の NATS",
   "inference.help.examples_header": "例:",
@@ -324,7 +324,7 @@
   "inference.local.recommended": "このホストの推奨モデル: {0}",
   "inference.local.started_pid": "llama-server を起動しました（pid {0}）",
   "inference.local.using_bin": "llama-server: {0}",
-  "inference.remote.example": "  例: wyrd inference remote http://home-server:8200",
+  "inference.remote.example": "  例: wyrd inference remote http://198.51.100.20:8200",
   "inference.remote.usage": "使い方: wyrd inference remote <url>",
   "inference.status.backend": "推論バックエンド: {0}",
   "inference.status.cores_ram": "  コア数: {0}   RAM: {1} GB",
@@ -1146,5 +1146,7 @@
   "doctor.disk_tight": "ディスク使用率 {0}% — 検索インデックスのバックアップが入らないかもしれません。バックアップ行を確認し、整理後に `wyrd doctor` を",
   "doctor.backups": "バックアップ: {0}、{1} 件（{2}）。0.3.0 からインデックスはスナップショットごとにハードリンクされ、新規分は容量を使いません",
   "doctor.swap": "スワップ: {1} MB 中 {0} MB 使用（起動以降のサービスのメモリピーク: {2}）",
-  "doctor.swappiness": "vm.swappiness={0}: カーネルは mmap されたモデルのページを捨てる前にプロセスメモリをスワップします。パッケージは 10 に設定します（/etc/sysctl.d/90-wyrdsekai.conf）"
+  "doctor.swappiness": "vm.swappiness={0}: カーネルは mmap されたモデルのページを捨てる前にプロセスメモリをスワップします。パッケージは 10 に設定します（/etc/sysctl.d/90-wyrdsekai.conf）",
+  "doctor.state_notes": "状態: {0} 個の属性は設計上まだ二つのストアにあります（統合ロードマップであり、故障ではありません）— `wyrd state dump --summary` で一覧できます",
+  "doctor.state_errors": "状態ダンプがエラーを報告しました:"
 }

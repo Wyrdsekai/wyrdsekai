@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -147,6 +148,161 @@ public class StandardItemLibrary {
         if (direct != null) return direct;
         var hit = resolverIndex.get(normalize(name));
         return hit == AMBIGUOUS ? null : hit;
+    }
+
+    /**
+     * The words a model reaches for when it means each template. Every entry is what
+     * {@link #get} answers to, beside the id and the display name; the table lives in
+     * one place so a clash between two templates is a test failure, not a silent
+     * {@link #AMBIGUOUS} drop.
+     *
+     * <p>Kept deliberately to words that name THIS template. "stone" is not here
+     * (ward-stone is one of several stones in the world), "board" is neither the
+     * bulletin board's nor the game board's, "key" is the room key alone.</p>
+     */
+    static final Map<String, List<String>> ALIASES = Map.ofEntries(
+        Map.entry("simple-book", List.of("book", "notebook", "notes", "note", "diary", "ledger",
+            "log", "logbook", "record book", "blank book", "empty book", "writing book",
+            "scrapbook", "commonplace book", "notepad")),
+        Map.entry("reference-tome", List.of("tome", "encyclopedia", "encyclopaedia", "reference",
+            "reference book", "manual", "handbook", "dictionary", "glossary", "almanac",
+            "compendium")),
+        Map.entry("research-journal", List.of("journal", "research journal", "research notes",
+            "lab notebook", "lab journal", "research log", "report", "findings journal",
+            "citation journal", "research record")),
+        Map.entry("mailbox", List.of("mail", "inbox", "letterbox", "letter box", "post box",
+            "postbox", "mail slot", "message box", "messages", "drop box", "dropbox",
+            "mail box")),
+        Map.entry("bulletin-board", List.of("bulletin", "notice board", "noticeboard",
+            "notices", "announcements", "announcement board", "message board", "poster board",
+            "corkboard", "cork board", "public board")),
+        Map.entry("signal-mirror", List.of("mirror", "signal", "alert", "alarm", "watcher",
+            "keyword watch", "keyword alert", "sentinel", "listener", "tripwire", "alert mirror",
+            "watch mirror")),
+        Map.entry("scrying-crystal", List.of("observer", "zone view", "activity crystal",
+            "statistics", "stats crystal", "observation orb")),
+        Map.entry("weather-globe", List.of("weather", "globe", "forecast", "barometer",
+            "weather ball", "weather sphere", "sky globe")),
+        Map.entry("oracle-lens", List.of("oracle", "lens", "prediction", "predictions",
+            "foresight", "prophecy", "forecast lens", "pattern lens", "oracle glass")),
+        Map.entry("dashboard-orb", List.of("dashboard", "orb", "metrics", "vitals",
+            "vitality orb", "gauge", "status orb", "cost orb", "performance orb", "meter")),
+        Map.entry("blueprint-pad", List.of("blueprint", "blueprints", "recipe pad", "recipe book",
+            "design pad", "schematic", "schematics", "plan pad", "drafting pad", "recipes")),
+        Map.entry("workbench-hammer", List.of("hammer", "workbench", "crafting hammer",
+            "forge hammer", "mallet", "anvil", "crafting tool", "maker's hammer")),
+        Map.entry("room-key", List.of("key", "door key", "room pass", "pass key", "passkey",
+            "access key", "visitor key", "entry key", "room access")),
+        Map.entry("guild-badge", List.of("badge", "guild", "token", "role badge",
+            "membership badge", "rank badge", "insignia", "emblem", "membership token",
+            "role token")),
+        Map.entry("ward-stone", List.of("ward", "warding stone", "wardstone", "barrier",
+            "barrier stone", "protection stone", "guard stone", "seal stone", "boundary stone")),
+        Map.entry("web-window", List.of("web", "browser", "website", "web page", "webpage", "url",
+            "internet", "web search", "web browser", "page viewer", "web viewer", "fetch page",
+            "web portal", "search engine", "internet window")),
+        Map.entry("email-quill", List.of("email", "e-mail", "email pen", "email client",
+            "mail client", "compose email", "quill")),
+        Map.entry("code-terminal", List.of("terminal", "code", "console", "shell", "repl",
+            "coding terminal", "code editor", "editor", "ide", "coding console", "dev terminal",
+            "command line", "cli")),
+        Map.entry("game-board", List.of("game", "board game", "chess", "chessboard", "chess board",
+            "checkers", "go board", "play board", "games")),
+        Map.entry("clarity-draught", List.of("draught", "potion", "clarity", "focus potion",
+            "clarity potion", "elixir", "focus draught", "curiosity draught", "brew")),
+        Map.entry("courage-flask", List.of("flask", "courage", "bravery", "confidence potion",
+            "courage potion", "boldness", "initiative flask", "nerve")),
+        Map.entry("scholars-mantle", List.of("mantle", "scholar", "scholar mantle", "cloak", "robe",
+            "scholar's robe", "study mantle", "research mantle", "patience mantle")),
+        Map.entry("guardians-shield", List.of("shield", "guardian", "guardian shield", "armor",
+            "armour", "aegis", "buckler", "vigilance shield", "protector"))
+    );
+
+    /** Every alias a template answers to: its own declared list plus the {@link #ALIASES} table. */
+    public List<String> aliasesOf(ItemTemplate t) {
+        var out = new ArrayList<>(t.aliases());
+        out.addAll(ALIASES.getOrDefault(t.name(), List.of()));
+        return out;
+    }
+
+    /** How {@link #resolveIntent} arrived at its answer, or why it declined. */
+    public enum How { NAME, ITEM_NAME, WORDS, NONE }
+
+    /**
+     * The outcome of {@link #resolveIntent}: a template with how it was reached, or
+     * {@code template == null} with the nearest candidates for the message that asks
+     * the model to choose.
+     */
+    public record Resolution(ItemTemplate template, How how, int score, List<ItemTemplate> candidates) {
+        public boolean matched() { return template != null; }
+    }
+
+    /** A match needs at least this much evidence: one word of the requested name, or two of the item's. */
+    static final int MIN_INTENT_SCORE = 3;
+
+    /**
+     * What template did the caller mean? Exact id, display name and alias first (through
+     * {@link #get}) for the requested template name and then for the item's name; then a
+     * whole-word comparison of both against every template's names, aliases, thematic
+     * words and description. A tie, or a score under {@link #MIN_INTENT_SCORE}, is NONE —
+     * the caller shows the list rather than guess.
+     *
+     * <p>Replaces the substring search that mapped {@code backup_vault} + "…use `create` to
+     * pack new backups…" onto the workbench hammer through the word {@code create}
+     * (household node 2026-09-12). Stopwords are not evidence, fragments are not words,
+     * and a two-way tie is not a decision.</p>
+     */
+    public Resolution resolveIntent(String templateName, String itemName) {
+        var direct = get(templateName);
+        if (direct != null) return new Resolution(direct, How.NAME, Integer.MAX_VALUE, List.of(direct));
+        var byItem = get(itemName);
+        if (byItem != null) return new Resolution(byItem, How.ITEM_NAME, Integer.MAX_VALUE, List.of(byItem));
+
+        var nameTokens = IntentTokens.tokens(templateName);
+        var itemTokens = new LinkedHashSet<>(IntentTokens.tokens(itemName));
+        itemTokens.removeAll(nameTokens);
+        var wholePhrase = IntentTokens.phrase(
+            (templateName == null ? "" : templateName) + " " + (itemName == null ? "" : itemName));
+        if (nameTokens.isEmpty() && itemTokens.isEmpty()) {
+            return new Resolution(null, How.NONE, 0, List.of());
+        }
+
+        var scores = new LinkedHashMap<ItemTemplate, Integer>();
+        for (var t : templates.values()) {
+            var strong = new LinkedHashSet<String>();
+            strong.addAll(IntentTokens.tokens(t.name(), t.displayName()));
+            var phrases = new ArrayList<String>();
+            phrases.add(IntentTokens.phrase(t.displayName()));
+            phrases.add(IntentTokens.phrase(t.name()));
+            for (var a : aliasesOf(t)) {
+                strong.addAll(IntentTokens.tokens(a));
+                phrases.add(IntentTokens.phrase(a));
+            }
+            if (t.thematic() != null) {
+                for (var w : t.thematic().symbols()) strong.addAll(IntentTokens.tokens(w));
+                for (var w : t.thematic().domains()) strong.addAll(IntentTokens.tokens(w));
+                for (var w : t.thematic().actions()) strong.addAll(IntentTokens.tokens(w));
+            }
+            var weak = IntentTokens.tokens(t.description());
+            int score = 0;
+            for (var q : nameTokens) score += strong.contains(q) ? 3 : weak.contains(q) ? 1 : 0;
+            for (var q : itemTokens) score += strong.contains(q) ? 2 : weak.contains(q) ? 1 : 0;
+            for (var p : phrases) {
+                if (p.indexOf(' ') > 0 && IntentTokens.containsPhrase(wholePhrase, p)) score += 4;
+            }
+            if (score > 0) scores.put(t, score);
+        }
+        var ranked = scores.entrySet().stream()
+            .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+            .toList();
+        var candidates = ranked.stream().limit(3).map(Map.Entry::getKey).toList();
+        if (ranked.isEmpty()) return new Resolution(null, How.NONE, 0, candidates);
+        int best = ranked.getFirst().getValue();
+        int second = ranked.size() > 1 ? ranked.get(1).getValue() : 0;
+        if (best < MIN_INTENT_SCORE || best == second) {
+            return new Resolution(null, How.NONE, best, candidates);
+        }
+        return new Resolution(ranked.getFirst().getKey(), How.WORDS, best, candidates);
     }
 
     /**
@@ -569,7 +725,8 @@ public class StandardItemLibrary {
                 List.of("observation"), List.of("play", "strategy", "contest"), List.of("play", "observe", "move"), 0.1),
             Map.of("source_type", "api"),
             2,
-            List.of("game", "chess board", "play board", "board")
+            // "board" alone is the bulletin board as often as this one — claimed by neither.
+            List.of("game", "chess board", "play board")
         ));
 
         // State & Effects
@@ -639,7 +796,7 @@ public class StandardItemLibrary {
         // to miss than to dispatch to the wrong template.
         indexKey(normalize(template.name()), template, /* allowOverwrite */ true);
         indexKey(normalize(template.displayName()), template, /* allowOverwrite */ false);
-        for (var alias : template.aliases()) {
+        for (var alias : aliasesOf(template)) {
             indexKey(normalize(alias), template, /* allowOverwrite */ false);
         }
     }

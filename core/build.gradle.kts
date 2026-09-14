@@ -160,6 +160,9 @@ val syncM2Bank = tasks.register<Copy>("syncM2Bank") {
     onlyIf { rootProject.file("scripts/m2/plan_examples.jsonl").exists() }
 }
 tasks.named("processResources") { dependsOn(syncM2Bank) }
+// Backup copies (*.bak) beside a model file are not resources. They are excluded
+// from the jar so an install never carries duplicate model weights.
+tasks.withType<ProcessResources>().configureEach { exclude("**/*.bak") }
 
 // Sigstore trusted-root JSON for
 // ReleaseVerifier. Pinned-on-disk by design: PR review covers any change,

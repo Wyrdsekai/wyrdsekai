@@ -168,6 +168,23 @@ public final class BondStore {
         return out;
     }
 
+    /**
+     * Remove a bond row. Used only for OUR duplicates — a person recorded twice under
+     * two identifiers — never for a bond the companion formed; those are severed, not
+     * erased.
+     */
+    public boolean delete(String bondId) {
+        if (bondId == null) return false;
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var st = conn.prepareStatement("DELETE FROM bonds WHERE bond_id = ?")) {
+            st.setString(1, bondId);
+            return st.executeUpdate() > 0;
+        } catch (SQLException e) {
+            log.error("Failed to delete bond {}: {}", bondId, e.getMessage());
+            return false;
+        }
+    }
+
     /** All bonds in the store. */
     public List<Bond> all() {
         var out = new ArrayList<Bond>();

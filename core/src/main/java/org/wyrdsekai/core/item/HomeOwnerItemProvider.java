@@ -590,6 +590,7 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
             var out = new ArrayList<Map<String, Object>>(users.size());
             for (var u : users) {
                 var m = new LinkedHashMap<String, Object>();
+                m.put("id", u.id());                 // what the room sees at the door
                 m.put("username", u.username());
                 m.put("displayName", u.displayName());
                 m.put("role", u.role());

@@ -67,7 +67,7 @@ function renderBonds() {
       : "[" + (b.depth || "?") + "]";
     if (b.active !== false) active++;
     if (b.scarred) scarred++;
-    var partner = names[b.partner] || b.partner || "?";
+    var partner = names[b.partner] || b.partnerName || b.partner || "?";
     // Who holds the bond matters — after a handover a former bondholder keeps
     // the relationship (MEMBER) but not the role; make that visible.
     var role = b.kind === "BONDHOLDER" ? "  — you hold the bond"

@@ -111,7 +111,9 @@ public class HomeProvisioner {
 
         if (profile.hasWardStone()) {
             objects.add(new HomeObject("ward-stone", "Ward Stone",
-                "A smooth stone that glows when your identity is strong and dims under pressure.",
+                "A smooth stone warm to your hand alone — the keys to this room are cut and "
+                    + "melted here. `use ward stone` shows who may enter; `invite <name>` "
+                    + "lets someone in, `uninvite <name>` takes it back.",
                 false));
         }
 

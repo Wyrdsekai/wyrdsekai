@@ -179,8 +179,7 @@ public final class DeepSleepTrainer {
          *  defaults to localhost) — i.e. this node actually runs llama-server.
          *  False when the node routes inference to a peer (http://home-server:..., nats://zone). */
         private static boolean isLocallyHosted() {
-            var url = WyrdConfig.get().resolve(
-                "WYRDSEKAI_INFERENCE_URL", "inference.url", () -> null);
+            var url = WyrdConfig.get().configuredInferenceUrl();
             if (url == null || url.isBlank()) return false;  // unset = no inference here
             url = url.trim().toLowerCase();
             return url.contains("127.0.0.1") || url.contains("localhost");
@@ -201,8 +200,7 @@ public final class DeepSleepTrainer {
             if (!wasLocallyHosted) {
                 log.info("DeepSleep pause: no local inference on this node "
                         + "(inference.url={}) — pause is a no-op",
-                        WyrdConfig.get().resolve(
-                            "WYRDSEKAI_INFERENCE_URL", "inference.url", () -> null));
+                        WyrdConfig.get().configuredInferenceUrl());
                 return true;
             }
             log.info("DeepSleep pause: single-inference mode — stopping all "

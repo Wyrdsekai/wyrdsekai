@@ -1233,5 +1233,6 @@
   "aesthetic.atmosphere.minimalist": "ここはすべてが整った線と、無駄のない意図された空間だ。",
   "aesthetic.atmosphere.garden": "緑が縁に芽吹き、空気は土と葉の香りを運んでくる。",
   "aesthetic.atmosphere.wild": "ここでは何ひとつ静止していない。場は野性的で落ち着きのない生命に満ちている。",
-  "aesthetic.atmosphere.sanctuary": "深い静けさがすべてに宿り、こらえた息のように柔らかい。"
+  "aesthetic.atmosphere.sanctuary": "深い静けさがすべてに宿り、こらえた息のように柔らかい。",
+  "agent.companion.inference_paused": "*落ち着いて* しばらく考えるのがゆっくりになる — 家がカードを必要としているの。ここにいるよ。"
 }

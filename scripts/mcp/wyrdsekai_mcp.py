@@ -7,8 +7,17 @@ that Claude Code can call during development sessions.
 
 Zero external dependencies — uses only Python stdlib.
 
-Setup in Claude Code:
-  Add to .claude/settings.json:
+Setup in Claude Code (registers the server in ~/.claude.json; Claude Code does NOT
+read mcpServers from .claude/settings.json — that pattern silently does nothing):
+
+  claude mcp add --scope user wyrdsekai \
+      --env WYRDSEKAI_URL=http://localhost:7070 \
+      -- python3 /path/to/wyrdsekai/scripts/mcp/wyrdsekai_mcp.py
+
+  (drop --scope user to register for the current project only; `claude mcp list`
+  shows what is registered; `claude mcp remove wyrdsekai` takes it out.)
+
+For other MCP clients that read a JSON config, the server entry is:
   {
     "mcpServers": {
       "wyrdsekai": {
@@ -18,8 +27,6 @@ Setup in Claude Code:
       }
     }
   }
-
-Or via `wyrdsekai mcp-serve` if installed.
 """
 
 import base64
@@ -51,13 +58,24 @@ PLAYER_PASSWORD = os.environ.get("WYRDSEKAI_PASSWORD")
 
 # ─── HTTP helpers ───────────────────────────────────────────────────────
 
+def _bearer_headers(extra=None):
+    """The /api/resident/* routes want the resident token; the MCP routes want the
+    session token. Send whichever we hold — these calls used to go out with no
+    Authorization at all, so every resident tool 401'd on a node that had a token."""
+    h = dict(extra or {})
+    tok = os.environ.get("WYRDSEKAI_RESIDENT_TOKEN") or _mcp_token
+    if tok:
+        h["Authorization"] = f"Bearer {tok}"
+    return h
+
+
 def api_get(path, params=None):
     """GET request to Wyrdsekai API. Returns parsed JSON or error string."""
     url = BASE_URL + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        req = urllib.request.Request(url, headers=_bearer_headers({"Accept": "application/json"}))
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
@@ -71,7 +89,7 @@ def api_post(path, body=None):
     try:
         req = urllib.request.Request(
             url, data=data, method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json"})
+            headers=_bearer_headers({"Content-Type": "application/json", "Accept": "application/json"}))
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
@@ -83,35 +101,74 @@ def api_post(path, body=None):
 _mcp_token = None  # Auth token for MCP REST API
 
 
-def mcp_post(path, body=None, timeout=30):
-    """POST to MCP REST API with Bearer token."""
-    url = BASE_URL + path
-    data = json.dumps(body or {}).encode() if body else None
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if _mcp_token:
-        headers["Authorization"] = f"Bearer {_mcp_token}"
+_relogin_depth = 0
+
+
+def _relogin_and_retry(once):
+    """A 401 mid-session means the server forgot us (it restarted) or the token aged
+    out. Log in again once and repeat the call; only then report the 401."""
+    global _relogin_depth
+    if _relogin_depth > 0:
+        return None
+    _relogin_depth += 1
     try:
-        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except Exception as e:
-        return {"error": str(e)}
+        res = do_mcp_login()
+        if isinstance(res, str) and res.startswith("Login failed"):
+            return None
+        return once()
+    finally:
+        _relogin_depth -= 1
+
+
+def mcp_post(path, body=None, timeout=30):
+    """POST to MCP REST API with Bearer token; re-logs in once on a 401."""
+    def once():
+        url = BASE_URL + path
+        data = json.dumps(body or {}).encode() if body else None
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if _mcp_token:
+            headers["Authorization"] = f"Bearer {_mcp_token}"
+        try:
+            req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and path != "/api/mcp/login":
+                return {"error": "HTTP Error 401", "_401": True}
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": str(e)}
+    res = once()
+    if isinstance(res, dict) and res.get("_401"):
+        again = _relogin_and_retry(once)
+        return again if again is not None else {"error": "HTTP Error 401: session expired and re-login failed"}
+    return res
 
 
 def mcp_get(path, params=None, timeout=30):
-    """GET from MCP REST API with Bearer token."""
-    url = BASE_URL + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    headers = {"Accept": "application/json"}
-    if _mcp_token:
-        headers["Authorization"] = f"Bearer {_mcp_token}"
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except Exception as e:
-        return {"error": str(e)}
+    """GET from MCP REST API with Bearer token; re-logs in once on a 401."""
+    def once():
+        url = BASE_URL + path
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        headers = {"Accept": "application/json"}
+        if _mcp_token:
+            headers["Authorization"] = f"Bearer {_mcp_token}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return {"error": "HTTP Error 401", "_401": True}
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": str(e)}
+    res = once()
+    if isinstance(res, dict) and res.get("_401"):
+        again = _relogin_and_retry(once)
+        return again if again is not None else {"error": "HTTP Error 401: session expired and re-login failed"}
+    return res
 
 
 def format_room(data):
@@ -710,6 +767,15 @@ _session = WyrdSession()
 TOOLS = [
     # ── In-World Presence (WebSocket session) ──
     {
+        "name": "wyrdsekai_events",
+        "description": (
+            "What has happened around you since you last asked: who spoke, what they said, "
+            "who came and went in the room you stand in. Call it after a say or a wait — "
+            "without it you are deaf to the room."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
         "name": "wyrdsekai_login",
         "description": (
             "Log into Wyrdsekai as a player entity. Opens a WebSocket session "
@@ -722,6 +788,10 @@ TOOLS = [
                 "username": {
                     "type": "string",
                     "description": "Player name (default: claude)"
+                },
+                "password": {
+                    "type": "string",
+                    "description": "Account password (optional; defaults to WYRDSEKAI_PASSWORD)"
                 },
                 "description": {
                     "type": "string",
@@ -1059,13 +1129,16 @@ def execute_tool(name, arguments):
     try:
         # ── In-world tools (WebSocket session) ──
         if name == "wyrdsekai_login":
+            # `description` used to be passed as the PASSWORD (a positional slip): a long
+            # description hit bcrypt's 72-byte limit and the server answered 500.
             return do_mcp_login(
                 arguments.get("username"),
+                arguments.get("password"),
                 arguments.get("description"))
+        elif name == "wyrdsekai_events":
+            return do_mcp_events()
         elif name == "wyrdsekai_logout":
-            global _mcp_token
-            _mcp_token = None
-            return "Logged out."
+            return do_mcp_logout()
         elif name == "wyrdsekai_go":
             return do_mcp_go(arguments.get("direction", ""))
         elif name == "wyrdsekai_do":
@@ -1117,6 +1190,48 @@ def execute_tool(name, arguments):
 
 
 # ─── MCP REST API tool implementations ────────────────────────────────
+
+
+_events_seq = 0
+
+
+def do_mcp_events():
+    """The room's side of the conversation, since the last call."""
+    global _events_seq
+    if not _mcp_token:
+        return "Not logged in — call wyrdsekai_login first."
+    result = mcp_get("/api/mcp/events", {"since": _events_seq})
+    if "error" in result:
+        return f"Events failed: {result['error']}"
+    events = result.get("events") or []
+    if not events:
+        return "Nothing new around you."
+    lines = []
+    for e in events:
+        _events_seq = max(_events_seq, int(e.get("seq", 0)))
+        t = e.get("type", "")
+        who = e.get("who", "someone")
+        if t == "Said":
+            lines.append(f"{who}: {e.get('text', '')}")
+        elif t == "Emoted":
+            lines.append(f"* {who} {e.get('text', '')}")
+        elif t == "EntityEntered":
+            lines.append(f"[{who} arrives]")
+        elif t == "EntityLeft":
+            lines.append(f"[{who} leaves]")
+        else:
+            lines.append(f"[{t}] {who}")
+    return "\n".join(lines)
+
+
+def do_mcp_logout():
+    """Leave the world: the server walks the entity out and forgets the token."""
+    global _mcp_token, _events_seq
+    if _mcp_token:
+        mcp_post("/api/mcp/logout", {})
+    _mcp_token = None
+    _events_seq = 0
+    return "Logged out."
 
 
 def do_mcp_login(username=None, password=None, description=None):
@@ -1336,10 +1451,18 @@ def do_study_write(title, content, tags):
 
 
 def do_status():
-    """Get companion status."""
+    """Get companion status (the resident bridge), or say plainly that it is not reachable."""
     result = api_get("/api/resident/status")
     if "error" in result:
-        # Fallback to /health if resident bridge is not enabled
+        # Not "Server: ok" dressed up as companion status: say which door was closed.
+        health = api_get("/health")
+        head = ("Companion status is not reachable (" + str(result.get("error")) + "): the resident "
+                "bridge needs WYRDSEKAI_RESIDENT_TOKEN on this client and a resident companion on the node. ")
+        if "error" in health:
+            return head + "The server itself did not answer: " + str(health["error"])
+        return head + "The server itself is up (inference backends: " + str(health.get("inferenceBackends",
+            health.get("backends", "?"))) + ")."
+    if False:
         result = api_get("/health")
         if "error" in result:
             return f"Could not get status: {result['error']}"

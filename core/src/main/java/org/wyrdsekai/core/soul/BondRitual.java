@@ -347,25 +347,33 @@ public class BondRitual {
                 totalInteractions += Math.max(0, b.interactionCount());
                 scarred |= b.scarred();
             }
+            // The role survives with the person: if any of the rows said BONDHOLDER, the
+            // merged one does — the row with the history was often the one the door wrote
+            // under the login id and typed MEMBER, while the announced bondholder sat on
+            // the DID row with nothing in it (household node 2026-09-13).
+            var kind = keep.canonicalKind();
+            boolean consent = keep.mutualConsent();
+            for (var b : group) {
+                if (b.canonicalKind() == BondKind.BONDHOLDER) kind = BondKind.BONDHOLDER;
+                consent |= b.mutualConsent();
+            }
             var merged = new Bond(keep.bondId(), keep.agentADid(), person, deepest,
-                earliest, latest, totalInteractions, keep.mutualConsent(), true,
+                earliest, latest, totalInteractions, consent, true,
                 scarred, keep.state(), keep.coldStartUntil(), keep.posture(),
-                keep.relationalState(), keep.kind());
+                keep.relationalState(), kind);
             bonds.put(merged.bondId(), merged);
             persist(merged);
             log.info("Merged {} bond(s) for person {} into {} — depth={} interactions={} "
                 + "(one person had been recorded as two; the encounters were real, the "
                 + "duplication was ours)",
                 group.size() - 1, person, merged.bondId(), deepest, totalInteractions);
+            // The duplicate is ours, not hers: it was never a second relationship, so it
+            // is removed rather than left as an inactive row the crystal would show as
+            // "[severed] — you hold the bond" beside the living one.
             for (int i = 1; i < group.size(); i++) {
                 var dup = group.get(i);
-                var retiredBond = new Bond(dup.bondId(), dup.agentADid(), dup.agentBDid(),
-                    dup.depth(), dup.formedAt(), dup.lastInteraction(),
-                    dup.interactionCount(), dup.mutualConsent(), /* active */ false,
-                    dup.scarred(), dup.state(), dup.coldStartUntil(), dup.posture(),
-                    dup.relationalState(), dup.kind());
-                bonds.put(retiredBond.bondId(), retiredBond);
-                persist(retiredBond);
+                bonds.remove(dup.bondId());
+                if (store != null) store.delete(dup.bondId());
                 retired++;
             }
         }

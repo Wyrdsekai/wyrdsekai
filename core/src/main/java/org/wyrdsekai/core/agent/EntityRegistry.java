@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -236,6 +237,32 @@ public class EntityRegistry {
     /** Check if an entity is an agent. */
     public boolean isAgent(String entityId) {
         return "agent".equals(entityTypes.get(entityId));
+    }
+
+    /** One entity standing somewhere, as the map wants it. */
+    public record Occupant(String entityId, String name, String type) {
+        public boolean isAgent() { return "agent".equals(type); }
+        public boolean isVisitor() { return "visitor".equals(type); }
+    }
+
+    /** The registered type of an entity ("player", "agent", "visitor"), or null. */
+    public String typeOf(String entityId) {
+        return entityTypes.get(entityId);
+    }
+
+    /**
+     * Who is standing in each room, keyed by room id. The registry knew where everyone was
+     * and the map never asked it (2026-09-13).
+     */
+    public Map<String, List<Occupant>> occupantsByRoom() {
+        var out = new LinkedHashMap<String, List<Occupant>>();
+        for (var e : entityRooms.entrySet()) {
+            var id = e.getKey();
+            var name = entityNames.getOrDefault(id, id);
+            out.computeIfAbsent(e.getValue(), k -> new ArrayList<>())
+                .add(new Occupant(id, name, entityTypes.get(id)));
+        }
+        return out;
     }
 
     /** All registered entity IDs. */

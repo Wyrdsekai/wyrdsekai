@@ -309,7 +309,7 @@
   "inference.help.dual_header": "Dual inference (4B voice + 9B skills):",
   "inference.help.example_local_auto": "  wyrd inference local                            # auto-pick model by hardware",
   "inference.help.example_local_path": "  wyrd inference local /opt/models/qwen3-4b.gguf  # explicit GGUF",
-  "inference.help.example_remote": "  wyrd inference remote http://home-server:8200          # direct HTTP to neighbor",
+  "inference.help.example_remote": "  wyrd inference remote http://198.51.100.20:8200          # direct HTTP to neighbor",
   "inference.help.example_voice_adapter": "  wyrd inference voice-adapter ~/.wyrdsekai/adapters/wyrd-voice/adapter.gguf",
   "inference.help.example_zone": "  wyrd inference zone home                        # NATS through relay",
   "inference.help.examples_header": "Examples:",
@@ -325,7 +325,7 @@
   "inference.local.recommended": "Recommended model for this host: {0}",
   "inference.local.started_pid": "Started llama-server (pid {0})",
   "inference.local.using_bin": "llama-server: {0}",
-  "inference.remote.example": "  Example: wyrd inference remote http://home-server:8200",
+  "inference.remote.example": "  Example: wyrd inference remote http://198.51.100.20:8200",
   "inference.remote.usage": "Usage: wyrd inference remote <url>",
   "inference.status.backend": "Inference backend: {0}",
   "inference.status.cores_ram": "  Cores: {0}   RAM: {1} GB",
@@ -1146,5 +1146,7 @@
   "doctor.disk_tight": "Disk {0}% full — a backup of the search index may not fit; see the backups line and `wyrd doctor` after pruning",
   "doctor.backups": "Backups: {0} in {1} entries ({2}); the search index is hard-linked per snapshot since 0.3.0, so a new one costs no space",
   "doctor.swap": "Swap: {0} MB of {1} MB used (service memory peak since start: {2})",
-  "doctor.swappiness": "vm.swappiness={0}: the kernel swaps process memory before dropping mmapped model pages; the package sets 10 (/etc/sysctl.d/90-wyrdsekai.conf)"
+  "doctor.swappiness": "vm.swappiness={0}: the kernel swaps process memory before dropping mmapped model pages; the package sets 10 (/etc/sysctl.d/90-wyrdsekai.conf)",
+  "doctor.state_notes": "State: {0} attribute(s) still live in two stores by design (consolidation roadmap, not a fault) — `wyrd state dump --summary` lists them",
+  "doctor.state_errors": "State dump reported errors:"
 }

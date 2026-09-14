@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -225,8 +226,58 @@ public final class WyrdConfig {
     }
 
     public String inferenceUrl() {
-        return resolve("WYRDSEKAI_INFERENCE_URL", "inference.url",
-            () -> "http://127.0.0.1:8200");
+        var configured = configuredInferenceUrl();
+        return configured != null ? configured : "http://127.0.0.1:8200";
+    }
+
+    /**
+     * The inference URL the steward pointed this node at, or {@code null} when none is set.
+     *
+     * <p>{@code WYRDSEKAI_INFERENCE_URL} first. Then {@code WYRDSEKAI_LLAMA_URL} when it
+     * names another host: that is the key the Windows CLI, the tray settings, the desktop
+     * settings and the install docs have offered for "point at a remote node" since the
+     * first Windows build — and nothing read it until 2026-09-13, so a Windows node pointed
+     * at a household GPU fell back to {@code 127.0.0.1:8200} without a word. A loopback
+     * llama URL is this node's own layout (drive :8200, voice :8201), which backend
+     * auto-detection already probes, so it is left to that path unchanged.</p>
+     */
+    public String configuredInferenceUrl() {
+        var v = resolve("WYRDSEKAI_INFERENCE_URL", "inference.url", () -> null);
+        if (v != null && !v.isBlank()) return v.trim();
+        var llama = resolve("WYRDSEKAI_LLAMA_URL", "inference.llama_url", () -> null);
+        if (llama != null && !llama.isBlank() && !isLoopback(llama.trim())) return llama.trim();
+        return null;
+    }
+
+    /** True when the URL names this machine (127.0.0.1, localhost, ::1, 0.0.0.0). */
+    static boolean isLoopback(String url) {
+        try {
+            var host = URI.create(url).getHost();
+            if (host == null) return true;          // unparseable = not a remote we can trust
+            host = host.toLowerCase(Locale.ROOT);
+            return host.equals("127.0.0.1") || host.equals("localhost")
+                || host.equals("::1") || host.equals("[::1]") || host.equals("0.0.0.0");
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+    }
+
+    /** {@code WYRDSEKAI_BUNSHIN_TOKENS} — completion tokens a bunshin may spend by default (2000). A model that thinks out loud needs more. */
+    public int bunshinTokens() { return intOr("WYRDSEKAI_BUNSHIN_TOKENS", "bunshin.tokens", 2000); }
+    /** {@code WYRDSEKAI_BUNSHIN_STEPS} — tool calls a bunshin may make by default (30). */
+    public int bunshinSteps() { return intOr("WYRDSEKAI_BUNSHIN_STEPS", "bunshin.steps", 30); }
+    /** {@code WYRDSEKAI_BUNSHIN_WALL_CLOCK} — seconds a bunshin may run by default; 0 = size it from measured inference latency. */
+    public int bunshinWallClock() { return intOr("WYRDSEKAI_BUNSHIN_WALL_CLOCK", "bunshin.wall_clock", 0); }
+
+    private int intOr(String env, String key, int dflt) {
+        var v = resolve(env, key, () -> null);
+        if (v == null || v.isBlank()) return dflt;
+        try { return Math.max(1, Integer.parseInt(v.trim())); } catch (NumberFormatException e) { return dflt; }
+    }
+
+    /** {@code WYRDSEKAI_QUIET_HOURS} — "22:00-07:00"; blank = none. Kept by the rooms for visitors. */
+    public String quietHours() {
+        return resolve("WYRDSEKAI_QUIET_HOURS", "household.quiet_hours", () -> "");
     }
 
     /**

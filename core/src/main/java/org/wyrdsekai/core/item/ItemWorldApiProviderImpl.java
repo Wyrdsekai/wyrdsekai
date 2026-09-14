@@ -2,6 +2,7 @@ package org.wyrdsekai.core.item;
 
 import org.apache.pekko.actor.typed.ActorRef;
 import org.wyrdsekai.core.persistence.BackupOrchestrator;
+import org.wyrdsekai.core.room.HomeWardGate;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.Props;
 import org.apache.pekko.actor.typed.Scheduler;
@@ -3373,13 +3374,51 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     public Map<String, Object> hermodGrantRevoke(String grantIdOrStem) {
         var d = adminDelegate(); return d != null ? d.hermodGrantRevoke(grantIdOrStem) : NOT_STEWARD_HELD;
     }
+    // ── Wards ────────────────────────────────────────────────────────────
+    // Two authorities, hers first. A room whose keeper she is — her Home, sealed to
+    // her at birth — answers to her own hand through the gate: she lets people in and
+    // takes it back, and nobody else's room opens to her. Any other room falls through
+    // to the steward-held delegate as before. Until 2026-09-13 there was only the
+    // delegate: with no steward delegation she got "not steward-held" for her own
+    // door, and with one she was acting with the steward's authority over every room.
+    private boolean keeperOf(String roomId) {
+        var gate = HomeWardGate.get();
+        return gate != null && roomId != null && agentId != null
+            && gate.isKeeper(roomId.trim(), List.of(agentId));
+    }
+
     @Override public List<Map<String, Object>> wardList(String roomId) {
+        var gate = HomeWardGate.get();
+        if (gate != null && roomId != null && !roomId.isBlank()) {
+            var rows = gate.listWards(roomId.trim());
+            if (!rows.isEmpty()) {
+                var out = new ArrayList<Map<String, Object>>(rows.size());
+                for (var w : rows) {
+                    var m = new LinkedHashMap<String, Object>();
+                    m.put("roomId", w.roomId());
+                    m.put("subject", w.principal());
+                    m.put("capability", w.permission());
+                    m.put("grantedBy", w.grantedBy());
+                    m.put("createdAt", w.createdAt());
+                    out.add(m);
+                }
+                return out;
+            }
+        }
         var d = adminDelegate(); return d != null ? d.wardList(roomId) : List.of();
     }
     @Override public Map<String, Object> wardGrant(String roomId, String subject, String capability) {
+        if (keeperOf(roomId)) {
+            var cap = capability == null ? "" : capability.trim().toLowerCase(Locale.ROOT);
+            return HomeWardGate.get().grant(roomId.trim(), List.of(agentId), subject, cap, agentId);
+        }
         var d = adminDelegate(); return d != null ? d.wardGrant(roomId, subject, capability) : NOT_STEWARD_HELD;
     }
     @Override public Map<String, Object> wardRevoke(String roomId, String subject, String capability) {
+        if (keeperOf(roomId)) {
+            var cap = capability == null ? "" : capability.trim().toLowerCase(Locale.ROOT);
+            return HomeWardGate.get().revoke(roomId.trim(), List.of(agentId), subject, cap);
+        }
         var d = adminDelegate(); return d != null ? d.wardRevoke(roomId, subject, capability) : NOT_STEWARD_HELD;
     }
     @Override public List<Map<String, Object>> parentalList() {
@@ -4216,7 +4255,13 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             for (var b : bonds) {
                 var m = new HashMap<String, Object>();
                 m.put("bondId", b.bondId());
-                m.put("partner", b.otherParty(agentId));
+                var partner = b.otherParty(agentId);
+                m.put("partner", partner);
+                if (partner != null && !partner.startsWith("companion-") && !partner.startsWith("agent-")) {
+                    PersonIdentityProvisioner.resolver()
+                        .flatMap(r -> r.displayNameFor(partner))
+                        .ifPresent(n -> m.put("partnerName", n));
+                }
                 m.put("depth", b.depth().name());
                 m.put("depthLevel", b.depth().level());
                 m.put("interactionCount", b.interactionCount());

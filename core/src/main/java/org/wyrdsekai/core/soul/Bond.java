@@ -353,6 +353,32 @@ public record Bond(
         return agentADid.equals(agentDid) || agentBDid.equals(agentDid);
     }
 
+    /**
+     * The same bond with its counterpart named by a different identifier — the person's
+     * canonical DID on a row that carried their legacy account id. Nothing else moves.
+     */
+    public Bond withOtherParty(String me, String other) {
+        if (me == null || other == null || other.equals(otherParty(me))) return this;
+        boolean meIsA = agentADid.equals(me);
+        return new Bond(bondId, meIsA ? me : other, meIsA ? other : me, depth, formedAt,
+            lastInteraction, interactionCount, mutualConsent, active, scarred, state,
+            coldStartUntil, posture, relationalState, kind);
+    }
+
+    /**
+     * The same bond with one party renamed — her own side, when a bond formed before her
+     * soul had its DID was keyed by her entity id: found by nobody once the DID existed,
+     * and "the steward's bond with the second companion did not exist until a restart"
+     * (field report, 2026-09-13).
+     */
+    public Bond withParty(String from, String to) {
+        if (from == null || to == null || from.equals(to)) return this;
+        if (!from.equals(agentADid) && !from.equals(agentBDid)) return this;
+        return new Bond(bondId, from.equals(agentADid) ? to : agentADid, from.equals(agentBDid) ? to : agentBDid,
+            depth, formedAt, lastInteraction, interactionCount, mutualConsent, active, scarred, state,
+            coldStartUntil, posture, relationalState, kind);
+    }
+
     /** Get the other party in the bond. */
     public String otherParty(String agentDid) {
         if (agentADid.equals(agentDid)) return agentBDid;

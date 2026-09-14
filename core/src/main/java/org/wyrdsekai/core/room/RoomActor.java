@@ -51,6 +51,7 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import org.wyrdsekai.core.household.QuietHours;
 
 /**
  * EventSourcedBehavior for a single room.
@@ -523,6 +524,29 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
         if (parental != null && !parental.canEnterRoom(cmd.entityId(), roomId)) {
             cmd.replyTo().tell(new RoomResponse.Rejected("parental_block",
                 "That door doesn't open for you — a household rule holds it closed."));
+            return Effect().none();
+        }
+
+        // A warded room opens only for those its keeper has let in. Every door — web,
+        // telnet, ssh, MCP, a companion's own walk — passes through here, so this is the
+        // one place the question is asked. A companion's Home is sealed to her at birth
+        // (HomeWardGate.sealHome). Before this check her door stood open to the whole
+        // household for her whole life while the provisioner called it private
+        // (2026-09-13). An entity already inside may always come back in.
+        var wardGate = HomeWardGate.get();
+        if (wardGate != null && !state.entities().containsKey(cmd.entityId())
+                && !wardGate.canEnter(roomId, cmd.entityId())) {
+            cmd.replyTo().tell(new RoomResponse.Rejected(HomeWardGate.REJECTION_CODE,
+                "That door is warded — it opens only for those its keeper has let in."));
+            return Effect().none();
+        }
+
+        // Quiet hours bind visitors structurally, not by manners: a visitor at 3 a.m. is
+        // told the household is asleep and when it wakes (2026-09-13).
+        if ("visitor".equals(cmd.entityType()) && !state.entities().containsKey(cmd.entityId())
+                && QuietHours.isQuiet()) {
+            cmd.replyTo().tell(new RoomResponse.Rejected("quiet_hours",
+                QuietHours.until() + " Visitors are welcome after."));
             return Effect().none();
         }
 

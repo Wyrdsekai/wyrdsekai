@@ -290,15 +290,21 @@ public final class StateDumpMain {
 
     private static void detailBonds(Connection conn, ObjectNode t) throws SQLException {
         ArrayNode arr = t.putArray("rows_detail");
+        // The columns the table actually has (agent_a_did/agent_b_did); the old
+        // holder_user_id/companion_did query threw on every dump and the detail
+        // silently became a detail_error.
         try (var stmt = conn.prepareStatement(
-                "SELECT bond_id, holder_user_id, companion_did, depth FROM bonds");
+                "SELECT bond_id, agent_a_did, agent_b_did, depth, interaction_count, kind, active FROM bonds");
              ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
                 ObjectNode r = arr.addObject();
                 r.put("bond_id", rs.getString(1));
-                r.put("holder_user_id", rs.getString(2));
-                r.put("companion_did", rs.getString(3));
-                r.put("depth", rs.getInt(4));
+                r.put("agent_a_did", rs.getString(2));
+                r.put("agent_b_did", rs.getString(3));
+                r.put("depth", rs.getString(4));
+                r.put("interaction_count", rs.getInt(5));
+                r.put("kind", rs.getString(6));
+                r.put("active", rs.getInt(7) != 0);
             }
         }
     }

@@ -6,21 +6,105 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-09-14
+
 ### Changed
-- **The bundled CodeZaiku is 0.3.3.** Its installer and `wyrd coding update codezaiku` take the
-  build that carries its own Java runtime when the machine has no Java 21, and the librarian's
-  does the same from ResearchZosho 0.1.6; `wyrd researcher setup` no longer warns about Java.
-- **The librarian's desk reads a write-up in pieces and says where a run is.** `read <id>` asks
-  the librarian (0.1.7) for the answer alone, capped, and says how much stayed on the shelf,
-  so a long report no longer overflows her turn; `jobs` shows a running job's phase, round and
-  workers, or that it is waiting for a sleeping model server.
-- **A third way to link the librarian:** `wyrd researcher link --stdio "npx -y
-  @wyrdsekai/researchzosho-mcp"`, the launcher both siblings publish on npm.
+- **Bundled CodeZaiku is 0.3.5; the librarian client speaks ResearchZosho 0.1.11.** Both
+  installers take the build with its own Java runtime when Java 21 is missing;
+  `wyrd researcher setup` no longer warns about Java.
+- **Librarian desk:** `read <id>` returns the answer only, capped, and reports how much was
+  left out. `jobs` shows a running job's phase, round and workers.
+- **`wyrd researcher link --stdio "npx -y @wyrdsekai/researchzosho-mcp"`** links the librarian
+  over stdio.
+
+### Added
+- **Windows CLI parity:** `wyrd inference remote <url>`, `wyrd inference pause|resume`,
+  `wyrd visitors`, `wyrd soul`, and the inference line in `wyrd doctor`.
+- **`map` shows occupants.** Public rooms list who is in them; anyone in a private room is
+  listed in a footer by kind only ("at home", "in their Study", "resting"). `where <name>`
+  answers the same way.
+- **MCP visitors.** A non-resident MCP login is an entity named `<name> (visitor, MCP)`.
+  Vouched accounts (`wyrd visitors vouch <user>`) enter at the Nexus, others at the Docks.
+  Visitors receive room events (`wyrdsekai_events`, `GET /api/mcp/events?since=<seq>`), are
+  subject to Home wards, the sanctuary and quiet hours (`WYRDSEKAI_QUIET_HOURS=22:00-07:00`),
+  and can be dismissed (`wyrd visitors dismiss <user>`). `POST /api/mcp/logout` removes the
+  visitor from the room.
+- **Name prompts wait.** On a terminal the companion and steward name prompts wait 10 minutes
+  (`WYRDSEKAI_NAME_PROMPT_SECS`); off a terminal the short countdown remains.
+- **`wyrd soul list | rename <old> <new> | archive <name>`.** Rename changes the manifest
+  name and keeps the DID, entity id and history. The server resolves a configured name to
+  the soul that answers to it and only creates a new soul when none matches, so changing
+  `WYRDSEKAI_COMPANION_NAME` no longer creates a second companion.
+- **`wyrd inference pause <90s|30m|2h> [reason]` / `resume`.** Requests are refused with a
+  `PAUSED:` error the companion reports once, then waits. `/health` includes `inference`
+  (inFlight, queued, maxConcurrency, p95LatencyMs, paused); `wyrd doctor` prints it.
+- **Parallel slots per model server.** `LLAMA_SKILLS_PARALLEL` / `LLAMA_VOICE_PARALLEL`
+  (compose) and `WYRDSEKAI_DRIVE_PARALLEL` / `WYRDSEKAI_VOICE_PARALLEL` (native) set
+  `--parallel`; `--ctx-size` is multiplied by the slot count. Default 1.
 
 ### Fixed
-- **MCP.md no longer claims a general MCP door at `POST /mcp`.** The household serves one
-  surface, the library door at `POST /mcp/library`; the world door stays closed until calls
-  carry a caller identity, and the document now says so.
+- **Inference metrics were not recorded.** Only the fallback retry path stamped a start
+  time, so `/health` showed 0 samples and the p95 was 0; the snapshot was also taken before
+  the in-flight counter was decremented, so one request always showed in flight. Every
+  dispatch path records now.
+- **`WYRDSEKAI_LLAMA_URL` was not read by the server.** The Windows CLI, tray, desktop
+  settings and docs used it for "point at a remote node"; the server only read
+  `WYRDSEKAI_INFERENCE_URL`, so a Windows node with a remote URL silently used
+  127.0.0.1:8200. The server now uses `WYRDSEKAI_LLAMA_URL` when it names another host
+  (loopback is left to local auto-detection). `wyrd inference remote` on Windows writes
+  `WYRDSEKAI_INFERENCE_URL`.
+- **Windows installer deleted the MSI on failure.** It is moved to Downloads with the
+  `msiexec` command to finish by hand, matching the Linux/macOS installer.
+- **Bond rows were split per person.** The bondholder's bond existed under the login id
+  (with history, kind MEMBER) and under the person DID (empty, kind BONDHOLDER). The merge
+  ritual joined them at load and the actor split them again at every turn. Bonds are keyed
+  by the canonical person id at every path; the merge keeps the bondholder kind and deletes
+  the duplicate; the bond crystal shows names; `wyrd state dump` reads the real bond
+  columns. `wyrd doctor` reports the consolidation roadmap as notes, not warnings.
+- **Router concurrency** defaults to one slot per backend instead of 1. A queue of 10 or
+  more logs a warning.
+- **Bunshin budgets** are sized from measured p95 latency instead of a fixed 180 s.
+  Defaults: `WYRDSEKAI_BUNSHIN_TOKENS` (2000), `WYRDSEKAI_BUNSHIN_STEPS` (30),
+  `WYRDSEKAI_BUNSHIN_WALL_CLOCK` (0 = measured). A dispatch can override per task.
+- **Inference URLs are probed.** `WYRDSEKAI_INFERENCE_URL` pointing at Ollama registers an
+  Ollama backend with its listed models; a URL that answers neither protocol is refused
+  at `wyrd inference remote` and logged as an error at boot. `wyrd inference remote` also
+  writes the URL to the conf file so `wyrd start` stops asking for it.
+- **Wizards:** stdin is drained before every prompt; `wyrd setup` and `wyrd start` share a
+  lock; setup ends with a summary of what it configured.
+- **MCP `do "go to <room>"` moves.** Moves resolve by direction or destination name; a
+  command that changed nothing does not answer "Done."; a refused door steps the visitor
+  back.
+- **MCP client:** the login tool's `description` no longer lands in the password field (a
+  long one caused HTTP 500 from bcrypt's 72-byte limit; the server now returns 400);
+  resident routes send the bearer token; an expired session re-logs in once;
+  `wyrdsekai_status` reports when companion status is unreachable; the setup docstring
+  gives the `claude mcp add` command.
+- **`wyrd researcher setup` twice in a row** ran its own log line as a command. It now
+  warns under sudo, since ResearchZosho installs per user.
+- **Installer keeps the download** when the install step fails and prints where it is;
+  `/api/auth/redeem` names the missing field.
+- **Companion Home rooms were not locked.** The Home was marked private but no ward rows
+  were written and `RoomActor` never checked wards on entry. Homes are sealed to their
+  companion (entity id and DID, all permissions) at creation and on every boot, so
+  existing Homes lock on upgrade; entry is checked on every path. Nobody else is granted
+  by default. The companion grants access with `use ward stone invite <name>` (enter +
+  speak; `invite <name> <cap>` for one capability) and `uninvite <name>`; the ward verbs
+  act with her authority in her own Home. Stewards keep `wyrd wards`. A companion refused
+  at a door returns to her previous room.
+- **Tool-result turns overflowed the context.** The turn after a tool result was given all
+  tool schemas (188, over 16k tokens) while other turns got a ranked 8 plus `use_item`. It
+  is ranked the same way now, and the compactor drops tool schemas (ranked head first, then
+  all) before failing.
+- **Unknown item templates matched by a shared word.** `craft_from_template` with a
+  missing template fell back to any template whose description shared a word with the
+  item name. Templates now carry alias words (notebook, key, browser, terminal, ...); a name
+  with no match is checked against existing items, otherwise the template list is returned.
+- **`world.room.emit` passed a live Graal object to the replicator**, which failed with
+  "The Context is already closed" after the script ended. Values are deep-copied at the
+  bridge.
+- **MCP.md** no longer documents a general MCP endpoint at `POST /mcp`. The only MCP
+  surface is the library door at `POST /mcp/library`.
 
 ## [0.3.1] — 2026-09-11
 

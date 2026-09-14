@@ -78,11 +78,24 @@ try {
     }
     if ($p.ExitCode -eq 3010) { Say 'installed - a reboot is required to finish.' }
     else { Say 'installed.' }
+    # Installed: the download has done its job. (On any failure above it is kept - see finally.)
+    Remove-Item -Force $msi -ErrorAction SilentlyContinue
 
     Say 'Next:  wyrd setup'
     Say 'verify anytime: the checksums live with the release -'
     Say "  $Base/SHA256SUMS"
 }
 finally {
+    # A refused elevation (or any abort) used to take the 1.2-1.7 GB download with it.
+    # Keep the artifact where the person can find it and re-run; only success removes it.
+    if ($msi -and (Test-Path $msi)) {
+        $keep = Join-Path $env:USERPROFILE 'Downloads'
+        if (-not (Test-Path $keep)) { $keep = [System.IO.Path]::GetTempPath() }
+        $kept = Join-Path $keep $Art
+        try {
+            Move-Item -Path $msi -Destination $kept -Force
+            Say "kept the download at $kept - install it with: msiexec /i `"$kept`" /passive /norestart"
+        } catch { }
+    }
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

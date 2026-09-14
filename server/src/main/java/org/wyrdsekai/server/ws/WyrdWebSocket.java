@@ -112,6 +112,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.time.Clock;
+import org.wyrdsekai.core.room.RoomPrivacy;
 
 /**
  * Javalin WebSocket handler for Wyrdsekai connections.
@@ -2779,11 +2780,17 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
         var topology = topo.snapshot(currentRoomId, radius, visitedRooms);
         List<String> path = null;
 
+        // Who is where: everyone by name in public rooms; a private room says the kind
+        // of place ("at home", "in their Study", "resting") and never its name.
+        var occupants = occupantsFor(playerId);
+
         switch (mapReq.command()) {
-            case "map" -> textMap = topo.renderTextMap(currentRoomId, radius, visitedRooms);
+            case "map" -> textMap = topo.renderTextMap(currentRoomId, radius, visitedRooms, occupants);
             case "nearby" -> textMap = topo.renderAccessibleMap(currentRoomId, 1, visitedRooms, false);
             case "rooms" -> textMap = topo.renderAccessibleMap(currentRoomId, 5, visitedRooms, false);
-            case "where" -> textMap = topo.renderVoiceMap(currentRoomId);
+            case "where" -> textMap = mapReq.target() != null && !mapReq.target().isBlank()
+                ? whereIs(mapReq.target(), topo)
+                : topo.renderVoiceMap(currentRoomId);
             case "exits" -> textMap = topo.renderAccessibleMap(currentRoomId, 1, visitedRooms, true);
             case "path" -> {
                 if (mapReq.target() != null) {
@@ -2812,11 +2819,49 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                     textMap = "Usage: path <room name>";
                 }
             }
-            default -> textMap = topo.renderTextMap(currentRoomId, radius, visitedRooms);
+            default -> textMap = topo.renderTextMap(currentRoomId, radius, visitedRooms, occupants);
         }
 
         var mapData = new S2CMessage.MapData(0, mapReq.command(), textMap, topology, path);
         sessionRef.tell(new ClientSessionActor.SendMessage(mapData));
+    }
+
+    /**
+     * The map's people: a function from room id to the names standing there (public rooms
+     * only), with the key {@code *elsewhere*} answering a footer for everyone in a private
+     * room, by kind of place. The requester is "you".
+     */
+    static Function<String, String> occupantsFor(String playerId) {
+        var registry = EntityRegistry.get();
+        if (registry == null) return id -> null;
+        var publicNames = new HashMap<String, String>();
+        var elsewhere = new ArrayList<String>();
+        for (var e : registry.occupantsByRoom().entrySet()) {
+            var kind = RoomPrivacy.whereabouts(e.getKey());
+            var names = new ArrayList<String>();
+            for (var o : e.getValue()) {
+                if (o.entityId().equals(playerId)) { names.add(0, "you"); continue; }
+                if (kind == null) names.add(o.name()); else elsewhere.add(o.name() + " (" + kind + ")");
+            }
+            if (kind == null && !names.isEmpty()) publicNames.put(e.getKey(), String.join(", ", names));
+        }
+        var footer = elsewhere.isEmpty() ? null : "Elsewhere: " + String.join(", ", elsewhere);
+        return id -> "*elsewhere*".equals(id) ? footer : publicNames.get(id);
+    }
+
+    /** `where <name>`: a public room by name, a private one by kind, or nowhere here. */
+    static String whereIs(String name, ZoneTopology topo) {
+        var registry = EntityRegistry.get();
+        if (registry == null) return "Nobody is registered here.";
+        var id = registry.findByName(name);
+        if (id.isEmpty()) return "Nobody here goes by '" + name + "'.";
+        var room = registry.roomOf(id.get());
+        var who = registry.nameOf(id.get()).orElse(name);
+        if (room.isEmpty()) return who + " is not in any room right now.";
+        var kind = RoomPrivacy.whereabouts(room.get());
+        if (kind != null) return who + " is " + kind + ".";
+        var roomName = topo.room(room.get()).map(ZoneTopology.RoomNode::name).orElse(room.get());
+        return who + " is in " + roomName + ".";
     }
 
     // ─── — furnishings projections ──────────────────

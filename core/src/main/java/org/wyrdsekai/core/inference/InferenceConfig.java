@@ -339,7 +339,7 @@ public record InferenceConfig(
                 if (!chosen.equals(already)) {
                     log.warn("Backend '{}': MODEL_PATH {} names the VOICE model (served at {}) — "
                         + "the drive slot takes the other server at {} instead. Fix the conf: "
-                        + "MODEL_PATH should name the drive model, or set WYRDSEKAI_LLAMA_URL.",
+                        + "MODEL_PATH should name the drive model, or set WYRDSEKAI_INFERENCE_URL.",
                         name, modelPath, already, chosen);
                 } else if (sameServer(already, voiceUrl)) {
                     log.warn("Backend '{}': {} is served only at the VOICE url {} and nothing "
@@ -662,12 +662,22 @@ public record InferenceConfig(
     }
 
     private static List<InferenceBackend> autoDetectLlamaServers() {
-        var envUrl = WyrdConfig.get().resolve(
-            "WYRDSEKAI_INFERENCE_URL", "inference.url", () -> null);
+        // WYRDSEKAI_INFERENCE_URL, or a WYRDSEKAI_LLAMA_URL that names another host
+        // (the Windows key; see WyrdConfig.configuredInferenceUrl).
+        var envUrl = WyrdConfig.get().configuredInferenceUrl();
         if (envUrl != null && !envUrl.isBlank()) {
-            return probeLlamaServer(envUrl, "llama-server-auto", 5)
-                .map(List::<InferenceBackend>of)
-                .orElse(List.of());
+            // The URL is probed for what it IS, not assumed to be llama-server. An
+            // Ollama endpoint here registered nothing and said nothing; "Inference
+            // backends: 1" in the log was the only clue while every companion ran on
+            // the local 4B (field report, 2026-09-13).
+            var llama = probeLlamaServer(envUrl, "llama-server-auto", 5);
+            if (llama.isPresent()) return List.of(llama.get());
+            var ollama = probeOllama(envUrl, "ollama-remote", 5);
+            if (ollama.isPresent()) return List.of(ollama.get());
+            log.error("Inference URL {} answers neither llama-server (/health, /v1/models) "
+                + "nor Ollama (/api/tags) — NO backend registered from it. Check the URL and the "
+                + "server; `wyrd inference remote <url>` probes before it persists.", envUrl);
+            return List.of();
         }
 
         var found = new ArrayList<InferenceBackend>();
@@ -803,7 +813,11 @@ public record InferenceConfig(
      * and discover available chat models (filtering out embedding-only models).
      */
     private static Optional<InferenceBackend> autoDetectOllama() {
-        var url = "http://127.0.0.1:11434";
+        return probeOllama("http://127.0.0.1:11434", "ollama-auto", 30);
+    }
+
+    /** Probe {@code url} as Ollama ({@code /api/tags}); register it with its chat models. */
+    static Optional<InferenceBackend> probeOllama(String url, String name, int priority) {
         try {
             var conn = (HttpURLConnection)
                 URI.create(url + "/api/tags").toURL().openConnection();
@@ -818,10 +832,11 @@ public record InferenceConfig(
                 return Optional.empty();
             }
 
-            log.info("Auto-detected Ollama at {} with models: {}", url, models);
+            log.info("Auto-detected Ollama at {} as '{}' with models: {} (priority {})",
+                url, name, models, priority);
             return Optional.of(new InferenceBackend.Ollama(
-                "ollama-auto", new InferenceClient(url, null, INFERENCE_TIMEOUT,
-                    new ApiProvider.OpenAI("ollama")), 30, models));
+                name, new InferenceClient(url, null, INFERENCE_TIMEOUT,
+                    new ApiProvider.OpenAI("ollama")), priority, models));
         } catch (Exception e) {
             // Not running — that's fine
         }

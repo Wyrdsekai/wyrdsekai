@@ -113,6 +113,38 @@ public class PersonIdentityResolver {
         }
     }
 
+    /**
+     * The name a person goes by, from their DID, account id or username. Empty when
+     * the identifier names nobody here — the caller keeps showing the identifier.
+     */
+    public Optional<String> displayNameFor(String identifier) {
+        if (identifier == null || identifier.isBlank()) return Optional.empty();
+        var id = identifier.trim();
+        try (var conn = getConnection()) {
+            if (!tableExists(conn, "users")) return Optional.empty();
+            boolean hasDid = columnExists(conn, "users", "did");
+            var sql = hasDid
+                ? "SELECT display_name, username FROM users WHERE id = ? OR username = ? OR did = ?"
+                : "SELECT display_name, username FROM users WHERE id = ? OR username = ?";
+            try (var ps = conn.prepareStatement(sql)) {
+                ps.setString(1, id);
+                ps.setString(2, id);
+                if (hasDid) ps.setString(3, id);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        var dn = rs.getString("display_name");
+                        if (dn != null && !dn.isBlank()) return Optional.of(dn);
+                        var un = rs.getString("username");
+                        if (un != null && !un.isBlank()) return Optional.of(un);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            return Optional.empty();
+        }
+        return Optional.empty();
+    }
+
     private Optional<String> lookupUsers(String id) {
         try (var conn = getConnection()) {
             if (!tableExists(conn, "users") || !columnExists(conn, "users", "did")) {

@@ -412,8 +412,23 @@
         },
         {
           "key": "WYRDSEKAI_INFERENCE_CONCURRENCY",
-          "description": "router-wide in-flight cap — raise for vLLM/SGLang",
-          "default": "1"
+          "description": "router-wide in-flight cap; unset = one slot per configured backend — raise for vLLM/SGLang",
+          "default": "(one per backend)"
+        },
+        {
+          "key": "WYRDSEKAI_BUNSHIN_TOKENS",
+          "description": "completion tokens a bunshin may spend by default; a reasoning model that thinks out loud needs more",
+          "default": "2000"
+        },
+        {
+          "key": "WYRDSEKAI_BUNSHIN_STEPS",
+          "description": "tool calls a bunshin may make by default",
+          "default": "30"
+        },
+        {
+          "key": "WYRDSEKAI_BUNSHIN_WALL_CLOCK",
+          "description": "seconds a bunshin may run by default; 0 = sized from measured inference latency",
+          "default": "0"
         },
         {
           "key": "WYRDSEKAI_INFERENCE_MAX_CONCURRENT",
