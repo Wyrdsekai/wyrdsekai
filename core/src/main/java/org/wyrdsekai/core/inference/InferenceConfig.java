@@ -103,6 +103,15 @@ public record InferenceConfig(
             backends.addAll(legacyBackends(config));
         }
 
+        // The inference URL the steward set is an instruction, not a hint: register it
+        // whatever else is enabled. Until 2026-09-14 it was consulted only when the list
+        // above came out empty, so a node with its local voice server enabled and the
+        // drive pointed at a household GPU booted with the dead voice as its only backend
+        // (Windows install test, 0.3.2).
+        registerConfiguredUrl(backends, WyrdConfig.get().configuredInferenceUrl(),
+            url -> probeLlamaServer(url, "llama-server-auto", 5)
+                .or(() -> probeOllama(url, "ollama-remote", 5)));
+
         // Auto-detect inference servers on default ports if no backends enabled
         if (backends.isEmpty()) {
             // llama-server on 8200/8201 (dual-inference) or 11525 (docker bundled).
@@ -661,9 +670,38 @@ public record InferenceConfig(
         return null;
     }
 
+    /**
+     * Register the steward's configured inference URL unless a backend already points at
+     * that server. Pure apart from the probe, so the rule is testable without a network:
+     * {@code url} null → nothing; same server already listed → nothing; probe empty →
+     * nothing added (the probe logs why); otherwise the backend is added.
+     *
+     * @return true when a backend was added
+     */
+    static boolean registerConfiguredUrl(List<InferenceBackend> backends, String url,
+                                         Function<String, Optional<InferenceBackend>> probe) {
+        if (url == null || url.isBlank()) return false;
+        for (var b : backends) {
+            if (sameServer(b.url(), url)) return false;
+        }
+        var found = probe.apply(url);
+        if (found.isEmpty()) {
+            log.error("Inference URL {} answers neither llama-server (/health, /v1/models) "
+                + "nor Ollama (/api/tags) — NO backend registered from it. Check the URL and the "
+                + "server; `wyrd inference remote <url>` probes before it persists.", url);
+            return false;
+        }
+        backends.add(found.get());
+        log.info("Inference backend from the configured URL: {} ({})", url, found.get().name());
+        return true;
+    }
+
     private static List<InferenceBackend> autoDetectLlamaServers() {
         // WYRDSEKAI_INFERENCE_URL, or a WYRDSEKAI_LLAMA_URL that names another host
         // (the Windows key; see WyrdConfig.configuredInferenceUrl).
+        // A configured URL was already tried by registerConfiguredUrl; when it failed the
+        // probe, nothing else is guessed at (a typo must not fall back to a local server
+        // the steward did not choose).
         var envUrl = WyrdConfig.get().configuredInferenceUrl();
         if (envUrl != null && !envUrl.isBlank()) {
             // The URL is probed for what it IS, not assumed to be llama-server. An

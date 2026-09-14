@@ -1989,6 +1989,9 @@ function Invoke-Inference {
             # The local llama-server is not started while a remote one is the brain;
             # 'wyrd inference install' turns the local stack back on.
             Set-ConfKey -Key "WYRDSEKAI_LLAMA_ENABLED" -Value "false"
+            # Neither local server is started while LLAMA_ENABLED is false, so the voice
+            # entry must not be registered either (a dead backend was the only one, 0.3.2 test).
+            Set-ConfKey -Key "WYRDSEKAI_VOICE_ENABLED" -Value "false"
             Write-Ok "Inference points at $url - 'wyrd restart' to apply. The local llama-server stays off; 'wyrd inference install' brings it back."
         }
         "pause" {

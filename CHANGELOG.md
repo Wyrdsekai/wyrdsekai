@@ -50,9 +50,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **`WYRDSEKAI_LLAMA_URL` was not read by the server.** The Windows CLI, tray, desktop
   settings and docs used it for "point at a remote node"; the server only read
   `WYRDSEKAI_INFERENCE_URL`, so a Windows node with a remote URL silently used
-  127.0.0.1:8200. The server now uses `WYRDSEKAI_LLAMA_URL` when it names another host
-  (loopback is left to local auto-detection). `wyrd inference remote` on Windows writes
-  `WYRDSEKAI_INFERENCE_URL`.
+  127.0.0.1:8200, and a configured URL was only consulted when no other backend was
+  enabled, so a node with its local voice entry enabled ignored the URL too. The configured
+  URL (`WYRDSEKAI_INFERENCE_URL`, or `WYRDSEKAI_LLAMA_URL` naming another host) is now
+  registered whatever else is enabled. `wyrd inference remote` on Windows writes the
+  canonical key and turns the local drive and voice entries off.
 - **Windows CLI verbs without arguments failed.** `wyrd version`, `wyrd inference` and every
   other verb that reads its argument list threw "The property 'Count' cannot be found" under
   strict mode when no arguments were given. The argument list is normalised once at startup.
