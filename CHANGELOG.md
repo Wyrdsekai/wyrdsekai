@@ -53,6 +53,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   127.0.0.1:8200. The server now uses `WYRDSEKAI_LLAMA_URL` when it names another host
   (loopback is left to local auto-detection). `wyrd inference remote` on Windows writes
   `WYRDSEKAI_INFERENCE_URL`.
+- **Windows CLI verbs without arguments failed.** `wyrd version`, `wyrd inference` and every
+  other verb that reads its argument list threw "The property 'Count' cannot be found" under
+  strict mode when no arguments were given. The argument list is normalised once at startup.
+- **`wyrd visitors` printed a Python traceback when the server was down.** It reports that the
+  server did not answer.
 - **Windows installer deleted the MSI on failure.** It is moved to Downloads with the
   `msiexec` command to finish by hand, matching the Linux/macOS installer.
 - **Bond rows were split per person.** The bondholder's bond existed under the login id

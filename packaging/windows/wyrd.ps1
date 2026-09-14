@@ -31,6 +31,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+# A verb with no arguments leaves $Rest null, and strict mode throws on $null.Count
+# (found on 0.3.2 install test: `wyrd version` failed). Normalise once here.
+if ($null -eq $Rest) { $Rest = @() }
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 # jpackage layout: staged files (jars, nats-server.exe, FIRST_ENCOUNTER.md,

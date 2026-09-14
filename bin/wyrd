@@ -6321,13 +6321,16 @@ do_visitors() {
     local base="http://localhost:${WYRDSEKAI_PORT:-7070}"
     case "$sub" in
         list)
-            curl -sf "$base/api/mcp/sessions" 2>/dev/null | python3 -c '
+            local sessions_json
+            sessions_json=$(curl -sf "$base/api/mcp/sessions" 2>/dev/null) \
+                || { err "The server did not answer at :${WYRDSEKAI_PORT:-7070} — is it running?"; return 1; }
+            printf '%s' "$sessions_json" | python3 -c '
 import json,sys
 d=json.load(sys.stdin); s=d.get("sessions",[])
 if not s: print("Nobody is in through the MCP door."); sys.exit(0)
 print("%-18s %-28s %-8s %-18s %s" % ("USER","AS","KIND","DOOR","ROOM"))
 for x in s: print("%-18s %-28s %-8s %-18s %s" % (x.get("username"),x.get("displayName"),x.get("kind"),x.get("door"),x.get("room")))
-' || err "The server did not answer at :${WYRDSEKAI_PORT:-7070} — is it running?"
+'
             ;;
         dismiss|vouch|unvouch)
             [[ -n "$who" ]] || { err "Usage: wyrd visitors $sub <username>"; return 2; }
