@@ -11782,6 +11782,74 @@ for e in d.get("enrollments", []):
 }
 
 # ── Room wards (W4 — /api/wards consumers; ward_keyring's terminal twin) ─
+# `wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]` — the steward's view
+# of the zone's rooms and the way to take a made room down. Founding rooms, Homes and occupied
+# rooms are refused by the server. Prune lists first; --yes carries it out (2026-09-14).
+do_rooms() {
+    local sub="${1:-list}"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    case "$sub" in
+        list)
+            local rooms_json
+            rooms_json=$(curl -sf "$api/api/rooms" 2>/dev/null) \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            printf '%s' "$rooms_json" | python3 -c '
+import json,sys
+rows=json.load(sys.stdin)
+print("%-44s %-32s %-10s %5s  %-6s %s" % ("ROOM","NAME","MADE BY","DOORS","FLAG","WHO"))
+for r in rows:
+    flag="markup" if r.get("markupId") else ("kept" if r.get("protectedRoom") else "")
+    rid=r["roomId"]; rid=rid if len(rid)<=44 else rid[:41]+"..."
+    name=r.get("name") or ""; name=name if len(name)<=32 else name[:29]+"..."
+    print("%-44s %-32s %-10s %5d  %-6s %s" % (rid,name,(r.get("madeBy") or "")[:10],r.get("doorways",0),flag,", ".join(r.get("occupants") or [])))
+print("%d room(s)" % len(rows))
+'
+            ;;
+        demolish)
+            local room="${2:-}"
+            [[ -n "$room" ]] || { err "Usage: wyrd rooms demolish <room-id-or-name>"; return 2; }
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local resp code
+            resp=$(curl -s -w '\n%{http_code}' -X DELETE -H "Authorization: Bearer $token" "$api/api/rooms/$room") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
+            ;;
+        prune)
+            local dup=false yes=false
+            for a in "${@:2}"; do case "$a" in --duplicates) dup=true ;; --yes|-y) yes=true ;; esac; done
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local plan code
+            plan=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/rooms/prune?dry=true&duplicates=$dup") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${plan##*$'\n'}"; plan="${plan%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward prunes rooms."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $plan"; return 1; }
+            printf '%s' "$plan" | python3 -c '
+import json,sys
+rooms=json.load(sys.stdin).get("rooms",[])
+if not rooms: print("Nothing to prune."); sys.exit(3)
+print("Would demolish %d room(s):" % len(rooms))
+for r in rooms: print("  %s — %s" % (r["roomId"][:70], r.get("name") or ""))
+' || { local rc=$?; [[ $rc -eq 3 ]] && return 0; return $rc; }
+            if [[ "$yes" != true ]]; then
+                echo "Run again with --yes to demolish them (add --duplicates to include later copies of a name)."
+                return 0
+            fi
+            curl -sf -X POST -H "Authorization: Bearer $token" "$api/api/rooms/prune?dry=false&duplicates=$dup" \
+                | python3 -c '
+import json,sys
+for r in json.load(sys.stdin).get("results",[]): print(("ok   " if r["ok"] else "kept ") + (r.get("name") or r["roomId"]) + " — " + r["message"])
+'
+            ;;
+        *) echo "Usage: wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]"; return 64 ;;
+    esac
+}
+
 do_wards() {
     local subcmd="${1:-help}"
     shift || true
@@ -13606,6 +13674,7 @@ case "${1:-help}" in
     home)       do_home "${@:2}" ;;
     skill)      do_skill "${@:2}" ;;
     wards)      do_wards "${@:2}" ;;
+    rooms)      do_rooms "${@:2}" ;;
     config)     do_config "${2:-help}" "${3:-}" ;;
     reset)      do_reset "${2:-soft}" ;;
     reseed)     do_reseed ;;

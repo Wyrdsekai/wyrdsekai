@@ -42,7 +42,7 @@ public final class ClientCommandMapper {
             case CommandParser.ParsedCommand.MapCommand mc ->
                 new C2SMessage.MapRequest(id, "map", mc.radius(), null);
             case CommandParser.ParsedCommand.Where w ->
-                new C2SMessage.MapRequest(id, "where", 0, null);
+                new C2SMessage.MapRequest(id, "where", 0, w.target());
             case CommandParser.ParsedCommand.Nearby n ->
                 new C2SMessage.MapRequest(id, "nearby", 1, null);
             case CommandParser.ParsedCommand.Rooms r ->

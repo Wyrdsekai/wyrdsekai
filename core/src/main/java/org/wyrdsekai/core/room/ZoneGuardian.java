@@ -254,6 +254,9 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
                                  String zone, List<Exit> exits,
                                  List<RoomObject> objects) implements Command {}
 
+    /** A demolished room: stop its actor and forget it. Doorways and metadata are the caller's. */
+    public record RetireRoom(String roomId) implements Command {}
+
     /** Internal: seed timeout — no view received, seed everything. */
     private record SeedTimeout() implements Command {}
 
@@ -586,6 +589,7 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
             .onMessage(ApplyRoomView.class, this::onApplyRoomView)
             .onMessage(RebuildRoom.class, this::onRebuildRoom)
             .onMessage(CreateNewRoom.class, this::onCreateNewRoom)
+            .onMessage(RetireRoom.class, this::onRetireRoom)
             .onMessage(SeedTimeout.class, this::onSeedTimeout)
             .onMessage(DelegateToCompanion.class, this::onDelegateToCompanion)
             .onMessage(SetRoomEventListener.class, this::onSetRoomEventListener)
@@ -693,16 +697,26 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     private void respawnPersistedRooms(Set<String> peerClaimed) {
         if (metadataService == null) return;
         try {
-            int respawned = 0;
+            int respawned = 0, repaired = 0;
             for (var info : metadataService.listRooms()) {
                 if (peerClaimed.contains(info.roomId())) continue;
                 if (RoomRegistry.get().ref(info.roomId()) != null) continue;
-                getOrSpawnRoom(info.roomId());
+                var ref = getOrSpawnRoom(info.roomId());
                 respawned++;
+                // Rooms made before 0.3.1 kept whatever name the model emitted — leaked
+                // tool-call markup, a description glued on. Repair once, the way new rooms
+                // are cut; the actor persists it, the metadata row follows.
+                if (RoomNaming.needsRepair(info.name())) {
+                    var fixed = RoomNaming.repair(info.name());
+                    ref.tell(new RoomCommand.RenameRoom(fixed, null, getContext().getSystem().ignoreRef()));
+                    metadataService.rename(info.roomId(), fixed);
+                    repaired++;
+                    log.info("ZoneGuardian: repaired room name {} -> '{}'", info.roomId(), fixed);
+                }
             }
             if (respawned > 0) {
-                log.info("ZoneGuardian: respawned {} persisted room(s) beyond the seed set",
-                    respawned);
+                log.info("ZoneGuardian: respawned {} persisted room(s) beyond the seed set{}",
+                    respawned, repaired > 0 ? " (" + repaired + " name(s) repaired)" : "");
             }
         } catch (RuntimeException e) {
             log.warn("ZoneGuardian: persisted-room respawn failed: {}", e.toString());
@@ -772,6 +786,21 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     private Behavior<Command> onProvisionCodeZaikuWorkshop(ProvisionCodeZaikuWorkshop cmd) {
         var seed = WorkshopProvisioner.createWorkshopSeed(cmd.bondholderId(), cmd.bondholderName());
         seedRoom(seed);
+        return this;
+    }
+
+    private Behavior<Command> onRetireRoom(RetireRoom cmd) {
+        var ref = RoomRegistry.get().ref(cmd.roomId());
+        if (ref != null) {
+            try {
+                getContext().stop(ref);
+            } catch (IllegalArgumentException e) {
+                log.warn("RetireRoom {}: not my child ({}) — left running", cmd.roomId(), e.getMessage());
+            }
+            RoomRegistry.get().remove(cmd.roomId());
+        }
+        ZoneTopology.forgetRoom(cmd.roomId());
+        log.info("ZoneGuardian: room {} retired", cmd.roomId());
         return this;
     }
 

@@ -175,6 +175,16 @@ public sealed interface RoomCommand {
     record AddExit(String direction, String targetRoom, String label,
                    ActorRef<RoomResponse> replyTo) implements RoomCommand {}
 
+    /** Close an exit by direction — steward demolition of the room beyond it. Idempotent. */
+    record RemoveExit(String direction, ActorRef<RoomResponse> replyTo) implements RoomCommand {}
+
+    /**
+     * Change the room's name (and description when given). Used by the name repair that runs
+     * on upgrade for rooms whose names carry leaked model markup, and by the steward.
+     */
+    record RenameRoom(String name, String description,
+                      ActorRef<RoomResponse> replyTo) implements RoomCommand {}
+
     /** Update the room's active hints (from companion or script). */
     record UpdateHints(List<Hint> hints,
                        ActorRef<RoomResponse> replyTo) implements RoomCommand {}

@@ -2,6 +2,7 @@ package org.wyrdsekai.core.room;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * A room's name is a name, not its description. The model that makes a room often hands
@@ -75,6 +76,38 @@ public final class RoomNaming {
     }
 
     /** Letters, digits and single spaces, lower-cased — the shape two names are compared in. */
+    /** A tool-call tag a model leaked into a name, and everything after it. */
+    private static final Pattern LEAKED_MARKUP = Pattern.compile(
+        "<\\s*/?\\s*(tool_call|function|parameter)\\b.*$", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The name a room should have had: leaked tool-call markup cut away, then the same
+     * first-seam cut new rooms get. Rooms made before 0.3.1 kept whatever the model emitted;
+     * six on one household node carried {@code </parameter> <tool_call> go_to_room} in the
+     * name (2026-09-14). Returns the input, stripped, when nothing needs doing.
+     */
+    public static String repair(String rawName) {
+        var original = rawName == null ? "" : rawName.strip();
+        var name = LEAKED_MARKUP.matcher(original).replaceFirst("").strip();
+        name = name.replaceAll("[\\s,;:\\-–—]+$", "").strip();
+        if (name.isEmpty()) return original;
+        return split(name, null).name();
+    }
+
+    /** True when {@link #repair} would change the name. */
+    public static boolean needsRepair(String rawName) {
+        var original = rawName == null ? "" : rawName.strip();
+        return !repair(original).equals(original);
+    }
+
+    /** A room id built from a name that carried markup, or that ran far past any name. */
+    public static boolean looksLikeMarkupId(String roomId) {
+        if (roomId == null) return false;
+        var id = roomId.toLowerCase(Locale.ROOT);
+        return id.contains("-parameter-") || id.contains("tool-call") || id.contains("-function-")
+            || id.length() > 120;
+    }
+
     public static String normalise(String s) {
         if (s == null) return "";
         return s.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N} ]", " ").replaceAll("\\s+", " ").strip();

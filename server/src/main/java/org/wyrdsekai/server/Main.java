@@ -205,6 +205,8 @@ import org.wyrdsekai.server.http.StudyRoutes;
 import org.wyrdsekai.server.http.SearchRoutes;
 import org.wyrdsekai.server.http.SoulRoutes;
 import org.wyrdsekai.server.http.TlsConfig;
+import org.wyrdsekai.core.room.RoomDemolition;
+import org.wyrdsekai.server.http.RoomAdminRoutes;
 import org.wyrdsekai.server.http.WardRoutes;
 import org.wyrdsekai.server.http.CompanionAskRoutes;
 import org.wyrdsekai.server.http.DirectoryRoutes;
@@ -347,6 +349,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -1148,6 +1151,11 @@ public class Main {
 
         // Set scheduler for room ask patterns (replaces ClusterSharding's EntityRef.ask)
         Rooms.setScheduler(system.scheduler());
+
+        // The steward's demolition service: founding rooms and Homes are protected by rule.
+        RoomDemolition.install(new RoomDemolition(metadataService,
+            foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()),
+            system::tell));
         RoomRegistry.get().setScheduler(system.scheduler());
 
         // Soul system: SoulStore (created early so Between can reference it)
@@ -3845,6 +3853,8 @@ public class Main {
                 });
         }
         var wardRoutes = new WardRoutes(wardService, authService);
+        var roomAdminRoutes = new RoomAdminRoutes(authService, metadataService,
+            foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()));
         final var limiter = rateLimiter;
         final var tlsConfig = config;
         final var finalInferenceRouter = inferenceRouter;
@@ -3912,6 +3922,7 @@ public class Main {
             healthRoutes.register(cfg.routes);
             authRoutes.register(cfg.routes);
             wardRoutes.register(cfg.routes);
+            roomAdminRoutes.register(cfg.routes);
             new ResidencyRoutes(authService, localZoneId).register(cfg.routes);
             new HouseholdRoutes(permissionChecker, stewardAuditLog, authService).register(cfg.routes);
             new SoulRoutes(finalSoulStore, authService, pairingService, bondStore).register(cfg.routes);

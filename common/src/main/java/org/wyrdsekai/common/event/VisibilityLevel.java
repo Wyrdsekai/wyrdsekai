@@ -50,6 +50,7 @@ public enum VisibilityLevel {
             case WorldEvent.ExitOpened _ -> PUBLIC;
             case WorldEvent.ExitClosed _ -> PUBLIC;
             case WorldEvent.DescriptionChanged _ -> PUBLIC;
+            case WorldEvent.RoomRenamed _ -> PUBLIC;
             case WorldEvent.HintsUpdated _ -> PUBLIC;
             case WorldEvent.RoomCreated _ -> SYSTEM;
             case WorldEvent.ScriptTriggered _ -> PRIVILEGED;

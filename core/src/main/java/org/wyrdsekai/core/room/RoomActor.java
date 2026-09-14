@@ -175,6 +175,8 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
             .forAnyState()
             .onCommand(RoomCommand.CreateRoom.class, this::onCreateRoom)
             .onCommand(RoomCommand.AddExit.class, this::onAddExit)
+            .onCommand(RoomCommand.RemoveExit.class, this::onRemoveExit)
+            .onCommand(RoomCommand.RenameRoom.class, this::onRenameRoom)
             .onCommand(RoomCommand.LookRoom.class, this::onLookRoom)
             .onCommand(RoomCommand.EnterRoom.class, this::onEnterRoom)
             .onCommand(RoomCommand.LeaveRoom.class, this::onLeaveRoom)
@@ -415,6 +417,58 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                 : "use:" + objName + "|" + args;
             hints.add(new Hint(c.label(), "use_" + objId + "_" + args, dispatch));
         }
+    }
+
+    private Effect<RoomEvent, RoomState> onRemoveExit(RoomState state, RoomCommand.RemoveExit cmd) {
+        if (!state.exits().containsKey(cmd.direction())) {
+            cmd.replyTo().tell(new RoomResponse.Ok(state.toSnapshot()));
+            return Effect().none();
+        }
+        var event = new WorldEvent.ExitClosed(roomId, Instant.now(), cmd.direction());
+        return Effect().persist(new RoomEvent(event))
+            .thenRun(newState -> {
+                notifySubscribers(event);
+                ZoneTopology.learnRoom(roomId, newState.name(), newState.zone(),
+                    List.copyOf(newState.exits().values()), null, null);
+                cmd.replyTo().tell(new RoomResponse.Ok(newState.toSnapshot()));
+                log.info("Exit removed from room {}: {}", roomId, cmd.direction());
+            });
+    }
+
+    private Effect<RoomEvent, RoomState> onRenameRoom(RoomState state, RoomCommand.RenameRoom cmd) {
+        if (state.name().isEmpty()) {
+            cmd.replyTo().tell(new RoomResponse.Rejected("not_found",
+                ScriptMessageCatalog.forLang("en").get("err.room_not_initialized")));
+            return Effect().none();
+        }
+        var name = cmd.name() == null ? "" : cmd.name().strip();
+        if (name.isEmpty()) {
+            cmd.replyTo().tell(new RoomResponse.Rejected("empty_name", "a room needs a name"));
+            return Effect().none();
+        }
+        var now = Instant.now();
+        var events = new ArrayList<RoomEvent>();
+        if (!name.equals(state.name())) {
+            events.add(new RoomEvent(new WorldEvent.RoomRenamed(roomId, now, name)));
+        }
+        if (cmd.description() != null && !cmd.description().isBlank()
+                && !cmd.description().equals(state.description())) {
+            events.add(new RoomEvent(new WorldEvent.DescriptionChanged(
+                roomId, now, cmd.description(), "rename")));
+        }
+        if (events.isEmpty()) {
+            cmd.replyTo().tell(new RoomResponse.Ok(state.toSnapshot()));
+            return Effect().none();
+        }
+        var oldName = state.name();
+        return Effect().persist(events)
+            .thenRun(newState -> {
+                for (var e : events) notifySubscribers(e.event());
+                ZoneTopology.learnRoom(roomId, newState.name(), newState.zone(),
+                    List.copyOf(newState.exits().values()), null, null);
+                cmd.replyTo().tell(new RoomResponse.Ok(newState.toSnapshot()));
+                log.info("Room {} renamed: '{}' -> '{}'", roomId, oldName, newState.name());
+            });
     }
 
     private Effect<RoomEvent, RoomState> onAddExit(RoomState state, RoomCommand.AddExit cmd) {

@@ -112,6 +112,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.time.Clock;
+import org.wyrdsekai.core.room.MapOccupants;
+import org.wyrdsekai.core.room.RoomDemolition;
 import org.wyrdsekai.core.room.RoomPrivacy;
 
 /**
@@ -1933,6 +1935,22 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                 }
                 return;
             }
+            case "demolish" -> {
+                // A steward takes a made room down (web + CLI parity with the ssh verb).
+                // playerId is the authenticated user's id here; the service itself refuses
+                // founding rooms, Homes and occupied rooms.
+                var args = cmd.args() != null ? cmd.args() : List.<String>of();
+                var target = String.join(" ", args).trim();
+                var steward = authService != null && playerId != null
+                    && authService.findUser(playerId).map(u -> "steward".equals(u.role())).orElse(false);
+                if (!steward) { sendProse(sessionRef, "system", "Only the steward demolishes rooms."); return; }
+                if (target.isEmpty()) { sendProse(sessionRef, "system", "Usage: demolish <room>"); return; }
+                var demolition = RoomDemolition.get();
+                if (demolition == null) { sendProse(sessionRef, "system", "Demolition is not available on this node."); return; }
+                demolition.demolish(target, playerId).whenComplete((r, ex) ->
+                    sendProse(sessionRef, "system", ex != null ? "Demolition failed: " + ex.getMessage() : r.message()));
+                return;
+            }
             case "sessions" -> {
                 var args = cmd.args() != null ? cmd.args() : List.<String>of();
                 var text = SessionCommands.isKill(args)
@@ -2832,36 +2850,12 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
      * room, by kind of place. The requester is "you".
      */
     static Function<String, String> occupantsFor(String playerId) {
-        var registry = EntityRegistry.get();
-        if (registry == null) return id -> null;
-        var publicNames = new HashMap<String, String>();
-        var elsewhere = new ArrayList<String>();
-        for (var e : registry.occupantsByRoom().entrySet()) {
-            var kind = RoomPrivacy.whereabouts(e.getKey());
-            var names = new ArrayList<String>();
-            for (var o : e.getValue()) {
-                if (o.entityId().equals(playerId)) { names.add(0, "you"); continue; }
-                if (kind == null) names.add(o.name()); else elsewhere.add(o.name() + " (" + kind + ")");
-            }
-            if (kind == null && !names.isEmpty()) publicNames.put(e.getKey(), String.join(", ", names));
-        }
-        var footer = elsewhere.isEmpty() ? null : "Elsewhere: " + String.join(", ", elsewhere);
-        return id -> "*elsewhere*".equals(id) ? footer : publicNames.get(id);
+        return MapOccupants.forViewer(playerId);
     }
 
     /** `where <name>`: a public room by name, a private one by kind, or nowhere here. */
     static String whereIs(String name, ZoneTopology topo) {
-        var registry = EntityRegistry.get();
-        if (registry == null) return "Nobody is registered here.";
-        var id = registry.findByName(name);
-        if (id.isEmpty()) return "Nobody here goes by '" + name + "'.";
-        var room = registry.roomOf(id.get());
-        var who = registry.nameOf(id.get()).orElse(name);
-        if (room.isEmpty()) return who + " is not in any room right now.";
-        var kind = RoomPrivacy.whereabouts(room.get());
-        if (kind != null) return who + " is " + kind + ".";
-        var roomName = topo.room(room.get()).map(ZoneTopology.RoomNode::name).orElse(room.get());
-        return who + " is in " + roomName + ".";
+        return MapOccupants.whereIs(name, topo);
     }
 
     // ─── — furnishings projections ──────────────────

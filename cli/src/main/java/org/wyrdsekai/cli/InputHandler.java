@@ -177,12 +177,18 @@ public class InputHandler {
             }
             case ParsedCommand.Where w -> {
                 connection.send(new C2SMessage.MapRequest(
-                    connection.newId(), "where", 0, null));
+                    connection.newId(), "where", 0, w.target()));
                 yield true;
             }
             case ParsedCommand.Nearby n -> {
                 connection.send(new C2SMessage.MapRequest(
                     connection.newId(), "nearby", 1, null));
+                yield true;
+            }
+            case ParsedCommand.Demolish d -> {
+                // Steward tool; the server refuses founding rooms, Homes and occupied rooms.
+                connection.send(new C2SMessage.Command(
+                    connection.newId(), "demolish", List.of(d.target())));
                 yield true;
             }
             case ParsedCommand.Rooms r -> {

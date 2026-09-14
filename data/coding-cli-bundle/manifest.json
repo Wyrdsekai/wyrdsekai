@@ -35,16 +35,16 @@
     "codezaiku": {
       "bundled": true,
       "path": "data/coding-cli-bundle/codezaiku/",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "comment": "BUNDLED DEFAULT as of 0.2.0. CodeZaiku (was CodePlane) - Apache-2.0, Wyrdsekai/codezaiku. ONE platform-independent tarball because it is a JVM app, so there is no per-platform asset and every platform key carries the SAME sha - the one artifact named five times, because the installer keys on <platform>-<arch> and has no platform-independent key. It ships bin/codezaiku and bin/codezaiku.bat, so all five are genuinely supported. Needs a JRE 21+; the .deb declares that dependency and the tarball does not, which is why the upstream installer points apt users at the .deb. Its own installer defaults to a PER-USER prefix (~/.local), so the binary often sits outside a service PATH - BackendExecutableResolver searches the data-dir owner's home for exactly this reason. Model routing travels only via CODEZAIKU_DRIVE / CODEZAIKU_MODEL, which the adapter sets from the node's own inference endpoint like every other backend. The download_url/sha are not dead weight on a bundled entry: packaging/build-dist.sh fetches and verifies against THEM to stage the bundle, so a release cannot ship a codezaiku that differs from what this manifest attests.",
       "distribution": "github_release",
-      "download_url_template": "https://github.com/Wyrdsekai/codezaiku/releases/download/v0.3.5/codezaiku-0.3.5.tar.gz",
+      "download_url_template": "https://github.com/Wyrdsekai/codezaiku/releases/download/v0.3.6/codezaiku-0.3.6.tar.gz",
       "sha256_per_platform": {
-        "linux-x64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
-        "linux-arm64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
-        "darwin-arm64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
-        "darwin-x64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48",
-        "windows-x64": "c2c914a71ca70e97013513b38ea189be7173ef49049bce5376fde893d5291b48"
+        "linux-x64": "03fb95eb8404e744d080500487f5f5948e5e8357fc4ae09d9cef57409fe998ae",
+        "linux-arm64": "03fb95eb8404e744d080500487f5f5948e5e8357fc4ae09d9cef57409fe998ae",
+        "darwin-arm64": "03fb95eb8404e744d080500487f5f5948e5e8357fc4ae09d9cef57409fe998ae",
+        "darwin-x64": "03fb95eb8404e744d080500487f5f5948e5e8357fc4ae09d9cef57409fe998ae",
+        "windows-x64": "03fb95eb8404e744d080500487f5f5948e5e8357fc4ae09d9cef57409fe998ae"
       },
       "size_mb": 23,
       "auth": {

@@ -55,7 +55,7 @@ class BakeConfigVisibleTest {
     @Test
     void theCodingBackendTableIsResolvable() {
         var base = ConfigFactory.load();
-        assertEquals("goose", base.getString("wyrdsekai.coding.default-backend"),
+        assertEquals("codezaiku", base.getString("wyrdsekai.coding.default-backend"),
             "default-backend must resolve from the cli classpath too");
     }
 }

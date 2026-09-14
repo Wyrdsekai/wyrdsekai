@@ -92,6 +92,10 @@ public record RoomState(
                 roomId, name, e.newDescription(), zone, aliases,
                 exits, entities, objects, hints, properties);
 
+            case WorldEvent.RoomRenamed e -> new RoomState(
+                roomId, e.newName(), description, zone, aliases,
+                exits, entities, objects, hints, properties);
+
             case WorldEvent.HintsUpdated e -> new RoomState(
                 roomId, name, description, zone, aliases,
                 exits, entities, objects, List.copyOf(e.hints()), properties);

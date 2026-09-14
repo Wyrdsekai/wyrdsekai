@@ -61,7 +61,10 @@ public final class CommandParser {
 
         // Navigation commands (§N2)
         record MapCommand(int radius) implements ParsedCommand {}
-        record Where() implements ParsedCommand {}
+        /** "where" — your own room; "where &lt;name&gt;" — where someone is (public room by name, private by kind). */
+        record Where(String target) implements ParsedCommand {}
+        /** "demolish &lt;room&gt;" — a steward takes a made room down. */
+        record Demolish(String target) implements ParsedCommand {}
         record Nearby() implements ParsedCommand {}
         record Rooms() implements ParsedCommand {}
         record Path(String targetRoom) implements ParsedCommand {}
@@ -304,7 +307,16 @@ public final class CommandParser {
 
         // Navigation commands (§N2)
         if (trimmed.equalsIgnoreCase("where")) {
-            return new ParsedCommand.Where();
+            return new ParsedCommand.Where(null);
+        }
+        if (trimmed.regionMatches(true, 0, "where ", 0, 6)) {
+            var who = trimmed.substring(6).trim();
+            if (who.toLowerCase().startsWith("is ")) who = who.substring(3).trim();
+            if (!who.isEmpty()) return new ParsedCommand.Where(who);
+        }
+        if (trimmed.regionMatches(true, 0, "demolish ", 0, 9)) {
+            var target = trimmed.substring(9).trim();
+            if (!target.isEmpty()) return new ParsedCommand.Demolish(target);
         }
         if (trimmed.equalsIgnoreCase("nearby")) {
             return new ParsedCommand.Nearby();

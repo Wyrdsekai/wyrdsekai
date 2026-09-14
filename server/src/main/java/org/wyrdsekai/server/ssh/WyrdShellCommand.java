@@ -59,6 +59,8 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.room.MapOccupants;
+import org.wyrdsekai.core.room.RoomDemolition;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.core.soul.BondRitual;
 import org.wyrdsekai.core.soul.SoulManifest;
@@ -1247,7 +1249,7 @@ public class WyrdShellCommand implements Command {
                     // room — render from shared topo as-is.
                     try {
                         var text = sharedTopo.renderTextMap(currentRoomId, radius,
-                            sharedTopo.rooms().keySet());
+                            sharedTopo.rooms().keySet(), MapOccupants.forViewer(playerId));
                         for (var line : text.split("\n")) sendLine(line);
                         renderer.sendPrompt(currentRoomName, currentZoneLabel());
                     } catch (IOException ignored) {}
@@ -1273,7 +1275,7 @@ public class WyrdShellCommand implements Command {
                         }
                         var personal = ZoneTopology.build(rooms);
                         var text = personal.renderTextMap(currentRoomId, radius,
-                            personal.rooms().keySet());
+                            personal.rooms().keySet(), MapOccupants.forViewer(playerId));
                         for (var line : text.split("\n")) sendLine(line);
                         renderer.sendPrompt(currentRoomName, currentZoneLabel());
                     } catch (IOException ignored) {}
@@ -1281,10 +1283,39 @@ public class WyrdShellCommand implements Command {
             }
             case ParsedCommand.Where w -> {
                 try {
-                    sendLine("You are in " + currentRoomName + " (" + currentRoomId
-                        + ") — zone " + currentZoneLabel() + ".");
+                    if (w.target() != null && !w.target().isBlank()) {
+                        sendLine(MapOccupants.whereIs(w.target(), ZoneTopology.getShared()));
+                    } else {
+                        sendLine("You are in " + currentRoomName + " (" + currentRoomId
+                            + ") — zone " + currentZoneLabel() + ".");
+                    }
                     renderer.sendPrompt(currentRoomName, currentZoneLabel());
                 } catch (IOException ignored) {}
+            }
+            case ParsedCommand.Demolish d -> {
+                // A steward takes a made room down: doorways closed, actor stopped, record
+                // gone. Founding rooms, Homes and occupied rooms are refused by the service.
+                if (!"steward".equals(playerRole)) {
+                    try {
+                        sendLine("Only the steward demolishes rooms.");
+                        renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                    } catch (IOException ignored) {}
+                    break;
+                }
+                var demolition = RoomDemolition.get();
+                if (demolition == null) {
+                    try {
+                        sendLine("Demolition is not available on this node.");
+                        renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                    } catch (IOException ignored) {}
+                    break;
+                }
+                demolition.demolish(d.target(), playerId).whenComplete((r, ex) -> {
+                    try {
+                        sendLine(ex != null ? "Demolition failed: " + ex.getMessage() : r.message());
+                        renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                    } catch (IOException ignored) {}
+                });
             }
             case ParsedCommand.Exits e -> {
                 var room = RoomRegistry.get().ref(currentRoomId);
@@ -1321,7 +1352,8 @@ public class WyrdShellCommand implements Command {
                 if (topo != null) {
                     try {
                         var center = topo.room(currentRoomId).isEmpty() ? "nexus" : currentRoomId;
-                        var text = topo.renderTextMap(center, 1, topo.rooms().keySet());
+                        var text = topo.renderTextMap(center, 1, topo.rooms().keySet(),
+                            MapOccupants.forViewer(playerId));
                         for (var line : text.split("\n")) sendLine(line);
                         renderer.sendPrompt(currentRoomName, currentZoneLabel());
                     } catch (IOException ignored) {}

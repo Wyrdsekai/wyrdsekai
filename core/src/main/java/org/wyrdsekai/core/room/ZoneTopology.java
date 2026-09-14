@@ -147,6 +147,48 @@ public final class ZoneTopology {
         INSTANCE = new ZoneTopology(map);
     }
 
+    /** A room is gone: drop its node and every exit that led to it. */
+    public static synchronized void forgetRoom(String roomId) {
+        if (roomId == null) return;
+        PENDING.remove(roomId);
+        var current = INSTANCE;
+        if (current == null) return;
+        var map = new HashMap<String, RoomNode>();
+        boolean changed = current.rooms.containsKey(roomId);
+        for (var n : current.rooms.values()) {
+            if (n.roomId().equals(roomId)) continue;
+            var kept = n.exits().stream().filter(e -> !roomId.equals(e.targetRoom())).toList();
+            if (kept.size() != n.exits().size()) {
+                changed = true;
+                map.put(n.roomId(), new RoomNode(n.roomId(), n.name(), n.zone(), List.copyOf(kept)));
+            } else {
+                map.put(n.roomId(), n);
+            }
+        }
+        if (changed) INSTANCE = new ZoneTopology(map);
+    }
+
+    /** Every doorway that leads into {@code roomId}: source room id → direction. */
+    public List<Map.Entry<String, String>> exitsInto(String roomId) {
+        var out = new ArrayList<Map.Entry<String, String>>();
+        if (roomId == null) return out;
+        for (var n : rooms.values()) {
+            for (var e : n.exits()) {
+                if (roomId.equals(e.targetRoom())) out.add(Map.entry(n.roomId(), e.direction()));
+            }
+        }
+        return out;
+    }
+
+    /** Auto-generated {@code to-<room-id>} keys can run to hundreds of characters; the map shows the head. */
+    static String displayDirection(String direction) {
+        if (direction == null) return "?";
+        if (direction.startsWith("to-") && direction.length() > 32) {
+            return direction.substring(0, 29) + "…";
+        }
+        return direction;
+    }
+
     public static synchronized void resetForTests() { INSTANCE = null; PENDING.clear(); }
 
     /** Build from room ID, name, zone, and exit lists. */
@@ -502,7 +544,7 @@ public final class ZoneTopology {
             var childPrefix = last ? "    " : "│   ";
 
             var arrow = hasReturn(roomId, targetId) ? "--" : "->";
-            sb.append(prefix).append(connector).append(exit.direction())
+            sb.append(prefix).append(connector).append(displayDirection(exit.direction()))
                 .append(arrow).append("[").append(name).append("]");
             var who = occupants.apply(targetId);
             if (who != null && !who.isBlank()) sb.append("  — ").append(who);

@@ -57,6 +57,29 @@ public final class RoomMetadataService {
     /**
      * List all registered rooms, ordered by name.
      */
+    /** Forget a room (demolition). Returns true when a row was removed. */
+    public boolean delete(String roomId) {
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.prepareStatement("DELETE FROM rooms WHERE room_id = ?")) {
+            stmt.setString(1, roomId);
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("Room delete failed", e);
+        }
+    }
+
+    /** Change the recorded name (steward rename, or the name repair that runs on upgrade). */
+    public boolean rename(String roomId, String name) {
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.prepareStatement("UPDATE rooms SET name = ? WHERE room_id = ?")) {
+            stmt.setString(1, name);
+            stmt.setString(2, roomId);
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("Room rename failed", e);
+        }
+    }
+
     public List<RoomInfo> listRooms() {
         try (var conn = DriverManager.getConnection(jdbcUrl)) {
             var sql = "SELECT room_id, name, zone, created_by, created_at FROM rooms ORDER BY name";

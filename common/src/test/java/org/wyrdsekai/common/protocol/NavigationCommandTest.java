@@ -67,6 +67,19 @@ class NavigationCommandTest {
         assertThat(cmd).isInstanceOf(ParsedCommand.Where.class);
     }
 
+    @Test void where_someone() {
+        var cmd = CommandParser.parse("where Mia");
+        assertThat(cmd).isEqualTo(new ParsedCommand.Where("Mia"));
+        assertThat(CommandParser.parse("where is Mia")).isEqualTo(new ParsedCommand.Where("Mia"));
+        assertThat(CommandParser.parse("where")).isEqualTo(new ParsedCommand.Where(null));
+    }
+
+    @Test void demolish_room() {
+        assertThat(CommandParser.parse("demolish The Garden")).isEqualTo(new ParsedCommand.Demolish("The Garden"));
+        assertThat(CommandParser.parse("DEMOLISH the-garden-4421")).isEqualTo(new ParsedCommand.Demolish("the-garden-4421"));
+        assertThat(CommandParser.parse("demolish")).isNotInstanceOf(ParsedCommand.Demolish.class);
+    }
+
     @Test void w_is_go_west_not_where() {
         // "w" is a direction abbreviation, must NOT become Where.
         var cmd = CommandParser.parse("w");

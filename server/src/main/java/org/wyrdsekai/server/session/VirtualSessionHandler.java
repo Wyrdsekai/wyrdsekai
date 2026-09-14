@@ -38,6 +38,7 @@ import org.wyrdsekai.core.room.RoomNotification;
 import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
+import org.wyrdsekai.core.room.MapOccupants;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import org.wyrdsekai.scripting.api.ItemWorldApiProvider;
@@ -1025,7 +1026,8 @@ public final class VirtualSessionHandler {
         }
         var center = session.currentRoomId;
         if (topo.room(center).isEmpty()) center = "nexus";
-        var text = topo.renderTextMap(center, radius, topo.rooms().keySet());
+        var text = topo.renderTextMap(center, radius, topo.rooms().keySet(),
+            MapOccupants.forViewer(session.playerId));
         sendVisitorProse(session, sessionId, text);
     }
 

@@ -28,6 +28,7 @@ import java.util.Map;
     @JsonSubTypes.Type(value = WorldEvent.ObjectUsed.class, name = "object_used"),
     @JsonSubTypes.Type(value = WorldEvent.ExitOpened.class, name = "exit_opened"),
     @JsonSubTypes.Type(value = WorldEvent.ExitClosed.class, name = "exit_closed"),
+    @JsonSubTypes.Type(value = WorldEvent.RoomRenamed.class, name = "room_renamed"),
     @JsonSubTypes.Type(value = WorldEvent.DescriptionChanged.class, name = "description_changed"),
     @JsonSubTypes.Type(value = WorldEvent.HintsUpdated.class, name = "hints_updated"),
     @JsonSubTypes.Type(value = WorldEvent.ScriptTriggered.class, name = "script_triggered"),
@@ -131,6 +132,9 @@ public sealed interface WorldEvent {
     /** Room description changed (by script, agent, or world event). */
     record DescriptionChanged(String roomId, Instant timestamp,
                               String newDescription, String reason) implements WorldEvent {}
+
+    /** The room's name changed: a steward rename, or the name repair that runs on upgrade. */
+    record RoomRenamed(String roomId, Instant timestamp, String newName) implements WorldEvent {}
 
     /** Hints were updated for the room (§65.2). */
     record HintsUpdated(String roomId, Instant timestamp,

@@ -397,7 +397,10 @@ use ward stone uninvite <name>     # remove every key that person holds
 Names are household names (a companion, a person by username or display name, or an id).
 The stone works only inside a Home and only for its keeper; the ward verbs in her item
 provider act with her own authority in her own room and fall through to the steward-held
-delegate elsewhere. Stewards keep `wyrd wards list|add|remove <room> ...`. A Home created
+delegate elsewhere. Stewards keep `wyrd wards list|add|remove <room> ...`, and can take a
+made room down with `demolish <room>` in-world or `wyrd rooms demolish <room>` (`wyrd rooms
+list` shows every room with who made it and who is in it; `wyrd rooms prune` lists rooms whose
+id carries leaked markup and demolishes them with `--yes`). A Home is never demolished. A Home created
 before this lock existed is sealed at the next boot; grants the companion has made since
 are kept.
 

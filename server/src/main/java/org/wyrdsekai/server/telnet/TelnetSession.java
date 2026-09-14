@@ -48,6 +48,7 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.room.MapOccupants;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.scripting.i18n.ScriptMessageCatalog;
 import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
@@ -637,7 +638,7 @@ public class TelnetSession implements Runnable {
                 if (myRoomRef == null || sharedTopo.room(currentRoomId).isPresent()) {
                     try {
                         var text = sharedTopo.renderTextMap(currentRoomId, radius,
-                            sharedTopo.rooms().keySet());
+                            sharedTopo.rooms().keySet(), MapOccupants.forViewer(playerId));
                         for (var line : text.split("\n")) TelnetCodec.sendLine(out, line);
                     } catch (IOException ignored) {}
                     break;
@@ -660,12 +661,13 @@ public class TelnetSession implements Runnable {
                         }
                         var personal = ZoneTopology.build(rooms);
                         var text = personal.renderTextMap(currentRoomId, radius,
-                            personal.rooms().keySet());
+                            personal.rooms().keySet(), MapOccupants.forViewer(playerId));
                         for (var line : text.split("\n")) TelnetCodec.sendLine(out, line);
                     } catch (IOException ignored) {}
                 });
             }
             case ParsedCommand.Where w -> {} // map rendering not supported in telnet
+            case ParsedCommand.Demolish d -> {} // steward tool: ssh, web, or `wyrd rooms`
             case ParsedCommand.Nearby n -> {} // map rendering not supported in telnet
             case ParsedCommand.Rooms r -> {} // map rendering not supported in telnet
             case ParsedCommand.Path p -> {} // map rendering not supported in telnet

@@ -2127,6 +2127,11 @@ Visitors (the MCP door):
   visitors [list]                      who is in, as what, through which door
   visitors dismiss|vouch|unvouch <user> walk a visitor out; let an account in at the Nexus; take that back
 
+Rooms (steward):
+  rooms [list]                         every room: who made it, doorways, who is in it, markup flag
+  rooms demolish <room>                take a made room down (founding rooms, Homes, occupied rooms refused)
+  rooms prune [--duplicates] [--yes]   list the junk (markup ids; later copies of a name with --duplicates), --yes demolishes
+
 Inference:
   inference status                     show backend + local llama state
   inference install [cpu|vulkan|cuda]  GPU-detect, fetch llama.cpp + model, enable local
@@ -2841,6 +2846,64 @@ function Invoke-Visitors {
             Write-Host $msg
         }
         default { Write-Host "Usage: wyrd visitors [list] | dismiss <username> | vouch <username> | unvouch <username>"; exit 64 }
+    }
+}
+
+# `wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]` - the steward's view of
+# the rooms and the way to take a made room down. Parity with bin/wyrd do_rooms.
+function Invoke-Rooms {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
+    $base = Get-ApiBase
+    switch ($sub) {
+        "list" {
+            try { $rows = Invoke-RestMethod -Uri "$base/api/rooms" -TimeoutSec 10 }
+            catch { Write-Err2 "The server did not answer at $base - is it running?"; exit 1 }
+            Write-Host ("{0,-44} {1,-32} {2,-10} {3,5}  {4,-6} {5}" -f 'ROOM', 'NAME', 'MADE BY', 'DOORS', 'FLAG', 'WHO')
+            foreach ($r in @($rows)) {
+                $flag = if ($r.markupId) { 'markup' } elseif ($r.protectedRoom) { 'kept' } else { '' }
+                $rid = "$($r.roomId)"; if ($rid.Length -gt 44) { $rid = $rid.Substring(0, 41) + '...' }
+                $name = "$($r.name)"; if ($name.Length -gt 32) { $name = $name.Substring(0, 29) + '...' }
+                Write-Host ("{0,-44} {1,-32} {2,-10} {3,5}  {4,-6} {5}" -f $rid, $name, "$($r.madeBy)", [int]$r.doorways, $flag, (@($r.occupants) -join ', '))
+            }
+            Write-Host "$(@($rows).Count) room(s)"
+        }
+        "demolish" {
+            $room = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+            if (-not $room) { Write-Err2 "Usage: wyrd rooms demolish <room-id-or-name>"; exit 2 }
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            try {
+                $d = Invoke-RestMethod -Method Delete -Uri "$base/api/rooms/$room" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 40
+                Write-Host $d.message
+            } catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                $body = $null; try { $body = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
+                Write-Err2 $(if ($body -and $body.message) { $body.message } elseif ($body -and $body.error) { $body.error } else { $_.Exception.Message })
+                exit 1
+            }
+        }
+        "prune" {
+            $dup = ($Rest -contains '--duplicates').ToString().ToLower()
+            $yes = ($Rest -contains '--yes') -or ($Rest -contains '-y')
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            try { $plan = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/prune?dry=true&duplicates=$dup" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20 }
+            catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                if ($code -eq 403) { Write-Err2 "Only the steward prunes rooms."; exit 1 }
+                Write-Err2 "The server did not answer at $base - is it running? ($($_.Exception.Message))"; exit 1
+            }
+            $rooms = @($plan.rooms)
+            if ($rooms.Count -eq 0) { Write-Host "Nothing to prune."; return }
+            Write-Host "Would demolish $($rooms.Count) room(s):"
+            foreach ($r in $rooms) { Write-Host ("  {0} - {1}" -f $r.roomId, $r.name) }
+            if (-not $yes) { Write-Host "Run again with --yes to demolish them (add --duplicates to include later copies of a name)."; return }
+            $res = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/prune?dry=false&duplicates=$dup" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 300
+            foreach ($r in @($res.results)) { Write-Host (($(if ($r.ok) { 'ok   ' } else { 'kept ' })) + "$($r.name) - $($r.message)") }
+        }
+        default { Write-Host "Usage: wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]"; exit 64 }
     }
 }
 
@@ -3976,6 +4039,7 @@ switch ($Command.ToLower()) {
     "version"   { Invoke-Version }
     "state"     { Invoke-State }
     "soul"      { Invoke-Soul }
+    "rooms"     { Invoke-Rooms }
     "visitors"  { Invoke-Visitors }
     "invite"    { Invoke-InviteCmd }
     "key"       { Invoke-KeyCmd }

@@ -6,6 +6,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-09-14
+
+### Added
+- **`demolish <room>` and `wyrd rooms`.** A steward can take a made room down: in-world
+  `demolish <room>` (ssh, web), `wyrd rooms list | demolish <room> | prune [--duplicates]
+  [--yes]`, and `GET/DELETE /api/rooms`. Every doorway into the room is closed, the actor is
+  stopped and the record removed. Founding rooms, companion Homes and occupied rooms are
+  refused. `prune` lists rooms whose id carries leaked tool-call markup (and later copies of
+  a name with `--duplicates`); `--yes` demolishes them.
+- **`where <name>`** on ssh answers where someone is: a public room by name, a private room
+  by kind.
+
+### Fixed
+- **The map on ssh and telnet showed no people.** The 0.3.2 occupant display was wired into
+  the web client only. One helper now serves every surface.
+- **Room names with leaked model markup are repaired on upgrade.** Rooms made before 0.3.1
+  kept whatever the model emitted (six on one node contained `</parameter> <tool_call>`).
+  At boot such names are cut the way new rooms are, and the change is persisted.
+- **Long auto-generated exit keys are shortened on the map.** `to-<room-id>` keys of hundreds
+  of characters are shown by their head; the key still works in full.
+- **Bundled CodeZaiku is 0.3.6.**
+
 ## [0.3.2] — 2026-09-14
 
 ### Changed
