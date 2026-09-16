@@ -124,7 +124,9 @@ class TemplateCreationIntegrationTest {
 
     @Test
     void createContainerAndPutTake() {
-        var item = library.instantiate("mailbox", Map.of(), "ember");
+        // Was "mailbox" until 2026-09-15, when that template became real mail. The
+        // bulletin board is the container this case is actually about.
+        var item = library.instantiate("bulletin-board", Map.of(), "ember");
         assertEquals("std/container", item.templateBase());
 
         // List empty

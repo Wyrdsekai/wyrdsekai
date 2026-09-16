@@ -472,8 +472,11 @@ public final class ItemManifestValidator {
             // observable to the room (semantic peer of room.emit at tier 3). Same
             // origin as agent.remember above.
             "agent.speak");
-        addAll(m, 4, "agent.tell");
-        addAll(m, 5, "agent.broadcast", "agent.mailbox.send");
+        // Mail inside the household is a note left for someone — the same reach as a tell,
+        // and the same tier (2026-09-15). Mail that LEAVES the household goes through the
+        // email adapter's own Tier 5 capability with credentials behind it.
+        addAll(m, 4, "agent.tell", "agent.mailbox.send");
+        addAll(m, 5, "agent.broadcast");
         addAll(m, 6, "agent.give_item", "transit.request", "transit.start", "bond.suggest");
 
         // §4.10 Forge

@@ -112,6 +112,8 @@ public class Renderer {
     public void render(S2CMessage msg) {
         switch (msg) {
             case S2CMessage.RoomState rs -> renderRoomState(rs);
+            // A composer request is the input handler's to act on (line mode); nothing to draw.
+            case S2CMessage.Compose ignoredCompose -> { }
             case S2CMessage.Prose prose -> renderProse(prose);
             case S2CMessage.AgentAction action -> renderAgentAction(action);
             case S2CMessage.StateChange change -> renderStateChange(change);

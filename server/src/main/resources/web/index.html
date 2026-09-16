@@ -18,6 +18,20 @@
     --err: #ff8080; --ok: #80d0a0;
   }
   * { box-sizing: border-box; }
+  /* Letter composer — a letter needs more than one line, and the command bar has one.
+     Opened when the server sends {type:"compose"}; Ctrl+Enter or the button sends it. */
+  #compose { display: none; position: fixed; inset: 0; background: rgba(10,10,20,.72);
+             align-items: center; justify-content: center; z-index: 20; }
+  #compose.on { display: flex; }
+  #compose .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+                    width: min(680px, 94vw); padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  #compose h2 { margin: 0; font-size: 1rem; color: var(--accent); font-weight: normal; }
+  #compose input, #compose textarea {
+      font-family: monospace; font-size: 1rem; background: var(--bg); color: var(--fg);
+      border: 1px solid var(--line); border-radius: 4px; padding: 8px; width: 100%; }
+  #compose textarea { min-height: 220px; resize: vertical; }
+  #compose .row { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+  #compose .hint { color: var(--dim); font-size: .85rem; margin-right: auto; }
   body { font-family: monospace; background: var(--bg); color: var(--fg);
          margin: 0; height: 100dvh; display: flex; flex-direction: column; }
   header { padding: 8px 14px; border-bottom: 1px solid var(--line);
@@ -93,9 +107,21 @@
   <span id="conn">disconnected</span>
 </header>
 <div id="log"></div>
+<div id="compose" role="dialog" aria-modal="true">
+  <form class="sheet" id="compose-form">
+    <h2 id="compose-title">Write a letter</h2>
+    <input id="compose-subject" autocomplete="off" placeholder="Subject">
+    <textarea id="compose-body" placeholder="Write as much as you like."></textarea>
+    <div class="row">
+      <span class="hint">Ctrl+Enter sends · Esc closes</span>
+      <button type="button" id="compose-cancel">cancel</button>
+      <button type="submit">send</button>
+    </div>
+  </form>
+</div>
 <form id="bar">
   <input id="input" autocomplete="off" spellcheck="false"
-         placeholder="speak — or try: look, go north, /help">
+         placeholder="speak — or try: look, go north, mail, journal, /help">
   <button type="submit">send</button>
 </form>
 
@@ -221,6 +247,9 @@ function render(m) {
       if ((m.inventory || []).length) line("room-meta", T.carrying + names(m.inventory));
       break;
     }
+    case "compose":
+      openComposer(m.kind, m.to, m.subject, m.prompt);
+      break;
     case "prose":
       streams.delete(m.speaker);
       // Render every speaker's line — INCLUDING our own. The server broadcasts
@@ -397,6 +426,14 @@ function dispatch(raw) {
   if (verb === "say")                   { send({ type: "say", id, roomId, text: rest }); return; }
   if (verb === "emote")                 { send({ type: "emote", id, roomId, text: rest }); return; }
   if (lower === "i" || lower === "inventory") { send({ type: "command", id, command: "inventory", args: [] }); return; }
+  if (lower === "journal") {
+    send({ type: "command", id, command: "journal", args: [] }); return; }
+  if (verb === "journal") {
+    send({ type: "command", id, command: "journal", args: [rest] }); return; }
+  if (["mail","inbox"].includes(lower)) {
+    send({ type: "command", id, command: "mail", args: [] }); return; }
+  if (verb === "mail" || verb === "inbox") {
+    send({ type: "command", id, command: "mail", args: [rest] }); return; }
   if (["who","help","actions","map","where","exits"].includes(verb)) {
     send({ type: "command", id, command: verb, args: words.slice(1) }); return; }
   if (lower === "quit" || lower === "exit" || lower === "q") {
@@ -411,6 +448,49 @@ function dispatch(raw) {
   // chat-first default: plain text is speech
   send({ type: "say", id, roomId, text });
 }
+
+// ---- letter composer -----------------------------------------------------
+// The command bar takes one line, which is no way to write to someone. The server
+// asks for this panel by sending {type:"compose"}; a client that ignores the message
+// still gets a prose line telling it how to send the letter on one line instead.
+let composeTo = null;
+let composeKind = "mail";
+
+function openComposer(kind, to, subject, prompt) {
+  composeKind = kind || "mail";
+  composeTo = to || null;
+  const isJournal = composeKind.indexOf("journal") === 0;
+  $("compose-title").textContent = prompt || (isJournal ? "Your journal" : "Write to " + (to || ""));
+  // A journal page has no recipient and no subject — only the page.
+  $("compose-subject").style.display = isJournal ? "none" : "";
+  $("compose-subject").value = isJournal ? "" : (subject || "");
+  $("compose-body").value = "";
+  $("compose").classList.add("on");
+  (!isJournal && !$("compose-subject").value ? $("compose-subject") : $("compose-body")).focus();
+}
+
+function closeComposer() {
+  $("compose").classList.remove("on");
+  composeTo = null;
+  $("input").focus();
+}
+
+function sendComposed() {
+  const body = $("compose-body").value.trim();
+  if (!body) { closeComposer(); return; }
+  send({ type: "compose_send", id: newId(), kind: composeKind, to: composeTo,
+         subject: $("compose-subject").value.trim(), body });
+  closeComposer();
+}
+
+$("compose-form").addEventListener("submit", ev => { ev.preventDefault(); sendComposed(); });
+$("compose-cancel").addEventListener("click", closeComposer);
+$("compose-body").addEventListener("keydown", ev => {
+  if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendComposed(); }
+});
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && $("compose").classList.contains("on")) closeComposer();
+});
 
 $("bar").addEventListener("submit", ev => {
   ev.preventDefault();

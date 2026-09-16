@@ -1721,28 +1721,77 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
     @Override
     public List<Map<String, Object>> journalRecent(int limit) {
         if (study == null || ownerDid == null) return List.of();
-        var results = study.recentJournal(ownerDid, Math.max(1, Math.min(limit, 50)));
+        // The OWNER's own read-back, so it includes their private entries, decrypted. It
+        // called recentJournal (shared only) until 2026-09-15, which made a private entry
+        // write-only to the person who wrote it — the one thing the item promises.
+        var results = study.recentAllJournal(ownerDid, Math.max(1, Math.min(limit, 50)));
         var out = new ArrayList<Map<String, Object>>(results.size());
         for (var r : results) {
             var m = new HashMap<String, Object>();
             m.put("id", r.id());
             m.put("content", r.content());
+            m.put("private", r.id() != null && r.id().startsWith("journal_private:"));
             var meta = r.metadata();
-            if (meta != null && meta.get("timestamp") != null) m.put("ts", meta.get("timestamp"));
+            if (meta != null && meta.get("timestamp") != null) {
+                m.put("ts", meta.get("timestamp"));
+                // journal.js reads writtenAt; it has been printing entries with no date
+                // because nothing ever set the name it looks for.
+                m.put("writtenAt", meta.get("timestamp"));
+            }
             out.add(m);
         }
         return out;
     }
 
+    // ─── Mail (§4.24) — the person's own mailbox ─────────────────────
+    //
+    // The companion route has implemented these since Phase C; the player route returned
+    // "mailbox not wired", so a mailbox in a person's Study did nothing at all while the
+    // store sat there working (found 2026-09-15). The owner's DID is the identity mail is
+    // filed under, exactly as the companion's entity id is on the other route.
+
+    @Override
+    public List<Map<String, Object>> mailboxInbox(Map<String, Object> filter) {
+        if (ownerDid == null) return List.of();
+        return MailboxService.getOrCreate().inbox(ownerDid, filter);
+    }
+
+    @Override
+    public Map<String, Object> mailboxRead(String id) {
+        if (ownerDid == null) return Map.of("ok", false, "error", "no_owner");
+        return MailboxService.getOrCreate().read(ownerDid, id);
+    }
+
+    @Override
+    public Map<String, Object> mailboxMarkRead(String id) {
+        if (ownerDid == null) return Map.of("ok", false, "error", "no_owner");
+        return MailboxService.getOrCreate().markRead(ownerDid, id);
+    }
+
+    @Override
+    public Map<String, Object> mailboxArchive(String id) {
+        if (ownerDid == null) return Map.of("ok", false, "error", "no_owner");
+        return MailboxService.getOrCreate().archive(ownerDid, id);
+    }
+
+    @Override
+    public Map<String, Object> mailboxSend(String to, String subject, String body,
+                                             Map<String, Object> opts) {
+        if (ownerDid == null) return Map.of("ok", false, "error", "no_owner");
+        return MailboxService.getOrCreate().send(ownerDid, to, subject, body, opts);
+    }
+
     @Override
     public List<Map<String, Object>> journalSearch(String query, int limit) {
         if (study == null || ownerDid == null) return List.of();
-        var results = study.searchJournal(ownerDid, query, Math.max(1, Math.min(limit, 50)));
+        // The owner searching their own journal sees their private entries too.
+        var results = study.searchAllJournal(ownerDid, query, Math.max(1, Math.min(limit, 50)));
         var out = new ArrayList<Map<String, Object>>(results.size());
         for (var r : results) {
             var m = new HashMap<String, Object>();
             m.put("id", r.id());
             m.put("content", r.content());
+            m.put("private", r.id() != null && r.id().startsWith("journal_private:"));
             out.add(m);
         }
         return out;

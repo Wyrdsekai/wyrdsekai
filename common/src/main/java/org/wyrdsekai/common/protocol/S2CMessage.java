@@ -20,6 +20,7 @@ import java.util.List;
 @JsonSubTypes({
     @JsonSubTypes.Type(value = S2CMessage.RoomState.class, name = "room_state"),
     @JsonSubTypes.Type(value = S2CMessage.Prose.class, name = "prose"),
+    @JsonSubTypes.Type(value = S2CMessage.Compose.class, name = "compose"),
     @JsonSubTypes.Type(value = S2CMessage.AgentAction.class, name = "agent_action"),
     @JsonSubTypes.Type(value = S2CMessage.StateChange.class, name = "state_change"),
     @JsonSubTypes.Type(value = S2CMessage.ReplayDone.class, name = "replay_done"),
@@ -160,6 +161,16 @@ public sealed interface S2CMessage {
     /** System notification (welcome, maintenance, etc.). */
     record Notification(long seq, String level, String title,
                         String message) implements S2CMessage {}
+
+    /**
+     * Open a composer — a letter wants more than one line.
+     *
+     * <p>A client that does not know this message ignores it and the prose line sent
+     * alongside tells the person how to write the letter on one line instead, so an older
+     * client is never left with a cursor and no way forward.</p>
+     */
+    record Compose(long seq, String kind, String to, String subject,
+                   String prompt) implements S2CMessage {}
 
     /**
      * Transit directive — tells client to reconnect to a remote zone.

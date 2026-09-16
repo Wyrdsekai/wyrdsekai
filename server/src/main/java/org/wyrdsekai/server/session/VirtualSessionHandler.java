@@ -775,6 +775,17 @@ public final class VirtualSessionHandler {
                                               || "feedback".equals(sc.command())
                                          -> { handleVisitorIssue(session, sessionId, sc); return; }
             case ParsedCommand.Unknown u -> { newType = "say";   p.put("text", u.text()); }
+            // A visitor's letter or journal page is not something to say out loud in the
+            // room. Mail across households is the next phase; the journal is at home.
+            case ParsedCommand.Mail m    -> {
+                sendVisitorProse(session, sessionId,
+                    "Mail isn't carried between households yet — write it from your own household.");
+                return;
+            }
+            case ParsedCommand.Journal j -> {
+                sendVisitorProse(session, sessionId, "Your journal is at home; it can't be written from here.");
+                return;
+            }
             default                      -> { reDispatchAsSay(sessionId, originalLine); return; }
         }
         var envelope = MAPPER.createObjectNode();

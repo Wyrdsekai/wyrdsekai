@@ -11,6 +11,7 @@ import org.wyrdsekai.core.home.HomeClient;
 import org.wyrdsekai.core.search.SearchCollections;
 import org.wyrdsekai.core.search.EmbeddingService;
 import org.wyrdsekai.core.search.IngestEmbedding;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.identity.StudyOwnerGuard;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
@@ -30,6 +31,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.List;
 import java.util.Locale;
 
@@ -47,6 +49,20 @@ import java.util.Locale;
  * {@code null}; collection access defaults to the shared journal only.</p>
  */
 public final class StudyService {
+
+    /**
+     * The node's study service, for surfaces that have a person but no injected service —
+     * the ssh shell and telnet, which grew a {@code journal} verb in 2026-09-15 and had no
+     * other way to reach one. The same shape {@code MailboxService} and {@code HomeWardGate}
+     * use; null on a node that never built one.
+     */
+    private static volatile StudyService instance;
+
+    public static void install(StudyService service) { instance = service; }
+
+    public static StudyService get() { return instance; }
+
+    public static void resetForTests() { instance = null; }
 
     private static final Logger log = LoggerFactory.getLogger(StudyService.class);
 
@@ -192,7 +208,11 @@ public final class StudyService {
         // strings. No-op until provisioning
         // is enabled, so un-migrated installs are unaffected.
         userDid = StudyOwnerGuard.require(userDid);
-        var id = "journal:" + userDid + ":" + System.currentTimeMillis();
+        // Two entries written in the same millisecond used to share an id, and the second
+        // UPSERTED over the first — a thought silently replacing another (2026-09-15). The
+        // suffix keeps ids unique without making them unreadable.
+        var id = "journal:" + userDid + ":" + System.currentTimeMillis()
+            + ":" + Long.toHexString(ThreadLocalRandom.current().nextLong() & 0xFFFFFFL);
         var title = content.length() > 60 ? content.substring(0, 60) + "..." : content;
         luceneStore.insertStudyItem(id, userDid, "journal", title, content,
             "journal", Instant.now().toEpochMilli(), 1, null,
@@ -218,7 +238,8 @@ public final class StudyService {
         // strings. No-op until provisioning
         // is enabled, so un-migrated installs are unaffected.
         userDid = StudyOwnerGuard.require(userDid);
-        var id = "journal_private:" + userDid + ":" + System.currentTimeMillis();
+        var id = "journal_private:" + userDid + ":" + System.currentTimeMillis()
+            + ":" + Long.toHexString(ThreadLocalRandom.current().nextLong() & 0xFFFFFFL);
         var title = "(private entry)";  // Don't reveal content in title
         var sealed = PrivateJournalCipher.encrypt(userDid, content);
         luceneStore.insertStudyItem(id, userDid, "journal_private", title, sealed,
@@ -241,6 +262,17 @@ public final class StudyService {
      * Search all journal entries including private (for the user themselves).
      */
     public List<WyrdLuceneStore.SearchResult> searchAllJournal(String userDid, String query, int limit) {
+        var combined = new ArrayList<WyrdLuceneStore.SearchResult>();
+        for (var key : ownerKeys(userDid)) {
+            for (var r : searchAllJournalUnder(key, query, limit)) {
+                if (combined.stream().noneMatch(c -> c.id().equals(r.id()))) combined.add(r);
+            }
+        }
+        combined.sort(Comparator.comparing(WyrdLuceneStore.SearchResult::score).reversed());
+        return combined.size() > limit ? combined.subList(0, limit) : combined;
+    }
+
+    private List<WyrdLuceneStore.SearchResult> searchAllJournalUnder(String userDid, String query, int limit) {
         // Search both journal and journal_private. Private entries are
         // encrypted at rest (0.5a): the text query cannot match their
         // ciphertext, so ALSO list recent private entries and match on the
@@ -262,8 +294,25 @@ public final class StudyService {
                 combined.add(open);
             }
         }
-        combined.sort(Comparator.comparing(WyrdLuceneStore.SearchResult::score).reversed());
-        return combined.size() > limit ? combined.subList(0, limit) : combined;
+        return combined;
+    }
+
+    /**
+     * The keys one person's pages may sit under.
+     *
+     * <p>A write resolves its owner to the person DID ({@link StudyOwnerGuard#require}), so
+     * a page written from ssh — which presents the legacy login id — lands under the DID.
+     * A read that looked under the login id then found nothing: the person's own journal,
+     * empty to them from one door and full from another (2026-09-15, the same seam as the
+     * 08-19 bond defect). The owner's read paths look under the resolved key AND, when it
+     * differs, the id as given — so from the ssh door, pages written under the login id
+     * before the identity migration are still there too. (From the web door, which presents
+     * only the DID, those older pages are not found; the resolver has no reverse lookup.)</p>
+     */
+    private static List<String> ownerKeys(String userDid) {
+        if (userDid == null) return List.of();
+        var canonical = PersonIds.canonical(userDid);
+        return canonical == null || canonical.equals(userDid) ? List.of(userDid) : List.of(canonical, userDid);
     }
 
     /** Decrypt a journal_private result's content for the OWNER's read paths. */
@@ -276,10 +325,48 @@ public final class StudyService {
     }
 
     /**
-     * List recent journal entries (shared only).
+     * List recent journal entries (shared only) — the companion-visible view.
      */
     public List<WyrdLuceneStore.SearchResult> recentJournal(String userDid, int limit) {
         return luceneStore.listJournal(userDid, limit);
+    }
+
+    /**
+     * List recent journal entries INCLUDING the owner's private ones, decrypted.
+     *
+     * <p>A private entry was write-only to the person who wrote it: the item's read-back
+     * called {@link #recentJournal}, which lists {@code journal} and not {@code journal_private}
+     * (2026-09-15). The item promises "mark one private and no one else can read it", and
+     * that had come to include its author. This is the owner's own path, so decryption is
+     * exactly what it is for; the companion's view stays {@link #recentJournal}.</p>
+     */
+    public List<WyrdLuceneStore.SearchResult> recentAllJournal(String userDid, int limit) {
+        var combined = new ArrayList<WyrdLuceneStore.SearchResult>();
+        for (var key : ownerKeys(userDid)) {
+            combined.addAll(luceneStore.listJournal(key, limit));
+            for (var r : luceneStore.listStudyByTypeRecent(key, "journal_private", limit)) {
+                combined.add(decryptResult(key, r));
+            }
+        }
+        combined.sort(Comparator.comparing(
+            (WyrdLuceneStore.SearchResult r) -> timestampOf(r)).reversed());
+        return combined.size() > limit ? combined.subList(0, limit) : combined;
+    }
+
+    /** When an entry was written, from its metadata; 0 when it cannot be told. */
+    private static long timestampOf(WyrdLuceneStore.SearchResult r) {
+        var meta = r == null ? null : r.metadata();
+        if (meta == null) return 0L;
+        var ts = meta.get("timestamp");
+        if (ts instanceof Number n) return n.longValue();
+        if (ts instanceof String str) {
+            try {
+                return Long.parseLong(str);
+            } catch (NumberFormatException ignored) {
+                return 0L;
+            }
+        }
+        return 0L;
     }
 
     // --- Documents ---

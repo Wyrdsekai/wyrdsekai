@@ -87,5 +87,6 @@
   "study.onboard.cancelled": "No worries. You can set this up anytime from the Study.",
   "study.onboard.openrouter_oauth": "Opening OpenRouter in your browser. Log in there and you''ll be connected automatically.",
   "study.onboard.anthropic_help": "Get your API key at: console.anthropic.com/settings/keys",
-  "study.onboard.openai_help": "Get your API key at: platform.openai.com/api-keys"
+  "study.onboard.openai_help": "Get your API key at: platform.openai.com/api-keys",
+  "study.journal.how": "Write with: journal <what you want to remember> · journal private <text> · journal read [n] · journal search <words>"
 }

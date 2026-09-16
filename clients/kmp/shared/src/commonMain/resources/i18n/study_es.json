@@ -87,5 +87,6 @@
   "study.onboard.cancelled": "Sin problema. Puedes configurarlo en cualquier momento desde el Estudio.",
   "study.onboard.openrouter_oauth": "Abriendo OpenRouter en tu navegador. Inicia sesión allí y te conectarás automáticamente.",
   "study.onboard.anthropic_help": "Obtén tu clave API en: console.anthropic.com/settings/keys",
-  "study.onboard.openai_help": "Obtén tu clave API en: platform.openai.com/api-keys"
+  "study.onboard.openai_help": "Obtén tu clave API en: platform.openai.com/api-keys",
+  "study.journal.how": "Escribe con: journal <lo que quieras recordar> · journal private <texto> · journal read [n] · journal search <palabras>"
 }

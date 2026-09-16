@@ -49,7 +49,9 @@ class CommandParserAliasIntegrationTest {
         assertThat(((ParsedCommand.Go) result2).direction()).isEqualTo("north");
 
         var result3 = CommandParser.parse("j today was great", "en", aliases);
-        assertThat(result3).isInstanceOf(ParsedCommand.Say.class); // "journal today was great" → room script
+        // "j" expands to "journal", which is a verb of its own since 2026-09-15.
+        assertThat(result3).isInstanceOf(ParsedCommand.Journal.class);
+        assertThat(((ParsedCommand.Journal) result3).args()).isEqualTo("today was great");
 
         // 3. List aliases
         var listCmd = CommandParser.parse("alias", "en", aliases);

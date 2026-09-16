@@ -167,31 +167,12 @@ function onSay(entityId, entityName, text) {
             world.emit("narrate", { text: results });
         }
 
-    } else if (lower.startsWith("journal private ")) {
-        var entry = text.substring(16).trim();
-        if (entry) {
-            var result = world.writePrivateJournalEntry(entry);
-            world.emit("narrate", {
-                text: world.t("study.journal.private.confirm", result)
-            });
-        }
-
-    } else if (lower.startsWith("journal ")) {
-        var entry = text.substring(8).trim();
-        if (entry) {
-            var result = world.writeJournalEntry(entry);
-            world.emit("narrate", {
-                text: world.t("study.journal.shared.confirm", result)
-            });
-        }
-
-    } else if (lower.startsWith("journal search ") || lower.startsWith("search journal ")) {
-        var query = lower.startsWith("journal search ")
-            ? text.substring(15).trim() : text.substring(15).trim();
-        if (query) {
-            var results = world.searchJournal(query);
-            world.emit("narrate", { text: results });
-        }
+    // `journal` is a command of its own now (2026-09-15) and never reaches onSay, so the
+    // three branches that used to live here are gone rather than left to look alive. They
+    // only ever worked for someone standing in THIS room — a person's own Study has no
+    // behaviour script — and `journal search <q>` was unreachable behind `journal <text>`,
+    // which wrote an entry that said "search …". One implementation, every room:
+    // core/mail/JournalSurface.
 
     } else if (lower === "predictions" || lower === "oracle") {
         var predictionsRaw = world.getProperty("oracle_predictions");

@@ -2,8 +2,11 @@ package org.wyrdsekai.core.item;
 
 import org.wyrdsekai.core.item.ToolItem.ToolParam;
 
+import org.wyrdsekai.core.persistence.InventoryService;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Scripted furnishings seeded into a new Study.
@@ -16,7 +19,7 @@ import java.util.List;
  *
  * <p>v1 ships two furnishings — Embers (audit log view) and Board (grants
  * issued) — because those were the surfaces unblocked by Phase M1a. More
- * items (Ledger, Mailbox, Mirror, Manifest, Shelf, Lantern, Trunk, Compass,
+ * items (Ledger, Grant Case, Mirror, Manifest, Shelf, Lantern, Trunk, Compass,
  * Window) come as their underlying services are exposed via the world API.</p>
  */
 public final class StudyFurnishingKit {
@@ -25,7 +28,7 @@ public final class StudyFurnishingKit {
 
     /** All M1c furnishings. Called by ZoneGuardian on Study provisioning. */
     public static List<ToolItem> defaults() {
-        return List.of(embers(), board(), mailbox(),
+        return List.of(embers(), board(), grantCase(),
             ledger(), manifest(), trunk(),
             shelf(), lantern(), mirror(), compass(), window(),
             threshold(),
@@ -191,40 +194,72 @@ public final class StudyFurnishingKit {
         }
         """;
 
-    // ─── Mailbox — grants held ──────────────────────────────────────
+    // ─── Grant Case — grants held ───────────────────────────────────
 
     /**
-     * {@code look mailbox} / {@code read mailbox} — the inbox side of §18.
+     * {@code look grant case} / {@code read grant case} — the receiving side of §18.
      * Lists every grant *issued to* the owner (by other users, agents, zones).
      * Counterpart to {@link #board()}, which shows what the owner has given out.
+     *
+     * <p>Called the Mailbox until 2026-09-15. It never carried mail: it reads
+     * {@code world.grants.held()} and always has. The name was the obvious one for the
+     * thing people actually expect — messages — and it was taken by a grants view, while
+     * the real message store ({@code world.mailbox.*}) sat unwired. Renamed so the word
+     * means what it says. {@link #RETIRED_FURNISHING_IDS} removes the old one on upgrade.</p>
      */
-    public static ToolItem mailbox() {
+    public static ToolItem grantCase() {
         return ToolItem.scripted(
-            "mailbox",
-            "Mailbox",
-            "A brass-hinged mailbox on a shelf by the door. Each envelope is a grant someone has "
+            "grant-case",
+            "Grant Case",
+            "A brass-hinged case on a shelf by the door. Each writ inside is a grant someone has "
             + "given you — a collection they've shared, a zone that lets you use its inference, "
             + "a companion with a capability they've delegated. Read it to see what authority you "
             + "hold on other Homes.",
-            MAILBOX_SCRIPT,
+            GRANT_CASE_SCRIPT,
             List.of(),
             "home-furnishing");
     }
 
-    private static final String MAILBOX_SCRIPT = """
+    /**
+     * Furnishing ids this kit no longer ships, with the marker that identifies OUR copy.
+     * A Study seeded before the rename keeps the old item forever otherwise — and on the
+     * household node that is the whole point of renaming, since the word stays taken.
+     * The marker is checked before removal so a crafted item that happens to share the id
+     * is never touched.
+     */
+    public static final Map<String, String> RETIRED_FURNISHING_IDS =
+        Map.of("mailbox", "world.grants.held");
+
+    /**
+     * Drop furnishings this kit has retired (renamed) from one owner's inventory.
+     * Idempotent, and safe to call on every seed.
+     */
+    public static void retireRenamedFurnishings(InventoryService inventory, String entityId) {
+        if (inventory == null || entityId == null) return;
+        for (var item : inventory.listItems(entityId)) {
+            var marker = RETIRED_FURNISHING_IDS.get(item.objectId());
+            if (marker == null || item.takeable()) continue;
+            var script = item.scriptSource();
+            if (script != null && script.contains(marker)) {
+                inventory.removeItem(entityId, item.objectId());
+            }
+        }
+    }
+
+    private static final String GRANT_CASE_SCRIPT = """
         function invoke(params) {
             var who = world.home.callerDid();
             if (!who) {
-                return { text: "The mailbox is sealed. (No Home is bound to this furnishing.)" };
+                return { text: "The case is sealed. (No Home is bound to this furnishing.)" };
             }
             var grants = world.grants.held();
             if (!grants || grants.length === 0) {
-                return { text: "The mailbox is empty. No one has yet granted you anything." };
+                return { text: "The case is empty. No one has yet granted you anything." };
             }
             var active = 0;
             var expired = 0;
             var lines = [];
-            lines.push("In the mailbox, envelopes addressed to you:");
+            lines.push("In the case, writs made out to you:");
             for (var i = 0; i < grants.length; i++) {
                 var g = grants[i];
                 var status = g.active ? "[active]" : (g.revokedAt ? "[revoked]" : "[expired]");

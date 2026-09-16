@@ -65,6 +65,16 @@ public final class CommandParser {
         record Where(String target) implements ParsedCommand {}
         /** "demolish &lt;room&gt;" — a steward takes a made room down. */
         record Demolish(String target) implements ParsedCommand {}
+        /**
+         * "mail" — what has arrived; "mail &lt;who&gt;" — write to them, subject then body,
+         * ending with a single dot; "mail read &lt;n&gt;" / "mail archive &lt;n&gt;".
+         */
+        record Mail(String args) implements ParsedCommand {}
+        /**
+         * "journal" — a blank page; "journal &lt;text&gt;" — write it down;
+         * "journal private &lt;text&gt;", "journal read [n]", "journal search &lt;words&gt;".
+         */
+        record Journal(String args) implements ParsedCommand {}
         record Nearby() implements ParsedCommand {}
         record Rooms() implements ParsedCommand {}
         record Path(String targetRoom) implements ParsedCommand {}
@@ -313,6 +323,18 @@ public final class CommandParser {
             var who = trimmed.substring(6).trim();
             if (who.toLowerCase().startsWith("is ")) who = who.substring(3).trim();
             if (!who.isEmpty()) return new ParsedCommand.Where(who);
+        }
+        if (trimmed.equalsIgnoreCase("journal")) {
+            return new ParsedCommand.Journal("");
+        }
+        if (trimmed.regionMatches(true, 0, "journal ", 0, 8)) {
+            return new ParsedCommand.Journal(trimmed.substring(8).trim());
+        }
+        if (trimmed.equalsIgnoreCase("mail") || trimmed.equalsIgnoreCase("inbox")) {
+            return new ParsedCommand.Mail("");
+        }
+        if (trimmed.regionMatches(true, 0, "mail ", 0, 5)) {
+            return new ParsedCommand.Mail(trimmed.substring(5).trim());
         }
         if (trimmed.regionMatches(true, 0, "demolish ", 0, 9)) {
             var target = trimmed.substring(9).trim();

@@ -948,6 +948,8 @@
   "usage.cmd.version": "  version      Mostrar información de versión",
   "usage.cmd.voice": "  voice        Inspeccionar/editar el VoiceProfile de un compañero: list/set/unset/freeze/revert",
   "usage.cmd.wards": "  wards        Guardas de salas: list / add / remove",
+  "usage.cmd.rooms": "  rooms        Salas creadas: list / demolish <sala> / prune [--duplicates] [--yes]",
+  "usage.cmd.mail": "  mail         Registro del correo del hogar: quién escribió a quién y cuándo (administrador; nunca asuntos ni cuerpos)",
   "usage.cmd.web": "  web          Terminal en el navegador en :7071 (enable/disable/status)",
   "usage.cmd.whoami": "  whoami       Mostrar el DID de tu household (did:wyrd:z6Mk…)",
   "usage.cmd.zones": "  zones        Gestionar tus zonas: list / create <etiqueta> / remove <etiqueta>",

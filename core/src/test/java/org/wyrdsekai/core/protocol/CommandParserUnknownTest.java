@@ -89,11 +89,24 @@ class CommandParserUnknownTest {
     }
 
     @Test
-    void journal_command_routes_to_room_script() {
-        // "journal" is routed as Say so room scripts can handle it
+    void journal_is_a_command_of_its_own() {
+        // Was routed as Say "so room scripts can handle it" — and exactly one room had a
+        // script that did. A person's own Study has none, so the journal commands the help
+        // text advertised did nothing there, and the one room that did handle them wrote an
+        // entry saying "search …" when asked to search (2026-09-15). It is a verb now, the
+        // same on every surface.
         var result = CommandParser.parse("journal had a good day");
-        assertThat(result).isInstanceOf(ParsedCommand.Say.class);
-        assertThat(((ParsedCommand.Say) result).text()).isEqualTo("journal had a good day");
+        assertThat(result).isInstanceOf(ParsedCommand.Journal.class);
+        assertThat(((ParsedCommand.Journal) result).args()).isEqualTo("had a good day");
+        assertThat(CommandParser.parse("journal")).isEqualTo(new ParsedCommand.Journal(""));
+        assertThat(((ParsedCommand.Journal) CommandParser.parse("journal read 20")).args())
+            .isEqualTo("read 20");
+    }
+
+    @Test
+    void mail_is_a_command_of_its_own() {
+        assertThat(CommandParser.parse("mail")).isEqualTo(new ParsedCommand.Mail(""));
+        assertThat(((ParsedCommand.Mail) CommandParser.parse("mail mia")).args()).isEqualTo("mia");
     }
 
     @Test
@@ -149,9 +162,10 @@ class CommandParserUnknownTest {
 
     @Test
     void japanese_journal_alias() {
+        // The alias still expands; what it expands INTO is a command now, not speech.
         var result = CommandParser.parse("日記 今日は良い日だった", "ja");
-        assertThat(result).isInstanceOf(ParsedCommand.Say.class); // routes to room script
-        assertThat(((ParsedCommand.Say) result).text()).contains("journal");
+        assertThat(result).isInstanceOf(ParsedCommand.Journal.class);
+        assertThat(((ParsedCommand.Journal) result).args()).isEqualTo("今日は良い日だった");
     }
 
     @Test
@@ -242,8 +256,8 @@ class CommandParserUnknownTest {
     void user_alias_with_arguments() {
         var userAliases = Map.of("j", "journal");
         var result = CommandParser.parse("j had a good day", "en", userAliases);
-        assertThat(result).isInstanceOf(ParsedCommand.Say.class);
-        assertThat(((ParsedCommand.Say) result).text()).contains("journal had a good day");
+        assertThat(result).isInstanceOf(ParsedCommand.Journal.class);
+        assertThat(((ParsedCommand.Journal) result).args()).isEqualTo("had a good day");
     }
 
     // ── Original tests ────────────────────────────────────────────

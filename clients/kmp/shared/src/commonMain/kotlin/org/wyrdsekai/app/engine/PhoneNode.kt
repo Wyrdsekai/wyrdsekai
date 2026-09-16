@@ -28,6 +28,7 @@ import org.wyrdsekai.app.engine.room.RoomEngine
 import org.wyrdsekai.app.engine.room.RoomEngineCommand
 import org.wyrdsekai.app.engine.scripting.RoomScripts
 import org.wyrdsekai.app.engine.scripting.ScriptEngine
+import org.wyrdsekai.app.engine.study.StudyItem
 import org.wyrdsekai.app.engine.study.StudyStore
 import org.wyrdsekai.app.engine.study.StudySyncLayer
 import org.wyrdsekai.app.engine.tier.*
@@ -397,9 +398,38 @@ class PhoneNode(
     /** Get all passivated room IDs. */
     fun passivatedRoomIds(): Set<String> = passivatedRooms.toSet()
 
+    /**
+     * Mail and the journal typed while visiting a household are COMMANDS, not speech.
+     *
+     * <p>Without this they went over the wire as Say and were spoken aloud in the room —
+     * the phone had no parser of its own for them, and the RN client's own e2e notes
+     * recorded the same shape as an expected failure. The zone re-parses the command with
+     * the same parser ssh uses, so the phone gets the verbs without carrying a copy of them
+     * (2026-09-15).</p>
+     */
+    private fun householdCommand(text: String): C2SMessage.Command? {
+        val trimmed = text.trim()
+        val lower = trimmed.lowercase()
+        val verb = when {
+            lower == "mail" || lower == "inbox" -> "mail"
+            lower == "journal" -> "journal"
+            lower.startsWith("mail ") -> "mail"
+            lower.startsWith("journal ") -> "journal"
+            else -> return null
+        }
+        val space = trimmed.indexOf(' ')
+        val args = if (space < 0) emptyList() else listOf(trimmed.substring(space + 1).trim())
+        return C2SMessage.Command(id = nextServerId(), command = verb, args = args)
+    }
+
     /** Handle a player saying something in the current room. */
     suspend fun say(entityId: String, entityName: String, text: String) {
         if (_visitingServerRoom != null) {
+            val command = householdCommand(text)
+            if (command != null) {
+                serverConnection?.send(command)
+                return
+            }
             phoneLog("say() visiting mode: room=${_visitingServerRoom}, conn=${serverConnection != null}, connected=${serverConnection?.isConnected}")
             serverConnection?.send(C2SMessage.Say(
                 id = nextServerId(),
@@ -1106,6 +1136,14 @@ class PhoneNode(
         } catch (_: Exception) {}
     }
 
+    /** One journal entry as a line: the entry itself, with private ones marked as such. */
+    private fun journalLine(item: StudyItem): String {
+        val mark = if (item.itemType == StudyItem.TYPE_JOURNAL_PRIVATE) "[private] " else ""
+        val text = item.content.trim().replace(Regex("\\s*\\n\\s*"), " / ")
+        val shown = if (text.length <= 160) text else text.take(157) + "..."
+        return "- $mark$shown"
+    }
+
     /** Execute a study action against the StudyStore, emitting results as prose. */
     private suspend fun handleStudyAction(action: String, data: Map<String, String>) {
         val store = studyStore ?: return
@@ -1122,9 +1160,10 @@ class PhoneNode(
                     val query = data["query"] ?: return
                     val results = store.searchJournal(userDid, query, limit = 5)
                     if (results.isEmpty()) {
-                        _notifications.emit(PhoneNodeEvent.Prose("narrator", "No journal entries found for \"$query\"."))
+                        _notifications.emit(PhoneNodeEvent.Prose("narrator",
+                            "No journal entries found for \"$query\". (To write that down instead: journal <text>.)"))
                     } else {
-                        val summary = results.joinToString("\n") { "- ${it.title}" }
+                        val summary = results.joinToString("\n") { journalLine(it) }
                         _notifications.emit(PhoneNodeEvent.Prose("narrator", "Found ${results.size} entries:\n$summary"))
                     }
                 }
@@ -1143,11 +1182,15 @@ class PhoneNode(
                     store.addNote(userDid, content)
                 }
                 "recent_journal" -> {
-                    val recent = store.recentJournal(userDid, limit = 5)
+                    // The 60-char TITLE was printed here, so every entry came back cut off and a
+                    // private one read only "(private entry)" — its own author could not see what
+                    // they had written (2026-09-15).
+                    val limit = data["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 5
+                    val recent = store.recentJournal(userDid, limit = limit)
                     if (recent.isEmpty()) {
                         _notifications.emit(PhoneNodeEvent.Prose("narrator", "Your journal is empty. Write something with: journal <text>"))
                     } else {
-                        val summary = recent.joinToString("\n") { "- ${it.title}" }
+                        val summary = recent.joinToString("\n") { journalLine(it) }
                         _notifications.emit(PhoneNodeEvent.Prose("narrator", "Recent journal entries:\n$summary"))
                     }
                 }

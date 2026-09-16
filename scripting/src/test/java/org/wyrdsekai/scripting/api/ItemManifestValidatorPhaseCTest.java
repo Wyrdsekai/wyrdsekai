@@ -91,8 +91,14 @@ class ItemManifestValidatorPhaseCTest {
     }
 
     @Test
-    void mailbox_send_is_tier_5() {
-        assertThat(ItemManifestValidator.tierFor("agent.mailbox.send")).isEqualTo(5);
+    void mailbox_send_is_the_same_reach_as_a_tell() {
+        // Mail inside the household is a note left for someone. It sat at Tier 5, above a
+        // tell, which made leaving a note harder than speaking (2026-09-15). Mail that
+        // LEAVES the household still goes through the email adapter's own Tier 5.
+        assertThat(ItemManifestValidator.tierFor("agent.mailbox.send"))
+            .isEqualTo(ItemManifestValidator.tierFor("agent.tell"));
+        assertThat(ItemManifestValidator.tierFor("agent.mailbox.send")).isEqualTo(4);
+        assertThat(ItemManifestValidator.tierFor("agent.broadcast")).isEqualTo(5);
     }
 
     @Test

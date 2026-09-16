@@ -948,6 +948,8 @@
   "usage.cmd.version": "  version      Show version info",
   "usage.cmd.voice": "  voice        Inspect/edit a companion's VoiceProfile: list/set/unset/freeze/revert",
   "usage.cmd.wards": "  wards        Room wards: list / add / remove",
+  "usage.cmd.rooms": "  rooms        Made rooms: list / demolish <room> / prune [--duplicates] [--yes]",
+  "usage.cmd.mail": "  mail         Household mail log: who wrote to whom and when (steward; never subjects or bodies)",
   "usage.cmd.web": "  web          Browser terminal on :7071 (enable/disable/status)",
   "usage.cmd.whoami": "  whoami       Print your household DID (did:wyrd:z6Mk…)",
   "usage.cmd.zones": "  zones        Manage your zones: list / create <label> / remove <label>",

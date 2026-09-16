@@ -63,7 +63,7 @@ class StudyFurnishingKitTest {
     @Test void kit_has_all_expected_furnishings() {
         var items = StudyFurnishingKit.defaults();
         assertThat(items).extracting("id")
-            .containsExactlyInAnyOrder("embers", "board", "mailbox",
+            .containsExactlyInAnyOrder("embers", "board", "grant-case",
                 "ledger", "manifest", "trunk",
                 "shelf", "lantern", "mirror", "compass", "window",
                 "threshold",
@@ -394,7 +394,7 @@ class StudyFurnishingKitTest {
 
     // ─── Mailbox (grants held) ─────────────────────────────────────
 
-    @Test void mailbox_shows_grants_issued_to_owner_by_others() {
+    @Test void grantCase_shows_grants_issued_to_owner_by_others() {
         // Bob grants Alice read on his health-notes collection.
         var bob = "did:key:z6MkBob999";
         var resource = ResourceUri.of(bob, ResourceTypeRegistry.COLLECTION, "health-notes");
@@ -406,25 +406,25 @@ class StudyFurnishingKitTest {
         var provider = new HomeOwnerItemProvider("alpha", "alpha",
             OWNER, homeClient, testKit.system());
 
-        var mailbox = StudyFurnishingKit.mailbox();
-        var result = executor.execute(mailbox.id(), mailbox.script(), Map.of(), provider);
+        var grantCase = StudyFurnishingKit.grantCase();
+        var result = executor.execute(grantCase.id(), grantCase.script(), Map.of(), provider);
         var text = String.valueOf(result.get("text"));
-        assertThat(text).contains("envelopes addressed to you");
+        assertThat(text).contains("writs made out to you");
         assertThat(text).contains(bob);
         assertThat(text).contains("health-notes");
         assertThat(result.get("active")).isInstanceOf(Number.class);
         assertThat(((Number) result.get("active")).intValue()).isGreaterThanOrEqualTo(1);
     }
 
-    @Test void mailbox_empty_when_nothing_granted_to_owner() {
+    @Test void grantCase_empty_when_nothing_granted_to_owner() {
         var newOwner = "did:key:z6MkFreshMail003";
         var executor = new ItemScriptExecutor();
         var provider = new HomeOwnerItemProvider("alpha", "alpha",
             newOwner, homeClient, testKit.system());
 
-        var mailbox = StudyFurnishingKit.mailbox();
-        var result = executor.execute(mailbox.id(), mailbox.script(), Map.of(), provider);
-        assertThat(String.valueOf(result.get("text"))).contains("mailbox is empty");
+        var grantCase = StudyFurnishingKit.grantCase();
+        var result = executor.execute(grantCase.id(), grantCase.script(), Map.of(), provider);
+        assertThat(String.valueOf(result.get("text"))).contains("case is empty");
     }
 
     // ─── Ledger (inference budget) ─────────────────────────────────

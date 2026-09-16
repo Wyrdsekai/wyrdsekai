@@ -87,5 +87,6 @@
   "study.onboard.cancelled": "大丈夫です。いつでも書斎から設定できます。",
   "study.onboard.openrouter_oauth": "ブラウザでOpenRouterを開きます。そこでログインすると自動的に接続されます。",
   "study.onboard.anthropic_help": "APIキーはこちらで取得: console.anthropic.com/settings/keys",
-  "study.onboard.openai_help": "APIキーはこちらで取得: platform.openai.com/api-keys"
+  "study.onboard.openai_help": "APIキーはこちらで取得: platform.openai.com/api-keys",
+  "study.journal.how": "書き方: journal <覚えておきたいこと> · journal private <本文> · journal read [n] · journal search <語句>"
 }

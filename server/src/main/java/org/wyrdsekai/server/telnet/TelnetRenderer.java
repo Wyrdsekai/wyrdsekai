@@ -37,6 +37,9 @@ public class TelnetRenderer {
         switch (msg) {
             case S2CMessage.RoomState rs -> renderRoomState(rs);
             case S2CMessage.Prose prose -> renderProse(prose);
+            // A telnet client has no composer to open: it writes a letter a line at a time,
+            // so the prompt it needs has already been sent as prose.
+            case S2CMessage.Compose ignored -> { }
             case S2CMessage.AgentAction action -> renderAgentAction(action);
             case S2CMessage.StateChange change -> renderStateChange(change);
             case S2CMessage.ReplayDone done -> renderReplayDone(done);

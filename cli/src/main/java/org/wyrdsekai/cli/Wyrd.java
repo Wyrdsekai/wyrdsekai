@@ -110,6 +110,9 @@ public class Wyrd {
             if (msg instanceof S2CMessage.RoomState rs) {
                 inputHandler.setCurrentRoomId(rs.room().roomId());
             }
+            if (msg instanceof S2CMessage.Compose c) {
+                inputHandler.onCompose(c);
+            }
         };
 
         WyrdSession connection;
@@ -195,7 +198,7 @@ public class Wyrd {
             while (true) {
                 String line;
                 try {
-                    line = reader.readLine(renderer.getPromptPrefix() + "> ");
+                    line = reader.readLine(inputHandler.isComposing() ? "> " : renderer.getPromptPrefix() + "> ");
                 } catch (UserInterruptException e) {
                     // Ctrl-C cancels the current input line; stay connected.
                     continue;

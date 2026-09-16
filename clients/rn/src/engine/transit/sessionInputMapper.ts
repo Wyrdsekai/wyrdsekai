@@ -136,6 +136,20 @@ export function mapSessionInput(raw: string, hints: Hint[], nextId: () => string
     // Out-of-range → forward like any unknown word (server decides).
   }
 
+  // Mail and the journal are commands, not things said out loud. The zone re-parses them
+  // through the same CommandParser ssh uses, so the phone gets the same verbs without a
+  // parser of its own: `mail`, `mail <who> <subject> | <body>`, `journal <text>`,
+  // `journal read [n]`, `journal private <text>`, `journal search <words>` (2026-09-15).
+  if (lower === 'mail' || lower === 'inbox' || lower === 'journal') {
+    return send({ type: 'command', id: nextId(), command: lower === 'inbox' ? 'mail' : lower,
+                  args: [], payload: {} });
+  }
+  if (lower.startsWith('mail ') || lower.startsWith('journal ')) {
+    const sp = trimmed.indexOf(' ');
+    return send({ type: 'command', id: nextId(), command: trimmed.substring(0, sp).toLowerCase(),
+                  args: [trimmed.substring(sp + 1).trim()], payload: {} });
+  }
+
   // examine family BEFORE bare look, so "look at X" isn't a room render.
   let g = trimmed.match(examineRe) ?? trimmed.match(lookAtRe);
   if (g) return send({ type: 'examine', id: nextId(), roomId: '', target: g[1].trim() });

@@ -118,6 +118,7 @@ public final class SchemaInitializer {
         runMigration(conn, 7, "skill_drafts_harness", () -> migrateSkillDraftsHarness(conn));
         runMigration(conn, 8, "soul_fragments_authoring_model",
             () -> migrateSoulFragmentsAuthoringModel(conn));
+        runMigration(conn, 9, "mail_table", () -> MailStore.ensureTable(conn));
 
         // Retry deferred indexes after migrations
         for (var statement : cleaned.split(";")) {
@@ -142,7 +143,7 @@ public final class SchemaInitializer {
      * {@link DataVersion} so an OLDER binary opening a NEWER data dir can refuse
      * instead of silently mangling tables it doesn't understand. Append-only.
      */
-    public static final int SCHEMA_VERSION = 8;
+    public static final int SCHEMA_VERSION = 9;
 
     @FunctionalInterface
     private interface Migration { void run() throws SQLException; }

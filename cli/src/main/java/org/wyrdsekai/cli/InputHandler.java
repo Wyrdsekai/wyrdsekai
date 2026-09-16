@@ -3,8 +3,10 @@ package org.wyrdsekai.cli;
 import org.wyrdsekai.common.protocol.C2SMessage;
 import org.wyrdsekai.common.protocol.CommandParser;
 import org.wyrdsekai.common.protocol.CommandParser.ParsedCommand;
+import org.wyrdsekai.common.protocol.S2CMessage;
 
 import java.io.PrintStream;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -19,6 +21,18 @@ public class InputHandler {
     private Renderer renderer;
     private String currentRoomId = "nexus";
     private String currentUsername;
+
+    /**
+     * A letter or journal page being written a line at a time. The server asks for it with
+     * {@link S2CMessage.Compose}; this client has no textarea, so it collects lines the way
+     * mail always has — subject, body, a single {@code .} on its own line — and sends the
+     * whole thing back as one {@link C2SMessage.ComposeSend}. While one is open every line
+     * typed is part of it, commands included.
+     */
+    private S2CMessage.Compose composing;
+    private String composeSubject;
+    private boolean composeHaveSubject;
+    private final List<String> composeBody = new ArrayList<>();
 
     public InputHandler(WyrdSession connection, PrintStream out) {
         this.connection = connection;
@@ -52,8 +66,61 @@ public class InputHandler {
         this.currentUsername = username;
     }
 
+    /** The server opened a composer: start collecting lines. */
+    public void onCompose(S2CMessage.Compose compose) {
+        composing = compose;
+        composeBody.clear();
+        boolean journal = compose.kind() != null && compose.kind().startsWith("journal");
+        composeHaveSubject = journal || (compose.subject() != null && !compose.subject().isBlank());
+        composeSubject = journal ? "" : (compose.subject() == null ? "" : compose.subject().strip());
+        if (composeHaveSubject) {
+            out.println(journal
+                ? "Write your entry. End with a single . on a line of its own (~q to abandon)."
+                : "Write your letter. End with a single . on a line of its own (~q to abandon).");
+        } else {
+            out.println("Subject? (one line; ~q to abandon)");
+        }
+    }
+
+    /** True while a letter or page is being collected. */
+    public boolean isComposing() {
+        return composing != null;
+    }
+
+    private boolean feedComposeLine(String line) {
+        var text = line == null ? "" : line;
+        var trimmed = text.strip();
+        if (trimmed.equals("~q")) {
+            composing = null;
+            out.println("Abandoned; nothing was sent.");
+            return true;
+        }
+        if (!composeHaveSubject) {
+            composeSubject = trimmed;
+            composeHaveSubject = true;
+            out.println("Write your letter. End with a single . on a line of its own (~q to abandon).");
+            return true;
+        }
+        if (trimmed.equals(".")) {
+            var letter = composing;
+            composing = null;
+            var body = String.join("\n", composeBody).strip();
+            if (body.isEmpty()) {
+                out.println("Nothing written; nothing sent.");
+                return true;
+            }
+            connection.send(new C2SMessage.ComposeSend(connection.newId(), letter.kind(),
+                letter.to(), composeSubject, body));
+            return true;
+        }
+        composeBody.add(text);
+        return true;
+    }
+
     /** Parse input line and send appropriate C2S message. Returns false if /quit. */
     public boolean handle(String input) {
+        if (composing != null) return feedComposeLine(input);
+
         // `actions` / `/actions` — render the contextual menu locally from the
         // latest hints (SSH/telnet parity). Intercept before parsing so it
         // never routes to the room as speech.
@@ -183,6 +250,20 @@ public class InputHandler {
             case ParsedCommand.Nearby n -> {
                 connection.send(new C2SMessage.MapRequest(
                     connection.newId(), "nearby", 1, null));
+                yield true;
+            }
+            case ParsedCommand.Journal j -> {
+                connection.send(new C2SMessage.Command(
+                    connection.newId(), "journal",
+                    j.args() == null || j.args().isBlank() ? List.of() : List.of(j.args())));
+                yield true;
+            }
+            case ParsedCommand.Mail m -> {
+                // The server drives the letter: reading and filing come back as prose, and
+                // writing arrives as a Compose message that onCompose turns into line mode.
+                connection.send(new C2SMessage.Command(
+                    connection.newId(), "mail",
+                    m.args() == null || m.args().isBlank() ? List.of() : List.of(m.args())));
                 yield true;
             }
             case ParsedCommand.Demolish d -> {

@@ -112,6 +112,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.time.Clock;
+import org.wyrdsekai.core.identity.PersonIds;
+import org.wyrdsekai.core.mail.JournalSurface;
+import org.wyrdsekai.core.mail.MailSurface;
+import org.wyrdsekai.core.item.MailboxService;
 import org.wyrdsekai.core.room.MapOccupants;
 import org.wyrdsekai.core.room.RoomDemolition;
 import org.wyrdsekai.core.room.RoomPrivacy;
@@ -756,7 +760,9 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
     public boolean deliverToPlayer(String playerId, S2CMessage msg) {
         boolean delivered = false;
         for (var entry : sessionPlayerIds.entrySet()) {
-            if ("all".equals(playerId) || playerId.equals(entry.getValue())) {
+            // Match the person, not the string: a session signed in by password carries the
+            // legacy login id while the notice is addressed to the DID.
+            if ("all".equals(playerId) || sameRecipient(playerId, entry.getValue())) {
                 var sessionRef = sessions.get(entry.getKey());
                 if (sessionRef != null) {
                     sessionRef.tell(new ClientSessionActor.SendMessage(msg));
@@ -765,6 +771,15 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             }
         }
         return delivered;
+    }
+
+    /** Is this session's player the addressee? Anonymous and device sessions never resolve. */
+    private static boolean sameRecipient(String target, String sessionPlayer) {
+        if (target == null || sessionPlayer == null) return false;
+        if (target.equals(sessionPlayer)) return true;
+        if (sessionPlayer.startsWith("anon-") || sessionPlayer.startsWith("device-")
+                || sessionPlayer.startsWith("tourist-")) return false;
+        return PersonIds.samePerson(target, sessionPlayer);
     }
 
     /**
@@ -1323,6 +1338,9 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
 
             case C2SMessage.Command cmd ->
                 handleCommand(sessionId, sessionRef, playerId, room, currentRoomId, cmd, locale);
+
+            case C2SMessage.ComposeSend letter ->
+                handleComposeSend(sessionRef, playerId, letter);
 
             case C2SMessage.SetPreference pref ->
                 handleSetPreference(sessionId, playerId, pref);
@@ -1951,6 +1969,14 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                     sendProse(sessionRef, "system", ex != null ? "Demolition failed: " + ex.getMessage() : r.message()));
                 return;
             }
+            case "mail", "inbox" -> {
+                handleMail(sessionRef, playerId, cmd.args());
+                return;
+            }
+            case "journal" -> {
+                handleJournal(sessionRef, playerId, cmd.args());
+                return;
+            }
             case "sessions" -> {
                 var args = cmd.args() != null ? cmd.args() : List.<String>of();
                 var text = SessionCommands.isKill(args)
@@ -2321,6 +2347,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
      * owner's inventory on first login. Idempotent via InventoryService upsert.
      */
     private void seedHomeFurnishings(String playerId, String homeRoomId, boolean isSteward) {
+        StudyFurnishingKit.retireRenamedFurnishings(inventoryService, playerId);
         for (var item : StudyFurnishingKit.defaultsFor(isSteward)) {
             try {
                 inventoryService.addItem(
@@ -2535,6 +2562,91 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
         if (dir == null) return true;
         var d = dir.trim().toLowerCase();
         return d.isEmpty() || d.equals("nowhere") || d.equals("somewhere") || d.equals("unknown");
+    }
+
+    /**
+     * {@code mail} in the browser. Reading and filing are the same lines every surface
+     * prints; WRITING opens the client's composer instead of the line-at-a-time mode the
+     * terminals use, because a chat-first client would otherwise say each line of the letter
+     * out loud in the room. The prose line beside it is what an older client shows instead.
+     */
+    private void handleMail(ActorRef<ClientSessionActor.SessionMessage> sessionRef,
+                             String playerId, List<String> args) {
+        var rest = args == null ? "" : String.join(" ", args).strip();
+        var first = rest.isEmpty() ? "" : rest.split("\\s+")[0].toLowerCase();
+        if (rest.isEmpty() || first.equals("list") || first.equals("inbox")
+                || first.equals("read") || first.equals("open") || first.equals("archive")) {
+            var lines = new ArrayList<String>();
+            MailSurface.command(null, playerId, rest, lines::add);
+            if (!lines.isEmpty()) sendProse(sessionRef, "system", String.join("\n", lines));
+            return;
+        }
+        if (rest.indexOf('|') > 0) {
+            // A whole letter on one line — no composer needed, and the shape a client with
+            // no composer is told to use.
+            var lines = new ArrayList<String>();
+            MailSurface.command(null, playerId, rest, lines::add);
+            if (!lines.isEmpty()) sendProse(sessionRef, "system", String.join("\n", lines));
+            return;
+        }
+        var head = MailSurface.splitRecipient(MailboxService.getOrCreate(), rest);
+        var to = head.to();
+        var subject = head.subject();
+        // The hint first, then the composer request, so a line-mode client's own prompt
+        // is the last thing on the screen.
+        sendProse(sessionRef, "system",
+            "Writing to " + to + " — if your client has no composer, send it on one line: "
+            + "mail " + to + " <subject> | <body>");
+        sessionRef.tell(new ClientSessionActor.SendMessage(
+            new S2CMessage.Compose(0, "mail", to, subject,
+                "Writing to " + to + ". Send when you are ready.")));
+    }
+
+    /**
+     * {@code journal} in the browser. Everything but a blank page is answered in prose; a
+     * blank page opens the composer, because a journal entry is the piece of writing most
+     * likely to be longer than one line and the command bar has one.
+     */
+    private void handleJournal(ActorRef<ClientSessionActor.SessionMessage> sessionRef,
+                                String playerId, List<String> args) {
+        var rest = args == null ? "" : String.join(" ", args).strip();
+        if (rest.isEmpty() || rest.equalsIgnoreCase("private")) {
+            boolean isPrivate = rest.equalsIgnoreCase("private");
+            sendProse(sessionRef, "system",
+                "A page to write on — if your client has no composer, write it on one line: "
+                + "journal <what you want to remember>");
+            sessionRef.tell(new ClientSessionActor.SendMessage(
+                new S2CMessage.Compose(0, isPrivate ? "journal-private" : "journal", null, null,
+                    isPrivate ? "A private page — nobody else reads this one"
+                              : "Your journal")));
+            return;
+        }
+        var lines = new ArrayList<String>();
+        JournalSurface.command(null, playerId, rest, lines::add);
+        if (!lines.isEmpty()) sendProse(sessionRef, "system", String.join("\n", lines));
+    }
+
+    /** A letter written in the client's composer, arriving whole. */
+    private void handleComposeSend(ActorRef<ClientSessionActor.SessionMessage> sessionRef,
+                                    String playerId, C2SMessage.ComposeSend letter) {
+        if (playerId == null) {
+            sendProse(sessionRef, "system", "Mail needs someone to be addressed to — sign in first.");
+            return;
+        }
+        var body = letter.body() == null ? "" : letter.body().strip();
+        boolean isJournal = letter.kind() != null && letter.kind().startsWith("journal");
+        if (body.isEmpty() || (!isJournal && (letter.to() == null || letter.to().isBlank()))) {
+            sendProse(sessionRef, "system", "Nothing written; nothing sent.");
+            return;
+        }
+        if (letter.kind() != null && letter.kind().startsWith("journal")) {
+            JournalSurface.write(playerId, "journal-private".equals(letter.kind()), body,
+                line -> sendProse(sessionRef, "system", line));
+            return;
+        }
+        var sent = MailboxService.getOrCreate()
+            .send(playerId, letter.to(), letter.subject(), body, Map.of());
+        sendProse(sessionRef, "system", MailSurface.describe(sent, letter.to()));
     }
 
     private void sendProse(ActorRef<ClientSessionActor.SessionMessage> sessionRef,

@@ -4,7 +4,84 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.3.4] — 2026-09-15
+
+### Added
+- **Household mail.** Send a message to someone by name. Messages are stored in `world.db`,
+  so they survive a restart, and the recipient gets a notification when one arrives.
+  Addressing: `mia` (this household), `mia@neo` (same thing, written out), `mia@alpha`
+  (a federated household), `bob@example.org` (the internet). Naming your own zone delivers
+  locally — no federation round trip — so replies to `kaz@neo` work.
+  The `mailbox` item template is now a real mailbox (`use mailbox`, `read <n>`,
+  `archive <n>`, `send <who> <subject> | <body>`) instead of a generic container.
+  Sending inside the household needs no grant — same capability tier as `tell`.
+  Messages are stored against the recipient's identity with the address kept for display,
+  so renaming a zone or a companion doesn't break old mail.
+  `wyrd mail` shows the steward a log of who wrote to whom and when — no subjects, no bodies.
+  Federated and external delivery are not implemented yet and return a clear error instead
+  of silently dropping the message.
+- **Multi-line message composition.** `mail` lists your inbox, `mail read <n>` opens one,
+  `mail <who>` starts a message: subject first, then body lines, ending with a single `.`
+  on its own line (`~q` cancels). This needs no client support, so it works over ssh, telnet
+  and the terminal CLI. Lines that look like commands are treated as message text.
+  In the browser, `mail <who>` opens a composer with a subject field and a textarea
+  (Ctrl+Enter sends, Escape closes) — the browser doesn't use line mode because a chat-first
+  client would broadcast each line to the room. Clients that don't support the composer get
+  a message explaining the one-line form. The terminal CLI collects the lines itself and
+  sends the letter whole.
+  Names with spaces work: `mail ada lovelace the garden` looks up the longest leading run of
+  words someone answers to, so it goes to Ada Lovelace with the subject "the garden". A quoted
+  name works everywhere too, including `use mailbox send "ada lovelace" ...`.
+
+### Fixed
+- **One person, one mailbox and one journal, from every door.** The web and the phone sign
+  you in under your DID; ssh and telnet still present the legacy login id. Mail is filed under
+  the DID, so a letter sent from the browser read as "No mail." from ssh, and a journal page
+  written from ssh (which resolves to the DID on write) did not show in `journal read` from
+  the same ssh session. Every mail door and the journal read-back now resolve the person
+  first. The same fix makes notifications reach a browser session signed in by password.
+  This is the 0.3.4 shape of the bond-table defect fixed in 0.3.2.
+  Found on the install test: the person-identity cache also remembered "no such person"
+  for the life of the process, and on a fresh install a login id is looked up before the
+  person's DID is minted at first login. Mail sent on the first day would have been filed
+  under the login id and lost from view after the first restart. The cache is now cleared
+  when a person is minted or a credential is linked.
+- **Short replies in the wrong language weren't caught.** The voice guard compares the
+  language of the draft and the polished output, but the detector returns "unsure" for text
+  under four words, and the guard only fired when both sides were identified. A short reply
+  like "Vale, gracias" passed through. When the household language is known, a single
+  Spanish marker is now enough to reject the polish and speak the raw draft instead.
+- **Private journal entries couldn't be read back by their author.** Private entries are
+  stored under a separate type (`journal_private`) and the read-back only listed `journal`.
+  The owner's read-back and search now include private entries, decrypted and marked
+  `[private]`. The companion's view is unchanged — it still sees shared entries only.
+- **`journal read that letter from mum again` was discarded.** Any entry starting with
+  "read", "recent" or "show" matched the read-back branch and was thrown away. Those words
+  are now only treated as commands when the rest of the line is empty or a number.
+- **The "Read recent entries" menu hint didn't work.** It dispatched with no argument, which
+  the script treated as an empty write and rejected with the write error.
+- **Journal entries written in the same millisecond overwrote each other.** Entry IDs were
+  `journal:<user>:<timestamp>`; they now include a random suffix.
+- **`journal` is a real command.** The help text advertised `journal <text>`,
+  `journal private <text>` and `journal search <query>`, but the server never implemented
+  them — the only working path was `use journal <text>` inside your Study. All three work
+  now on every surface, plus `journal read [n]`. `journal` with no argument opens a blank
+  entry (line mode in a terminal, textarea in the browser), and `journal private` does the
+  same for a private entry.
+- **`wyrd version` on macOS and Windows printed a git error as the build hash.** Those
+  installers are built from an exported tarball with no git history, and the stamping
+  task took git's "fatal: not a git repository" message as the answer. A tree with no
+  history now stamps `unknown`.
+- **Windows installed an old coding backend.** The PowerShell launcher pinned goose 1.34.1
+  and codezaiku 0.3.3 while the bundle manifest attested 1.50.1 and 0.3.6. The comment next to
+  each pin said it matched the manifest; it hadn't for two releases. Both now match.
+
+### Changed
+- **The Study's "Mailbox" is now the "Grant Case".** It never contained mail — it lists
+  capability grants other people, zones and companions have given you, via
+  `world.grants.held()`. Existing Studies get the old item removed and replaced with
+  `grant-case` on next login; a crafted item that happens to share the ID is left alone.
+  This frees the name "mailbox" for actual messages.
 
 ## [0.3.3] — 2026-09-14
 

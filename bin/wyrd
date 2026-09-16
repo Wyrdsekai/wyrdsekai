@@ -11785,6 +11785,38 @@ for e in d.get("enrollments", []):
 # `wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]` — the steward's view
 # of the zone's rooms and the way to take a made room down. Founding rooms, Homes and occupied
 # rooms are refused by the server. Prune lists first; --yes carries it out (2026-09-14).
+# `wyrd mail` — the steward's view of household mail: who wrote to whom and when. Never a
+# subject and never a body; mail belongs to the two people in it (2026-09-15).
+do_mail() {
+    local sub="${1:-log}"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    case "$sub" in
+        log|list)
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local resp code
+            resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/mail/headers?limit=${2:-50}") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward sees the household's mail log."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            printf '%s' "$resp" | python3 -c '
+import json,sys,datetime
+rows=json.load(sys.stdin).get("headers",[])
+if not rows: print("No mail yet."); sys.exit(0)
+print("%-17s %-24s %-24s %6s %s" % ("WHEN","FROM","TO","BYTES","READ"))
+for r in rows:
+    when=datetime.datetime.fromtimestamp(r["ts"]/1000).strftime("%Y-%m-%d %H:%M")
+    print("%-17s %-24s %-24s %6d %s" % (when, r["from"][:24], r["to"][:24], r.get("bytes",0),
+          "read" if r.get("read") else ("archived" if r.get("archived") else "unread")))
+print("%d message(s). Subjects and bodies belong to the two people in them." % len(rows))
+'
+            ;;
+        *) echo "Usage: wyrd mail [log] [limit]"; return 64 ;;
+    esac
+}
+
 do_rooms() {
     local sub="${1:-list}"
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
@@ -13675,6 +13707,7 @@ case "${1:-help}" in
     skill)      do_skill "${@:2}" ;;
     wards)      do_wards "${@:2}" ;;
     rooms)      do_rooms "${@:2}" ;;
+    mail)       do_mail "${@:2}" ;;
     config)     do_config "${2:-help}" "${3:-}" ;;
     reset)      do_reset "${2:-soft}" ;;
     reseed)     do_reseed ;;
@@ -13749,6 +13782,8 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.home)"
         echo "$(_t usage.cmd.skill)"
         echo "$(_t usage.cmd.wards)"
+        echo "$(_t usage.cmd.rooms)"
+        echo "$(_t usage.cmd.mail)"
         echo "$(_t usage.cmd.passwd)"
         echo "$(_t usage.cmd.discover)"
         echo "$(_t usage.cmd.discover_2)"

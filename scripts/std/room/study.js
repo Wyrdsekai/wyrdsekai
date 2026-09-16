@@ -23,12 +23,10 @@ function onSay(entityId, entityName, text) {
     if (world.isAgent(entityId)) return;
     var lower = text.toLowerCase().trim();
 
-    if (lower.startsWith("journal ")) {
-        var entry = text.substring(8).trim();
-        world.emit("narrate", {
-            text: "*" + entityName + " writes in the journal.* " + entry
-        });
-    }
+    // A `journal` line is a command now (2026-09-15) and does not arrive here. What this
+    // branch did was narrate a write that never happened — it called nothing that stored
+    // anything, so the entry was announced and lost.
+    if (lower.length === 0) return;
 }
 
 function onUse(entityId, objectName, target) {

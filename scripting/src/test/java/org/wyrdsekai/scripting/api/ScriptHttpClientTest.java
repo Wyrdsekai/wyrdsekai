@@ -142,7 +142,7 @@ class ScriptHttpClientTest {
     @Test
     void strict_policy_blocks_rfc1918_literal() {
         var strict = new ScriptHttpClient(true);
-        assertThatThrownBy(() -> strict.get("http://192.0.2.5/x"))
+        assertThatThrownBy(() -> strict.get("http://10.0.0.5/x"))
             .isInstanceOf(SecurityException.class)
             .hasMessageContaining("non-public");
     }

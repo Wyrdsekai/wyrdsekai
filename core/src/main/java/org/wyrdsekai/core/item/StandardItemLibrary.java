@@ -503,15 +503,17 @@ public class StandardItemLibrary {
 
         // Communication
         register(new ItemTemplate(
-            "mailbox", "Mailbox", "Receives and stores messages when the owner is away",
-            "container", "std/container",
+            "mailbox", "Mailbox",
+            "Household mail: read what has arrived, write to someone by name",
+            "communication", "std/mailbox",
             List.of(
-                param("action", "string", "list, put, or take", true, List.of("list", "put", "take")),
-                param("item_name", "string", "Message or item name", false, null)
+                param("action", "string", "list, read, archive, or send", true,
+                    List.of("list", "read", "archive", "send")),
+                param("args", "string", "who and what: <n> to read, or <who> <subject> | <body>", false, null)
             ),
             new ThematicProfile(
                 List.of("communication"), List.of("connection", "waiting", "delivery"), List.of("store", "deliver", "receive"), 0.0),
-            Map.of("label", "mailbox", "capacity", "50"),
+            Map.of("label", "mailbox"),
             1,
             List.of("mail", "inbox", "letter box", "letterbox")
         ));

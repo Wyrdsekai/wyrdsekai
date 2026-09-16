@@ -117,9 +117,9 @@ $V8Default = @(
 # the model reliably where pi did not). Recipes dispatch through it, so a
 # first-class Windows node bootstraps it exactly like .deb/.pkg do at setup.
 $GooseRepo    = "aaif-goose/goose"   # repo moved block/goose -> aaif-goose/goose
-$GooseTag     = "v1.34.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
+$GooseTag     = "v1.50.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuRepo = "Wyrdsekai/codezaiku"
-$CodeZaikuTag  = "v0.3.3"             # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuTag  = "v0.3.6"             # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuDir  = Join-Path $DataDir "coding-cli-bundle\codezaiku"
 # The tarball carries its own top-level codezaiku/ dir, so the launcher lands
 # nested — same shape BackendExecutableResolver searches on the Java side.
@@ -2127,6 +2127,9 @@ Visitors (the MCP door):
   visitors [list]                      who is in, as what, through which door
   visitors dismiss|vouch|unvouch <user> walk a visitor out; let an account in at the Nexus; take that back
 
+Mail:
+  mail [log] [limit]                   who wrote to whom and when (steward; never subjects or bodies)
+
 Rooms (steward):
   rooms [list]                         every room: who made it, doorways, who is in it, markup flag
   rooms demolish <room>                take a made room down (founding rooms, Homes, occupied rooms refused)
@@ -2851,6 +2854,33 @@ function Invoke-Visitors {
 
 # `wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]` - the steward's view of
 # the rooms and the way to take a made room down. Parity with bin/wyrd do_rooms.
+# `wyrd mail` - the steward's view of household mail: who wrote to whom and when. Never a
+# subject and never a body. Parity with bin/wyrd do_mail.
+function Invoke-Mail {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "log" }
+    if ($sub -notin @('log', 'list')) { Write-Host "Usage: wyrd mail [log] [limit]"; exit 64 }
+    $limit = if ($Rest.Count -ge 2) { $Rest[1] } else { 50 }
+    $token = Get-SessionToken
+    if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+    try {
+        $d = Invoke-RestMethod -Uri "$(Get-ApiBase)/api/mail/headers?limit=$limit" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15
+    } catch {
+        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+        if ($code -eq 403) { Write-Err2 "Only the steward sees the household's mail log."; exit 1 }
+        Write-Err2 "The server did not answer at $(Get-ApiBase) - is it running?"; exit 1
+    }
+    $rows = @($d.headers)
+    if ($rows.Count -eq 0) { Write-Host "No mail yet."; return }
+    Write-Host ("{0,-17} {1,-24} {2,-24} {3,6} {4}" -f 'WHEN', 'FROM', 'TO', 'BYTES', 'READ')
+    foreach ($r in $rows) {
+        $when = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$r.ts).LocalDateTime.ToString('yyyy-MM-dd HH:mm')
+        $state = if ($r.read) { 'read' } elseif ($r.archived) { 'archived' } else { 'unread' }
+        Write-Host ("{0,-17} {1,-24} {2,-24} {3,6} {4}" -f $when, "$($r.from)", "$($r.to)", [int]$r.bytes, $state)
+    }
+    Write-Host "$($rows.Count) message(s). Subjects and bodies belong to the two people in them."
+}
+
 function Invoke-Rooms {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
     $base = Get-ApiBase
@@ -4040,6 +4070,7 @@ switch ($Command.ToLower()) {
     "state"     { Invoke-State }
     "soul"      { Invoke-Soul }
     "rooms"     { Invoke-Rooms }
+    "mail"      { Invoke-Mail }
     "visitors"  { Invoke-Visitors }
     "invite"    { Invoke-InviteCmd }
     "key"       { Invoke-KeyCmd }

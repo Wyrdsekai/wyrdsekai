@@ -59,6 +59,9 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.mail.JournalSurface;
+import org.wyrdsekai.core.mail.MailComposer;
+import org.wyrdsekai.core.mail.MailSurface;
 import org.wyrdsekai.core.room.MapOccupants;
 import org.wyrdsekai.core.room.RoomDemolition;
 import org.wyrdsekai.core.room.ZoneTopology;
@@ -533,13 +536,25 @@ public class WyrdShellCommand implements Command {
                 out.flush();
                 var line = lineBuffer.toString().strip();
                 lineBuffer.setLength(0);
-                if (!line.isEmpty()) {
+                // A letter in progress takes every line, blank ones included — a blank line
+                // is a paragraph break, not a no-op — and none of them is a command worth
+                // remembering in the history.
+                boolean composing = MailComposer.get().isComposing(sessionId);
+                if (composing) {
+                    handleInput(line);
+                } else if (!line.isEmpty()) {
                     pushHistory(line);
                     handleInput(line);
                 }
                 historyPos = cmdHistory.size();
-                // Send prompt after processing
-                renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                // Send prompt after processing: the room's while commanding, a bare one
+                // while a letter is being written so it does not read as command mode.
+                if (MailComposer.get().isComposing(sessionId)) {
+                    out.write("> ".getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                } else {
+                    renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                }
             } else if (ch == 4) {
                 // Ctrl-D (EOT). SSH channels don't run a canonical-mode TTY, so the
                 // kernel doesn't translate ^D into EOF on stdin — it arrives as raw
@@ -1087,6 +1102,16 @@ public class WyrdShellCommand implements Command {
         }
 
         if (connectionRegistry != null) connectionRegistry.touch(sessionId);
+        // A letter in progress takes the line before anything else does — including the
+        // parser, which would read "read the letter tomorrow" as a command, and a chat-first
+        // surface, which would say it out loud in the room.
+        if (MailSurface.feedComposeLine(sessionId, playerId, input, line -> {
+                try {
+                    sendLine(line);
+                } catch (IOException ignored) { }
+            })) {
+            return;   // the read loop prompts
+        }
         var cmd = CommandParser.parse(input, locale, userAliases);
         if (cmd == null) return;
 
@@ -1292,6 +1317,16 @@ public class WyrdShellCommand implements Command {
                     renderer.sendPrompt(currentRoomName, currentZoneLabel());
                 } catch (IOException ignored) {}
             }
+            case ParsedCommand.Journal j -> JournalSurface.command(sessionId, playerId, j.args(), line -> {
+                try {
+                    sendLine(line);
+                } catch (IOException ignored) { }
+            });
+            case ParsedCommand.Mail m -> MailSurface.command(sessionId, playerId, m.args(), line -> {
+                try {
+                    sendLine(line);
+                } catch (IOException ignored) { }
+            });
             case ParsedCommand.Demolish d -> {
                 // A steward takes a made room down: doorways closed, actor stopped, record
                 // gone. Founding rooms, Homes and occupied rooms are refused by the service.
@@ -1700,6 +1735,8 @@ public class WyrdShellCommand implements Command {
                     sendLine(catalog.get("telnet.help_exits"));
                     sendLine(catalog.get("telnet.help_say"));
                     sendLine(catalog.get("telnet.help_tell"));
+                    sendLine(catalog.get("telnet.help_mail"));
+                    sendLine(catalog.get("telnet.help_journal"));
                     sendLine(catalog.get("telnet.help_take"));
                     sendLine(catalog.get("telnet.help_drop"));
                     sendLine(catalog.get("telnet.help_retire"));
@@ -2865,6 +2902,7 @@ public class WyrdShellCommand implements Command {
         // seed scripted furnishings for authenticated users.
         if (pId != null && !pId.startsWith("anon-") && inventoryService != null) {
             var studyRoom = StudyProvisioner.studyRoomId(pId);
+            StudyFurnishingKit.retireRenamedFurnishings(inventoryService, pId);
             for (var item : StudyFurnishingKit.defaultsFor(isSteward)) {
                 try {
                     inventoryService.addItem(pId, item.id(), item.name(), item.description(),
@@ -2932,6 +2970,8 @@ public class WyrdShellCommand implements Command {
         if (connectionRegistry != null) {
             connectionRegistry.unregister(sessionId);
         }
+        // A letter half-written when the connection dropped is not sent, and not kept.
+        MailComposer.get().cancel(sessionId);
         // Suppress the room departure + entity removal while the same account is
         // still present through another surface (e.g. SSH closing while the CLI
         // is still up). Otherwise the other surface sees "X heads disconnect."

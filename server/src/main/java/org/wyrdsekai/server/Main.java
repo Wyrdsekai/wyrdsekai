@@ -205,7 +205,12 @@ import org.wyrdsekai.server.http.StudyRoutes;
 import org.wyrdsekai.server.http.SearchRoutes;
 import org.wyrdsekai.server.http.SoulRoutes;
 import org.wyrdsekai.server.http.TlsConfig;
+import org.wyrdsekai.core.item.MailboxService;
+import org.wyrdsekai.core.mail.MailDirectory;
+import org.wyrdsekai.core.persistence.MailStore;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.room.RoomDemolition;
+import org.wyrdsekai.server.http.MailRoutes;
 import org.wyrdsekai.server.http.RoomAdminRoutes;
 import org.wyrdsekai.server.http.WardRoutes;
 import org.wyrdsekai.server.http.CompanionAskRoutes;
@@ -1186,6 +1191,44 @@ public class Main {
         // a few lines below once localZoneId resolves, so the home_zone
         // column lights up correctly for legacy souls.
         var companionRegistry = new CompanionRegistry(jdbcUrl);
+
+        // Household mail (§4.24). The store makes it mail rather than a queue — it lived in a
+        // map until 2026-09-15, so a restart lost every message. The directory is read live
+        // rather than snapshotted: a companion born this afternoon can be written to this
+        // afternoon, and a person who changes their display name keeps their mail, because
+        // delivery files under the identity and carries the address only for display.
+        MailboxService.getOrCreate().install(
+            new MailStore(jdbcUrl),
+            new MailDirectory() {
+                @Override public Optional<Recipient> byName(String name) {
+                    return MailDirectory.of(all()).byName(name);
+                }
+                @Override public List<Recipient> all() {
+                    var out = new ArrayList<Recipient>();
+                    try {
+                        for (var u : authService.listUsers()) {
+                            var shown = u.displayName() == null || u.displayName().isBlank()
+                                ? u.username() : u.displayName();
+                            out.add(new Recipient(PersonIds.canonical(u.id()), shown, "person"));
+                            if (!shown.equalsIgnoreCase(u.username())) {
+                                out.add(new Recipient(PersonIds.canonical(u.id()), u.username(), "person"));
+                            }
+                        }
+                    } catch (RuntimeException e) {
+                        log.debug("Mail directory: people unavailable ({})", e.toString());
+                    }
+                    try {
+                        for (var c : companionRegistry.all()) {
+                            if (c.archived()) continue;
+                            out.add(new Recipient(c.entityId(), c.name(), "companion"));
+                        }
+                    } catch (RuntimeException e) {
+                        log.debug("Mail directory: companions unavailable ({})", e.toString());
+                    }
+                    return out;
+                }
+            },
+            WyrdConfig.get().zoneId());
 
         // Track-C C5: ChronicleEntryStore singleton wired
         // once at boot. CompanionActor.completeSleep + Study furnishings
@@ -2632,7 +2675,12 @@ public class Main {
         // world.pinboard.* hits the interface defaults and every pin "takes"
         // into nowhere (2026-07-04 live .deb audit).
         if (luceneStore != null) {
-            wsHandler.setStudyService(new StudyService(luceneStore));
+            var playerStudy = new StudyService(luceneStore);
+            wsHandler.setStudyService(playerStudy);
+            // ssh and telnet have no injected study service, and the `journal` verb they grew
+            // in 2026-09-15 needs one. The HTTP route below builds a home-aware instance and
+            // replaces this; either serves a person writing their own page.
+            StudyService.install(playerStudy);
         }
         wsHandlerRef.set(wsHandler);
         // Rita campaign 2026-07-11 (#27): the tell-back player deliverer was
@@ -2757,6 +2805,7 @@ public class Main {
             // Seed scripted furnishings. Idempotent —
             // InventoryService.addItem silently no-ops on duplicate itemId.
             var studyRoom = StudyProvisioner.studyRoomId(r.did());
+            StudyFurnishingKit.retireRenamedFurnishings(inventoryService, r.did());
             for (var item : StudyFurnishingKit.defaultsFor(isSteward)) {
                 try {
                     inventoryForHook.addItem(r.did(), item.id(), item.name(), item.description(),
@@ -3853,6 +3902,7 @@ public class Main {
                 });
         }
         var wardRoutes = new WardRoutes(wardService, authService);
+        var mailRoutes = new MailRoutes(authService);
         var roomAdminRoutes = new RoomAdminRoutes(authService, metadataService,
             foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()));
         final var limiter = rateLimiter;
@@ -3923,6 +3973,7 @@ public class Main {
             authRoutes.register(cfg.routes);
             wardRoutes.register(cfg.routes);
             roomAdminRoutes.register(cfg.routes);
+            mailRoutes.register(cfg.routes);
             new ResidencyRoutes(authService, localZoneId).register(cfg.routes);
             new HouseholdRoutes(permissionChecker, stewardAuditLog, authService).register(cfg.routes);
             new SoulRoutes(finalSoulStore, authService, pairingService, bondStore).register(cfg.routes);
@@ -4043,6 +4094,7 @@ public class Main {
                 new IssueRoutes().register(cfg.routes);
                 var homeClient = new HomeClient(homeRegistry, system);
                 var studyService = new StudyService(finalLuceneStore, homeClient);
+                StudyService.install(studyService);
                 var docIndexer = new DocumentIndexer(studyService);
                 new StudyRoutes(studyService, docIndexer).register(cfg.routes);
                 new FamiliarJournalRoutes(studyService).register(cfg.routes);

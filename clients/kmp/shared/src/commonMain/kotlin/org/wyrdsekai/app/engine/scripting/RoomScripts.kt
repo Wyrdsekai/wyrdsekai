@@ -144,6 +144,30 @@ object RoomScripts {
                 return;
             }
 
+            // Journal read-back. "read"/"recent" count as a verb ONLY when the rest is a
+            // count or nothing: "journal read that letter from mum again" is an ENTRY, and
+            // answering it with a read-back would throw the sentence away — the failure the
+            // server side had until 2026-09-15.
+            var readMatch = text.trim().match(/^journal\s+(read|recent|show)(?:\s+(\d{1,3}))?$/i);
+            if (readMatch) {
+                world.emit("study_action", {
+                    action: "recent_journal",
+                    limit: readMatch[2] ? readMatch[2] : "5"
+                });
+                return;
+            }
+            // `journal` on its own: show what is there and how to write.
+            if (lower === "journal" || lower === "journal help") {
+                world.emit("study_action", { action: "recent_journal", limit: "5" });
+                world.emit("narrate", { text: world.t("study.journal.how") });
+                return;
+            }
+            // `journal private` with nothing after it used to be swallowed in silence.
+            if (lower === "journal private") {
+                world.emit("narrate", { text: world.t("study.journal.how") });
+                return;
+            }
+
             // Journal write (shared). Match both `journal <text>` and the
             // explicit `journal entry <text>` form. Strip the matching
             // prefix and persist the rest; pass the entry into the i18n

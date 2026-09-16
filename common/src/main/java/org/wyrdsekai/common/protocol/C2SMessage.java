@@ -16,6 +16,7 @@ import java.util.Map;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
     @JsonSubTypes.Type(value = C2SMessage.Say.class, name = "say"),
+    @JsonSubTypes.Type(value = C2SMessage.ComposeSend.class, name = "compose_send"),
     @JsonSubTypes.Type(value = C2SMessage.Go.class, name = "go"),
     @JsonSubTypes.Type(value = C2SMessage.Take.class, name = "take"),
     @JsonSubTypes.Type(value = C2SMessage.Drop.class, name = "drop"),
@@ -123,6 +124,15 @@ public sealed interface C2SMessage {
      *
      * @param payload Structured key-value data for zone-type actions. Empty for core commands.
      */
+
+    /**
+     * A letter written in a client's own composer, arriving whole rather than a line at a
+     * time. The browser's textarea sends this; the terminals build the same thing out of
+     * lines ending in a single dot.
+     */
+    record ComposeSend(String id, String kind, String to, String subject,
+                       String body) implements C2SMessage {}
+
     record Command(String id, String command, List<String> args,
                    Map<String, String> payload) implements C2SMessage {
 

@@ -9195,7 +9195,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * a blank polish all at once. Two hypotheses were built and falsified by experiment
      * before instrumenting; instrument first next time.
      */
-    enum VoiceReject { NONE, BLANK, LANGUAGE, FACT, EXPANSION }
+    /**
+     * Why a polish was not spoken. {@code LANGUAGE_UNCORRECTED} is the case the guard used
+     * to wave through: the draft was already in the wrong language and the correction pass
+     * came back in the wrong language too, so there was nothing on-language to speak. It
+     * is logged under its own name so it can be counted (five such lines reached the
+     * household in ten days, 2026-09-15, and nothing had recorded them).
+     */
+    enum VoiceReject { NONE, BLANK, LANGUAGE, LANGUAGE_UNCORRECTED, FACT, EXPANSION }
 
     static String chooseVoicedLine(String draft, String polished, Set<String> required,
                                    String expectedLang) {
@@ -9240,10 +9247,30 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var polishLang = detectLanguage(polished);
             var draftLang = detectLanguage(draft);
             boolean polishOff = polishLang != null && !polishLang.equals(expectedLang);
+            // Under four words the detector says "unsure" rather than guess, and this branch
+            // needed BOTH sides identified before it would fire — so a short line in the wrong
+            // language went straight through to the household ("Vale, gracias"). When the
+            // expected language is known, one marker is enough to say "not that one". The cost
+            // of being wrong is the polish; the cost of missing is speaking Spanish to an
+            // English household (, option A).
+            if (!polishOff && polishLang == null && offLanguageShort(polished, expectedLang)) {
+                polishOff = true;
+            }
             boolean draftOn = draftLang == null || draftLang.equals(expectedLang);
             if (polishOff && draftOn) {
                 reasonOut[0] = VoiceReject.LANGUAGE;
                 return draft;   // polish drifted away from the user's language
+            }
+            if (polishOff) {
+                // The draft was off-language and the correction pass did not correct it.
+                // Neither line is in the household's language; the draft is spoken because
+                // it is at least the author's own words, and the reason is logged so the
+                // failure is visible. Before 2026-09-15 this branch ACCEPTED the polish —
+                // the rule only asked whether the polish moved away from an on-language
+                // draft — and that is how every Spanish line that reached an English
+                // household in the ten days before got there.
+                reasonOut[0] = VoiceReject.LANGUAGE_UNCORRECTED;
+                return draft;
             }
             // The floor's rewrite succeeded: off-language draft, on-language
             // polish. The remaining guards must judge a TRANSLATION, not a
@@ -9394,9 +9421,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Spanish-only orthography is decisive on its own.
         if (t.matches("(?s).*[áéíóúñ¿¡].*")) return "es";
         // Otherwise count function words that are common in Spanish and rare in English.
+        // Counted on the text AS WRITTEN, lowercase only: Spanish function words sit
+        // mid-sentence in lowercase, while "Los Angeles", "Del" and "Al" are names. Matched
+        // case-blind, "Al and Del went to Los Angeles for the con" read as Spanish, and a
+        // draft the detector calls Spanish is sent for translation — into Spanish
+        // (measured 2026-09-15: the correction prompt translated that English line 2/2).
         int es = 0;
         for (var w : ES_MARKERS) {
-            if (t.matches("(?s).*\\b" + w + "\\b.*")) es++;
+            if (text.matches("(?s).*\\b" + w + "\\b.*")) es++;
         }
         if (es >= 2) return "es";
         // Too short to judge — say so rather than guessing "en" and letting a
@@ -9405,10 +9437,56 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return "en";
     }
 
+    /**
+     * Is this too-short-to-judge text visibly NOT the expected language? Asked only when
+     * {@link #detectLanguage} returned null, and only about languages the detector can verify.
+     */
+    static boolean offLanguageShort(String text, String expectedLang) {
+        if (text == null || text.isBlank() || !detectorVerifiable(expectedLang)) return false;
+        var t = text.toLowerCase();
+        if (!"es".equals(expectedLang)) {
+            if (t.matches("(?s).*[áéíóúñ¿¡].*")) return true;
+            for (var w : ES_MARKERS) {
+                // Case-blind here because a short line starts with a capital ("Vale,
+                // gracias"), so the three markers that are also English names or words
+                // ("Los Angeles", "Del", "the con") are left out of this pass.
+                if (ES_MARKERS_ALSO_ENGLISH.contains(w)) continue;
+                if (t.matches("(?s).*\\b" + w + "\\b.*")) return true;
+            }
+            for (var w : ES_SHORT_MARKERS) {
+                if (t.matches("(?s).*\\b" + w + "\\b.*")) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Words that carry a short Spanish line on their own. {@link #ES_MARKERS} is function
+     * words, which a four-word reply easily avoids — "Vale, gracias" has none of them and no
+     * accent. Each of these is a word an English sentence does not contain; the ambiguous ones
+     * ("no", "me", "solo", "son") are deliberately absent.
+     */
+    private static final List<String> ES_SHORT_MARKERS = List.of(
+        "vale", "gracias", "claro", "hola", "adios", "ahora", "bien", "listo", "vamos",
+        "entonces", "luego", "pues", "aqui", "alli", "quiero", "puedo", "tengo", "eres",
+        "somos", "buenas", "buenos", "dias", "noches", "perdon", "tambien", "siempre",
+        "nunca", "ningun", "tiempo", "trabajo", "ayuda", "espera", "mismo", "tuyo", "mio");
+
+    /**
+     * Markers that are also English names, words or interjections ("Los Angeles", "Del",
+     * "the con", "El Paso", "yo!"); skipped where matching is case-blind.
+     */
+    private static final Set<String> ES_MARKERS_ALSO_ENGLISH = Set.of("los", "del", "con", "el", "es", "yo", "tu");
+
     private static final List<String> ES_MARKERS = List.of(
         "que", "para", "por", "los", "las", "una", "del", "con", "esta", "este",
         "como", "pero", "muy", "más", "está", "hasta", "sobre", "cuando", "porque",
-        "todo", "algo", "nada", "hay", "ser", "estoy", "voy");
+        "todo", "algo", "nada", "hay", "ser", "estoy", "voy",
+        // Safe only because matching is case-sensitive: "El Paso" is a name, "el camino"
+        // is Spanish. One of the five lines that reached the household had only "que"
+        // from the list above and read as English (2026-09-15); these four catch it, and
+        // flag nothing new across 17,400 lines of the household's own record.
+        "el", "es", "yo", "tu");
 
     /**
      * True when the token starting at {@code idx} sits in sentence-initial position:
@@ -13452,6 +13530,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                                    boolean wrongLanguage,
                                    Consumer<String> onComplete) {
         var requestId = "polish-" + UUID.randomUUID();
+        // The language floor, at the polish door. speak() forces rewrite mode when a draft
+        // reads as the wrong language, but not every line enters through speak(): a tool's
+        // confirmation ("The space you just created is ...") reaches this method directly,
+        // and when the drive model had authored it in Spanish the normal body's VERBATIM
+        // branch handed the Spanish straight back (measured 52/60 on the production 4B,
+        // 2026-09-15) and the guard accepted it. Whichever door a draft came through, an
+        // off-language draft is translated, not polished.
+        var draftLang = detectLanguage(draft);
+        boolean rewrite = wrongLanguage
+            || (detectorVerifiable(expectedLang) && draftLang != null && !draftLang.equals(expectedLang));
+        var draftLangName = draftLang == null ? null : languageName(draftLang);
+        if (rewrite && !wrongLanguage) {
+            log.info("Language floor at the polish door: draft reads '{}' but this turn's "
+                + "language is '{}' — translating instead of polishing", draftLang, expectedLang);
+        }
         // Wrap the callback so it's fire-once — whichever of inference-response
         // or timeout arrives first wins, the other becomes a no-op.
         var fired = new AtomicBoolean(false);
@@ -13477,7 +13570,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // correction and spoke the raw Spanish (live 2026-07-31,
         // missing facts=[Algo]). Numbers and caller-pinned facts survive
         // translation and stay required.
-        var required = wrongLanguage
+        var required = rewrite
             ? new LinkedHashSet<String>()
             : new LinkedHashSet<>(extractRequiredEntities(draft));
         required.addAll(extractRequiredNumbers(draft));
@@ -13528,7 +13621,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         sb.append("You speak ").append(pinLang)
             .append(". Every reply you write is in ").append(pinLang)
             .append(".\n\n");
-        if (wrongLanguage) {
+        if (rewrite) {
             // Rewrite mode REPLACES the normal polish workflow. The standard
             // body leads with "if the draft is already clean → output VERBATIM",
             // and that branch wins: live 2026-07-31, a floored Spanish draft
@@ -13536,12 +13629,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // clean direct speech — just in the wrong language. In this mode
             // the one and only job is restating the draft in the user's
             // language, so no instruction may offer a pass-through.
-            sb.append("You are the voice stage for ").append(voiceName).append(". The draft you receive is "
-                + "written in the wrong language for this user.\n\n"
-                + "Say the same thing in ").append(pinLang)
-                .append(": keep the meaning, tone, names, and numbers. Do not "
-                + "add new content. Do not reply to the draft — restate it in ")
-                .append(pinLang).append(".\n\n");
+            // Named as a TRANSLATION from a named language, not as a restatement. The
+            // corpus taught this model that "say the same thing" is the rewrite operation,
+            // and it performs that operation in whichever language it likes: measured on the
+            // production 4B over ten Spanish drafts from the household (2026-09-15), "Say the
+            // same thing in English" came back English 80/120 at temperature 0.3 and 21/30
+            // at 0 — three drafts were echoed back in Spanish every single time. "The draft
+            // below is in Spanish; this household speaks English. Translate the draft into
+            // ... English" came back English 119/120 at 0.3 and 30/30 at 0.
+            var fromLang = draftLangName != null ? draftLangName : "another language";
+            sb.append("You are the voice stage for ").append(voiceName)
+                .append(". The draft below is in ").append(fromLang)
+                .append("; this household speaks ").append(pinLang).append(".\n\n")
+                .append("Translate the draft into natural, warm first-person ").append(pinLang)
+                .append(". Keep the meaning, tone, names and numbers. Do not add anything. "
+                + "Do not answer the draft.\n\n");
         } else if (noOneIsListening()) {
             // Own-time speech in an empty room. The audience-facing prompt below asserts
             // "a draft that will be spoken to a user" on EVERY line, which manufactured a
@@ -13665,13 +13767,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // draft — without her voice — for most of every day (2026-09-06). The
         // "I want to make sure…" loops the penalty was added for (2026-04-22, a
         // different model) are covered by the EXPANSION guard in chooseVoicedLine.
+        // A translation is not the place for variance: at temperature 0 the correction
+        // prompt came back in the household's language 30/30 against 111/120 at 0.3.
         inferenceRouter.tell(new InferenceRouter.ChatRequest(
             requestId, "cap:quick", messages,
-            200, 0.3,
+            200, rewrite ? 0.0 : 0.3,
             inferenceResponseAdapter, null, null, null, List.of(), "none",
             0.9, 0.0, 1.0, false));
-        log.info("Voice polish queued (requestId={}, draft={} chars)",
-            requestId, draft.length());
+        log.info("Voice polish queued (requestId={}, draft={} chars{})",
+            requestId, draft.length(), rewrite ? ", translating from " + draftLangName : "");
     }
 
     /**

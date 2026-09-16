@@ -946,6 +946,8 @@
   "usage.cmd.version": "  version      バージョン情報を表示",
   "usage.cmd.voice": "  voice        コンパニオンの VoiceProfile を確認/編集: list/set/unset/freeze/revert",
   "usage.cmd.wards": "  wards        部屋の結界: list / add / remove",
+  "usage.cmd.rooms": "  rooms        作られた部屋: list / demolish <部屋> / prune [--duplicates] [--yes]",
+  "usage.cmd.mail": "  mail         世帯メールの記録: 誰が誰にいつ書いたか（管理者向け。件名や本文は表示しない）",
   "usage.cmd.web": "  web          ブラウザターミナル :7071 (enable/disable/status)",
   "usage.cmd.whoami": "  whoami       世帯の DID を表示 (did:wyrd:z6Mk…)",
   "usage.cmd.zones": "  zones        ゾーンを管理: list / create <label> / remove <label>",

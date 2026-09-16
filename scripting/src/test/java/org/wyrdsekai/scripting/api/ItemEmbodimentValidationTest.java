@@ -27,7 +27,10 @@ class ItemEmbodimentValidationTest {
             ItemManifestValidator.ManifestEmbodimentMissingException.class,
             () -> ItemManifestValidator.requireEmbodiment(null, false, "broken_item"));
         assertTrue(ex.getMessage().contains("broken_item"));
-        assertTrue(ex.getMessage().contains("§18"));
+        // The message names the missing block. It must not be pinned to a spec citation:
+        // the public export strips private-doc citations from literals, so a test that
+        // asserted "§18" passed privately and failed in the shipped tree.
+        assertTrue(ex.getMessage().contains("embodiment"));
     }
 
     @Test

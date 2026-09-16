@@ -34,13 +34,18 @@ val generateVersionProperties = tasks.register("generateVersionProperties") {
         val dir = outputDir.get().asFile
         dir.mkdirs()
         val propsFile = File(dir, "wyrdsekai-version.properties")
-        fun git(vararg args: String): String = try {
+        // A tree with no .git (the macOS and Windows packagers build from an exported
+        // tarball) answers "fatal: not a git repository" on stderr and exits 128; with
+        // stderr merged and the exit code unchecked, that sentence was the shipped
+        // buildHash (0.3.4 install tests, 2026-09-16). Only a clean exit is an answer.
+        fun git(vararg args: String): String? = try {
             val p = ProcessBuilder("git", *args).redirectErrorStream(true).start()
-            p.inputStream.bufferedReader().readText().trim()
-        } catch (_: Exception) { "unknown" }
-        val gitHashShort = git("rev-parse", "--short", "HEAD")
-        val gitSha = git("rev-parse", "HEAD")
-        val gitDirty = git("status", "--porcelain", "-uno").isNotBlank()
+            val out = p.inputStream.bufferedReader().readText().trim()
+            if (p.waitFor() == 0) out else null
+        } catch (_: Exception) { null }
+        val gitHashShort = git("rev-parse", "--short", "HEAD") ?: "unknown"
+        val gitSha = git("rev-parse", "HEAD") ?: "unknown"
+        val gitDirty = git("status", "--porcelain", "-uno")?.isNotBlank() ?: false
         val now = System.currentTimeMillis().toString()
         propsFile.writeText(
             "version=${project.version}\n" +

@@ -48,6 +48,9 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.mail.JournalSurface;
+import org.wyrdsekai.core.mail.MailComposer;
+import org.wyrdsekai.core.mail.MailSurface;
 import org.wyrdsekai.core.room.MapOccupants;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.scripting.i18n.ScriptMessageCatalog;
@@ -490,6 +493,14 @@ public class TelnetSession implements Runnable {
         }
 
         if (connectionRegistry != null) connectionRegistry.touch(sessionId);
+        // A letter in progress takes the line before the parser or the room hears it.
+        if (MailSurface.feedComposeLine(sessionId, playerId, input, line -> {
+                try {
+                    TelnetCodec.sendLine(out, line);
+                } catch (IOException ignored) { }
+            })) {
+            return;
+        }
         var cmd = CommandParser.parse(input, locale, userAliases);
         if (cmd == null) return;
 
@@ -667,6 +678,16 @@ public class TelnetSession implements Runnable {
                 });
             }
             case ParsedCommand.Where w -> {} // map rendering not supported in telnet
+            case ParsedCommand.Journal j -> JournalSurface.command(sessionId, playerId, j.args(), line -> {
+                try {
+                    TelnetCodec.sendLine(out, line);
+                } catch (IOException ignored) { }
+            });
+            case ParsedCommand.Mail m -> MailSurface.command(sessionId, playerId, m.args(), line -> {
+                try {
+                    TelnetCodec.sendLine(out, line);
+                } catch (IOException ignored) { }
+            });
             case ParsedCommand.Demolish d -> {} // steward tool: ssh, web, or `wyrd rooms`
             case ParsedCommand.Nearby n -> {} // map rendering not supported in telnet
             case ParsedCommand.Rooms r -> {} // map rendering not supported in telnet
@@ -911,6 +932,8 @@ public class TelnetSession implements Runnable {
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_exits"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_say"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_tell"));
+                    TelnetCodec.sendLine(out, catalog.get("telnet.help_mail"));
+                    TelnetCodec.sendLine(out, catalog.get("telnet.help_journal"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_take"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_drop"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_retire"));
@@ -1371,10 +1394,11 @@ public class TelnetSession implements Runnable {
         var isSteward = "steward".equals(playerRole);
         ((ActorSystem<ZoneGuardian.Command>) (Object) system)
             .tell(new ZoneGuardian.ProvisionStudy(pId, pName, isSteward));
-        // seed scripted furnishings (Embers, Board, Mailbox) for
+        // seed scripted furnishings (Embers, Board, Grant Case) for
         // authenticated users. Idempotent via InventoryService upsert.
         if (pId != null && !pId.startsWith("anon-") && inventoryService != null) {
             var studyRoom = StudyProvisioner.studyRoomId(pId);
+            StudyFurnishingKit.retireRenamedFurnishings(inventoryService, pId);
             for (var item : StudyFurnishingKit.defaultsFor(isSteward)) {
                 try {
                     inventoryService.addItem(pId, item.id(), item.name(), item.description(),
@@ -1562,6 +1586,8 @@ public class TelnetSession implements Runnable {
         if (connectionRegistry != null) {
             connectionRegistry.unregister(sessionId);
         }
+        // A letter half-written when the connection dropped is not sent, and not kept.
+        MailComposer.get().cancel(sessionId);
         // Suppress the room departure + entity removal while the same account is
         // still present through another surface — quitting one surface must not
         // broadcast "X heads disconnect." while X is still here on another.

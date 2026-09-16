@@ -44,21 +44,54 @@ public final class PersonIds {
     /** The person DID for any identifier, or the identifier unchanged if unresolvable. */
     public static String canonical(String identifier) {
         if (identifier == null || identifier.isBlank()) return identifier;
-        return CACHE.computeIfAbsent(identifier, id -> {
-            try {
-                var r = resolverOrNull();
-                if (r == null) return id;
-                return r.resolve(id).map(did -> {
-                    if (!did.equals(id)) {
-                        log.info("Person identity: '{}' resolves to {}", id, did);
-                    }
-                    return did;
-                }).orElse(id);
-            } catch (Exception e) {
-                log.debug("canonical('{}') failed, using as-is: {}", id, e.toString());
-                return id;
+        var cached = CACHE.get(identifier);
+        if (cached != null) return cached;
+        var r = resolverOrNull();
+        // No resolver yet (early boot, or a test JVM with no database): answer as-is and
+        // remember nothing, so the first call does not fix the answer for the process.
+        if (r == null) return identifier;
+        try {
+            var resolved = r.resolve(identifier).orElse(null);
+            if (resolved == null) {
+                // A negative answer is cached too — this sits on the speech path — but it
+                // is evicted by {@link #forget} the moment a person is provisioned or a
+                // credential is linked. It used to stay for the life of the process: on a
+                // fresh install a person's login id was looked up before their DID was
+                // minted at first login, and every door keyed on canonical() (mail, bonds)
+                // kept the login id until the next restart, after which the same person's
+                // record was split in two (found on the 0.3.4 install test, 2026-09-15).
+                CACHE.put(identifier, identifier);
+                return identifier;
             }
-        });
+            if (!resolved.equals(identifier)) {
+                log.info("Person identity: '{}' resolves to {}", identifier, resolved);
+            }
+            CACHE.put(identifier, resolved);
+            return resolved;
+        } catch (Exception e) {
+            log.debug("canonical('{}') failed, using as-is: {}", identifier, e.toString());
+            return identifier;
+        }
+    }
+
+    /**
+     * Drop what is remembered about these identifiers. Called when a person is minted or a
+     * credential is linked to one, so an answer given before that moment is asked again.
+     */
+    public static void forget(String... identifiers) {
+        if (identifiers == null) return;
+        for (var id : identifiers) {
+            if (id != null) CACHE.remove(id);
+        }
+    }
+
+    /**
+     * Drop everything remembered. A new link can change the answer for a username, a
+     * display name and a login id at once, and linking is rare, so starting over is
+     * cheaper than knowing which spellings were asked about.
+     */
+    public static void forgetAll() {
+        CACHE.clear();
     }
 
     /** Do these identifiers name the same person? Null-safe; null never matches. */

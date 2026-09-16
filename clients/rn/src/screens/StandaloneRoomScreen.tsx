@@ -192,8 +192,13 @@ export function StandaloneRoomScreen({ navigation }: Props) {
       const body = lower.startsWith('/') ? trimmed.substring(1) : trimmed;
       const bl = body.toLowerCase();
       // Journal
+      // A write, and ONLY a write. `journal read`, `journal read 20`, `journal search <words>`
+      // and a bare `journal` are commands — they fall through to mapSessionInput, which sends
+      // them to the zone. Matching them here wrote an entry that said "read" and threw the
+      // person's actual line away, the same shape the server had until 2026-09-15.
+      const reservedVerb = /^(?:read|recent|show)(?:\s+\d{1,3})?$|^(?:search|find)\s+/i;
       const journalMatch = bl.match(/^journal(?:\s+(entry|private)\b)?\s+(.+)$/);
-      if (journalMatch) {
+      if (journalMatch && !reservedVerb.test(journalMatch[2].trim())) {
         const isPrivate = journalMatch[1] === 'private';
         const content = body.substring(body.toLowerCase().indexOf(journalMatch[2])).trim();
         return { kind: 'journal', content, private: isPrivate };

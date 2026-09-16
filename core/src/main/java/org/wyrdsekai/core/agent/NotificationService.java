@@ -3,6 +3,7 @@ package org.wyrdsekai.core.agent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.protocol.S2CMessage;
+import org.wyrdsekai.core.identity.PersonIds;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -128,6 +129,11 @@ public class NotificationService {
             return;
         }
 
+        // One person, one key. The web presents a DID and the ssh corridor a legacy login
+        // id for the same person; deliver and buffer under the resolved key so a notice
+        // is not filed under one door and awaited at the other.
+        if (targetDid != null && !"all".equals(targetDid)) targetDid = PersonIds.canonical(targetDid);
+
         var validPriority = normalizePriority(priority);
         var notification = new S2CMessage.Notification(0, validPriority, fromAgentId, message);
 
@@ -245,6 +251,7 @@ public class NotificationService {
      * @return the flushed notifications (may be empty)
      */
     public List<S2CMessage.Notification> flushBuffered(String playerId) {
+        if (playerId != null) playerId = PersonIds.canonical(playerId);
         var list = buffered.remove(playerId);
         if (list == null || list.isEmpty()) return List.of();
 

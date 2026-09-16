@@ -37,7 +37,9 @@ exports.manifest = {
   data_sensitivity: "high",
   commands: [
     { label: "Write an entry", args: "<what you want to remember>" },
-    { label: "Read recent entries", args: "" }
+    { label: "Read recent entries", args: "read" },
+    { label: "Write a private entry", args: "private <what you want to remember>" },
+    { label: "Search what you have written", args: "search <words>" }
   ],
   // ONE required anchor, ONE call shape — the 2026-07-14 calculator lesson. `entry` is the
   // thing this cannot do its job without, and reading back is expressed by `action: "read"`
@@ -61,8 +63,8 @@ exports.manifest = {
   ]
 };
 
-function readBack(params) {
-  var n = params.n || 5;
+function readBack(params, howMany) {
+  var n = howMany || params.n || 5;
   var entries = world.journal.recent(n);
   if (!entries || entries.length === 0) {
     return {
@@ -73,9 +75,12 @@ function readBack(params) {
     };
   }
   var lines = entries.map(function (e) {
-    var when = e.writtenAt || e.created_at || "";
+    var when = e.writtenAt || e.created_at || e.ts || "";
+    if (when && String(when).match(/^\d+$/)) {
+      when = new Date(Number(when)).toISOString().replace("T", " ").substring(0, 16);
+    }
     var text = e.content || e.text || "";
-    return (when ? "(" + when + ") " : "") + text;
+    return (when ? "(" + when + ") " : "") + (e["private"] ? "[private] " : "") + text;
   });
   return {
     ok: true,
@@ -108,10 +113,41 @@ function invoke(params) {
   var text = params.entry || params.note || params.content || params.body
           || params.text || params.args;
 
-  // "read" is a real intent, however it arrives.
-  if (action === "read" || action === "recent"
-      || (typeof text === "string" && /^(read|recent|show)\b/i.test(text.trim()))) {
-    return readBack(params);
+  // A sub-verb typed by a person arrives as the whole of `text`. Match it ONLY when the
+  // line IS the verb — "read", "read 20", "search quiet mornings", "private <entry>".
+  //
+  // It used to match any entry that merely STARTED with one ("read that letter from mum
+  // again" was answered with a read-back and the sentence was thrown away, 2026-09-15).
+  // A journal that silently discards what you wrote is the failure this file was written
+  // to prevent; matching a prefix was the same bug wearing different clothes.
+  var typed = typeof text === "string" ? text.trim() : "";
+  var readVerb = typed.match(/^(read|recent|show)(?:\s+(\d+))?$/i);
+  if (action === "read" || action === "recent" || readVerb) {
+    return readBack(params, readVerb && readVerb[2] ? parseInt(readVerb[2], 10) : null);
+  }
+  var searchVerb = typed.match(/^(?:search|find)\s+(.+)$/i);
+  if (action === "search" || searchVerb) {
+    var q = searchVerb ? searchVerb[1] : (params.query_text || params.q || "");
+    if (!q) return { ok: false, error: "Search for what? — search <words>" };
+    var hits = world.journal.search(q);
+    if (!hits || hits.length === 0) {
+      return { ok: true, action: "search", entries: [],
+               summary: "Nothing in your journal matches \"" + q + "\"." };
+    }
+    var found = hits.map(function (e) {
+      return (e["private"] ? "[private] " : "") + (e.content || e.text || "");
+    });
+    return { ok: true, action: "search", entries: hits,
+             summary: hits.length + " entr" + (hits.length === 1 ? "y" : "ies")
+                    + " matching \"" + q + "\":\n" + found.join("\n") };
+  }
+  // "private <entry>" is how a person marks one private from a room command — params.private
+  // cannot be reached from `use journal`, so the promise on the tin had no way in.
+  var isPrivateTyped = false;
+  var privateVerb = typed.match(/^private\s+([\s\S]+)$/i);
+  if (privateVerb) {
+    isPrivateTyped = true;
+    text = privateVerb[1];
   }
 
   // A journal entry with nothing in it is a malformed call, not an empty thought. Say what
@@ -120,13 +156,15 @@ function invoke(params) {
   if (!text || String(text).trim() === "") {
     return {
       ok: false,
-      error: "There's nothing to write. Send what you want to remember, "
-           + "e.g. {entry: \"the room felt softer today\"}."
+      error: "There's nothing to write yet. Write an entry with: journal <what you want to "
+           + "remember> — or `journal` on its own opens a page to write on. "
+           + "`journal read` shows your recent entries; `journal private <text>` keeps one "
+           + "to yourself; `journal search <words>` looks back."
     };
   }
 
   var content = String(text).trim();
-  var opts = params.private === true ? { visibility: "private" } : {};
+  var opts = (params.private === true || isPrivateTyped) ? { visibility: "private" } : {};
   var written = world.journal.write(content, opts);
 
   // Never report a write that did not happen. Half of this project's bugs have been a

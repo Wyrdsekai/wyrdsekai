@@ -106,6 +106,7 @@ public class PersonIdentityResolver {
             ps.setString(2, userIdOrName);
             ps.setString(3, userIdOrName);
             var n = ps.executeUpdate();
+            PersonIds.forgetAll();
             log.info("Linked {} local credential row(s) for '{}' to person {}",
                 n, userIdOrName, personDid);
         } catch (SQLException e) {
