@@ -37,6 +37,7 @@ import org.wyrdsekai.core.home.HomeRegistryActor;
 import org.wyrdsekai.core.home.RelayGovernance;
 import org.wyrdsekai.core.home.RelayGovernor;
 import org.wyrdsekai.core.host.HostActionService;
+import org.wyrdsekai.core.host.HostHand;
 import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.library.AgentIngestService;
@@ -1133,6 +1134,11 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     @Override
     public List<String> hostApps() {
         return HostActionService.allowedApps();
+    }
+
+    @Override
+    public Map<String, Object> hostHand(String verb, String args) {
+        return HostHand.run(verb, args, agentId);
     }
 
     @Override

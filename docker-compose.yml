@@ -140,6 +140,9 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: wyrdsekai-llama
     restart: unless-stopped
+    # A brain is shed before the record: the kernel takes this container before the JVM
+    # (the service unit carries OOMScoreAdjust=-500).
+    oom_score_adj: 500
     profiles: ["inference"]
     ports:
       - "${LLAMA_PORT:-8200}:8200"
@@ -231,6 +234,9 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: wyrdsekai-llama-voice
     restart: unless-stopped
+    # A brain is shed before the record: the kernel takes this container before the JVM
+    # (the service unit carries OOMScoreAdjust=-500).
+    oom_score_adj: 500
     profiles: ["voice", "dual"]
     ports:
       - "${LLAMA_VOICE_PORT:-8201}:8201"
@@ -341,6 +347,9 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: wyrdsekai-llama-embed
     restart: unless-stopped
+    # A brain is shed before the record: the kernel takes this container before the JVM
+    # (the service unit carries OOMScoreAdjust=-500).
+    oom_score_adj: 500
     profiles: ["embed"]
     ports:
       - "${LLAMA_EMBED_PORT:-8202}:8202"
@@ -400,6 +409,9 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:${TEI_IMAGE_TAG:-cpu-1.9}
     container_name: wyrdsekai-tei-embed
     restart: unless-stopped
+    # A brain is shed before the record: the kernel takes this container before the JVM
+    # (the service unit carries OOMScoreAdjust=-500).
+    oom_score_adj: 500
     profiles: ["embed-tei"]
     ports:
       - "${LLAMA_EMBED_PORT:-8202}:80"

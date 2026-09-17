@@ -407,6 +407,64 @@ are kept.
 A companion refused at any door returns to the room she came from and records that the
 door did not open.
 
+The companion's Hearth contains the household `mailbox` item. `use mailbox` lists mail,
+`use mailbox read <n>` reads one and marks it read, `use mailbox send <who> <subject> |
+<body>` sends. When mail arrives for a companion, the mail service sends `MailArrived` to
+her actor: the arrival is added to her next prompt as a system event, and if she is idle
+it starts an own-time turn.
+
+## Body map, marks and reflexes
+
+The server keeps a table (`body_parts`) of the parts it depends on: inference backends,
+the database, the host, household peer nodes on the mesh, the relay connection, the
+coding backend, and the librarian's MCP connection. Federated zones are not parts; the
+relay door is what connects to them. Each part has a heartbeat interval. The inference router's
+health checks update the backends; a watch thread (`body.watch_seconds`, default 30)
+checks the database and reads host memory pressure, heap and disk. A part silent for more
+than twice its interval is marked numb, dated from its last heartbeat, and stays in the
+table until the steward runs `wyrd body gone <id>`.
+
+Every companion prompt includes one line built from the table, next to the existing
+`[Body-sense: ...]` line. It is not model-generated and it is stripped from speech. When
+everything answers: `[Body: whole — thinking brain and voice brain answering; the record
+holds.]`. When a part is numb, the line names it and states the effect, for example
+`The thinking brain went quiet — I think slower and thinner.` The numb part appears once
+when it happens, then for `body.ache_hours` (default 6); the database and the main
+inference backend stay in the line for as long as they are numb. High memory pressure or
+low disk adds one clause.
+
+At the start of each sleep cycle the companion asks the thinking backend to tell the
+day as she would remember it, from the day's events, the chronicle and her drive levels.
+The text goes to her Hearth journal with mood `dream` (private; she can read it), to the
+activity trail as a `dream` entry with her felt stamp (the nightly weight-write reads it
+beside her spoken lines), and its opening sentence is in her first prompt after waking. A
+short day, a paused router or a missing backend skips the dream.
+
+Events the companion did not see are stored in `body_marks` and included in her next
+prompt once: a part numb or back, a part removed, a pause and resume, a reflex, each sleep
+cycle (start time, duration, events consolidated, memory count before and after), and the
+nightly weight-write result (staged plus guard verdict, quiet day, gate failed, error).
+Marks track which companion has read them; a mark addressed to one companion is not shown
+to another.
+
+Before the server is paused, stopped or updated, and before a companion restarts a backend
+or reboots the host, the server runs quiesce: the router stops accepting turns, each
+companion actor persists its state within a deadline, the database is checkpointed, and a
+mark records the reason, the requester and the duration. The self-updater does not run
+while a companion is in a sleep cycle or the nightly write is running. A companion whose
+forge backlog is past 70% of her sleep target gets a `[Tired: ...]` line.
+
+The watch thread also runs a fixed reflex table without any model call: memory pressure,
+a full heap, or the database not answering pauses inference for a set time; low disk
+writes a warning mark. Quiet hours are stored in `household_config` (`wyrd household
+quiet`): visitors are refused, companions send no non-critical external notifications,
+and pressure-based sleep starts at half the normal backlog.
+
+The Hearth also contains the `host_hand` item. `use host hand` prints the current level
+and the verbs it allows; verbs above the level are refused with the level named. The
+steward sets the level with `wyrd config set WYRDSEKAI_HOST_HAND=<observe|localize|
+propose|guarded|unattended>`; see CONFIGURATION.md.
+
 ## Visitors through the MCP door
 
 An MCP client that is not a resident of the zone is a **visitor**: an entity named

@@ -54,6 +54,19 @@ public final class MailboxService {
 
     public static MailboxService get() { return instance; }
 
+    /**
+     * How a companion is told a letter has landed: the server wires this to her actor. Until
+     * 2026-09-16 mail to a companion sat in a table she never looked at. The notice carries the
+     * sender's address and the subject; the letter itself waits in the box.
+     */
+    public interface CompanionNotice {
+        void arrived(String entityId, String companionName, String fromAddress, String subject);
+    }
+
+    private volatile CompanionNotice companionNotice;
+
+    public void setCompanionNotice(CompanionNotice notice) { this.companionNotice = notice; }
+
     public static MailboxService getOrCreate() {
         var i = instance;
         if (i == null) {
@@ -225,7 +238,12 @@ public final class MailboxService {
             // she reads her box in-world; her own notice is the next phase.
             for (var r : directory.all()) {
                 if (recipientId.equals(r.identity()) && "companion".equals(r.kind())) {
-                    log.debug("Mail for companion {} waits in the box", r.name());
+                    var notice = companionNotice;
+                    if (notice != null) {
+                        notice.arrived(r.identity(), r.name(), fromAddress, subject);
+                    } else {
+                        log.debug("Mail for companion {} waits in the box", r.name());
+                    }
                     return;
                 }
             }

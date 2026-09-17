@@ -881,6 +881,8 @@
   "status.port.not_responding": "Port {0}: not responding",
   "status.port.responding": "Port {0}: responding",
   "status.server.not_running": "Server: not running",
+  "status.brainstem.running": "Brainstem: watching (restarts the server if it stops answering)",
+  "status.brainstem.not_running": "Brainstem: not running — the server has no watcher outside the JVM (sudo systemctl start wyrdsekai-brainstem)",
   "status.server.orphans": "Server: orphan processes found ({0})",
   "status.server.running": "Server: running (pid {0})",
   "stop.force_killing": "Force-killing {0}",
@@ -904,6 +906,7 @@
   "update.source_only": "In source mode. To update an INSTALLED node run: wyrd update <path-to.deb|.pkg|.msi> (preserves data + config; the deb/pkg auto-restart).",
   "update.unknown_artifact": "Unknown installer type: {0} (expected .deb, .pkg, or .msi)",
   "usage.cmd.backup": "  backup       Create a backup snapshot",
+  "usage.cmd.vault": "  vault        The vault: status / snapshot [reason] / drill / prune / sync [dest] / list / restore <id> <dir> / stage <id>",
   "usage.cmd.block": "  block        Block a DID: wyrd block <did> [--revoke] [--note \"...\"]",
   "usage.cmd.blocks": "  blocks       List all blocks",
   "usage.cmd.bond": "  bond         Steward-bootstrap a player↔companion bond: wyrd bond create <player> <companion-did>",
@@ -950,6 +953,7 @@
   "usage.cmd.wards": "  wards        Room wards: list / add / remove",
   "usage.cmd.rooms": "  rooms        Made rooms: list / demolish <room> / prune [--duplicates] [--yes]",
   "usage.cmd.mail": "  mail         Household mail log: who wrote to whom and when (steward; never subjects or bodies)",
+  "usage.cmd.body": "  body         The body map: every part, its pulse, and the marks it left (steward); body gone <id> releases a part",
   "usage.cmd.web": "  web          Browser terminal on :7071 (enable/disable/status)",
   "usage.cmd.whoami": "  whoami       Print your household DID (did:wyrd:z6Mk…)",
   "usage.cmd.zones": "  zones        Manage your zones: list / create <label> / remove <label>",
@@ -1149,6 +1153,8 @@
   "doctor.backups": "Backups: {0} in {1} entries ({2}); the search index is hard-linked per snapshot since 0.3.0, so a new one costs no space",
   "doctor.swap": "Swap: {0} MB of {1} MB used (service memory peak since start: {2})",
   "doctor.swappiness": "vm.swappiness={0}: the kernel swaps process memory before dropping mmapped model pages; the package sets 10 (/etc/sysctl.d/90-wyrdsekai.conf)",
+  "doctor.oom_score": "Service OOM score: {0} (the kernel kills the brains before the record)",
+  "doctor.oom_score_unset": "Service OOM score is {0}: the kernel may kill the server before a llama container; reinstall the package or add OOMScoreAdjust=-500 to the unit",
   "doctor.state_notes": "State: {0} attribute(s) still live in two stores by design (consolidation roadmap, not a fault) — `wyrd state dump --summary` lists them",
   "doctor.state_errors": "State dump reported errors:"
 }

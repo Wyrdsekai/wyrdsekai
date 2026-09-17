@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# wyrdsekai-brainstem — the small process outside the JVM that watches the server.
+#
+# What it does, every INTERVAL seconds:
+#   1. Touches $STATE/heartbeat so the server can see the brainstem is alive.
+#   2. Asks the supervisor (systemd or launchd) whether the server unit is active.
+#   3. Asks the server itself: GET http://127.0.0.1:$PORT/health must answer "status":"UP".
+#   4. If the unit is active but the server has not answered for MISSES checks in a row
+#      (default 6 x 10 s), and the unit has been up longer than GRACE seconds (a JVM that is
+#      still loading models is not hung): snapshot the database (sqlite3 .backup, else a plain
+#      copy), run the doors-close hook, restart the unit, and write an event.
+#   5. While the server is down for any reason, run the doors-close hook once; when it answers
+#      again, run doors-open once. The hooks are optional executables in $CONF_DIR/brainstem/;
+#      with none installed nothing is closed.
+#   6. Appends every decision to $STATE/events.jsonl. The server reads that file and turns new
+#      events into marks the companion sees on her next turn.
+#
+# It never acts on an intentional stop: an inactive or deactivating unit is left alone. It
+# needs no Java, no Docker, no network beyond loopback. Restart-on-crash is the supervisor's
+# job; this covers the case the supervisor cannot see, a process that is alive and not
+# answering.
+#
+# Test hooks (all optional): BRAINSTEM_FAKE_UNIT=active|inactive|failed|deactivating,
+# BRAINSTEM_FAKE_HEALTH=up|down, BRAINSTEM_FAKE_UPTIME=<seconds>, BRAINSTEM_RESTART_CMD,
+# BRAINSTEM_ONCE=1 (one pass, then exit).
+set -u
+
+INTERVAL="${BRAINSTEM_INTERVAL:-10}"
+MISSES="${BRAINSTEM_MISSES:-6}"
+GRACE="${BRAINSTEM_GRACE:-180}"
+UNIT="${BRAINSTEM_UNIT:-wyrdsekai}"
+LAUNCHD_LABEL="${BRAINSTEM_LAUNCHD_LABEL:-com.wyrdsekai.server}"
+
+# ── where things are (same resolution as bin/wyrd) ──
+OS="$(uname -s)"
+if [[ -n "${WYRDSEKAI_DATA_DIR:-}" ]]; then
+    DATA_DIR="$WYRDSEKAI_DATA_DIR"
+elif [[ "$OS" == "Linux" && ( -f /etc/wyrdsekai/wyrdsekai.conf || -d /var/lib/wyrdsekai ) ]]; then
+    DATA_DIR=/var/lib/wyrdsekai
+else
+    DATA_DIR="${HOME:-/root}/.wyrdsekai"
+fi
+CONFIG_FILE="${WYRDSEKAI_CONFIG_FILE:-/etc/wyrdsekai/wyrdsekai.conf}"
+[[ -f "$CONFIG_FILE" ]] || CONFIG_FILE="$DATA_DIR/wyrdsekai.conf"
+if [[ -f "$CONFIG_FILE" ]]; then
+    set -a; # shellcheck disable=SC1090
+    source "$CONFIG_FILE" 2>/dev/null || true; set +a
+fi
+PORT="${WYRDSEKAI_PORT:-7070}"
+STATE="${BRAINSTEM_STATE_DIR:-$DATA_DIR/brainstem}"
+CONF_DIR="$(dirname "$CONFIG_FILE")"
+HOOKS="${BRAINSTEM_HOOKS_DIR:-$CONF_DIR/brainstem}"
+DB="${BRAINSTEM_DB:-$DATA_DIR/world.db}"
+BACKUPS="${BRAINSTEM_BACKUPS_DIR:-$DATA_DIR/backups}"
+mkdir -p "$STATE" 2>/dev/null || true
+
+log() { echo "$(date -u +%FT%TZ) $*"; }
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+event() {   # <event> <reason> [snapshot]
+    local snap="${3:-}"
+    printf '{"ts":"%s","event":"%s","reason":"%s","snapshot":"%s"}\n' \
+        "$(date -u +%FT%TZ)" "$1" "$(json_escape "$2")" "$(json_escape "$snap")" >> "$STATE/events.jsonl"
+    log "event: $1 — $2${snap:+ (snapshot $snap)}"
+}
+
+# ── the supervisor's word: active | inactive | activating | deactivating | failed | unmanaged ──
+unit_state() {
+    if [[ -n "${BRAINSTEM_FAKE_UNIT:-}" ]]; then echo "$BRAINSTEM_FAKE_UNIT"; return; fi
+    if [[ "$OS" == "Linux" ]] && command -v systemctl >/dev/null 2>&1 \
+            && [[ -f "/usr/lib/systemd/system/$UNIT.service" || -f "/etc/systemd/system/$UNIT.service" ]]; then
+        systemctl is-active "$UNIT" 2>/dev/null || echo inactive
+        return
+    fi
+    if [[ "$OS" == "Darwin" ]] && command -v launchctl >/dev/null 2>&1; then
+        if launchctl print "system/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+            if launchctl print "system/$LAUNCHD_LABEL" 2>/dev/null | grep -q "state = running"; then echo active; else echo inactive; fi
+        else
+            echo inactive
+        fi
+        return
+    fi
+    echo unmanaged
+}
+
+# seconds since the unit became active; 0 when unknown. systemd says; launchd does not, so
+# elsewhere it is counted from the moment this watcher saw the unit become active.
+unit_uptime() {
+    if [[ -n "${BRAINSTEM_FAKE_UPTIME:-}" ]]; then echo "$BRAINSTEM_FAKE_UPTIME"; return; fi
+    if [[ "$OS" == "Linux" ]] && command -v systemctl >/dev/null 2>&1; then
+        local ts; ts="$(systemctl show "$UNIT" -p ActiveEnterTimestampMonotonic --value 2>/dev/null || echo 0)"
+        local now; now="$(awk '{printf "%d", $1*1000000}' /proc/uptime 2>/dev/null || echo 0)"
+        if [[ "${ts:-0}" -gt 0 && "$now" -gt 0 ]]; then echo $(( (now - ts) / 1000000 )); return; fi
+    fi
+    local since; since="$(read_state active_since "")"
+    if [[ -n "$since" ]]; then echo $(( $(date +%s) - since )); else echo 0; fi
+}
+
+health_up() {
+    if [[ -n "${BRAINSTEM_FAKE_HEALTH:-}" ]]; then [[ "$BRAINSTEM_FAKE_HEALTH" == "up" ]]; return; fi
+    curl -s -m 5 "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"status":"UP"'
+}
+
+restart_unit() {
+    if [[ -n "${BRAINSTEM_RESTART_CMD:-}" ]]; then $BRAINSTEM_RESTART_CMD; return $?; fi
+    if [[ "$OS" == "Linux" ]]; then systemctl restart "$UNIT"; return $?; fi
+    if [[ "$OS" == "Darwin" ]]; then launchctl kickstart -k "system/$LAUNCHD_LABEL"; return $?; fi
+    return 1
+}
+
+snapshot_record() {   # prints the snapshot path, or "none"
+    [[ -f "$DB" ]] || { echo none; return; }
+    mkdir -p "$BACKUPS" 2>/dev/null || true
+    local out="$BACKUPS/brainstem.world.db.$(date -u +%Y%m%d-%H%M%S).bak"
+    if command -v sqlite3 >/dev/null 2>&1; then
+        if sqlite3 "$DB" ".backup '$out'" 2>/dev/null; then echo "$out"; return; fi
+    fi
+    # No sqlite3, or the backup API refused: a plain copy of the file and its WAL. The server
+    # is not answering, so the file is as still as it is going to be.
+    if cp "$DB" "$out" 2>/dev/null; then
+        [[ -f "$DB-wal" ]] && cp "$DB-wal" "$out-wal" 2>/dev/null
+        echo "$out"; return
+    fi
+    echo none
+}
+
+hook() {   # doors-close | doors-open
+    local h="$HOOKS/$1"
+    [[ -x "$h" ]] || return 0
+    if "$h"; then log "hook $1 ran"; else log "hook $1 failed (exit $?)"; fi
+}
+
+read_state() { cat "$STATE/$1" 2>/dev/null || echo "${2:-}"; }
+write_state() { printf '%s' "$2" > "$STATE/$1" 2>/dev/null || true; }
+
+pass() {
+    touch "$STATE/heartbeat" 2>/dev/null || true
+    local unit; unit="$(unit_state)"
+    local misses; misses="$(read_state misses 0)"
+    local doors; doors="$(read_state doors open)"
+    local last_unit; last_unit="$(read_state unit "")"
+
+    if [[ "$unit" != "$last_unit" ]]; then
+        case "$unit" in
+            active) write_state active_since "$(date +%s)" ;;
+            failed) event crashed "the server unit failed; the supervisor restarts it"; write_state hang 1 ;;
+            inactive|deactivating) [[ "$last_unit" == "active" ]] && event stopped "the server unit was stopped" ;;
+        esac
+        write_state unit "$unit"
+    fi
+
+    if [[ "$unit" == "active" ]] && health_up; then
+        # "Recovered" is only news after a hang or a crash. A stop the household asked for is
+        # marked by the server itself, and its restart is not a recovery.
+        local since; since="$(read_state down_since "")"
+        if [[ -n "$since" && "$(read_state hang 0)" == "1" ]]; then
+            event recovered "after $(( $(date +%s) - since )) s without an answer"
+        fi
+        write_state down_since ""; write_state hang 0; write_state misses 0
+        if [[ "$doors" == "closed" ]]; then hook doors-open; write_state doors open; fi
+        return
+    fi
+
+    # Down, one way or another.
+    [[ -n "$(read_state down_since "")" ]] || write_state down_since "$(date +%s)"
+    if [[ "$doors" == "open" ]]; then hook doors-close; write_state doors closed; fi
+    if [[ "$unit" != "active" ]]; then
+        write_state misses 0      # not ours to restart: stopped, crashed, or not managed here
+        return
+    fi
+    misses=$((misses + 1)); write_state misses "$misses"
+    log "server not answering ($misses/$MISSES)"
+    if [[ "$misses" -lt "$MISSES" ]]; then return; fi
+    local up; up="$(unit_uptime)"
+    if [[ "$up" -le 0 ]]; then
+        log "unit uptime unknown — not acting on a server that may still be starting"
+        return
+    fi
+    if [[ "$up" -lt "$GRACE" ]]; then
+        log "unit up ${up}s (< ${GRACE}s grace) — still starting, not a hang"
+        return
+    fi
+    write_state hang 1            # active, past grace, and silent: this is the case we exist for
+    local snap; snap="$(snapshot_record)"
+    if restart_unit; then
+        event restarted "the server was up but did not answer for $((misses * INTERVAL)) s; restarted after a snapshot" "$snap"
+    else
+        event restart-failed "the server did not answer for $((misses * INTERVAL)) s and the restart command failed" "$snap"
+    fi
+    write_state misses 0
+}
+
+case "${1:-}" in
+    --status)
+        echo "state dir: $STATE"; echo "unit: $(unit_state)"; echo "misses: $(read_state misses 0)"; echo "doors: $(read_state doors open)"
+        [[ -f "$STATE/events.jsonl" ]] && tail -n 5 "$STATE/events.jsonl"
+        exit 0 ;;
+    --once) BRAINSTEM_ONCE=1 ;;
+esac
+
+log "brainstem watching $UNIT on :$PORT every ${INTERVAL}s (state $STATE)"
+while true; do
+    pass
+    [[ "${BRAINSTEM_ONCE:-}" == "1" ]] && exit 0
+    sleep "$INTERVAL"
+done

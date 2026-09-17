@@ -516,6 +516,7 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_LIBRARY_SERVICE", "id of the MCP service that plays the library role (a research librarian or a peer library; LIBRARY_PROTOCOL.md)", ""],
     ["WYRDSEKAI_LIBRARY_SERVE_FINDINGS", "serve the companions' accepted findings on the library door (only those whose sources may travel)", "true"],
     ["WYRDSEKAI_HOST_APPS", "allowlist of host apps agents may launch", ""],
+    ["WYRDSEKAI_HOST_HAND", "how far a companion's hand reaches into the host: observe, localize, propose, guarded, unattended", "observe"],
     ["WYRDSEKAI_HOST_OPEN_ROOTS", "allowlisted host filesystem roots", ""]
   ]},
   { id: "skills", title: "skills & external tools", keys: [
@@ -538,6 +539,10 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_PG_PASSWORD", "PostgreSQL password", ""],
     ["WYRDSEKAI_BACKUP_ENABLED", "periodic DB snapshots", "true"],
     ["WYRDSEKAI_BACKUP_INTERVAL_HOURS", "snapshot cadence (hours)", "24"],
+    ["WYRDSEKAI_VAULT_MINUTES", "how often the vault takes a content-addressed copy of the self; 0 disables it", "15"],
+    ["WYRDSEKAI_VAULT_DIR", "where the vault's chunks and manifests live", "<data>/vault-store"],
+    ["WYRDSEKAI_VAULT_REMOTE", "rsync destination for wyrd vault sync (a vault node or offsite)", ""],
+    ["WYRDSEKAI_VAULT_DRILL_DAYS", "how often the newest copy is rebuilt into scratch and checked", "30"],
     ["WYRDSEKAI_ENTITY_TTL_DAYS", "memory-entity time-to-live (days)", "90"],
     ["WYRDSEKAI_CONVERSATION_TURNS_RETENTION_DAYS", "conversation-turn retention (days)", "180"]
   ]},
@@ -649,7 +654,9 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_PRESENCE_SILENCE_SEC", "co-presence silence window (sec)", "300"],
     ["WYRDSEKAI_AGENTS_QUIET_WHEN_HUMAN_PRESENT", "hush agent chatter around humans", "true"],
     ["WYRDSEKAI_SESSION_IDLE_REAP_MINUTES", "idle client-session reaping", "240"],
-    ["WYRDSEKAI_INFERENCE_MAX_QUEUE", "resilience-layer inference queue depth", "20"]
+    ["WYRDSEKAI_INFERENCE_MAX_QUEUE", "resilience-layer inference queue depth", "20"],
+    ["WYRDSEKAI_BODY_WATCH_SECONDS", "how often the body watch takes the record's pulse, reads the host and ages the body map", "30"],
+    ["WYRDSEKAI_BODY_ACHE_HOURS", "how long a quiet part of ordinary weight stays in a companion's felt line before it is only in the boiler room", "6"]
   ]}
 ];
 

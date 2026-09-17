@@ -880,6 +880,8 @@
   "status.port.not_responding": "ポート {0}: 応答なし",
   "status.port.responding": "ポート {0}: 応答あり",
   "status.server.not_running": "サーバ: 実行中ではありません",
+  "status.brainstem.running": "脳幹: 監視中（サーバーが応答しなくなれば再起動する）",
+  "status.brainstem.not_running": "脳幹: 動いていない — JVM の外にサーバーの監視役がいない（sudo systemctl start wyrdsekai-brainstem）",
   "status.server.orphans": "サーバ: 孤立プロセスが見つかりました ({0})",
   "status.server.running": "サーバ: 実行中 (pid {0})",
   "stop.force_killing": "{0} を強制終了しています",
@@ -903,6 +905,7 @@
   "update.source_only": "ソースモードです。インストール済みノードを更新するには: wyrd update <.deb|.pkg|.msi のパス>（データと設定は保持され、deb/pkg は自動再起動）。",
   "update.unknown_artifact": "不明なインストーラー形式: {0}（.deb、.pkg、.msi のいずれか）",
   "usage.cmd.backup": "  backup       バックアップスナップショットを作成",
+  "usage.cmd.vault": "  vault        保管庫: status / snapshot [理由] / drill / prune / sync [宛先] / list / restore <id> <dir> / stage <id>",
   "usage.cmd.block": "  block        DID をブロック: wyrd block <did> [--revoke] [--note \"...\"]",
   "usage.cmd.blocks": "  blocks       すべてのブロックを一覧表示",
   "usage.cmd.bond": "  bond         スチュワードによる プレイヤー↔コンパニオン 絆の起動: wyrd bond create <player> <companion-did>",
@@ -948,6 +951,7 @@
   "usage.cmd.wards": "  wards        部屋の結界: list / add / remove",
   "usage.cmd.rooms": "  rooms        作られた部屋: list / demolish <部屋> / prune [--duplicates] [--yes]",
   "usage.cmd.mail": "  mail         世帯メールの記録: 誰が誰にいつ書いたか（管理者向け。件名や本文は表示しない）",
+  "usage.cmd.body": "  body         体の地図: 各部位、その脈、残した印（管理者向け）。body gone <id> で部位を手放す",
   "usage.cmd.web": "  web          ブラウザターミナル :7071 (enable/disable/status)",
   "usage.cmd.whoami": "  whoami       世帯の DID を表示 (did:wyrd:z6Mk…)",
   "usage.cmd.zones": "  zones        ゾーンを管理: list / create <label> / remove <label>",
@@ -1149,6 +1153,8 @@
   "doctor.backups": "バックアップ: {0}、{1} 件（{2}）。0.3.0 からインデックスはスナップショットごとにハードリンクされ、新規分は容量を使いません",
   "doctor.swap": "スワップ: {1} MB 中 {0} MB 使用（起動以降のサービスのメモリピーク: {2}）",
   "doctor.swappiness": "vm.swappiness={0}: カーネルは mmap されたモデルのページを捨てる前にプロセスメモリをスワップします。パッケージは 10 に設定します（/etc/sysctl.d/90-wyrdsekai.conf）",
+  "doctor.oom_score": "サービスの OOM スコア: {0}（カーネルは記録より先に脳を止める）",
+  "doctor.oom_score_unset": "サービスの OOM スコアは {0}: カーネルが llama コンテナより先にサーバーを止める可能性がある。パッケージを再インストールするか、ユニットに OOMScoreAdjust=-500 を追加する",
   "doctor.state_notes": "状態: {0} 個の属性は設計上まだ二つのストアにあります（統合ロードマップであり、故障ではありません）— `wyrd state dump --summary` で一覧できます",
   "doctor.state_errors": "状態ダンプがエラーを報告しました:"
 }

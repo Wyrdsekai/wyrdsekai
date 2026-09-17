@@ -269,6 +269,39 @@ public final class WyrdConfig {
     /** {@code WYRDSEKAI_BUNSHIN_WALL_CLOCK} — seconds a bunshin may run by default; 0 = size it from measured inference latency. */
     public int bunshinWallClock() { return intOr("WYRDSEKAI_BUNSHIN_WALL_CLOCK", "bunshin.wall_clock", 0); }
 
+    /** {@code WYRDSEKAI_BODY_WATCH_SECONDS} — how often the body watch takes the record's pulse and ages the map. */
+    public int bodyWatchSeconds() { return intOr("WYRDSEKAI_BODY_WATCH_SECONDS", "body.watch_seconds", 30); }
+
+    /**
+     * {@code WYRDSEKAI_HOST_HAND} — how far a companion's hand reaches into the host:
+     * {@code observe} (read gauges), {@code localize} (read logs), {@code propose} (write a
+     * proposal to the steward, run nothing), {@code guarded} (allowlisted acts with halts and a
+     * mark), {@code unattended} (guarded plus reboot). Default observe.
+     */
+    public String hostHandRung() {
+        var v = resolve("WYRDSEKAI_HOST_HAND", "host.hand", () -> "observe");
+        return v == null || v.isBlank() ? "observe" : v.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** {@code WYRDSEKAI_BODY_ACHE_HOURS} — how long a quiet part of ordinary weight stays in her felt line. */
+    public int bodyAcheHours() { return intOr("WYRDSEKAI_BODY_ACHE_HOURS", "body.ache_hours", 6); }
+
+    /** {@code WYRDSEKAI_VAULT_MINUTES} — how often the vault takes a copy; 0 turns the vault off. */
+    public int vaultMinutes() {
+        var v = resolve("WYRDSEKAI_VAULT_MINUTES", "vault.minutes", () -> "15");
+        try { return Math.max(0, Integer.parseInt(v.trim())); } catch (Exception e) { return 15; }
+    }
+
+    /** {@code WYRDSEKAI_VAULT_DIR} — where the copies are kept; default {@code <data>/vault-store}
+     *  ({@code <data>/vault} is the Vault room's shelf). */
+    public String vaultDir() { return resolve("WYRDSEKAI_VAULT_DIR", "vault.dir", () -> ""); }
+
+    /** {@code WYRDSEKAI_VAULT_REMOTE} — an rsync destination for {@code wyrd vault sync}; blank = none. */
+    public String vaultRemote() { return resolve("WYRDSEKAI_VAULT_REMOTE", "vault.remote", () -> ""); }
+
+    /** {@code WYRDSEKAI_VAULT_DRILL_DAYS} — how often the newest copy is restored into scratch and checked. */
+    public int vaultDrillDays() { return intOr("WYRDSEKAI_VAULT_DRILL_DAYS", "vault.drill_days", 30); }
+
     private int intOr(String env, String key, int dflt) {
         var v = resolve(env, key, () -> null);
         if (v == null || v.isBlank()) return dflt;

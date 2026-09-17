@@ -88,6 +88,8 @@ public class BridgeDataProviderImpl implements BridgeDataProvider {
 
     // Health / Engine Room data — set after EngineRoomService is created
     private volatile Supplier<String> healthStatusSupplier;
+    // The body map as prose — set after the map is installed
+    private volatile Supplier<String> bodySupplier;
 
     // Reputation data — set after CountingHouseActor/MutualCreditLedger are available
     private volatile Supplier<String> reputationSummarySupplier;
@@ -148,6 +150,11 @@ public class BridgeDataProviderImpl implements BridgeDataProvider {
     /** Set health status supplier (called from Main after EngineRoomService is created). */
     public void setHealthSupplier(Supplier<String> healthStatus) {
         this.healthStatusSupplier = healthStatus;
+    }
+
+    /** Set the body map supplier (called from Main once the map is installed). */
+    public void setBodySupplier(Supplier<String> body) {
+        this.bodySupplier = body;
     }
 
     /** Set reputation data suppliers (called from Main after economy is initialized). */
@@ -943,6 +950,12 @@ public class BridgeDataProviderImpl implements BridgeDataProvider {
     public String formatHealthStatus() {
         if (healthStatusSupplier != null) return healthStatusSupplier.get();
         return "No health data available";
+    }
+
+    @Override
+    public String formatBodyMap() {
+        if (bodySupplier != null) return bodySupplier.get();
+        return "No body map on this node.";
     }
 
     // --- Inference methods ---

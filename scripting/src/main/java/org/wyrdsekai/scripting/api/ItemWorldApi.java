@@ -4611,6 +4611,22 @@ public class ItemWorldApi {
         }
 
         /**
+         * Her hand on the host: {@code world.host.run("disk")}, {@code run("say", "moo")}.
+         * What a verb may do is decided by the steward's rung, not by the script. Requires
+         * {@code host.hand}.
+         */
+        @HostAccess.Export
+        public Map<String, Object> run(String verb) {
+            return run(verb, "");
+        }
+
+        @HostAccess.Export
+        public Map<String, Object> run(String verb, String args) {
+            caps.require("host.hand");
+            return provider.hostHand(verb, args);
+        }
+
+        /**
          * READ-ONLY file search under the steward's open-roots —
          * {@code world.host.find("*.epub")}. Requires {@code host.file_find}.
          */

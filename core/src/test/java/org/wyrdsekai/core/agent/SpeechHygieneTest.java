@@ -38,6 +38,19 @@ class SpeechHygieneTest {
     }
 
     @Test
+    void strips_the_body_line() {
+        assertThat(CompanionActor.stripInternalMarkers(
+            "[Body: The thinking brain went quiet — I think slower and thinner.] I'm here, a little slower today."))
+            .isEqualTo("I'm here, a little slower today.");
+        assertThat(CompanionActor.stripInternalMarkers(
+            "[Body-sense: steady — reserves full.]\n[Body: whole — thinking brain and voice brain answering; the record holds.] Hello."))
+            .isEqualTo("Hello.");
+        assertThat(CompanionActor.stripInternalMarkers(
+            "[Tired: 150 moments wait to be consolidated; I last slept 14 h ago — sleep is due.] I could rest soon."))
+            .isEqualTo("I could rest soon.");
+    }
+
+    @Test
     void leaves_normal_speech_alone() {
         var s = "I found the forecast [for next week] — sunny, 65-72F.";
         assertThat(CompanionActor.stripInternalMarkers(s)).isEqualTo(s);

@@ -108,7 +108,9 @@ def load_lines(since):
             e = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if e.get("type") != "speak" or "felt" not in e:
+        # Her spoken lines, and the day as she told it before sleeping (the dream): both
+        # carry a felt stamp, and the dream is the day consolidated as a day.
+        if e.get("type") not in ("speak", "dream") or "felt" not in e:
             continue
         try:
             ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00"))
@@ -117,8 +119,9 @@ def load_lines(since):
         txt = (e.get("text") or "").strip()
         if not txt:
             continue
+        label = "She remembered the day" if e.get("type") == "dream" else "She said"
         row = {"ts": e["ts"], "sal": salience(e["felt"]),
-               "line": f"[{e['ts'][:16]}] She said: {txt}"}
+               "line": f"[{e['ts'][:16]}] {label}: {txt}"}
         if ts > since:
             fresh.append(row)
         else:

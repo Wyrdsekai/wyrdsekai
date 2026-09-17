@@ -2224,10 +2224,32 @@ function Invoke-Household {
             else { Write-Err2 "No household key in server response." }
         }
         "join" { $script:Rest = $Rest[1..($Rest.Count-1)]; Invoke-Join }
+        "quiet" {
+            # Quiet hours kept in the record: show, set HH:MM-HH:MM, or off (steward).
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            $hdr = @{ Authorization = "Bearer $token" }
+            try {
+                if ($Rest.Count -ge 2) {
+                    $d = Invoke-RestMethod -Method Post -Uri "$(Get-ApiBase)/api/household/quiet" -Headers $hdr -ContentType 'application/json' -Body (@{ window = $Rest[1] } | ConvertTo-Json) -TimeoutSec 15
+                } else {
+                    $d = Invoke-RestMethod -Uri "$(Get-ApiBase)/api/household/quiet" -Headers $hdr -TimeoutSec 15
+                }
+            } catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 403) { Write-Err2 "Only the steward sets quiet hours."; exit 1 }
+                Write-Err2 "The server did not answer at $(Get-ApiBase) - is it running?"; exit 1
+            }
+            $w = if ($d.window) { $d.window } else { "none" }
+            $now = if ($d.quietNow) { "  (quiet now)" } else { "" }
+            Write-Host "Quiet hours: $w$now  [$($d.source)]"
+        }
         default {
             Write-Host "Usage:"
             Write-Host "  wyrd household key"
             Write-Host "       Print this hub's active household key (generates one if none)."
+            Write-Host "  wyrd household quiet [HH:MM-HH:MM | off]"
+            Write-Host "       Show or set the household quiet hours, kept in the record (steward)."
             Write-Host "  wyrd join <host[:port]> --household-key <key>"
             Write-Host "       Auto-add this node to the hub's home zone (run on the joining node)."
         }
@@ -2879,6 +2901,101 @@ function Invoke-Mail {
         Write-Host ("{0,-17} {1,-24} {2,-24} {3,6} {4}" -f $when, "$($r.from)", "$($r.to)", [int]$r.bytes, $state)
     }
     Write-Host "$($rows.Count) message(s). Subjects and bodies belong to the two people in them."
+}
+
+function Invoke-Body {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "show" }
+    $token = Get-SessionToken
+    if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+    if ($sub -eq 'gone') {
+        if ($Rest.Count -lt 2) { Write-Err2 "Which part? wyrd body gone <part-id>"; exit 64 }
+        try {
+            $r = Invoke-RestMethod -Method Post -Uri "$(Get-ApiBase)/api/body/gone" -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body (@{ part = $Rest[1] } | ConvertTo-Json) -TimeoutSec 15
+            Write-Host "Declared gone: $($r.id)"
+        } catch { Write-Err2 "The server did not accept that: $($_.Exception.Message)"; exit 1 }
+        return
+    }
+    if ($sub -notin @('show', 'map', 'list')) { Write-Host "Usage: wyrd body [show] | gone <part-id>"; exit 64 }
+    try {
+        $d = Invoke-RestMethod -Uri "$(Get-ApiBase)/api/body" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15
+    } catch {
+        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+        if ($code -eq 403) { Write-Err2 "Only the steward reads the body map."; exit 1 }
+        Write-Err2 "The server did not answer at $(Get-ApiBase) - is it running?"; exit 1
+    }
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    function Ago($ms) {
+        if (-not $ms) { return 'never' }
+        $s = [int](($now - [int64]$ms) / 1000)
+        if ($s -lt 60) { return "$($s)s ago" }
+        if ($s -lt 3600) { return "$([int]($s / 60))m ago" }
+        if ($s -lt 172800) { return "$([int]($s / 3600))h ago" }
+        return "$([int]($s / 86400))d ago"
+    }
+    if ($d.host) { Write-Host "host: $($d.host)"; Write-Host "" }
+    $parts = @($d.parts)
+    if ($parts.Count -eq 0) { Write-Host "No parts attached yet." }
+    else {
+        Write-Host ("{0,-8} {1,-28} {2,-16} {3,-7} {4,-12} {5,-14} {6}" -f 'KIND', 'PART', 'STATE', 'WEIGHT', 'HEARD', 'LAST WORKED', 'DETAIL')
+        foreach ($p in $parts) {
+            $state = if ($p.quietFor) { "$($p.state) $($p.quietFor)" } else { "$($p.state)" }
+            Write-Host ("{0,-8} {1,-28} {2,-16} {3,-7} {4,-12} {5,-14} {6}" -f $p.kind, "$($p.name)", $state, $p.weight, (Ago $p.lastHeartbeat), (Ago $p.lastUsed), "$($p.detail)")
+        }
+    }
+    $marks = @($d.marks)
+    if ($marks.Count -gt 0) {
+        Write-Host ""; Write-Host "Marks (what the body did, told to her afterwards):"
+        foreach ($m in ($marks | Select-Object -First 12)) {
+            $when = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$m.at).LocalDateTime.ToString('yyyy-MM-dd HH:mm')
+            $flag = if ($m.read) { '' } else { '  (unread)' }
+            Write-Host "  $when  $($m.text)$flag"
+        }
+    }
+}
+
+function Invoke-Vault {
+    # The vault through the running server: status, a copy now, a drill, a prune. Restore and
+    # stage rebuild files with the server down; on Windows run them through the Java tool:
+    #   java -cp "<install>\lib\*" org.wyrdsekai.cli.VaultMain restore --vault <dir> --to <dir> latest
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
+    $token = Get-SessionToken
+    if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+    $hdr = @{ Authorization = "Bearer $token" }
+    $base = Get-ApiBase
+    try {
+        switch ($sub) {
+            "status" {
+                $d = Invoke-RestMethod -Uri "$base/api/vault" -Headers $hdr -TimeoutSec 15
+                Write-Host "Vault: $($d.dir)"
+                Write-Host ("Copies: {0} ({1} kept), store {2:N2} GB" -f $d.copies, $d.kept, ([double]$d.chunkStoreBytes / 1e9))
+                Write-Host ("Latest: {0}" -f $(if ($d.latest) { $d.latest } else { "none" }))
+                if ($d.lastDrill) { Write-Host ("Last drill: {0} {1} - {2}" -f $d.lastDrill, $(if ($d.lastDrillOk) { "passed" } else { "FAILED" }), $d.lastDrillDetail) } else { Write-Host "Last drill: never" }
+                if ($d.lastError) { Write-Host "Last error: $($d.lastError)" }
+                if ($d.unclassified -and @($d.unclassified).Count -gt 0) { Write-Host ("Unclassified in the data dir (not vaulted): " + (@($d.unclassified) -join ", ")) }
+            }
+            "snapshot" {
+                $reason = if ($Rest.Count -ge 2) { $Rest[1] } else { "the steward asked" }
+                $d = Invoke-RestMethod -Method Post -Uri "$base/api/vault/snapshot" -Headers $hdr -ContentType 'application/json' -Body (@{ reason = $reason } | ConvertTo-Json) -TimeoutSec 600
+                Write-Host ("Copy {0}: {1} files, {2:N1} MB" -f $d.id, $d.files, ([double]$d.bytes / 1e6))
+            }
+            "drill" {
+                $d = Invoke-RestMethod -Method Post -Uri "$base/api/vault/drill" -Headers $hdr -TimeoutSec 600
+                Write-Host ($(if ($d.ok) { "Drill passed: " } else { "Drill FAILED: " }) + $d.detail)
+            }
+            "prune" {
+                $d = Invoke-RestMethod -Method Post -Uri "$base/api/vault/prune" -Headers $hdr -TimeoutSec 120
+                Write-Host ("Pruned {0}; {1} copies remain" -f $d.removed, $d.copies)
+            }
+            default { Write-Host "Usage: wyrd vault [status] | snapshot [reason] | drill | prune   (restore/stage: see the comment in wyrd.ps1)"; exit 64 }
+        }
+    } catch {
+        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+        if ($code -eq 403) { Write-Err2 "Only the steward opens the vault."; exit 1 }
+        if ($code -eq 404) { Write-Err2 "No vault on this node (WYRDSEKAI_VAULT_MINUTES=0)."; exit 1 }
+        Write-Err2 "The server did not answer at $base - is it running?"; exit 1
+    }
 }
 
 function Invoke-Rooms {
@@ -4071,6 +4188,8 @@ switch ($Command.ToLower()) {
     "soul"      { Invoke-Soul }
     "rooms"     { Invoke-Rooms }
     "mail"      { Invoke-Mail }
+    "body"      { Invoke-Body }
+    "vault"     { Invoke-Vault }
     "visitors"  { Invoke-Visitors }
     "invite"    { Invoke-InviteCmd }
     "key"       { Invoke-KeyCmd }

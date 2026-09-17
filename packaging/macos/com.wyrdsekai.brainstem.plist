@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    LaunchDaemon for the wyrdsekai brainstem on macOS: the small process outside the
+    server that watches it, snapshots the database and restarts it when it is alive but
+    not answering. Template: the .pkg postinstall substitutes __HOME__ so the data dir
+    resolves to the installing user's home, as for the server daemon.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wyrdsekai.brainstem</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/wyrdsekai/bin/wyrdsekai-brainstem</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/wyrdsekai-brainstem.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/wyrdsekai-brainstem.log</string>
+</dict>
+</plist>

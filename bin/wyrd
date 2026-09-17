@@ -3971,7 +3971,20 @@ is_systemd_managed() {
     [[ $rc -ne 4 ]]
 }
 
+# Hold still before a stop or an update: the running node asks every companion
+# to persist what she carries, checkpoints the record, and leaves a mark that names the reason
+# and who asked. Best effort — no session, no server, no problem; the service quiesces again
+# on its own at SIGTERM, without a second mark.
+_quiesce_notice() {   # <reason>
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token 2>/dev/null || true)
+    [[ -z "$token" ]] && return 0
+    curl -s -m 12 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+        -d "{\"reason\": \"$1\", \"who\": \"the steward\"}" "$api/api/quiesce" >/dev/null 2>&1 || true
+}
+
 do_stop() {
+    _quiesce_notice "a stop"
     # Tear the SSH reverse tunnel down first (no-op if not running) so it doesn't
     # keep dialing the relay after the zone is gone.
     _stop_ssh_tunnel
@@ -4080,6 +4093,12 @@ do_status() {
         else
             info "$(_t status.server.not_running)"
         fi
+    fi
+    # The brainstem (the watcher outside the JVM): running or not, on the platforms that have it.
+    if is_systemd_managed 2>/dev/null; then
+        if systemctl is-active wyrdsekai-brainstem.service >/dev/null 2>&1; then log "$(_t status.brainstem.running)"; else warn "$(_t status.brainstem.not_running)"; fi
+    elif [[ "$(uname -s)" == "Darwin" ]] && launchctl print system/com.wyrdsekai.brainstem >/dev/null 2>&1; then
+        log "$(_t status.brainstem.running)"
     fi
 
     # Health check
@@ -4392,6 +4411,7 @@ do_update() {
     case "$artifact" in
         *.deb)
             log "$(_t update.installing "$artifact")"
+            _quiesce_notice "an update"
             sudo dpkg -i "$artifact" || { err "$(_t update.install_failed)"; return 1; }
             ;;
         *.pkg)
@@ -4448,6 +4468,16 @@ do_doctor() {
         local _peak=""; if is_systemd_managed 2>/dev/null; then _peak="$(systemctl show wyrdsekai -p MemoryPeak --value 2>/dev/null | awk '{ if ($1+0 > 0) printf "%.1f GB", $1/1073741824 }' || true)"; fi
         if [[ -n "$_sw_total" && "$_sw_total" -gt 0 ]]; then
             if [[ "${_sw_used:-0}" -gt $(( _sw_total / 2 )) ]]; then warn "$(_t doctor.swap "${_sw_used}" "${_sw_total}" "${_peak:-?}")"; _wbump; else log "$(_t doctor.swap "${_sw_used}" "${_sw_total}" "${_peak:-?}")"; fi
+        fi
+        # The record's process should be the last thing the kernel kills and the brains the
+        # first. The unit sets OOMScoreAdjust=-500; the llama
+        # containers carry +500. Report what is actually in force.
+        if is_systemd_managed 2>/dev/null; then
+            local _mpid _oom; _mpid="$(systemctl show wyrdsekai -p MainPID --value 2>/dev/null || true)"
+            if [[ -n "$_mpid" && "$_mpid" != "0" && -r "/proc/$_mpid/oom_score_adj" ]]; then
+                _oom="$(cat "/proc/$_mpid/oom_score_adj" 2>/dev/null || true)"
+                if [[ "${_oom:-0}" -lt 0 ]]; then log "$(_t doctor.oom_score "$_oom")"; else warn "$(_t doctor.oom_score_unset "${_oom:-0}")"; _wbump; fi
+            fi
         fi
         local _swp; _swp="$(cat /proc/sys/vm/swappiness 2>/dev/null || true)"
         [[ -n "$_swp" && "$_swp" -gt 20 ]] && info "$(_t doctor.swappiness "$_swp")"
@@ -5252,10 +5282,11 @@ do_uninstall() {
                 rm -f "$tmp_un"
             else
                 # Fallback (source checkout / pre-helper install): inline best-effort.
-                for label in dev.wyrdsekai.server org.wyrdsekai.server com.wyrdsekai.server com.wyrdsekai.oracle; do
+                for label in dev.wyrdsekai.server org.wyrdsekai.server com.wyrdsekai.server com.wyrdsekai.brainstem com.wyrdsekai.oracle; do
                     sudo launchctl bootout "system/$label" 2>/dev/null || true
                 done
                 sudo rm -f /Library/LaunchDaemons/com.wyrdsekai.server.plist \
+                           /Library/LaunchDaemons/com.wyrdsekai.brainstem.plist \
                            /Library/LaunchDaemons/com.wyrdsekai.oracle.plist \
                            /Library/LaunchDaemons/org.wyrdsekai.server.plist \
                            /Library/LaunchDaemons/dev.wyrdsekai.server.plist
@@ -5610,6 +5641,95 @@ do_backup() {
             echo "$(_t backup.pruned "$(basename "$old")")"
         done
     fi
+}
+
+do_vault() {
+    local sub="${1:-status}"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local vault_dir="${WYRDSEKAI_VAULT_DIR:-$DATA_DIR/vault-store}"
+    _vault_call() {   # <method> <path> [json]
+        local token; token=$(wyrd_session_token)
+        [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+        local resp code
+        if [[ "$1" == "POST" ]]; then
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "${3:-{\}}" "$api$2")
+        else
+            resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api$2")
+        fi
+        [[ $? -eq 0 ]] || { err "The server did not answer at $api — is it running?"; return 1; }
+        code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+        [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+        [[ "$code" == "403" ]] && { err "Only the steward opens the vault."; return 1; }
+        [[ "$code" == "404" ]] && { err "No vault on this node (WYRDSEKAI_VAULT_MINUTES=0)."; return 1; }
+        [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+        printf '%s' "$resp"
+    }
+    _vault_java() {   # offline verbs through the CLI jar
+        local CLI_LIB
+        if [[ "$MODE" == "source" ]]; then
+            [[ -d "$PROJECT_ROOT/cli/build/install/cli" ]] || (cd "$PROJECT_ROOT" && "$GRADLE" :cli:installDist -q) || { err "$(_t common.build_failed)"; return 1; }
+            CLI_LIB="$PROJECT_ROOT/cli/build/install/cli/lib"
+        else
+            CLI_LIB="$REAL_BIN/../lib/cli"; [[ ! -d "$CLI_LIB" ]] && CLI_LIB="$REAL_BIN/../lib"
+        fi
+        find_java || { err "$(_t common.java_missing)"; return 1; }
+        local CP; CP=$(echo "$CLI_LIB"/*.jar | tr ' ' ':')
+        [[ "$MODE" == "source" && -d "$PROJECT_ROOT/cli/build/classes/java/main" ]] && CP="$PROJECT_ROOT/cli/build/classes/java/main:$PROJECT_ROOT/core/build/classes/java/main:$CP"
+        "$JAVA_CMD" -cp "$CP" org.wyrdsekai.cli.VaultMain "$@"
+    }
+    case "$sub" in
+        status)
+            local resp; resp=$(_vault_call GET /api/vault) || return 1
+            printf '%s' "$resp" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print("Vault: %s" % d.get("dir"))
+print("Copies: %s (%s kept), store %.2f GB" % (d.get("copies"), d.get("kept"), (d.get("chunkStoreBytes") or 0)/1e9))
+print("Latest: %s" % (d.get("latest") or "none"))
+ld=d.get("lastDrill")
+print("Last drill: %s" % ("never" if not ld else "%s %s — %s" % (ld, "passed" if d.get("lastDrillOk") else "FAILED", d.get("lastDrillDetail",""))))
+if d.get("lastError"): print("Last error: %s" % d["lastError"])
+if d.get("unclassified"): print("Unclassified in the data dir (not vaulted): %s" % ", ".join(d["unclassified"]))
+rec=d.get("recent",[])
+if rec:
+    print(); print("%-22s %-24s %-5s %6s %9s  %s" % ("ID","AT","KEEP","FILES","MB","REASON"))
+    for m in rec: print("%-22s %-24s %-5s %6d %9.1f  %s" % (m["id"], m["at"], "keep" if m.get("keep") else "", m["files"], m["bytes"]/1e6, m["reason"]))
+' ;;
+        snapshot|copy)
+            local reason="${2:-the steward asked}"
+            local resp; resp=$(_vault_call POST /api/vault/snapshot "{\"reason\": \"$reason\"}") || return 1
+            printf '%s\n' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Copy %s: %d files, %.1f MB" % (d["id"], d["files"], d["bytes"]/1e6))' ;;
+        drill)
+            local resp; resp=$(_vault_call POST /api/vault/drill) || return 1
+            printf '%s\n' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(("Drill passed: " if d.get("ok") else "Drill FAILED: ") + d.get("detail",""))' ;;
+        prune)
+            local resp; resp=$(_vault_call POST /api/vault/prune) || return 1
+            printf '%s\n' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Pruned %d; %d copies remain" % (d["removed"], d["copies"]))' ;;
+        sync)
+            # A second copy on another disk, a vault node, or offsite: plain files over rsync.
+            local remote="${2:-${WYRDSEKAI_VAULT_REMOTE:-}}"
+            [[ -z "$remote" ]] && { err "Where to? wyrd vault sync <rsync destination>  (or set WYRDSEKAI_VAULT_REMOTE)"; return 64; }
+            command -v rsync >/dev/null 2>&1 || { err "rsync is not installed"; return 1; }
+            [[ -d "$vault_dir" ]] || { err "No vault at $vault_dir yet"; return 1; }
+            log "Syncing $vault_dir → $remote"
+            rsync -a --delete "$vault_dir/" "$remote/" && log "Synced." ;;
+        list)      _vault_java list --vault "$vault_dir" ;;
+        restore)
+            # Rebuild a copy under a directory of your choosing (the server may be up).
+            local id="${2:-latest}" to="${3:-}"
+            [[ -z "$to" ]] && { err "Usage: wyrd vault restore <id|latest> <dir>"; return 64; }
+            _vault_java restore --vault "$vault_dir" --to "$to" "$id" ;;
+        stage)
+            # Rebuild the record from a copy and stage it for the next start. Stop first.
+            local id="${2:-latest}"
+            if curl -sf -m 3 "$api/health" >/dev/null 2>&1; then
+                err "The server is running. Stop it first (wyrd stop), then stage, then start."; return 1
+            fi
+            _vault_java stage --vault "$vault_dir" --data "$DATA_DIR" "$id" ;;
+        *)
+            echo "Usage: wyrd vault [status] | snapshot [reason] | drill | prune | sync [dest] | list | restore <id|latest> <dir> | stage <id|latest>"
+            return 64 ;;
+    esac
 }
 
 do_restore() {
@@ -7504,12 +7624,42 @@ for e in entries:
     print(row)
 ' <<<"$resp" 2>/dev/null || echo "$resp"
             ;;
+        quiet)
+            # Quiet hours, kept in the record (2026-09-16): visitors are not let in, no notice
+            # leaves the house unless critical, and a companion's sleep may start early inside
+            # the window. `wyrd household quiet` shows; `quiet 22:00-07:00` sets; `quiet off` clears.
+            shift || true
+            local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local resp code
+            if [[ -n "${1:-}" ]]; then
+                resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                    -d "{\"window\": \"$1\"}" "$api/api/household/quiet") \
+                    || { err "The server did not answer at $api — is it running?"; return 1; }
+            else
+                resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/household/quiet") \
+                    || { err "The server did not answer at $api — is it running?"; return 1; }
+            fi
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward sets quiet hours."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            printf '%s' "$resp" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+w=d.get("window") or ""
+print("Quiet hours: " + (w if w else "none") + ("  (quiet now)" if d.get("quietNow") else "") + "  [" + d.get("source","") + "]")
+'
+            ;;
         help|*)
             echo "Usage:"
             echo "  wyrd household key"
             echo "       Print this hub's active household key (generates one if none)."
             echo "  wyrd household audit [--limit <n>]"
             echo '       Recent household audit log (requires wyrd login).'
+            echo "  wyrd household quiet [HH:MM-HH:MM | off]"
+            echo '       Show or set the household quiet hours, kept in the record (steward).'
             echo "  wyrd join <host[:port]> --household-key <key>"
             echo "       Auto-add this node to the hub's home zone (run on the joining node)."
             ;;
@@ -11817,6 +11967,61 @@ print("%d message(s). Subjects and bodies belong to the two people in them." % l
     esac
 }
 
+do_body() {
+    local sub="${1:-show}"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token)
+    [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+    case "$sub" in
+        show|map|list)
+            local resp code
+            resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/body") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward reads the body map."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            printf '%s' "$resp" | python3 -c '
+import json,sys,datetime,time
+d=json.load(sys.stdin)
+now=time.time()*1000
+def ago(ms):
+    if not ms: return "never"
+    s=int((now-ms)/1000)
+    if s<60: return "%ds ago"%s
+    if s<3600: return "%dm ago"%(s//60)
+    if s<172800: return "%dh ago"%(s//3600)
+    return "%dd ago"%(s//86400)
+if d.get("host"): print("host: "+d["host"]); print()
+parts=d.get("parts",[])
+if not parts: print("No parts attached yet.")
+else:
+    print("%-8s %-28s %-9s %-7s %-12s %-14s %s" % ("KIND","PART","STATE","WEIGHT","HEARD","LAST WORKED","DETAIL"))
+    for p in parts:
+        state=p["state"]+(" "+p["quietFor"] if p.get("quietFor") else "")
+        print("%-8s %-28s %-9s %-7s %-12s %-14s %s" % (p["kind"], p["name"][:28], state[:9] if not p.get("quietFor") else state, p["weight"], ago(p.get("lastHeartbeat")), ago(p.get("lastUsed")), p.get("detail","")))
+marks=d.get("marks",[])
+if marks:
+    print(); print("Marks (what the body did, told to her afterwards):")
+    for m in marks[:12]:
+        when=datetime.datetime.fromtimestamp(m["at"]/1000).strftime("%Y-%m-%d %H:%M")
+        print("  %s  %s%s" % (when, m["text"], "" if m.get("read") else "  (unread)"))
+'
+            ;;
+        gone)
+            [[ -z "${2:-}" ]] && { err "Which part? wyrd body gone <part-id>   (ids are in: wyrd body)"; return 64; }
+            local resp code
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                -d "{\"part\": \"$2\"}" "$api/api/body/gone") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            log "Declared gone: $2"
+            ;;
+        *) echo "Usage: wyrd body [show] | gone <part-id>"; return 64 ;;
+    esac
+}
+
 do_rooms() {
     local sub="${1:-list}"
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
@@ -13662,6 +13867,7 @@ case "${1:-help}" in
     status)     do_status ;;
     log)        do_log ;;
     backup)     do_backup ;;
+    vault)      do_vault "${@:2}" ;;
     model)      do_model "${2:-}" "${3:-}" ;;
     restore)    do_restore "$2" ;;
     recover)    do_recover "$2" "$3" ;;
@@ -13708,6 +13914,7 @@ case "${1:-help}" in
     wards)      do_wards "${@:2}" ;;
     rooms)      do_rooms "${@:2}" ;;
     mail)       do_mail "${@:2}" ;;
+    body)       do_body "${@:2}" ;;
     config)     do_config "${2:-help}" "${3:-}" ;;
     reset)      do_reset "${2:-soft}" ;;
     reseed)     do_reseed ;;
@@ -13746,6 +13953,7 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.web)"
         echo "$(_t usage.cmd.log)"
         echo "$(_t usage.cmd.backup)"
+        echo "$(_t usage.cmd.vault)"
         echo "$(_t usage.cmd.model)"
         echo "$(_t usage.cmd.restore)"
         echo "$(_t usage.cmd.config)"
@@ -13784,6 +13992,7 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.wards)"
         echo "$(_t usage.cmd.rooms)"
         echo "$(_t usage.cmd.mail)"
+        echo "$(_t usage.cmd.body)"
         echo "$(_t usage.cmd.passwd)"
         echo "$(_t usage.cmd.discover)"
         echo "$(_t usage.cmd.discover_2)"

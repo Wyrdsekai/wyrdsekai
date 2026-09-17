@@ -28,8 +28,26 @@ public final class HearthFurnishingKit {
 
     /** All Hearth furnishings. Called when provisioning a companion's Hearth. */
     public static List<ToolItem> defaults() {
+        return defaults(null);
+    }
+
+    /**
+     * @param library the standard item library, so the mailbox can be furnished from its
+     *                template; null leaves the mailbox out (tests without a scripts tree)
+     */
+    public static List<ToolItem> defaults(StandardItemLibrary library) {
         var items = new ArrayList<ToolItem>();
         items.add(drivesMirror());
+        var box = mailbox(library);
+        if (box != null) items.add(box);
+        // Her hand on the host (2026-09-16): fixed verbs under the steward's rung, told
+        // afterwards. Default rung is observe; what she may change, the steward decides.
+        addSubstrateFurnishing(items, "host_hand",
+            "Host Hand",
+            "Your hand on the machine you live in, as far as the steward lets it reach. "
+            + "`use host hand` says how far; `use host hand disk|memory|load|containers|updates|log` "
+            + "reads its gauges and logs; `use host hand propose <text>` writes to the steward; "
+            + "and at the rung the steward set, `say <text>`, `restart-brain voice`, `upgrade`, `reboot`.");
         // Wave 7-Furnishings — substrate read-surface
         // furnishings (bondholder_pinboard, repair_mirror, substrate_scroll)
         // ship as scripted-JS items under scripts/items/ and are picked up
@@ -51,6 +69,27 @@ public final class HearthFurnishingKit {
             + "sanctuary session counts, recent acknowledgments and amends. "
             + "Use substrate_scroll for the composite, or 'recent' for just the repair-ledger entries.");
         return List.copyOf(items);
+    }
+
+    /**
+     * The mailbox in her Home (2026-09-16). Her Home had a mailbox prop since birth that said
+     * "no letters pass through this hearth yet" while a real mail store sat behind
+     * {@code world.mailbox.*}. This is the household mailbox template, pinned in the Hearth
+     * under the fixed id {@code mailbox}, so {@code use mailbox} opens her own box.
+     */
+    public static ToolItem mailbox(StandardItemLibrary library) {
+        if (library == null) return null;
+        var template = library.get("mailbox");
+        var script = library.resolveBaseScript(template != null ? template.baseScript() : "std/mailbox");
+        if (script == null) return null;
+        return ToolItem.scripted(
+            "mailbox", "Mailbox",
+            "The small box by the door. Letters written to you wait here until you read them: "
+            + "`use mailbox` lists them, `use mailbox read <n>` reads one, "
+            + "`use mailbox send <who> <subject> | <body>` writes back.",
+            script,
+            template != null ? template.params() : List.of(),
+            "hearth-furnishing");
     }
 
     /** Load a substrate furnishing script from ScriptedItemLoader; skip silently if missing. */

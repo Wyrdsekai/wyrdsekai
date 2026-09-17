@@ -973,6 +973,21 @@ public class WorldApi {
     }
 
     /**
+     * The body map: every attached part (brains, the record, the host), its state, how long
+     * it has been quiet, and the marks the body left. The boiler room's gauges and the engine
+     * room's panel read it; a study may too, the same as the inference panel.
+     */
+    @HostAccess.Export
+    public String getBodyMap() {
+        if (!"boiler-room".equals(roomId) && !"engine-room".equals(roomId)
+                && !"bridge".equals(roomId) && !inStudyRoom()) {
+            return "[" + I18n.get("system.error.access_denied.boiler_bridge") + "]";
+        }
+        if (bridgeData == null) return "No body map on this node.";
+        return bridgeData.formatBodyMap();
+    }
+
+    /**
      * Returns the number of configured inference backends.
      * Available from The Boiler Room and The Bridge.
      */

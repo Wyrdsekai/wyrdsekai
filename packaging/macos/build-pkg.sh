@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/macos/build-pkg.sh
-#   WYRDSEKAI_VERSION=0.3.4 ./packaging/macos/build-pkg.sh
+#   WYRDSEKAI_VERSION=0.4.0 ./packaging/macos/build-pkg.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.3.4}"
+VERSION="${WYRDSEKAI_VERSION:-0.4.0}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 PKG_BUILD="$PROJECT_DIR/build/pkg"
@@ -204,6 +204,12 @@ if compgen -G "$PROJECT_DIR/packaging/oracle/oracle_core-*.whl" >/dev/null 2>&1;
 else
     echo "NOTE: oracle-core wheel not bundled — copy ../oracle-core/dist/*.whl into packaging/oracle/"
 fi
+# The brainstem script and its LaunchDaemon template (postinstall renders __HOME__).
+mkdir -p "$PAYLOAD/usr/local/wyrdsekai/scripts"
+cp "$PROJECT_DIR/packaging/brainstem/wyrdsekai-brainstem" "$PAYLOAD/usr/local/wyrdsekai/bin/wyrdsekai-brainstem"
+chmod +x "$PAYLOAD/usr/local/wyrdsekai/bin/wyrdsekai-brainstem"
+cp "$PROJECT_DIR/packaging/macos/com.wyrdsekai.brainstem.plist" \
+   "$PAYLOAD/usr/local/wyrdsekai/scripts/com.wyrdsekai.brainstem.plist"
 # Oracle LaunchDaemon plist template → payload scripts/ (postinstall renders __HOME__).
 if [[ -f "$PROJECT_DIR/packaging/macos/com.wyrdsekai.oracle.plist" ]]; then
     mkdir -p "$PAYLOAD/usr/local/wyrdsekai/scripts"
@@ -532,6 +538,26 @@ if [ -d "$ORACLE_WHEEL_DIR" ]; then
         ORACLE_OK=1
     else
         echo "oracle bootstrap deferred — run 'wyrd oracle bootstrap' later"
+    fi
+
+    # The brainstem daemon: installed and started unconditionally; it only acts when the
+    # server daemon is running and not answering.
+    BS_PLIST_TEMPLATE="$WYRD_HOME/scripts/com.wyrdsekai.brainstem.plist"
+    BS_PLIST_TARGET=/Library/LaunchDaemons/com.wyrdsekai.brainstem.plist
+    BSVC=system/com.wyrdsekai.brainstem
+    if [ -f "$BS_PLIST_TEMPLATE" ]; then
+        sed -e "s|__HOME__|$TARGET_HOME|g" "$BS_PLIST_TEMPLATE" > "$BS_PLIST_TARGET"
+        chown root:wheel "$BS_PLIST_TARGET"
+        chmod 644 "$BS_PLIST_TARGET"
+        /bin/launchctl bootout "$BSVC" 2>/dev/null || true
+        /bin/launchctl enable "$BSVC" 2>>"$LOG" || true
+        if /bin/launchctl bootstrap system "$BS_PLIST_TARGET" 2>>"$LOG"; then
+            ( /bin/launchctl kickstart -k "$BSVC" 2>>"$LOG" || true ) &
+            echo "Brainstem LaunchDaemon installed + started"
+        else
+            echo "WARN: brainstem launchctl bootstrap failed — start manually:"
+            echo "  sudo launchctl bootstrap system $BS_PLIST_TARGET"
+        fi
     fi
 
     ORACLE_PLIST_TEMPLATE="$WYRD_HOME/scripts/com.wyrdsekai.oracle.plist"

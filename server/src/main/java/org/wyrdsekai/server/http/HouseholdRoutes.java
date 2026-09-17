@@ -10,6 +10,9 @@ import org.wyrdsekai.core.household.HouseholdMember;
 import org.wyrdsekai.core.household.PermissionChecker;
 import org.wyrdsekai.core.household.StewardAuditLog;
 import org.wyrdsekai.core.persistence.AuthService;
+import org.wyrdsekai.core.household.QuietHours;
+
+import java.util.Map;
 
 import java.time.Instant;
 import java.util.List;
@@ -49,6 +52,8 @@ public final class HouseholdRoutes {
         app.post("/api/household/members/{did}/promote", this::handlePromote);
         app.post("/api/household/members/{did}/deactivate", this::handleDeactivate);
         app.get("/api/household/audit", this::handleAuditLog);
+        app.get("/api/household/quiet", this::handleGetQuiet);
+        app.post("/api/household/quiet", this::handleSetQuiet);
     }
 
     // --- Request/Response records ---
@@ -251,6 +256,35 @@ public final class HouseholdRoutes {
                 a.actorName(), a.type().name(), a.targetId(),
                 a.description(), a.approved()))
             .toList());
+    }
+
+    // --- Quiet hours (the record's say) ---
+
+    private void handleGetQuiet(Context ctx) {
+        if (requireAuth(ctx) == null) return;
+        var spec = QuietHours.spec();
+        ctx.json(Map.of("window", spec, "quietNow", QuietHours.isQuiet(),
+            "source", auth.getConfig("quiet_hours") != null ? "record" : "config"));
+    }
+
+    /** {@code {"window": "22:00-07:00"}} or {@code {"window": "off"}}; steward only. */
+    private void handleSetQuiet(Context ctx) {
+        var token = AuthRoutes.extractToken(ctx);
+        var user = token == null ? java.util.Optional.<AuthService.User>empty() : auth.validateSession(token);
+        if (user.isEmpty()) { ctx.status(401).json(Map.of("error", "Authentication required")); return; }
+        if (!"steward".equals(user.get().role())) { ctx.status(403).json(Map.of("error", "Only the steward sets quiet hours")); return; }
+        String window = null;
+        try {
+            var node = Json.mapper().readTree(ctx.body() == null || ctx.body().isBlank() ? "{}" : ctx.body());
+            if (node.hasNonNull("window")) window = node.get("window").asText().trim();
+        } catch (Exception ignored) { }
+        if (window == null || window.isBlank()) { ctx.status(400).json(Map.of("error", "window: HH:MM-HH:MM or off")); return; }
+        if (!"off".equalsIgnoreCase(window) && QuietHours.parse(window).isEmpty()) {
+            ctx.status(400).json(Map.of("error", "window: HH:MM-HH:MM or off")); return;
+        }
+        auth.setConfig("quiet_hours", window.toLowerCase(), user.get().id());
+        QuietHours.refresh();
+        ctx.json(Map.of("window", QuietHours.spec(), "quietNow", QuietHours.isQuiet(), "source", "record"));
     }
 
     // --- Auth helper ---

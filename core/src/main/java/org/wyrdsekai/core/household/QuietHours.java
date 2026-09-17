@@ -38,14 +38,51 @@ public final class QuietHours {
     }
 
     private static volatile String configured;
+    private static volatile java.util.function.Supplier<String> record;
+    private static volatile String cached;
+    private static volatile long cachedAt;
+    private static final long CACHE_MS = 30_000;
 
     /** Set once at boot from the household config; blank means no quiet hours. */
     public static void configure(String spec) {
         configured = spec;
+        cached = null;
+    }
+
+    /**
+     * The record's say (2026-09-16, sleep plan item 2): a window the steward set in the
+     * household config table overrides the boot-time setting, and {@code off} turns quiet
+     * hours off. Read through a short cache; the rooms ask on every entry.
+     */
+    public static void install(java.util.function.Supplier<String> fromRecord) {
+        record = fromRecord;
+        cached = null;
+    }
+
+    /** Forget the cached record value, after the steward changed it. */
+    public static void refresh() {
+        cached = null;
+    }
+
+    /** The window in force: the record's if set ("off" = none), else the boot-time config. */
+    public static String spec() {
+        var r = record;
+        if (r != null) {
+            var now = System.currentTimeMillis();
+            var c = cached;
+            if (c == null || now - cachedAt > CACHE_MS) {
+                try { c = r.get(); } catch (RuntimeException e) { c = null; }
+                cached = c == null ? "" : c;
+                cachedAt = now;
+                c = cached;
+            }
+            if (c != null && !c.isBlank()) return "off".equalsIgnoreCase(c.trim()) ? "" : c;
+        }
+        return configured == null ? "" : configured;
     }
 
     public static Optional<Window> window() {
-        return parse(configured);
+        return parse(spec());
     }
 
     /** Is it quiet now, by the node's clock? */

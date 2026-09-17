@@ -242,6 +242,9 @@ public interface BridgeDataProvider {
     /** Engine Room health summary with alerts and thresholds. */
     default String formatHealthStatus() { return "No health data available"; }
 
+    /** The body map: every attached part, its state, and the marks the body left. */
+    default String formatBodyMap() { return "No body map on this node."; }
+
     // --- Inference methods ---
 
     /** Inference backend status for Boiler Room and Bridge. */

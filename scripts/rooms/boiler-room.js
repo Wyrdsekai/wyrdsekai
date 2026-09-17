@@ -23,9 +23,10 @@ function onUse(entityId, objectName, target) {
         var metrics = world.getSystemMetrics();
         world.emit("narrate", {
             text: world.t("boiler_room.use.gauge", metrics)
+                + "\n\n" + world.t("boiler_room.say.body", world.getBodyMap())
                 + "\n\nCommands:\n"
-                + "  use pressure gauge   — read the world's live vital signs\n"
-                + "  use computer <status|inference|topology|federation> — deeper panels"
+                + "  use pressure gauge   — read the world's live vital signs and the body map\n"
+                + "  use computer <status|inference|body|topology|federation> — deeper panels"
         });
         return;
     }
@@ -52,6 +53,11 @@ function onUse(entityId, objectName, target) {
             var inferenceStatus = world.getInferenceStatus();
             world.emit("narrate", {
                 text: world.t("boiler_room.say.inference", inferenceStatus)
+            });
+        } else if (cmd.includes("body") || cmd.includes("map") || cmd.includes("parts")
+                || cmd.includes("limb") || cmd.includes("heartbeat")) {
+            world.emit("narrate", {
+                text: world.t("boiler_room.say.body", world.getBodyMap())
             });
         } else if (cmd.includes("node") || cmd.includes("cluster") || cmd.includes("topology")
                 || cmd.includes("network") || cmd.includes("between")) {
@@ -90,6 +96,7 @@ function computerHelp() {
     return "The monitoring system responds to:\n"
         + "  use computer               — system metrics (this view)\n"
         + "  use computer inference     — inference backend status\n"
+        + "  use computer body          — the body map: every part, its pulse, the marks it left\n"
         + "  use computer topology      — network / node topology\n"
         + "  use computer federation    — inter-zone conduits\n"
         + "The same requests work spoken: 'computer, show inference'.";

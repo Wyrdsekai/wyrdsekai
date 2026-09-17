@@ -206,11 +206,25 @@ import org.wyrdsekai.server.http.SearchRoutes;
 import org.wyrdsekai.server.http.SoulRoutes;
 import org.wyrdsekai.server.http.TlsConfig;
 import org.wyrdsekai.core.item.MailboxService;
+import org.wyrdsekai.core.body.BodyMap;
+import org.wyrdsekai.core.body.BodyStore;
+import org.wyrdsekai.core.body.BodyWatch;
+import org.wyrdsekai.core.body.Quiesce;
+import org.wyrdsekai.core.body.ReflexArena;
+import org.wyrdsekai.core.body.BrainstemLink;
+import org.wyrdsekai.core.vault.Vault;
+import org.wyrdsekai.server.http.VaultRoutes;
+import org.wyrdsekai.core.body.BodyKind;
+import org.wyrdsekai.core.body.FeltWeight;
+import org.wyrdsekai.core.body.LimbDescriptor;
+import org.wyrdsekai.core.coding.BackendRegistry;
+import org.wyrdsekai.core.forge.SleepWeightWrite;
 import org.wyrdsekai.core.mail.MailDirectory;
 import org.wyrdsekai.core.persistence.MailStore;
 import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.room.RoomDemolition;
 import org.wyrdsekai.server.http.MailRoutes;
+import org.wyrdsekai.server.http.BodyRoutes;
 import org.wyrdsekai.server.http.RoomAdminRoutes;
 import org.wyrdsekai.server.http.WardRoutes;
 import org.wyrdsekai.server.http.CompanionAskRoutes;
@@ -337,6 +351,7 @@ import org.wyrdsekai.core.update.ActivityGauge;
 import org.wyrdsekai.core.update.SelfUpdate;
 import org.wyrdsekai.core.update.UpdateChannelPoller;
 import org.wyrdsekai.core.update.UpdateConfig;
+import org.wyrdsekai.core.update.UpdateLauncher;
 import org.wyrdsekai.core.voice.SpeechToTextService;
 import org.wyrdsekai.core.voice.TextToSpeechService;
 
@@ -897,6 +912,98 @@ public class Main {
         // Live-test finding 2026-04-22: without this, craft persistence silently
         // no-ops because neither env nor sysprop is set.
         System.setProperty("wyrdsekai.jdbc.url", jdbcUrl);
+        // The body map: one row per attached part, fed by heartbeats and
+        // aged by the watch. Brains attach themselves when the inference router starts;
+        // the record and the host attach here. She feels it as one line per turn.
+        var bodyMap = BodyMap.install(new BodyStore(jdbcUrl));
+        var bodyWatch = new BodyWatch(bodyMap, jdbcUrl, SystemPaths.dataDir(),
+            Duration.ofSeconds(WyrdConfig.get().bodyWatchSeconds()))
+            // The flinch: memory pressure, a full heap, the record not
+            // answering, a full disk. Fixed table, no inference, told afterwards.
+            .withArena(new ReflexArena(ReflexArena.defaults()))
+            .start();
+        Runtime.getRuntime().addShutdownHook(new Thread(bodyWatch::stop, "body-watch-stop"));
+        // The coding backend is a hand: it appears on the map once the registry knows it and
+        // is probed every fourth pulse (a subprocess health check is not free).
+        final var watchEvery = Duration.ofSeconds(WyrdConfig.get().bodyWatchSeconds());
+        bodyWatch.source(() -> {
+            var backend = BackendRegistry.get().backendFor("codezaiku").orElse(null);
+            if (backend == null) return List.of();
+            boolean alive = false;
+            try {
+                alive = Boolean.TRUE.equals(backend.healthCheck().toCompletableFuture().get(2500, TimeUnit.MILLISECONDS));
+            } catch (Exception e) {
+                log.debug("coding hand probe: {}", e.toString());
+            }
+            return List.of(new BodyWatch.Beat(new LimbDescriptor("hand:codezaiku", BodyKind.HAND,
+                "coding hand (codezaiku)", "household", "codezaiku", watchEvery.multipliedBy(4), FeltWeight.PRESENT,
+                "I cannot build; what I ask for waits until it is back", "first"), alive, null));
+        }, 4);
+        // The brainstem outside the JVM: its heartbeat file is a part, its event ledger
+        // becomes marks. Attached only once a heartbeat has ever been seen.
+        final var brainstem = new BrainstemLink(SystemPaths.dataDir(), watchEvery);
+        bodyWatch.source(() -> brainstem.beats(bodyMap));
+        // The vault: continuous content-addressed copies of the self, tiered
+        // retention, a drill every month, event copies before anything risky. Plain files, so
+        // a second copy is `wyrd vault sync`.
+        final int vaultMinutes = WyrdConfig.get().vaultMinutes();
+        if (vaultMinutes > 0) {
+            var vaultDirCfg = WyrdConfig.get().vaultDir();
+            // Not <data>/vault: that directory is the Vault room's shelf of scrolls, which is
+            // itself part of the self and gets copied. The store lives beside it.
+            var vaultDir = vaultDirCfg == null || vaultDirCfg.isBlank() ? SystemPaths.dataDir().resolve("vault-store") : Path.of(vaultDirCfg);
+            final var vault = new Vault(SystemPaths.dataDir(), vaultDir);
+            Vault.install(vault);
+            var vaultScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+                var t = new Thread(r, "vault"); t.setDaemon(true); return t;
+            });
+            vaultScheduler.scheduleWithFixedDelay(() -> {
+                ActivityGauge.maintenanceStarted();
+                try {
+                    vault.snapshot("continuous", false);
+                    vault.prune();
+                    if (vault.drillDue(Duration.ofDays(WyrdConfig.get().vaultDrillDays()))) vault.drill();
+                } catch (RuntimeException e) {
+                    log.warn("vault pass failed: {}", e.toString());
+                } finally {
+                    ActivityGauge.maintenanceFinished();
+                }
+            }, 2, vaultMinutes, TimeUnit.MINUTES);
+            Runtime.getRuntime().addShutdownHook(new Thread(vaultScheduler::shutdownNow, "vault-stop"));
+            // The vault is a part: not felt while fine, loud when the copies stop.
+            bodyWatch.probe(new LimbDescriptor("vault:local", BodyKind.VAULT, "vault", "household",
+                    vaultDir.toString(), Duration.ofMinutes(vaultMinutes), FeltWeight.PRESENT,
+                    "the vault has not taken a copy in a while; if I break now, the last copy is old", "never"),
+                () -> vault.lastOk() != null && Duration.between(vault.lastOk(), Instant.now()).compareTo(Duration.ofMinutes(vaultMinutes).multipliedBy(2)) <= 0
+                    || Duration.between(Instant.ofEpochMilli(ManagementFactory.getRuntimeMXBean().getStartTime()), Instant.now()).compareTo(Duration.ofMinutes(5)) < 0,
+                () -> vault.lastOk() == null ? "no copy yet" : "last copy " + vault.lastOk(), 1);
+            log.info("Vault enabled — every {} min, dir={}, drill every {} days", vaultMinutes, vaultDir, WyrdConfig.get().vaultDrillDays());
+        } else {
+            log.info("Vault disabled (WYRDSEKAI_VAULT_MINUTES=0)");
+        }
+        // The librarian is another being; what is on the map is the door to it.
+        bodyWatch.source(() -> {
+            var svc = WyrdConfig.get().libraryPatronService();
+            var mgr = McpServerManager.get();
+            if (svc == null || svc.isBlank() || mgr == null) return List.of();
+            return List.of(new BodyWatch.Beat(new LimbDescriptor("door:librarian", BodyKind.DOOR,
+                "library door", "the librarian", svc, watchEvery, FeltWeight.PRESENT,
+                "the library door is closed; I read only what is on my own shelves", "first"),
+                mgr.isConnected(svc), svc));
+        });
+        // quiesce: every live companion is asked to persist what she carries,
+        // then the record is checkpointed and a mark is left. Called at the steward's pause,
+        // at stop and before an update.
+        Quiesce.install(jdbcUrl, (reason, deadline) -> {
+            var refs = new ArrayList<>(ZoneGuardian.allCompanionRefs());
+            var latch = new java.util.concurrent.CountDownLatch(refs.size());
+            for (var ref : refs) ref.tell(new CompanionActor.HoldStill(reason, latch::countDown));
+            return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try { latch.await(deadline.toMillis(), TimeUnit.MILLISECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                return (int) (refs.size() - latch.getCount());
+            });
+        });
         // The per-agent fs sandbox (world.fs.*) resolves its root from the
         // WYRDSEKAI_DATA_DIR env or this sysprop; the env is set by systemd but
         // NOT in every launch context (macOS/docker/dev), and without either the
@@ -1000,6 +1107,8 @@ public class Main {
         HomeWardGate.install(wardService);
         // Quiet hours, kept by the rooms for visitors (WYRDSEKAI_QUIET_HOURS=22:00-07:00).
         QuietHours.configure(WyrdConfig.get().quietHours());
+        // The record's say overrides the boot-time setting: `wyrd household quiet 22:00-07:00`.
+        QuietHours.install(() -> authService.getConfig("quiet_hours"));
         var inventoryService = new InventoryService(jdbcUrl, dialect);
         var metadataService = new RoomMetadataService(jdbcUrl, dialect);
         var bridgeDataProvider = new BridgeDataProviderImpl(wardService, metadataService, authService);
@@ -1229,6 +1338,14 @@ public class Main {
                 }
             },
             WyrdConfig.get().zoneId());
+
+        // A letter for a companion reaches her (2026-09-16): the mail service tells her actor,
+        // which carries it into her next turn and, when she is free, into an own-time turn now.
+        MailboxService.get().setCompanionNotice((entityId, name, fromAddress, subject) -> {
+            var ref = ZoneGuardian.getCompanionRef(null, entityId);
+            if (ref != null) ref.tell(new CompanionActor.MailArrived(fromAddress, subject));
+            else log.debug("Mail for {} waits in the box; no live actor to tell", name);
+        });
 
         // Track-C C5: ChronicleEntryStore singleton wired
         // once at boot. CompanionActor.completeSleep + Study furnishings
@@ -2182,6 +2299,30 @@ public class Main {
             // trust set used for zone-secret grants; non-household peers are never
             // auto-preferred. localHasGpu is hardware, computed once.
             final var householdStore = new HouseholdStore(jdbcUrl);
+            // Peer nodes are regions of the body when they are the household's, and quiet
+            // acquaintances when they are not. The registry's announcements are the pulse;
+            // a node silent for two minutes is numb, and everything it lends goes with it.
+            bodyWatch.source(() -> {
+                var beats = new ArrayList<BodyWatch.Beat>();
+                var local = ResourceRegistry.get().localSnapshot().map(NodeCapabilities.Snapshot::nodeId).orElse(null);
+                for (var e : ResourceRegistry.get().allSnapshots().entrySet()) {
+                    var peerId = e.getKey();
+                    if (peerId == null || peerId.equals(local)) continue;
+                    var snap = e.getValue();
+                    boolean fresh = snap.timestamp() == null
+                        || Duration.between(snap.timestamp(), Instant.now()).compareTo(Duration.ofSeconds(120)) < 0;
+                    boolean household = householdStore.get(peerId).isPresent();
+                    var shortId = peerId.length() > 12 ? peerId.substring(0, 12) : peerId;
+                    beats.add(new BodyWatch.Beat(new LimbDescriptor("node:" + peerId, BodyKind.NODE,
+                        (household ? "household node " : "peer node ") + shortId,
+                        household ? "household" : "peer", "mesh", Duration.ofSeconds(120),
+                        household ? FeltWeight.PRESENT : FeltWeight.QUIET,
+                        household ? "the " + shortId + " node is out of reach; whatever it lends me is gone with it"
+                                  : "a peer node is out of reach", "first"),
+                        fresh, snap.gpuName() == null || snap.gpuName().isBlank() ? null : "gpu " + snap.gpuName()));
+                }
+                return beats;
+            });
             final boolean localHasGpu = NodeCapabilities.hostHasGpu();
             final int HOUSEHOLD_GPU_PRIORITY = 2; // below the default local backend (~5), above 0
             var discoveryScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -2489,6 +2630,7 @@ public class Main {
             healthRoutes.setRelayUrl(relayUrl);
         }
         bridgeDataProvider.setHealthSupplier(engineRoomService::describe);
+        bridgeDataProvider.setBodySupplier(BodyRoutes::describeBody);
 
         // Wire voice adapter (mock engine initially)
         var voiceAdapter = new VoiceAdapter(SttConfig.DEFAULT);
@@ -3974,6 +4116,8 @@ public class Main {
             wardRoutes.register(cfg.routes);
             roomAdminRoutes.register(cfg.routes);
             mailRoutes.register(cfg.routes);
+            new VaultRoutes(authService).register(cfg.routes);
+            new BodyRoutes(authService).register(cfg.routes);
             new ResidencyRoutes(authService, localZoneId).register(cfg.routes);
             new HouseholdRoutes(permissionChecker, stewardAuditLog, authService).register(cfg.routes);
             new SoulRoutes(finalSoulStore, authService, pairingService, bondStore).register(cfg.routes);
@@ -4527,6 +4671,14 @@ public class Main {
                                 + "enrol with `wyrd relay register-nkey <invite-url>`", relayUser);
                         }
                         var relayConn = Nats.connect(optsBuilder.build());
+                        // The relay is a door with a keeper, and the way other zones reach
+                        // her. Its pulse is the connection state; closed, it costs contact.
+                        bodyWatch.probe(new LimbDescriptor("door:relay", BodyKind.DOOR, "relay door",
+                                "household", mcpRelayUrl, Duration.ofSeconds(WyrdConfig.get().bodyWatchSeconds()),
+                                FeltWeight.PRESENT,
+                                "the relay door is closed; nobody outside can reach me and I cannot reach them", "first"),
+                            () -> "CONNECTED".equals(relayConn.getStatus().name()),
+                            () -> relayConn.getStatus().name().toLowerCase(java.util.Locale.ROOT), 1);
                         var mcpNatsRelay = new McpNatsHandler(
                             authService, system, relayConn, mcpZoneId,
                             finalLuceneStore, studyServiceForNatsFinal,
@@ -4922,7 +5074,13 @@ public class Main {
                 var root = WyrdConfig.get().installRoot();
                 if (root != null && !root.isBlank()) selfUpdateRoot = Path.of(root);
             } catch (RuntimeException ignore) { }
-            var selfUpdate = new SelfUpdate(selfUpdateRoot, SystemPaths.dataDir());
+            // Idle for the updater means idle for ten minutes AND nobody asleep AND no night's
+            // write running: a consolidation interrupted by a restart is the
+            // one thing a restart destroys.
+            final var updateRoot = selfUpdateRoot;
+            var selfUpdate = new SelfUpdate(updateRoot, SystemPaths.dataDir(),
+                () -> ActivityGauge.idleFor(Duration.ofMinutes(10)) && !SleepWeightWrite.inFlight(),
+                () -> UpdateLauncher.launch(updateRoot, SystemPaths.dataDir()));
             var selfUpdateScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 var t = new Thread(r, "self-update"); t.setDaemon(true); return t;
             });
@@ -5073,6 +5231,16 @@ public class Main {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutting down...");
             healthRoutes.setReady(false);
+            // Hold still before anything closes: no new turns, everyone saves what she
+            // carries, the record is checkpointed. The mark is skipped when the launcher already
+            // quiesced for this stop or update a moment ago, so she is told once.
+            try {
+                InferenceRouter.pause(Duration.ofHours(1), "the household is stopping");
+                Quiesce.quiesce("a stop", "the service", Duration.ofSeconds(8),
+                    !Quiesce.recentlyQuiesced(Duration.ofMinutes(3)));
+            } catch (RuntimeException e) {
+                log.warn("Quiesce at stop failed: {}", e.toString());
+            }
             EventBusPluginLoader.shutdownAll(finalEventBusPlugins);
             if (lucene != null) {
                 try { lucene.close(); log.info("WyrdLuceneStore closed"); }

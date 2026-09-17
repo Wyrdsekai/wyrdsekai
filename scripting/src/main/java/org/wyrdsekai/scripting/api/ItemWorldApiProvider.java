@@ -2026,6 +2026,14 @@ public interface ItemWorldApiProvider {
     default List<String> hostApps() { return List.of(); }
 
     /**
+     * Her hand on the host under the steward's ladder (observe, localize, propose, guarded,
+     * unattended): fixed verbs, argv only, halts and marks. Tier 6.
+     */
+    default Map<String, Object> hostHand(String verb, String args) {
+        return Map.of("ok", false, "error", "host.hand not wired");
+    }
+
+    /**
      * READ-ONLY file search under the steward's open-roots (glob or
      * substring). Returns {@code {ok, matches: [paths], truncated}} or
      * {@code {ok:false, error}}. Tier 5.

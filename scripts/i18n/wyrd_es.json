@@ -881,6 +881,8 @@
   "status.port.not_responding": "Puerto {0}: sin respuesta",
   "status.port.responding": "Puerto {0}: respondiendo",
   "status.server.not_running": "Servidor: no está en ejecución",
+  "status.brainstem.running": "Tronco cerebral: vigilando (reinicia el servidor si deja de responder)",
+  "status.brainstem.not_running": "Tronco cerebral: no está en marcha — el servidor no tiene vigilante fuera de la JVM (sudo systemctl start wyrdsekai-brainstem)",
   "status.server.orphans": "Servidor: se encontraron procesos huérfanos ({0})",
   "status.server.running": "Servidor: en ejecución (pid {0})",
   "stop.force_killing": "Forzando terminación de {0}",
@@ -904,6 +906,7 @@
   "update.source_only": "En modo fuente. Para actualizar un nodo INSTALADO ejecuta: wyrd update <ruta-a.deb|.pkg|.msi> (preserva datos y configuración; deb/pkg se reinician solos).",
   "update.unknown_artifact": "Tipo de instalador desconocido: {0} (se esperaba .deb, .pkg o .msi)",
   "usage.cmd.backup": "  backup       Crear un snapshot de respaldo",
+  "usage.cmd.vault": "  vault        La bóveda: status / snapshot [motivo] / drill / prune / sync [destino] / list / restore <id> <dir> / stage <id>",
   "usage.cmd.block": "  block        Bloquear un DID: wyrd block <did> [--revoke] [--note \"...\"]",
   "usage.cmd.blocks": "  blocks       Listar todos los bloqueos",
   "usage.cmd.bond": "  bond         Bootstrap de mayordomo de un vínculo jugador↔compañero: wyrd bond create <jugador> <companion-did>",
@@ -950,6 +953,7 @@
   "usage.cmd.wards": "  wards        Guardas de salas: list / add / remove",
   "usage.cmd.rooms": "  rooms        Salas creadas: list / demolish <sala> / prune [--duplicates] [--yes]",
   "usage.cmd.mail": "  mail         Registro del correo del hogar: quién escribió a quién y cuándo (administrador; nunca asuntos ni cuerpos)",
+  "usage.cmd.body": "  body         El mapa del cuerpo: cada parte, su pulso y las marcas que dejó (administrador); body gone <id> libera una parte",
   "usage.cmd.web": "  web          Terminal en el navegador en :7071 (enable/disable/status)",
   "usage.cmd.whoami": "  whoami       Mostrar el DID de tu household (did:wyrd:z6Mk…)",
   "usage.cmd.zones": "  zones        Gestionar tus zonas: list / create <etiqueta> / remove <etiqueta>",
@@ -1149,6 +1153,8 @@
   "doctor.backups": "Copias: {0} en {1} entradas ({2}); el índice se enlaza (hard link) por instantánea desde 0.3.0, así que una nueva no ocupa espacio",
   "doctor.swap": "Swap: {0} MB de {1} MB en uso (pico de memoria del servicio desde el arranque: {2})",
   "doctor.swappiness": "vm.swappiness={0}: el núcleo pasa memoria de procesos a swap antes de soltar páginas de modelos mapeados; el paquete fija 10 (/etc/sysctl.d/90-wyrdsekai.conf)",
+  "doctor.oom_score": "Puntuación OOM del servicio: {0} (el núcleo mata los cerebros antes que el registro)",
+  "doctor.oom_score_unset": "La puntuación OOM del servicio es {0}: el núcleo podría matar el servidor antes que un contenedor llama; reinstala el paquete o añade OOMScoreAdjust=-500 a la unidad",
   "doctor.state_notes": "Estado: {0} atributo(s) aún viven en dos almacenes por diseño (hoja de ruta de consolidación, no un fallo) — `wyrd state dump --summary` los lista",
   "doctor.state_errors": "El volcado de estado informó errores:"
 }

@@ -122,6 +122,20 @@ public final class ActivityLogger {
             .put("energy", Math.round(energy * 100.0) / 100.0));
     }
 
+    /**
+     * The day as she told it before sleeping (the sleep plan, item 3), stamped with how it sat in
+     * her. The nightly write reads these beside her spoken lines, so consolidation has the day
+     * as a day, not only as parts.
+     */
+    public void dream(String agentName, String agentId, String room, String text,
+                      Map<String, Double> felt) {
+        var node = event("dream", agentName, agentId)
+            .put("room", room)
+            .put("text", truncate(text, 4000));
+        attachFelt(node, felt);
+        write(node);
+    }
+
     public void sleep(String agentName, String agentId, String room, double energy) {
         write(event("sleep", agentName, agentId)
             .put("room", room)

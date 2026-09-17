@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/deb/build-deb.sh               # Uses build/dist/wyrdsekai-<version>/
-#   WYRDSEKAI_VERSION=0.3.4 ./packaging/deb/build-deb.sh
+#   WYRDSEKAI_VERSION=0.4.0 ./packaging/deb/build-deb.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.3.4}"
+VERSION="${WYRDSEKAI_VERSION:-0.4.0}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
@@ -104,6 +104,10 @@ cp    "$(_tpn_src)" "$DEB_ROOT/opt/wyrdsekai/THIRD_PARTY_NOTICES.md" 2>/dev/null
 cp    "$DIST_DIR/VERSION"  "$DEB_ROOT/opt/wyrdsekai/VERSION"
 # Root docker-compose.yml (used by wyrd setup for Searxng + NATS)
 cp    "$DIST_DIR/docker-compose.yml" "$DEB_ROOT/opt/wyrdsekai/docker-compose.yml" 2>/dev/null || true
+
+# The brainstem: the small process outside the JVM that watches the server.
+cp "$PACKAGING_DIR/brainstem/wyrdsekai-brainstem" "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-brainstem"
+chmod +x "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-brainstem"
 
 # Bundled binaries — nats-server, metasearch, and llama-server (no Docker required)
 # llama-server gives CPU-only / no-Docker hosts (laptops, AVX-512 desktops without GPUs)
@@ -443,6 +447,28 @@ EOF
 # embedded nats-server. The bundled wyrdsekai-nats.service exists only for
 # nodes that want NATS standalone (no Java server), and would collide on
 # port 4222 if both were running.
+# The brainstem watches the server from outside the JVM: heartbeat, hang detection with a
+# database snapshot before the restart, door hooks, an event ledger the server reads. It is
+# independent of the server unit (no After=), lives below it in the OOM order, and never acts
+# on an intentional stop.
+cat > "$DEB_ROOT/usr/lib/systemd/system/wyrdsekai-brainstem.service" << 'EOF'
+[Unit]
+Description=Wyrdsekai Brainstem (watches the server from outside the JVM)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/wyrdsekai/bin/wyrdsekai-brainstem
+Restart=always
+RestartSec=5
+OOMScoreAdjust=-900
+Environment=WYRDSEKAI_DATA_DIR=/var/lib/wyrdsekai
+Environment=PATH=/opt/wyrdsekai/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 cat > "$DEB_ROOT/usr/lib/systemd/system/wyrdsekai.service" << 'EOF'
 [Unit]
 Description=Wyrdsekai Server
@@ -473,6 +499,12 @@ Environment=PATH=/opt/wyrdsekai/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/us
 # That silent split stole hours of debugging before we made it explicit.
 Environment=WYRDSEKAI_DATA_DIR=/var/lib/wyrdsekai
 Environment=WYRDSEKAI_SERVICE_MODE=true
+# The record's process is the last thing the kernel kills; the llama containers carry +500
+# in docker-compose.yml so a brain dies before the JVM (the opposite of what happened on a
+# household node in September 2026, when the prompt cache OOM-killed the brains four times
+# a day and nobody saw). The stop timeout bounds the quiesce at SIGTERM.
+OOMScoreAdjust=-500
+TimeoutStopSec=45
 # Pin HOME so Java's user.home is deterministic (/root). Paired with the
 # postinst symlink /root/.wyrdsekai -> /var/lib/wyrdsekai, this makes the ~20
 # code paths that hardcode `user.home/.wyrdsekai` (profile.toml, models, souls,
@@ -553,7 +585,7 @@ Section: misc
 Priority: optional
 Architecture: ${ARCH}
 Depends: default-jre-headless (>= 2:1.25) | openjdk-25-jre-headless
-Recommends: docker.io | docker-ce | podman, python3-gi, gir1.2-gtk-3.0, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, policykit-1 | polkit, xdg-utils
+Recommends: sqlite3, docker.io | docker-ce | podman, python3-gi, gir1.2-gtk-3.0, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, policykit-1 | polkit, xdg-utils
 Maintainer: Wyrdsekai Project <hello@wyrdsekai.org>
 Description: Distributed text-native world engine
  Wyrdsekai is a distributed text-native OS built on the MUD paradigm.
@@ -685,6 +717,11 @@ systemctl unmask wyrdsekai-nats 2>/dev/null || true
 # missing venv (air-gapped installs that skipped pip stay inert harmlessly).
 systemctl enable wyrdsekai-oracle 2>/dev/null || true
 systemctl start wyrdsekai-oracle 2>/dev/null || true
+
+# The brainstem runs whether or not the server does; it only acts when the server unit is
+# active and not answering.
+systemctl enable wyrdsekai-brainstem 2>/dev/null || true
+systemctl restart wyrdsekai-brainstem 2>/dev/null || true
 
 # F4 phase 2: mint a one-time steward-bootstrap invite. The operator can
 # `ssh steward@host -p 7022` with this code as password to register the
@@ -848,7 +885,7 @@ fi
 sha256sum /opt/wyrdsekai/docker-compose.yml 2>/dev/null | cut -c1-64 > /run/wyrdsekai.compose-hash || true
 
 # Stop always (clean jar swap on upgrade; clean shutdown on remove).
-for svc in wyrdsekai wyrdsekai-oracle wyrdsekai-rendezvous wyrdsekai-metasearch \
+for svc in wyrdsekai-brainstem wyrdsekai wyrdsekai-oracle wyrdsekai-rendezvous wyrdsekai-metasearch \
            wyrdsekai-nats wyrdsekai-llama; do
     systemctl stop "$svc" 2>/dev/null || true
 done
@@ -879,7 +916,7 @@ case "$action" in
         ;;
     *)
         # remove | deconfigure | purge: full teardown so a later reinstall is clean.
-        for svc in wyrdsekai wyrdsekai-oracle wyrdsekai-rendezvous \
+        for svc in wyrdsekai wyrdsekai-brainstem wyrdsekai-oracle wyrdsekai-rendezvous \
                    wyrdsekai-metasearch wyrdsekai-nats wyrdsekai-llama; do
             systemctl disable "$svc" 2>/dev/null || true
         done

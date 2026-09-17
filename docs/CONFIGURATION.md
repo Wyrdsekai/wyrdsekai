@@ -203,6 +203,76 @@ release channel for a fleet) is separate and unchanged.
 | `WYRDSEKAI_UPDATE_WINDOW` | when auto mode may install, `HH:MM-HH:MM` local | `03:00-05:00` |
 | `WYRDSEKAI_UPDATE_PIN` | stay on this version | unset |
 
+## Body map
+
+The server keeps a table of the parts it depends on (inference backends, the database,
+the host), each with a heartbeat interval, and adds one line of body state to every
+companion prompt. See COMPANIONS.md, "Body map, marks and reflexes".
+
+| Key | Env | Default | Meaning |
+|---|---|---|---|
+| `body.watch_seconds` | `WYRDSEKAI_BODY_WATCH_SECONDS` | 30 | how often the watch thread checks the database, reads the host, and ages the table |
+| `body.ache_hours` | `WYRDSEKAI_BODY_ACHE_HOURS` | 6 | how long a numb part of ordinary weight stays in the prompt line |
+
+`wyrd body` prints the table and recent marks; `wyrd body gone <id>` removes a numb part.
+Both need a steward login.
+
+### Quiet hours and reflexes
+
+`wyrd household quiet HH:MM-HH:MM` stores quiet hours in the database; `wyrd household
+quiet off` clears them; `WYRDSEKAI_QUIET_HOURS` applies when nothing is stored. The reflex
+table (memory pressure, full heap, database not answering, low disk) is fixed in this
+release; each firing is a mark in `wyrd body`.
+
+On the Linux package the systemd unit sets `OOMScoreAdjust=-500` and the inference
+containers set `oom_score_adj: 500`, so the kernel kills a container before the server.
+`wyrd doctor` prints the score in force.
+
+### Brainstem
+
+`wyrdsekai-brainstem` runs outside the JVM as its own unit (systemd on the deb, launchd on
+the pkg; not on Windows yet). It restarts the server only when the unit is active and
+`/health` has not answered for 60 seconds after a 3 minute start-up grace, snapshotting
+`world.db` first. Optional hooks: `/etc/wyrdsekai/brainstem/doors-close` and `doors-open`,
+run when the server stops answering and when it answers again; use them for firewall
+changes. Environment knobs for the unit: `BRAINSTEM_INTERVAL` (10), `BRAINSTEM_MISSES` (6),
+`BRAINSTEM_GRACE` (180). Events are in `<data>/brainstem/events.jsonl`; `wyrd body` shows
+them as marks and `wyrd status` says whether the brainstem is running.
+
+### Vault
+
+| Key | Env | Default | Meaning |
+|---|---|---|---|
+| `vault.minutes` | `WYRDSEKAI_VAULT_MINUTES` | 15 | how often a copy is taken; 0 disables the vault |
+| `vault.dir` | `WYRDSEKAI_VAULT_DIR` | `<data>/vault-store` | where chunks and manifests live |
+| `vault.remote` | `WYRDSEKAI_VAULT_REMOTE` | none | rsync destination for `wyrd vault sync` |
+| `vault.drill_days` | `WYRDSEKAI_VAULT_DRILL_DAYS` | 30 | how often the newest copy is rebuilt and checked |
+
+`wyrd vault status` shows copies, store size, the last drill and anything unclassified in
+the data directory. `wyrd vault stage <id>` needs the server stopped; the restore applies at
+the next start and keeps the displaced database. The vault directory is plain files; a
+second copy is `wyrd vault sync user@vaultnode:/srv/wyrdsekai-vault`. Copies synced offsite
+are not encrypted at rest yet.
+
+### Host hand
+
+The `host_hand` Hearth item runs fixed commands on the host. The level is set by the
+steward:
+
+| `WYRDSEKAI_HOST_HAND` / `host.hand` | allowed |
+|---|---|
+| `observe` (default) | read uptime, disk, memory, load, service status, gpu, containers, pending updates, logged-in users, network |
+| `localize` | also read the service log, a household container's log, a process list |
+| `propose` | also mail a text proposal to the steward; nothing runs |
+| `guarded` | also `say <text>` (wall), `restart-brain voice|drive|embed`, `upgrade` (apt-get) |
+| `unattended` | also `reboot` |
+
+Every command is a fixed argv with validated arguments and no shell. `upgrade` runs
+`apt-get -s upgrade` first and stops, mailing the steward, if the set includes a driver,
+kernel, grub, systemd, docker or dkms package. Commands that change the host run quiesce
+first and write a mark in `wyrd body`. On the Linux package the service runs as root, so
+this level is the only limit.
+
 ## Budgets
 
 Real money and real compute both have ceilings:

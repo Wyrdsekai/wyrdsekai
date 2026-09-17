@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.wyrdsekai.common.model.AppVersion;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.body.Quiesce;
+import org.wyrdsekai.core.vault.Vault;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.observability.EngineRoomService;
 
@@ -154,12 +156,38 @@ public final class HealthRoutes {
                 if (node.hasNonNull("seconds")) seconds = Math.max(1, node.get("seconds").asLong());
                 if (node.hasNonNull("reason")) reason = node.get("reason").asText();
             } catch (Exception ignored) { }
+            // A pause is a junction: hold still first, so what she carries is
+            // on disk before the card is taken, then refuse new turns.
             InferenceRouter.pause(Duration.ofSeconds(seconds), reason);
-            ctx.json(InferenceRouter.snapshot().asMap());
+            var report = Quiesce.quiesce(reason == null || reason.isBlank() ? "a pause" : reason,
+                "the steward", Duration.ofSeconds(8));
+            var out = new LinkedHashMap<String, Object>(InferenceRouter.snapshot().asMap());
+            out.put("quiesced", Map.of("flushed", report.flushed(), "checkpointed", report.checkpointed(),
+                "ms", report.took().toMillis()));
+            ctx.json(out);
         });
         app.post("/api/inference/resume", ctx -> {
+            boolean wasPaused = InferenceRouter.isPaused();
             InferenceRouter.resume();
+            if (wasPaused) Quiesce.resumed("the steward");
             ctx.json(InferenceRouter.snapshot().asMap());
+        });
+        // Hold still without pausing: the launcher calls this before a stop or an update so the
+        // mark names the reason and who asked, instead of the service finding out at SIGTERM.
+        app.post("/api/quiesce", ctx -> {
+            String reason = null, who = null;
+            try {
+                var node = JsonMapper.builder().build().readTree(ctx.body() == null || ctx.body().isBlank() ? "{}" : ctx.body());
+                if (node.hasNonNull("reason")) reason = node.get("reason").asText();
+                if (node.hasNonNull("who")) who = node.get("who").asText();
+            } catch (Exception ignored) { }
+            var report = Quiesce.quiesce(reason, who == null ? "the steward" : who, Duration.ofSeconds(8));
+            // An event copy before whatever comes next (an update, a stop): flagged so the
+            // retention tiers never take it.
+            var vault = Vault.get();
+            if (vault != null) vault.snapshot("before " + report.reason(), true);
+            ctx.json(Map.of("reason", report.reason(), "flushed", report.flushed(),
+                "checkpointed", report.checkpointed(), "ms", report.took().toMillis()));
         });
         app.get("/health", ctx -> {
             var response = new LinkedHashMap<String, Object>();

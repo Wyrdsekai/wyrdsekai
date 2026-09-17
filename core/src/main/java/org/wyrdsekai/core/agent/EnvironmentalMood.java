@@ -82,6 +82,9 @@ public final class EnvironmentalMood {
             // Fresh reading arriving is a small lift, the way a new node is.
             case LIBRARY_PACK_INSTALLED -> current
                 .withMomentum(current.momentum() + 0.02);
+            // A letter: someone thought of her. A small lift, the same as a pack landing.
+            case MAIL_ARRIVED -> current
+                .withMomentum(current.momentum() + 0.02);
         };
     }
 

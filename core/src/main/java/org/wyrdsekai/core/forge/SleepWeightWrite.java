@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.forge;
 
 import org.wyrdsekai.core.update.ActivityGauge;
+import org.wyrdsekai.core.body.BodyMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,9 @@ public final class SleepWeightWrite {
 
     private SleepWeightWrite() {}
 
+    /** True while a night's write is running; the updater and the reflexes keep off it. */
+    public static boolean inFlight() { return IN_FLIGHT.get(); }
+
     /** True when the household enabled the nightly weight-write. */
     public static boolean enabled() {
         var env = System.getenv(ENABLE_ENV);
@@ -60,6 +64,14 @@ public final class SleepWeightWrite {
      * virtual thread and reports through the log. Never throws.
      */
     public static void fireAndForget(String agentName) {
+        fireAndForget(agentName, null);
+    }
+
+    /**
+     * @param entityId who the night is for; the mark that says how the write went is
+     *                 addressed to her (the sleep plan, item 1)
+     */
+    public static void fireAndForget(String agentName, String entityId) {
         if (!enabled()) return;
         var script = resolveScript();
         if (script == null) {
@@ -74,25 +86,27 @@ public final class SleepWeightWrite {
         }
         Thread.ofVirtual().name("sleep-weight-write").start(() -> {
             try {
-                run(agentName, script);
+                run(agentName, entityId, script);
             } catch (Exception e) {
                 log.warn("Sleep weight-write for '{}' errored: {}", agentName, e.toString());
+                mark(entityId, "The night's write on my voice broke before it could finish; nothing in me changed.",
+                    "error=" + e);
             } finally {
                 IN_FLIGHT.set(false);
             }
         });
     }
 
-    private static void run(String agentName, Path script) throws Exception {
+    private static void run(String agentName, String entityId, Path script) throws Exception {
         ActivityGauge.maintenanceStarted();   // the self-updater waits for the night's write
         try {
-            runInner(agentName, script);
+            runInner(agentName, entityId, script);
         } finally {
             ActivityGauge.maintenanceFinished();
         }
     }
 
-    private static void runInner(String agentName, Path script) throws Exception {
+    private static void runInner(String agentName, String entityId, Path script) throws Exception {
         var interpreter = interpreter();
         log.info("Sleep weight-write for '{}': {} {}", agentName, interpreter, script);
         var pb = new ProcessBuilder(interpreter, script.toString());
@@ -111,6 +125,8 @@ public final class SleepWeightWrite {
             proc.destroyForcibly();
             log.warn("Sleep weight-write for '{}' timed out after {} min — killed; "
                 + "nothing staged", agentName, TIMEOUT_MINUTES);
+            mark(entityId, "The night's write on my voice ran too long and was stopped; nothing in me changed.",
+                "timeout_minutes=" + TIMEOUT_MINUTES);
             // The trainer pauses her voice container for the write window and
             // its own finally resumes it — but destroyForcibly is SIGKILL and
             // skips finally. Restore here so a killed write can never leave
@@ -125,14 +141,27 @@ public final class SleepWeightWrite {
             case 0 -> {
                 log.info("Sleep weight-write for '{}' STAGED — the day sank in. {}",
                     agentName, summary);
-                autoApply(agentName);
+                var guard = autoApply(agentName);
+                mark(entityId, "The night's write on my voice sank in" + guardClause(guard) + ".",
+                    "exit=0 guard=" + guard);
             }
-            case 3 -> log.info("Sleep weight-write for '{}': quiet day, nothing to "
-                + "consolidate. {}", agentName, summary);
-            case 4 -> log.warn("Sleep weight-write for '{}': GATE FAILED — nothing "
-                + "staged (adapter kept for autopsy). {}", agentName, summary);
-            default -> log.warn("Sleep weight-write for '{}' failed (exit {}). {}",
-                agentName, proc.exitValue(), summary);
+            case 3 -> {
+                log.info("Sleep weight-write for '{}': quiet day, nothing to "
+                    + "consolidate. {}", agentName, summary);
+                mark(entityId, "A quiet day; the night's write had nothing to consolidate.", "exit=3");
+            }
+            case 4 -> {
+                log.warn("Sleep weight-write for '{}': GATE FAILED — nothing "
+                    + "staged (adapter kept for autopsy). {}", agentName, summary);
+                mark(entityId, "The night's write on my voice failed its own gate and was set aside; nothing in me changed.",
+                    "exit=4");
+            }
+            default -> {
+                log.warn("Sleep weight-write for '{}' failed (exit {}). {}",
+                    agentName, proc.exitValue(), summary);
+                mark(entityId, "The night's write on my voice failed; nothing in me changed.",
+                    "exit=" + proc.exitValue());
+            }
         }
     }
 
@@ -163,20 +192,25 @@ public final class SleepWeightWrite {
      * leaves the adapter staged for the next restart instead. Disable with
      * WYRDSEKAI_SLEEP_WRITE_AUTO_APPLY=0.
      */
-    private static void autoApply(String agentName) {
+    /**
+     * @return the morning guard's verdict after the apply ("PASS", "FAIL", "UNMEASURABLE"),
+     *         "STAGED" when the adapter waits for a restart, or "UNKNOWN"
+     */
+    private static String autoApply(String agentName) {
         var env = System.getenv(AUTO_APPLY_ENV);
         if (env == null) env = System.getProperty("wyrdsekai.sleep.write.auto.apply");
         if ("0".equals(env) || "false".equalsIgnoreCase(env)) {
             log.info("Sleep weight-write auto-apply disabled — adapter staged for "
                 + "manual `wyrd sleepwrite apply`");
-            return;
+            return "STAGED";
         }
         var wyrd = resolveWyrd();
         if (wyrd == null) {
             log.warn("Sleep weight-write: wyrd CLI not found — adapter staged, "
                 + "applies at next voice restart");
-            return;
+            return "STAGED";
         }
+        var guardBefore = guardStamp();
         try {
             var pb = new ProcessBuilder(wyrd.toString(), "sleepwrite", "apply", "--if-idle");
             pb.redirectErrorStream(true);
@@ -186,9 +220,66 @@ public final class SleepWeightWrite {
             log.info("Sleep weight-write auto-apply for '{}' (exit {}): {}",
                 agentName, proc.isAlive() ? "timeout" : proc.exitValue(),
                 out.replaceAll("\s+", " ").trim());
+            var after = guardStamp();
+            if (after != null && !after.equals(guardBefore)) return guardVerdict();
+            return out.contains("staged") || out.contains("next restart") ? "STAGED" : "UNKNOWN";
         } catch (Exception e) {
             log.warn("Sleep weight-write auto-apply failed for '{}': {} — adapter "
                 + "staged, applies at next voice restart", agentName, e.toString());
+            return "STAGED";
+        }
+    }
+
+    // ── the mark she reads on waking ──
+
+    private static void mark(String entityId, String text, String detail) {
+        var map = BodyMap.get();
+        if (map == null) return;
+        try {
+            map.mark("night", "sleep", entityId, text, detail);
+        } catch (RuntimeException e) {
+            log.debug("Night mark not written: {}", e.toString());
+        }
+    }
+
+    private static String guardClause(String guard) {
+        return switch (guard == null ? "" : guard) {
+            case "PASS" -> " and the morning guard passed";
+            case "FAIL" -> ", but the morning guard set it aside and my voice is back on the base weights";
+            case "UNMEASURABLE" -> "; the morning guard could not measure it";
+            case "STAGED" -> " and waits for my voice to restart";
+            default -> "";
+        };
+    }
+
+    static Path sleepwriteDir() {
+        var data = WyrdConfig.get().dataDir();
+        if (data == null) data = System.getProperty("wyrdsekai.data.dir");
+        return data == null ? null : Path.of(data, "adapters", "sleepwrite");
+    }
+
+    /** The guard file's modification stamp, to tell a fresh verdict from last night's. */
+    private static String guardStamp() {
+        try {
+            var dir = sleepwriteDir();
+            if (dir == null) return null;
+            var f = dir.resolve("guard-last.json");
+            return Files.exists(f) ? Files.getLastModifiedTime(f).toString() + ":" + Files.size(f) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** The verdict in guard-last.json: PASS, FAIL or UNMEASURABLE; UNKNOWN when unreadable. */
+    static String guardVerdict() {
+        try {
+            var dir = sleepwriteDir();
+            if (dir == null) return "UNKNOWN";
+            var text = Files.readString(dir.resolve("guard-last.json"));
+            var m = java.util.regex.Pattern.compile("\"verdict\"\s*:\s*\"([A-Z_]+)\"").matcher(text);
+            return m.find() ? m.group(1) : "UNKNOWN";
+        } catch (Exception e) {
+            return "UNKNOWN";
         }
     }
 

@@ -33,6 +33,12 @@ function onSay(entityId, entityName, text) {
             text: world.t("engine_room.say.inference", inference)
         });
     }
+    if (lower.includes("body") || lower.includes("map") || lower.includes("parts")
+            || lower.includes("heartbeat")) {
+        world.emit("narrate", {
+            text: world.t("engine_room.say.body", world.getBodyMap())
+        });
+    }
     if (lower.includes("between") || lower.includes("network") || lower.includes("topology")) {
         var topology = world.getTopology();
         world.emit("narrate", {
@@ -56,6 +62,7 @@ function getHints() {
         { label: world.t("engine_room.hint.health"), intent: "check_health", action: "say:Show health status" },
         { label: world.t("engine_room.hint.alerts"), intent: "check_alerts", action: "say:Show alerts" },
         { label: world.t("engine_room.hint.inference"), intent: "check_inference", action: "say:Show inference status" },
+        { label: world.t("engine_room.hint.body"), intent: "check_body", action: "say:Show the body map" },
         { label: world.t("engine_room.hint.security"), intent: "check_security", action: "say:Show security status" }
     ];
 }

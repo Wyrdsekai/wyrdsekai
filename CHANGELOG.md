@@ -4,6 +4,138 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] — 2026-09-16
+
+### Added
+- **Body map.** The server keeps a table of the parts it depends on: each inference
+  backend, the database (`world.db`), and the host. Each part has a heartbeat interval.
+  Inference backends are updated by the router's existing health checks. A watch thread
+  runs every 30 seconds (`body.watch_seconds`): it opens the database and runs `SELECT 1`,
+  reads host memory pressure (`/proc/pressure/memory` on Linux), heap use and free disk,
+  and marks any part silent for more than twice its interval as `numb`, dated from its last
+  heartbeat. A numb part stays in the table until the steward removes it with
+  `wyrd body gone <id>`. Before this, a backend that stopped answering was a `WARN` line in
+  the log and nothing else changed. Schema migration 10 adds `body_parts` and `body_marks`.
+- **Body line in the companion prompt.** Each companion turn now includes one line of
+  body state next to the existing `[Body-sense: ...]` line. It is generated from the table,
+  not by a model, and it is stripped from speech like the other bracket markers. When all
+  parts answer: `[Body: whole — thinking brain and voice brain answering; the record
+  holds.]`. When a part is numb the line says which one and what it costs (for example
+  `The thinking brain went quiet — I think slower and thinner.`). A numb part appears in the
+  line once when it happens, then for `body.ache_hours` (default 6) afterwards; the
+  database and the main inference backend stay in the line for as long as they are numb.
+  After that the part is only visible in `wyrd body` and the boiler room. High memory
+  pressure or a nearly full disk adds one clause.
+- **Marks.** Events the companion did not see are recorded in `body_marks` and included in
+  her next prompt once: a part going numb or returning, a part removed, a pause, a resume,
+  a reflex, a sleep cycle, the nightly weight-write result. Each mark records which
+  companions have read it. A mark addressed to one companion is not shown to another.
+- **Sleep marks.** Each sleep cycle writes a mark with the start time, duration, number of
+  events consolidated, and the memory count before and after. The nightly weight-write
+  writes a mark when it finishes: staged plus the morning guard's verdict, quiet day, gate
+  failed, or error. Previously nothing told the companion a sleep or a write had happened.
+- **Mail arrival.** Mail to a companion was stored but never announced. The mail service
+  now sends `MailArrived` to the companion actor. The arrival is added to the prompt as a
+  system event, and if the companion is idle and has energy it triggers an own-time turn.
+  The companion's Hearth now contains the real `mailbox` item (`use mailbox`,
+  `use mailbox read <n>`, `use mailbox send <who> <subject> | <body>`) instead of a room
+  object that only printed a placeholder.
+- **`wyrd body`.** Prints the table for the steward: kind, part, state, felt weight, last
+  heartbeat, last use, detail, and recent marks. `wyrd body gone <id>` removes a part.
+  `GET /api/body` and `POST /api/body/gone` back it (steward session). In the boiler room,
+  `use pressure gauge` and `use computer body` print the same table; in the engine room,
+  say "show the body map". New config keys `body.watch_seconds` and `body.ache_hours`
+  (`WYRDSEKAI_BODY_WATCH_SECONDS`, `WYRDSEKAI_BODY_ACHE_HOURS`).
+- **Quiesce.** One routine runs before the server is paused, stopped, updated, or a
+  companion restarts a backend or reboots the host: the inference router stops accepting
+  turns, every companion actor is asked to persist its state (vitality, sleep pressure,
+  conversation checkpoint, substrate trackers, soul manifest) within a deadline, the
+  database gets a WAL checkpoint, and a mark records the reason, who asked, and how long
+  it took. `wyrd inference resume` writes a resume mark. `wyrd stop` and `wyrd update now`
+  call `POST /api/quiesce` on the running server first so the mark carries the reason;
+  the shutdown hook runs the same routine at SIGTERM without writing a second mark.
+- **Updater waits for sleep.** The self-updater's idle check now also requires that no
+  companion is in a sleep cycle and the nightly weight-write is not running. A companion
+  whose forge backlog is past 70% of her sleep target gets a `[Tired: ...]` line in the
+  prompt.
+- **Host hand.** A new Hearth item, `host_hand`, runs a fixed set of commands on the host
+  under a level the steward sets with `WYRDSEKAI_HOST_HAND` (default `observe`):
+  `observe` reads uptime, disk, memory, load, service status, gpu, containers, pending
+  updates, logged-in users and network; `localize` adds the service log, container logs
+  and process lookup; `propose` mails a text proposal to the steward and runs nothing;
+  `guarded` adds `say <text>` (wall), `restart-brain voice|drive|embed` (docker restart)
+  and `upgrade` (apt-get); `unattended` adds `reboot`. Every command is a fixed argv with
+  validated arguments, no shell. `upgrade` runs `apt-get -s upgrade` first and stops,
+  mailing the steward, if the set includes a driver, kernel, grub, systemd, docker or dkms
+  package. Commands that change the host run quiesce first and write a mark visible in
+  `wyrd body`. Note: on the Linux package the service runs as root, so this setting is the
+  only limit.
+- **Quiet hours in the database.** `wyrd household quiet 22:00-07:00` stores quiet hours in
+  `household_config`; `wyrd household quiet off` clears them; `WYRDSEKAI_QUIET_HOURS` is
+  used when nothing is stored (`GET`/`POST /api/household/quiet`, steward). During quiet
+  hours visitors are refused as before, companions send no non-critical external
+  notifications, and a companion's pressure-based sleep starts at half the normal backlog.
+- **Reflexes.** The watch thread evaluates a fixed table on every tick, without any model
+  call: memory stall above 30% for two ticks pauses inference for 90 seconds; heap above
+  95% for two ticks pauses it for 60 seconds; the database not answering pauses it for 5
+  minutes; free disk below 3% writes a warning mark at most once per 6 hours. Each firing
+  writes a mark.
+- **More parts on the body map.** Household peer nodes from the mesh's resource
+  announcements (`node:<id>`, numb after two minutes of silence; nodes outside the
+  household are listed with low weight), the relay connection (`door:relay`, from the NATS
+  connection state), the coding backend (`hand:codezaiku`, probed every fourth watch
+  tick), and the librarian's MCP connection (`door:librarian`). Federated zones are not
+  on the map: the federation handshake caches a manifest but nothing pings a zone, so
+  there is no heartbeat to record. The relay door is the signal for reaching other zones.
+- **Brainstem.** A small bash process outside the JVM, installed as `wyrdsekai-brainstem`
+  (a systemd unit on the deb, a LaunchDaemon on the pkg; not on Windows yet). Every 10
+  seconds it touches a heartbeat file, asks the supervisor whether the server unit is
+  active, and asks `GET /health`. If the unit is active but the server has not answered for
+  six checks and the unit has been up for more than three minutes, it snapshots `world.db`
+  (`sqlite3 .backup`, or a copy when sqlite3 is absent) into the backups directory, runs
+  the optional `doors-close` hook, restarts the unit, and appends an event to
+  `brainstem/events.jsonl` in the data directory. It leaves a stopped or crashed unit to
+  the supervisor. The server reads the heartbeat file as a part on the body map and turns
+  new events into marks, so a restart the companion slept through is in her next prompt.
+  Hooks are executables in `/etc/wyrdsekai/brainstem/` (`doors-close`, `doors-open`); none
+  are installed by default. `wyrd status` reports whether the brainstem is running.
+- **Vault.** A second backup system beside the hourly snapshots, built for continuity rather
+  than for a copy: every 15 minutes (`WYRDSEKAI_VAULT_MINUTES`, 0 disables) the server takes
+  a consistent copy of `world.db` with `VACUUM INTO` and stores it, with the node identity,
+  credentials, config, souls, agents, classifiers, substrate, items, recipes, adapters, story
+  and biography, as content-addressed chunks (cut by content, about 4 MiB) under `<data>/vault-store/`
+  with one manifest per copy. Unchanged chunks are not rewritten and an inserted page
+  changes one chunk, so a quiet quarter hour costs a read and a busy day costs its churn.
+  Search indexes are classified derivable and models replaceable; neither is vaulted, and the
+  manifest lists them, plus anything in the data directory that nothing classified.
+  Retention: every copy for two hours, one an hour for a day, one a day for a week, one a
+  week for five weeks, one a month for a year; copies taken before an update, a reboot or a host upgrade are flagged
+  and never expire. Every 30 days (`WYRDSEKAI_VAULT_DRILL_DAYS`) the newest copy is rebuilt
+  into scratch and checked: integrity, and the counts of people, companions, residencies
+  and souls in it; the verdict is written into the manifest and as a mark. The vault is a
+  part on the body map and goes numb when copies stop. `wyrd vault status|snapshot|drill|
+  prune` talk to the running server; `wyrd vault sync <rsync destination>` copies the
+  directory elsewhere (`WYRDSEKAI_VAULT_REMOTE`); `wyrd vault list|restore <id> <dir>` rebuild
+  a copy offline; `wyrd vault stage <id>` rebuilds `world.db` and stages it through the
+  existing restart-to-apply restore, keeping the displaced database. Offsite copies are not
+  encrypted at rest yet.
+- **The dream.** At the start of each sleep cycle, before the forge consolidates the day,
+  the companion asks the thinking backend to tell the day as she would remember it: the
+  day's events as short lines (her own marked as "I"), the last day of chronicle entries,
+  her current drive levels and body line, with instructions for first-person past-tense
+  prose and no invented events. One request, 700 tokens at most, a 90 second timeout; a day
+  with fewer than 5 events, a paused router or no backend skips it and the night goes on.
+  The text is written to her Hearth journal with mood `dream` (private; `read_journal`
+  shows it), appended to the activity trail as a `dream` entry with her felt stamp, and
+  marked so her first turn after waking carries its opening sentence. The nightly
+  weight-write now reads `dream` entries beside her spoken lines, and waits up to 90
+  seconds for a dream still in flight before it starts. The existing post-consolidation
+  dream line from the forge is unchanged.
+- **OOM ordering on Linux.** The systemd unit sets `OOMScoreAdjust=-500` and
+  `TimeoutStopSec=45`; the llama and embedding containers set `oom_score_adj: 500`, so the
+  kernel kills an inference container before the server. `wyrd doctor` prints the server's
+  OOM score and warns if it is not negative.
+
 ## [0.3.4] — 2026-09-15
 
 ### Added

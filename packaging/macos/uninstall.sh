@@ -37,10 +37,11 @@ rm -f "$REAL_HOME/Library/LaunchAgents/com.wyrdsekai.menubar.plist" \
       "$REAL_HOME/Library/LaunchAgents/com.wyrdsekai.mlx-voice.plist"
 
 # Stop + remove the system daemons (node server + oracle).
-for svc in com.wyrdsekai.server com.wyrdsekai.oracle org.wyrdsekai.server; do
+for svc in com.wyrdsekai.brainstem com.wyrdsekai.server com.wyrdsekai.oracle org.wyrdsekai.server; do
     launchctl bootout "system/$svc" 2>/dev/null || true
 done
 rm -f /Library/LaunchDaemons/com.wyrdsekai.server.plist \
+      /Library/LaunchDaemons/com.wyrdsekai.brainstem.plist \
       /Library/LaunchDaemons/com.wyrdsekai.oracle.plist \
       /Library/LaunchDaemons/org.wyrdsekai.server.plist   # written by pre-0.2.2 `wyrd start`
 

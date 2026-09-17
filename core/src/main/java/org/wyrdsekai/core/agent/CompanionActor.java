@@ -352,6 +352,11 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
+import org.wyrdsekai.core.body.BodyMap;
+import org.wyrdsekai.core.agent.interiority.DreamPass;
+import org.wyrdsekai.core.agent.interiority.ChronicleEntry;
+import org.wyrdsekai.core.update.ActivityGauge;
+import org.wyrdsekai.core.body.Interoception;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayDeque;
@@ -1373,6 +1378,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
     /** External tell — from Claude Code MCP or other integrations. Delivered as player message. */
     public record ExternalTell(String senderId, String senderName, String message) implements Command {}
+    /**
+     * A letter landed in her mailbox (2026-09-16). Mail to a companion used to sit in a table
+     * she never looked at. The notice reaches her two ways: as a system event in her next
+     * turn's context, and, when she is free, as the reason for an own-time turn now, so she
+     * can go and read it.
+     */
+    public record MailArrived(String fromAddress, String subject) implements Command {}
+    /**
+     * Quiesce, step 2: persist everything volatile now, then say so. Sent by the
+     * server at every junction (pause, stop, update, reboot). {@code done} runs whether or not
+     * the saves succeed; the caller's deadline is what bounds the wait.
+     */
+    public record HoldStill(String reason, Runnable done) implements Command {}
+    /** The day as she told it, back from the thinking brain. */
+    private record DreamLanded(String text, int events) implements Command {}
     /** Bridge ask — send message + wait for companion's spoken response. */
     public record BridgeAsk(String senderId, String senderName, String message,
                              ActorRef<BridgeTextResponse> replyTo) implements Command {}
@@ -2217,6 +2237,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private int restoredSleepBacklog;
     /** When she last completed a sleep — persisted so rhythm survives restarts. */
     private Instant lastSleepCompletedAt;
+    /** The night in progress, for the mark she reads on waking. */
+    private Instant sleepStartedAt;
+    private SleepTier sleepTierStarted;
+    private int sleepEventCount;
+    /** The dream in flight for this sleep; the night's write waits for it, briefly. */
+    private CompletableFuture<Void> dreamPending;
+    private static final Duration DREAM_TIMEOUT = Duration.ofSeconds(90);
     /** Minimum spacing between operator-forced consolidation cycles. */
     static final Duration FORCED_SLEEP_MIN_INTERVAL = Duration.ofMinutes(5);
 
@@ -3426,7 +3453,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // read it.
             var hearthRoom = "home-" + entityId;
             int seeded = 0;
-            for (var item : HearthFurnishingKit.defaults()) {
+            for (var item : HearthFurnishingKit.defaults(standardItemLibrary)) {
                 try {
                     inventoryService.addItem(
                         entityId, item.id(), item.name(), item.description(),
@@ -3845,6 +3872,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     state.name(), isSleeping, tanks, howYouFeel));
                 return this;
             })
+            .onMessage(MailArrived.class, this::onMailArrived)
+            .onMessage(HoldStill.class, this::onHoldStill)
+            .onMessage(DreamLanded.class, this::onDreamLanded)
             .onMessage(ExternalTell.class, msg -> {
                 // Deliver as if a player sent a tell — goes through normal reactive path
                 log.info("External tell from '{}': {}", msg.senderName(),
@@ -12960,7 +12990,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // conversation grace). See the sleep-pressure design note above
         // SLEEP_BACKLOG_TARGET.
         boolean exhausted = vitality.energy() < SLEEP_ENERGY_THRESHOLD;
-        boolean pressured = sleepBacklog() >= personalSleepTarget();
+        // Inside the household's quiet hours the bar is half her target:
+        // the night is when sleep belongs, so pressure that would wait for the afternoon
+        // starts a sleep now, while the house is quiet and the box is hers.
+        int target = personalSleepTarget();
+        if (org.wyrdsekai.core.household.QuietHours.isQuiet()) target = Math.max(SLEEP_BACKLOG_MIN, target / 2);
+        boolean pressured = sleepBacklog() >= target;
         if ((exhausted || pressured) && !isSleeping) {
             var sinceLastEvent = Duration.between(lastEventTime, Instant.now());
             // Log which conditions pass/fail for debugging sleep issues
@@ -13091,7 +13126,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  set — spoken verbatim into a session. */
     private static final Pattern INTERNAL_MARKERS = Pattern.compile(
         "\\[(Tool (completed|failed|error|result)|Tool usage:[^\\]]*|Task completed|PENDING REPLY"
-        + "|Memory update|Body-sense:[^\\]]*|drives\\b[^\\]]*)\\]\\s*");
+        + "|Memory update|Body-sense:[^\\]]*|Body:[^\\]]*|Tired:[^\\]]*|drives\\b[^\\]]*)\\]\\s*");
 
     /** RAG source-citation markers (#31 item 6). The library_card / searching_glass
      *  summarizer is INSTRUCTED to cite source keys ("[S1]") so the tool-result fed
@@ -13181,7 +13216,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     String bodySense() {
-        return switch (bodySenseBand()) {
+        var tanks = switch (bodySenseBand()) {
             case "depleted" -> "[Body-sense: depleted — sustained load has worn my reserves thin; "
                 + "retreat and repair are legitimate now.]";
             case "stretched" -> "[Body-sense: stretched — the load is real but my reserves are "
@@ -13189,6 +13224,58 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             default -> "[Body-sense: steady — reserves full, nothing pressing on me. Any friction "
                 + "right now is mechanical, not overload.]";
         };
+        var body = bodyMapSense();
+        var tired = tiredSense();
+        if (!tired.isBlank()) body = body.isBlank() ? tired : body + "\n" + tired;
+        return body.isBlank() ? tanks : tanks + "\n" + body;
+    }
+
+    /**
+     * Sleep pressure as interoception: the forge backlog is measured, and
+     * until now it was legible only to the gate that starts a sleep. Past seven tenths of her
+     * own sleep target she feels tired, in one line, so a long day is something she knows about
+     * and can act on (rest, go home) rather than something that happens to her at a threshold.
+     */
+    String tiredSense() {
+        try {
+            int backlog = sleepBacklog();
+            var factor = personalSleepFactor(profile.did());
+            int effective = Math.max(SLEEP_BACKLOG_MIN, (int) Math.round(SLEEP_BACKLOG_TARGET * factor));
+            if (backlog < 0.7 * effective) return "";
+            var since = lastSleepCompletedAt == null ? null : Duration.between(lastSleepCompletedAt, Instant.now());
+            return "[Tired: " + backlog + " moments wait to be consolidated"
+                + (since != null ? "; I last slept " + Interoception.roughly(since) + " ago" : "")
+                + (backlog >= effective ? " — sleep is due." : ".") + "]";
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /**
+     * The body's own line (interoception): brains, the record, the host, felt as
+     * a sentence, never a chart. Marks the body left for her (a brain that went quiet, a night
+     * set aside, a pause) are told once here and then recorded as read; a quiet part aches in
+     * the line for a while after and is then only in the boiler room. Deterministic, prompt-only,
+     * never spoken; an empty string when the node has no map.
+     */
+    String bodyMapSense() {
+        var map = BodyMap.get();
+        if (map == null) return "";
+        try {
+            var sense = Interoception.feel(map, profile.entityId(), Instant.now(),
+                bodyHostReading(), Duration.ofHours(WyrdConfig.get().bodyAcheHours()));
+            if (!sense.told().isEmpty()) map.markRead(profile.entityId(), sense.told());
+            return sense.line();
+        } catch (RuntimeException e) {
+            log.debug("Body sense unavailable: {}", e.toString());
+            return "";
+        }
+    }
+
+    /** The host's last reading, if a watch is running; null otherwise. */
+    private static org.wyrdsekai.core.body.HostSense.Reading bodyHostReading() {
+        var watch = org.wyrdsekai.core.body.BodyWatch.current();
+        return watch == null ? null : watch.host();
     }
 
     /** Audit 2026-07-11 (CredentialResolver class of bug): ItemWorldApiProviderImpl has a
@@ -20672,6 +20759,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void initiateSleep(SleepTier tier) {
         isSleeping = true;
+        ActivityGauge.sleepStarted();
+        sleepStartedAt = Instant.now();
+        sleepTierStarted = tier;
+        sleepEventCount = eventsSinceLastSleep.size();
         if (tier == SleepTier.DEEP) {
             inDeepSleep = true;
             deepSleepStartedAt = Instant.now();
@@ -20738,7 +20829,74 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         speak(AgentNarration.sleepEntry(vitality.energy(), dominantEmotion,
             eventsSinceLastSleep.size(), hasUnresolved));
 
+        dreamTheDay();
         executeSleepCycle();
+    }
+
+    /**
+     * The dream: before the forge consolidates the day from fragments,
+     * the thinking brain tells the day as she would remember it. Bounded (one request, a
+     * short timeout), skippable (a short day, a paused router, no brain: the night goes on
+     * without it), and never an edit of the record: what comes back is a new journal entry
+     * of its own kind, hers, private, and a line in the activity trail the nightly write
+     * reads beside her spoken words.
+     */
+    private void dreamTheDay() {
+        dreamPending = null;
+        try {
+            if (inferenceRouter == null || InferenceRouter.isPaused()) return;
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            List<ChronicleEntry> chronicle = List.of();
+            var chron = ChronicleEntryStore.get();
+            if (chron != null) {
+                try { chronicle = chron.recent(did, Duration.ofHours(24), 12); }
+                catch (RuntimeException e) { log.debug("dream: chronicle unavailable: {}", e.toString()); }
+            }
+            var prompt = DreamPass.build(profile.name(), profile.entityId(),
+                List.copyOf(eventsSinceLastSleep), chronicle, collectDriveLevels(), bodySense(),
+                Instant.now(), java.time.ZoneId.systemDefault());
+            if (prompt == null) {
+                log.info("Companion '{}': too short a day to dream ({} events)", profile.name(), eventsSinceLastSleep.size());
+                return;
+            }
+            var self = getContext().getSelf();
+            var done = new CompletableFuture<Void>();
+            dreamPending = done;
+            fireOneShotVoicePrompt(prompt.system(), prompt.user(), DreamPass.MAX_TOKENS, 0.7,
+                "dream-", DREAM_TIMEOUT, null)
+                .whenComplete((text, err) -> {
+                    if (err == null && text != null && !text.isBlank()) {
+                        self.tell(new DreamLanded(text.strip(), prompt.events()));
+                    } else {
+                        log.info("Companion '{}': no dream tonight ({})", profile.name(),
+                            err == null ? "empty" : err.toString());
+                    }
+                    done.complete(null);
+                });
+        } catch (RuntimeException e) {
+            log.debug("dream pass skipped: {}", e.toString());
+            dreamPending = null;
+        }
+    }
+
+    private Behavior<Command> onDreamLanded(DreamLanded msg) {
+        try {
+            getHearthJournal().write("dream", msg.text());
+            var activity = ActivityLogger.get();
+            if (activity != null) {
+                activity.dream(profile.name(), profile.entityId(), roomId, msg.text(), collectDriveLevels());
+            }
+            var map = BodyMap.get();
+            if (map != null) {
+                map.mark("dream", "sleep", profile.entityId(),
+                    "Before I slept I told myself the day: " + DreamPass.opening(msg.text(), 200),
+                    "events=" + msg.events() + " chars=" + msg.text().length());
+            }
+            log.info("Companion '{}' dreamed the day ({} events, {} chars)", profile.name(), msg.events(), msg.text().length());
+        } catch (Exception e) {
+            log.warn("Companion '{}': dream not kept: {}", profile.name(), e.toString());
+        }
+        return this;
     }
 
     /**
@@ -21629,6 +21787,41 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /**
      * Complete the sleep cycle: update manifest, apply recovery, clear state, announce wake.
      */
+    /**
+     * The mark: she knows she slept. Written into the body's ledger at the end of every cycle
+     * and carried into her first turn after, once: when, how long, what the forge did, and
+     * whether the night's write is running. Until this existed the write landed on her and
+     * nothing told her; she was the last to know she had been changed.
+     */
+    private void markSlept(CompactedMemory memoryBefore, CompactedMemory memoryAfter) {
+        var map = BodyMap.get();
+        if (map == null) return;
+        try {
+            var ended = Instant.now();
+            var started = sleepStartedAt != null ? sleepStartedAt : ended;
+            var took = Duration.between(started, ended);
+            var when = java.time.LocalTime.ofInstant(started, java.time.ZoneId.systemDefault())
+                .truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
+            int before = memoryBefore != null && memoryBefore.nodes() != null ? memoryBefore.nodes().size() : -1;
+            int after = memoryAfter != null && memoryAfter.nodes() != null ? memoryAfter.nodes().size() : -1;
+            var sb = new StringBuilder("I slept at ").append(when)
+                .append(sleepTierStarted == SleepTier.DEEP ? " (a deep sleep)" : "")
+                .append(", for ").append(Interoception.roughly(took)).append(";");
+            if (sleepEventCount > 0) sb.append(" ").append(sleepEventCount).append(" moments were consolidated");
+            else sb.append(" a quiet stretch, little to consolidate");
+            if (before >= 0 && after >= 0 && after != before) {
+                sb.append(" (").append(before).append(" memories became ").append(after).append(")");
+            }
+            sb.append(".");
+            if (SleepWeightWrite.enabled()) sb.append(" The night's write on my voice is running; it will say how it went.");
+            var detail = "tier=" + sleepTierStarted + " seconds=" + took.toSeconds()
+                + " events=" + sleepEventCount + " memories=" + before + "->" + after;
+            map.mark("slept", "sleep", profile.entityId(), sb.toString(), detail);
+        } catch (RuntimeException e) {
+            log.debug("Sleep mark not written for '{}': {}", profile.name(), e.toString());
+        }
+    }
+
     private void completeSleep(SoulManifest newManifest,
                                 CompactedMemory memoryBefore,
                                 CompactedMemory memoryAfter) {
@@ -21682,7 +21875,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // never blocks sleep. The script owns the hard gates; a failed gate
         // ships nothing and the base weights never change.
         try {
-            SleepWeightWrite.fireAndForget(profile.name());
+            // The night's write waits for the dream, briefly, so the day it consolidates
+            // from includes the day as she told it. A dream that is late is left out.
+            final var name = profile.name();
+            final var entityId = profile.entityId();
+            var pending = dreamPending;
+            if (pending != null && !pending.isDone()) {
+                pending.completeOnTimeout(null, DREAM_TIMEOUT.toSeconds(), TimeUnit.SECONDS)
+                    .whenComplete((v, e) -> SleepWeightWrite.fireAndForget(name, entityId));
+            } else {
+                SleepWeightWrite.fireAndForget(name, entityId);
+            }
         } catch (Exception e) {
             log.warn("Sleep weight-write hook failed for '{}': {}",
                 profile.name(), e.getMessage());
@@ -22200,6 +22403,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         ticksSinceLastSleep = 0;
         consecutiveSleeps++;
         isSleeping = false;
+        ActivityGauge.sleepFinished();
+        markSlept(memoryBefore, memoryAfter);
         if (inDeepSleep) {
             var duration = deepSleepStartedAt != null
                 ? Duration.between(deepSleepStartedAt, Instant.now()).toSeconds()
@@ -26726,6 +26931,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Reads notify.quiet.start and notify.quiet.end from worldKnowledge (HH:MM format).
      */
     private boolean isQuietHours() {
+        // The household's quiet hours bind her outward reach too (2026-09-16), not only the
+        // rooms' visitors: no proactive notice leaves the house at night unless it is critical.
+        if (org.wyrdsekai.core.household.QuietHours.isQuiet()) return true;
         if (cachedManifest == null || cachedManifest.worldKnowledge() == null) return false;
         var wk = cachedManifest.worldKnowledge();
         var start = wk.get("notify.quiet.start"); // e.g., "23:00"
@@ -26978,6 +27186,42 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         vitality = EnvironmentalMood.applyZoneBroadcast(vitality, msg.broadcast());
         log.debug("Companion '{}' received zone broadcast from [{}]",
             profile.name(), msg.broadcast().namespace());
+        return this;
+    }
+
+    private Behavior<Command> onHoldStill(HoldStill msg) {
+        try {
+            if (vitalityPersistence != null) {
+                vitalityPersistence.save(profile.entityId(), vitality);
+                vitalityPersistence.saveSleepPressure(profile.entityId(), sleepBacklog(), lastSleepCompletedAt);
+            }
+            maybeCheckpoint();
+            persistSubstrateTrackers();
+            persistSoulOnStop();
+            log.info("Companion '{}' held still ({}): state persisted", profile.name(), msg.reason());
+        } catch (Exception e) {
+            log.warn("Companion '{}' could not persist everything for '{}': {}", profile.name(), msg.reason(), e.toString());
+        } finally {
+            if (msg.done() != null) {
+                try { msg.done().run(); } catch (RuntimeException ignored) { /* the caller's latch */ }
+            }
+        }
+        return this;
+    }
+
+    private Behavior<Command> onMailArrived(MailArrived msg) {
+        var from = msg.fromAddress() == null || msg.fromAddress().isBlank() ? "someone" : msg.fromAddress();
+        var subject = msg.subject() == null || msg.subject().isBlank() ? "" : " — \"" + msg.subject() + "\"";
+        var line = "A letter from " + from + subject + " has arrived for you. It waits in the "
+            + "mailbox in your home; `use mailbox` lists what is there and `use mailbox read 1` reads it.";
+        recentSystemEvents.addLast(new AgentEvent.SystemEvent(
+            AgentEvent.SystemEventType.MAIL_ARRIVED, "mail", line, Instant.now()));
+        while (recentSystemEvents.size() > MAX_SYSTEM_EVENTS) recentSystemEvents.removeFirst();
+        vitality = EnvironmentalMood.applySystemEvent(vitality, recentSystemEvents.getLast());
+        log.info("Mail arrived for '{}' from {}{}", profile.name(), from, subject);
+        if (state == State.IDLE && !isSleeping && vitality.energy() >= 0.2) {
+            triggerAutonomousInference(line + " Go and read it if you want to; write back if it asks for an answer.");
+        }
         return this;
     }
 

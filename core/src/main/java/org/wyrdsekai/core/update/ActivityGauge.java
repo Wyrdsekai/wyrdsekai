@@ -30,18 +30,24 @@ public final class ActivityGauge {
     public static void maintenanceStarted() { MAINTENANCE.incrementAndGet(); lastBusyMillis = System.currentTimeMillis(); }
     public static void maintenanceFinished() { MAINTENANCE.updateAndGet(n -> Math.max(0, n - 1)); lastBusyMillis = System.currentTimeMillis(); }
     public static int maintenanceRunning() { return MAINTENANCE.get(); }
+    // A companion's sleep is a junction the updater must not land on: a
+    // consolidation interrupted by a restart is the one thing a restart destroys.
+    private static final AtomicInteger SLEEPING = new AtomicInteger();
+    public static void sleepStarted() { SLEEPING.incrementAndGet(); lastBusyMillis = System.currentTimeMillis(); }
+    public static void sleepFinished() { SLEEPING.updateAndGet(n -> Math.max(0, n - 1)); lastBusyMillis = System.currentTimeMillis(); }
+    public static int sleeping() { return SLEEPING.get(); }
 
     public static int inferenceInFlight() { return INFERENCE.get(); }
     public static int codingTasks() { return CODING.get(); }
 
     /** True when nothing is in flight and nothing has been for at least {@code quiet}. */
     public static boolean idleFor(Duration quiet) {
-        if (INFERENCE.get() > 0 || CODING.get() > 0 || MAINTENANCE.get() > 0) return false;
+        if (INFERENCE.get() > 0 || CODING.get() > 0 || MAINTENANCE.get() > 0 || SLEEPING.get() > 0) return false;
         return System.currentTimeMillis() - lastBusyMillis >= quiet.toMillis();
     }
 
     public static Instant lastBusy() { return Instant.ofEpochMilli(lastBusyMillis); }
 
     /** Tests only. */
-    static void reset() { INFERENCE.set(0); CODING.set(0); MAINTENANCE.set(0); lastBusyMillis = 0L; }
+    static void reset() { INFERENCE.set(0); CODING.set(0); MAINTENANCE.set(0); SLEEPING.set(0); lastBusyMillis = 0L; }
 }

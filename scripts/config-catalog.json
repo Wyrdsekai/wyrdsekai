@@ -1,5 +1,4 @@
 {
-  "_comment": "GENERATED from SCROLL_GROUPS in scripts/rooms/study.js — regenerate with the one-liner in ConfigCatalogParityTest; do not edit by hand.",
   "groups": [
     {
       "id": "identity",
@@ -248,6 +247,11 @@
           "default": ""
         },
         {
+          "key": "WYRDSEKAI_HOST_HAND",
+          "description": "how far a companion's hand reaches into the host: observe, localize, propose, guarded, unattended",
+          "default": "observe"
+        },
+        {
           "key": "WYRDSEKAI_HOST_OPEN_ROOTS",
           "description": "allowlisted host filesystem roots",
           "default": ""
@@ -348,6 +352,26 @@
           "key": "WYRDSEKAI_BACKUP_INTERVAL_HOURS",
           "description": "snapshot cadence (hours)",
           "default": "24"
+        },
+        {
+          "key": "WYRDSEKAI_VAULT_MINUTES",
+          "description": "how often the vault takes a content-addressed copy of the self; 0 disables it",
+          "default": "15"
+        },
+        {
+          "key": "WYRDSEKAI_VAULT_DIR",
+          "description": "where the vault's chunks and manifests live",
+          "default": "<data>/vault-store"
+        },
+        {
+          "key": "WYRDSEKAI_VAULT_REMOTE",
+          "description": "rsync destination for wyrd vault sync (a vault node or offsite)",
+          "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_VAULT_DRILL_DAYS",
+          "description": "how often the newest copy is rebuilt into scratch and checked",
+          "default": "30"
         },
         {
           "key": "WYRDSEKAI_ENTITY_TTL_DAYS",
@@ -880,6 +904,16 @@
           "key": "WYRDSEKAI_INFERENCE_MAX_QUEUE",
           "description": "resilience-layer inference queue depth",
           "default": "20"
+        },
+        {
+          "key": "WYRDSEKAI_BODY_WATCH_SECONDS",
+          "description": "how often the body watch takes the record's pulse, reads the host and ages the body map",
+          "default": "30"
+        },
+        {
+          "key": "WYRDSEKAI_BODY_ACHE_HOURS",
+          "description": "how long a quiet part of ordinary weight stays in a companion's felt line before it is only in the boiler room",
+          "default": "6"
         }
       ]
     }

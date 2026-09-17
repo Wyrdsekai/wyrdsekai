@@ -43,7 +43,10 @@ public sealed interface AgentEvent {
         // installing. Found live 2026-08-31 — 287k chunks landed overnight
         // and the companion told her steward "nothing new has landed with me
         // yet today", because nothing carried the arrival to her.
-        LIBRARY_PACK_INSTALLED
+        LIBRARY_PACK_INSTALLED,
+        // A letter landed in her mailbox (2026-09-16). Mail to a companion used to sit in a
+        // table she never looked at; the notice is how she learns it is there.
+        MAIL_ARRIVED
     }
 
     /**

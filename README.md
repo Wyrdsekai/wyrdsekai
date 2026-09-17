@@ -307,6 +307,7 @@ wyrd start          # Start the household
 wyrd stop           # Stop services
 wyrd status         # Health check
 wyrd doctor         # Diagnose problems (disk, RAM, GPU, ports, substrate state)
+wyrd body           # Parts table: backends, database, host; heartbeats and recent marks
 wyrd update         # This release vs the latest; `now` installs it; `auto on` lets the node
 wyrd logs           # Follow server logs
 wyrd inference      # Manage inference backends (local/cloud/zone/status)

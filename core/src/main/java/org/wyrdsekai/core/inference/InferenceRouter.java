@@ -41,6 +41,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
+import org.wyrdsekai.core.body.BodyMap;
+import org.wyrdsekai.core.body.BrainLimbs;
+import org.wyrdsekai.core.config.WyrdConfig;
 
 /**
  * Actor that routes inference requests to available backends.
@@ -510,6 +513,24 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     private static volatile String pauseReason;
     private static final InferenceMetrics.Aggregator LATENCY = new InferenceMetrics.Aggregator(500, Duration.ofMinutes(10));
     private final Map<String, Long> startedAt = new HashMap<>();
+    private Duration healthCheckInterval = Duration.ofSeconds(30);
+
+    // ── the body map: brains are parts ──
+    private void attachBrain(String name, String type, String url, int priority) {
+        var map = BodyMap.get();
+        if (map == null) return;
+        try {
+            map.attach(BrainLimbs.forBackend(name, type, url, priority, healthCheckInterval,
+                WyrdConfig.get().voiceUrl()));
+        } catch (RuntimeException e) {
+            log.debug("Body map: could not attach brain {}: {}", name, e.toString());
+        }
+    }
+
+    private static void brainHeartbeat(String name, boolean alive) {
+        var map = BodyMap.get();
+        if (map != null) map.heartbeat(BrainLimbs.id(name), alive, null);
+    }
 
     public static Snapshot snapshot() {
         var s = LATENCY.summary();
@@ -579,6 +600,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     private void recordLatency(String requestId, String backendName, boolean ok, int tokensIn, int tokensOut) {
+        if (ok && backendName != null) {
+            var map = BodyMap.get();
+            if (map != null) map.used(BrainLimbs.id(backendName));
+        }
         var t0 = startedAt.remove(requestId);
         if (t0 == null) return;
         long ms = (System.nanoTime() - t0) / 1_000_000L;
@@ -638,6 +663,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         for (var b : backends) {
             healthStatus.put(b.name(), true);
         }
+        this.healthCheckInterval = healthCheckInterval;
+        // Each brain is a part of the body: the map feels it go quiet and come back, and the
+        // felt line tells her. The router's health loop is the brain's heartbeat.
+        for (var b : backends) attachBrain(b.name(), b.type(), b.url(), b.priority());
 
         // Start periodic health checks
         timers.startTimerWithFixedDelay(HEALTH_CHECK_TIMER,
@@ -1798,6 +1827,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
     private Behavior<Command> onHealthCheckResult(HealthCheckResult result) {
         var prev = healthStatus.put(result.backendName(), result.healthy());
+        brainHeartbeat(result.backendName(), result.healthy());
         if (prev != null && prev != result.healthy()) {
             log.info("Backend '{}' health: {}", result.backendName(),
                     result.healthy() ? "UP" : "DOWN");
@@ -2061,6 +2091,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 msg.name(), msg.priority(), msg.models(),
                 targetZone, localZone, natsRemoteCaller);
             backends.add(nats);
+            attachBrain(msg.name(), msg.type(), msg.url(), msg.priority());
             remoteBackendNames.add(msg.name());
             healthStatus.put(msg.name(), true);
             backends.sort(Comparator.comparingInt(InferenceBackend::priority));
@@ -2089,6 +2120,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         };
 
         backends.add(backend);
+        attachBrain(msg.name(), msg.type(), msg.url(), msg.priority());
         remoteBackendNames.add(msg.name());
         healthStatus.put(msg.name(), true); // optimistic — health check will verify
         backends.sort(Comparator.comparingInt(InferenceBackend::priority));
@@ -2106,6 +2138,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     private Behavior<Command> onRemoveRemoteBackend(RemoveRemoteBackend msg) {
         householdBackendNames.remove(msg.name());
         var removed = backends.removeIf(b -> b.name().equals(msg.name()));
+        if (removed) {
+            var map = BodyMap.get();
+            if (map != null) map.declareGone(BrainLimbs.id(msg.name()), "mesh discovery");
+        }
         remoteBackendNames.remove(msg.name());
         healthStatus.remove(msg.name());
         if (removed) {
@@ -2125,6 +2161,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             return this; // unknown backend — ignore
         }
         var prev = healthStatus.put(msg.name(), msg.healthy());
+        brainHeartbeat(msg.name(), msg.healthy());
         if (prev != null && prev != msg.healthy()) {
             log.info("Backend '{}' health (discovery): {}", msg.name(),
                     msg.healthy() ? "UP" : "DOWN");
