@@ -41,7 +41,7 @@ class AnItemSaysHowToUseItselfTest {
             { label: "Show the query results before writing", args: "details" }
           ]
         };
-        function invoke(params) { return { ok: true }; }
+        function invoke(params) { return { ok: true, details: (params.args || "") === "details" }; }
         """;
 
     private SourceArtifact artifactFor(String fileName, String script) throws Exception {

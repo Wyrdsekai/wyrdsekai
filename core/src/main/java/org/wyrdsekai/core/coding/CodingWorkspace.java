@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.coding;
 
 import org.slf4j.Logger;
+import org.wyrdsekai.core.host.Principals;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.config.WyrdConfig;
 
@@ -49,6 +50,20 @@ public final class CodingWorkspace {
      * @return a directory that exists, or null only if no safe one could be made — callers
      *         treat null as "do not run with a directory" rather than "use the cwd"
      */
+    /** The task's workspace, owned by the being whose task it is where the host has principals. */
+    public static File forTask(String workspaceHint, String taskId, String beingDid) {
+        var dir = forTask(workspaceHint, taskId);
+        if (dir != null && beingDid != null && (workspaceHint == null || workspaceHint.isBlank() || "(default)".equals(workspaceHint.trim()))) {
+            Principals.own(dir.toPath(), beingDid);
+        }
+        return dir;
+    }
+
+    public static String pathFor(String workspaceHint, String taskId, String beingDid) {
+        var dir = forTask(workspaceHint, taskId, beingDid);
+        return dir == null ? "" : dir.getAbsolutePath();
+    }
+
     public static File forTask(String workspaceHint, String taskId) {
         if (workspaceHint != null && !workspaceHint.isBlank()
                 && !"(default)".equals(workspaceHint.trim())) {

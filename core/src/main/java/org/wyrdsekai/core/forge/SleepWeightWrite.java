@@ -252,7 +252,7 @@ public final class SleepWeightWrite {
         };
     }
 
-    static Path sleepwriteDir() {
+    public static Path sleepwriteDir() {
         var data = WyrdConfig.get().dataDir();
         if (data == null) data = System.getProperty("wyrdsekai.data.dir");
         return data == null ? null : Path.of(data, "adapters", "sleepwrite");

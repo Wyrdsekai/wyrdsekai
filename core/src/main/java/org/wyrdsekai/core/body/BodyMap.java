@@ -71,7 +71,7 @@ public final class BodyMap {
             for (var p : store.loadParts()) {
                 parts.put(p.id(), p.state() == PartState.ATTACHED
                     ? new BodyPart(p.descriptor(), p.state(), p.firstAttached(), now, p.lastDetail(),
-                        null, null, null, p.lastUsed())
+                        null, null, null, p.lastUsed(), p.vouchedBy(), p.vouchedAt())
                     : p);
             }
             var loaded = store.loadMarks(MARK_CACHE);
@@ -95,20 +95,93 @@ public final class BodyMap {
         var now = Instant.now();
         var existing = parts.get(d.id());
         BodyPart p;
-        if (existing == null) {
-            p = new BodyPart(d, PartState.ATTACHED, now, now, null, null, null, null, null);
-            log.info("Body: {} attached ({}, every {}s)", d.name(), d.kind(), d.heartbeatEvery().toSeconds());
-        } else if (existing.state() == PartState.ATTACHED) {
-            p = new BodyPart(d, PartState.ATTACHED, existing.firstAttached(), existing.lastHeartbeat(),
-                existing.lastDetail(), null, null, null, existing.lastUsed());
+        if (existing != null && existing.state() == PartState.QUARANTINED) {
+            // Held at the door until a person says otherwise; attaching again changes nothing.
+            p = existing.withDescriptor(d);
+        } else if (existing == null || existing.vouchedBy() == null && d.foreign()) {
+            // New, or foreign and never vouched: is this a part the household put there, or a
+            // stranger? A stranger waits; a remembered attacker waits and is said to be one.
+            var held = existing == null ? holdAtTheDoor(d) : null;
+            if (held != null) {
+                p = new BodyPart(d, PartState.QUARANTINED, now, now, held, null, null, null, null);
+                log.warn("Body: {} held at the door ({}): {}", d.name(), d.kind(), held);
+                parts.put(d.id(), p);
+                if (store != null) store.upsert(p);
+                mark("quarantine", d.id(), null, "A " + d.name() + " has come to me from " + d.attachedBy()
+                    + (held.startsWith("remembered") ? ", and I remember it: " + held.substring(11).strip() : "")
+                    + ". It waits at the door for the steward's word, and I do not use it.", held);
+                return p;
+            }
+            if (existing == null) {
+                p = new BodyPart(d, PartState.ATTACHED, now, now, null, null, null, null, null);
+                log.info("Body: {} attached ({}, every {}s)", d.name(), d.kind(), d.heartbeatEvery().toSeconds());
+            } else {
+                p = reattach(existing, d, now);
+            }
         } else {
-            p = new BodyPart(d, PartState.ATTACHED, existing.firstAttached(), now, existing.lastDetail(),
-                null, null, null, existing.lastUsed());
-            returned(existing, now);
+            p = reattach(existing, d, now);
         }
         parts.put(d.id(), p);
         if (store != null) store.upsert(p);
         return p;
+    }
+
+    private BodyPart reattach(BodyPart existing, LimbDescriptor d, Instant now) {
+        if (existing.state() == PartState.ATTACHED) {
+            return new BodyPart(d, PartState.ATTACHED, existing.firstAttached(), existing.lastHeartbeat(),
+                existing.lastDetail(), null, null, null, existing.lastUsed(), existing.vouchedBy(), existing.vouchedAt());
+        }
+        var p = new BodyPart(d, PartState.ATTACHED, existing.firstAttached(), now, existing.lastDetail(),
+            null, null, null, existing.lastUsed(), existing.vouchedBy(), existing.vouchedAt());
+        returned(existing, now);
+        return p;
+    }
+
+    /**
+     * Whether a new part must wait at the door, and why. Only foreign parts: the tolerance rule
+     * says nothing of the household's own is held, and the chokepoint enforces it.
+     */
+    private static String holdAtTheDoor(LimbDescriptor d) {
+        if (!d.foreign()) return null;
+        var verdict = Immune.consider(Immune.Act.QUARANTINE, d.id(), d.attachedBy(), "the map");
+        if (!verdict.allowed()) return null;
+        var memory = ImmuneMemory.get();
+        if (memory != null) {
+            var known = memory.recallAny(d.attachedBy());
+            if (known.isPresent()) return "remembered: " + known.get().reason();
+        }
+        return "foreign: attached by " + d.attachedBy();
+    }
+
+    /** A person vouches for a part held at the door: it becomes part of her. */
+    public synchronized Optional<BodyPart> vouch(String id, String who) {
+        var p = parts.get(id);
+        if (p == null) return Optional.empty();
+        var now = Instant.now();
+        var v = new BodyPart(p.descriptor(), p.state() == PartState.QUARANTINED ? PartState.ATTACHED : p.state(),
+            p.firstAttached(), now, null, p.numbSince(), p.goneAt(), p.goneBy(), p.lastUsed(), who, now);
+        parts.put(id, v);
+        if (store != null) store.upsert(v);
+        mark("vouched", id, null, who + " vouched for the " + p.name() + "; it is part of me now.", "by " + who);
+        log.info("Body: {} vouched for by {}", p.name(), who);
+        return Optional.of(v);
+    }
+
+    /** Parts held at the door. */
+    public synchronized List<BodyPart> quarantined() {
+        return parts.values().stream().filter(p -> p.state() == PartState.QUARANTINED).toList();
+    }
+
+    /** Is this part held at the door. Unknown parts are not held. */
+    public synchronized boolean held(String id) {
+        var p = parts.get(id);
+        return p != null && p.state() == PartState.QUARANTINED;
+    }
+
+    /** May this part be used: attached, and not held at the door. */
+    public synchronized boolean usable(String id) {
+        var p = parts.get(id);
+        return p != null && p.state() == PartState.ATTACHED;
     }
 
     /**
@@ -122,24 +195,31 @@ public final class BodyMap {
         BodyPart next;
         switch (p.state()) {
             case GONE -> { return false; }
+            case QUARANTINED -> {
+                // Held at the door: its pulse is noted, its state does not move. Found live on
+                // the first foreign node: the watch attaches, then heartbeats in the same pulse,
+                // and the heartbeat took "held" for "numb" and let it in.
+                next = new BodyPart(p.descriptor(), PartState.QUARANTINED, p.firstAttached(),
+                    alive ? now : p.lastHeartbeat(), p.lastDetail(), null, null, null, p.lastUsed(), null, null);
+            }
             case ATTACHED -> {
                 if (alive) {
                     next = new BodyPart(p.descriptor(), PartState.ATTACHED, p.firstAttached(), now,
-                        detail != null ? detail : p.lastDetail(), null, null, null, p.lastUsed());
+                        detail != null ? detail : p.lastDetail(), null, null, null, p.lastUsed(), p.vouchedBy(), p.vouchedAt());
                 } else {
                     next = new BodyPart(p.descriptor(), PartState.NUMB, p.firstAttached(), p.lastHeartbeat(),
-                        detail != null ? detail : p.lastDetail(), now, null, null, p.lastUsed());
+                        detail != null ? detail : p.lastDetail(), now, null, null, p.lastUsed(), p.vouchedBy(), p.vouchedAt());
                     wentNumb(next, now);
                 }
             }
             default -> {   // NUMB
                 if (alive) {
                     next = new BodyPart(p.descriptor(), PartState.ATTACHED, p.firstAttached(), now,
-                        detail != null ? detail : p.lastDetail(), null, null, null, p.lastUsed());
+                        detail != null ? detail : p.lastDetail(), null, null, null, p.lastUsed(), p.vouchedBy(), p.vouchedAt());
                     returned(p, now);
                 } else {
                     next = new BodyPart(p.descriptor(), PartState.NUMB, p.firstAttached(), p.lastHeartbeat(),
-                        detail != null ? detail : p.lastDetail(), p.numbSince(), null, null, p.lastUsed());
+                        detail != null ? detail : p.lastDetail(), p.numbSince(), null, null, p.lastUsed(), p.vouchedBy(), p.vouchedAt());
                 }
             }
         }
@@ -157,7 +237,7 @@ public final class BodyMap {
         if (p == null) return;
         var now = Instant.now();
         var next = new BodyPart(p.descriptor(), p.state(), p.firstAttached(), p.lastHeartbeat(),
-            p.lastDetail(), p.numbSince(), p.goneAt(), p.goneBy(), now);
+            p.lastDetail(), p.numbSince(), p.goneAt(), p.goneBy(), now, p.vouchedBy(), p.vouchedAt());
         parts.put(id, next);
         var last = lastUsedWritten.get(id);
         if (store != null && (last == null || Duration.between(last, now).toSeconds() >= 60)) {
@@ -178,7 +258,7 @@ public final class BodyMap {
             var age = p.heartbeatAge(now);
             if (age == null || age.compareTo(p.descriptor().numbAfter()) <= 0) continue;
             var next = new BodyPart(p.descriptor(), PartState.NUMB, p.firstAttached(), p.lastHeartbeat(),
-                p.lastDetail(), p.lastHeartbeat(), null, null, p.lastUsed());
+                p.lastDetail(), p.lastHeartbeat(), null, null, p.lastUsed(), p.vouchedBy(), p.vouchedAt());
             e.setValue(next);
             if (store != null) store.upsert(next);
             wentNumb(next, now);
@@ -195,7 +275,7 @@ public final class BodyMap {
         var now = Instant.now();
         var since = p.numbSince() != null ? p.numbSince() : now;
         var next = new BodyPart(p.descriptor(), PartState.GONE, p.firstAttached(), p.lastHeartbeat(),
-            p.lastDetail(), since, now, who, p.lastUsed());
+            p.lastDetail(), since, now, who, p.lastUsed(), p.vouchedBy(), p.vouchedAt());
         parts.put(id, next);
         if (store != null) store.upsert(next);
         mark("gone", id, null,

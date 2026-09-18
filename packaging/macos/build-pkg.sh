@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/macos/build-pkg.sh
-#   WYRDSEKAI_VERSION=0.4.0 ./packaging/macos/build-pkg.sh
+#   WYRDSEKAI_VERSION=0.4.1 ./packaging/macos/build-pkg.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.4.0}"
+VERSION="${WYRDSEKAI_VERSION:-0.4.1}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 PKG_BUILD="$PROJECT_DIR/build/pkg"
@@ -747,6 +747,12 @@ if [ -d "$DATA_DIR" ] && ls "$DATA_DIR"/*.db >/dev/null 2>&1; then
     cp "$DATA_DIR"/*.db "$snap/" 2>/dev/null || true
     ls -dt "$DATA_DIR"/backups/pre-upgrade-* 2>/dev/null | tail -n +4 | xargs rm -rf 2>/dev/null || true
 fi
+
+# The release evidence is this release's, not every release's. The installer lays
+# files down and never removes: an upgraded node had 130 files from 62 bakes here
+# (found 2026-09-18). Clear it before the new payload lands; the deb's dpkg does the
+# same by removing files the old package owned.
+rm -rf /usr/local/wyrdsekai/data/release-evidence 2>/dev/null || true
 
 # Check for Java 25+ (project standard — audit 2026-07-11)
 if command -v java >/dev/null 2>&1; then

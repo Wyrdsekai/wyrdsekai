@@ -207,7 +207,9 @@ public final class ChronicleService {
                 var clsNode = e.payload().get("classification");
                 if (clsNode == null || clsNode.isNull()) continue;
                 var cls = clsNode.asText();
-                resilienceCounts.merge(cls, 1, Integer::sum);
+                // A line may stand for many unchanged windows (the writer folds them).
+                var w = e.payload().get("windows");
+                resilienceCounts.merge(cls, w == null || w.isNull() ? 1 : Math.max(1, w.asInt()), Integer::sum);
                 if (!"INSUFFICIENT_DATA".equals(cls)
                         && (latestNonInsufficientAt == null
                             || e.ts().isAfter(latestNonInsufficientAt))) {

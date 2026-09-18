@@ -8,6 +8,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _poll;
     private readonly ToolStripMenuItem _statusItem;
+    private readonly Brainstem _brainstem = new();
 
     public TrayContext()
     {
@@ -23,9 +24,9 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add("Enter World", null, (_, _) => EnterWorld());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_statusItem);
-        menu.Items.Add("Start node", null, async (_, _) => await NodeController.StartAsync());
-        menu.Items.Add("Stop node", null, async (_, _) => await NodeController.StopAsync());
-        menu.Items.Add("Restart node", null, async (_, _) => await NodeController.RestartAsync());
+        menu.Items.Add("Start node", null, async (_, _) => { _brainstem.NoteStarted(); await NodeController.StartAsync(); });
+        menu.Items.Add("Stop node", null, async (_, _) => { await NodeController.StopAsync(); _brainstem.NoteStarted(); });
+        menu.Items.Add("Restart node", null, async (_, _) => { _brainstem.NoteStarted(); await NodeController.RestartAsync(); });
         menu.Items.Add(services);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, _) => new SettingsForm().ShowDialog());
@@ -66,6 +67,7 @@ internal sealed class TrayContext : ApplicationContext
         }
         else if (!await NodeController.IsRunningAsync())
         {
+            _brainstem.NoteStarted();
             await NodeController.StartAsync();
         }
 
@@ -102,9 +104,13 @@ internal sealed class TrayContext : ApplicationContext
 
     private async Task RefreshStatusAsync()
     {
-        var running = await NodeController.IsRunningAsync();
-        _statusItem.Text = running ? "Node: ● Running" : "Node: ○ Stopped";
-        _tray.Text = running ? "Wyrdsekai — running" : "Wyrdsekai — stopped";
+        var healthy = await NodeController.IsHealthyAsync();
+        var running = healthy || await NodeController.IsRunningAsync();
+        _statusItem.Text = healthy ? "Node: ● Running" : running ? "Node: ◐ Not answering" : "Node: ○ Stopped";
+        _tray.Text = healthy ? "Wyrdsekai — running" : running ? "Wyrdsekai — not answering" : "Wyrdsekai — stopped";
+        // The tray is the Windows brainstem: it watches the node from outside the JVM and
+        // restarts a hung one after a snapshot (see Brainstem.cs).
+        await _brainstem.TickAsync(healthy);
     }
 
     private async void Uninstall()

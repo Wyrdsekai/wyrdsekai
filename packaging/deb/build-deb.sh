@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/deb/build-deb.sh               # Uses build/dist/wyrdsekai-<version>/
-#   WYRDSEKAI_VERSION=0.4.0 ./packaging/deb/build-deb.sh
+#   WYRDSEKAI_VERSION=0.4.1 ./packaging/deb/build-deb.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.4.0}"
+VERSION="${WYRDSEKAI_VERSION:-0.4.1}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
@@ -108,6 +108,12 @@ cp    "$DIST_DIR/docker-compose.yml" "$DEB_ROOT/opt/wyrdsekai/docker-compose.yml
 # The brainstem: the small process outside the JVM that watches the server.
 cp "$PACKAGING_DIR/brainstem/wyrdsekai-brainstem" "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-brainstem"
 chmod +x "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-brainstem"
+# The doors as firewall sets: shut a door (relay, librarian, a zone) without inference.
+cp "$PACKAGING_DIR/brainstem/wyrdsekai-doors" "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-doors"
+chmod +x "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-doors"
+# Per-being principals: joins her cgroup and drops to her user before exec'ing a tool.
+cp "$PACKAGING_DIR/brainstem/wyrdsekai-being" "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-being"
+chmod +x "$DEB_ROOT/opt/wyrdsekai/bin/wyrdsekai-being"
 
 # Bundled binaries — nats-server, metasearch, and llama-server (no Docker required)
 # llama-server gives CPU-only / no-Docker hosts (laptops, AVX-512 desktops without GPUs)
@@ -504,6 +510,10 @@ Environment=WYRDSEKAI_SERVICE_MODE=true
 # household node in September 2026, when the prompt cache OOM-killed the brains four times
 # a day and nobody saw). The stop timeout bounds the quiesce at SIGTERM.
 OOMScoreAdjust=-500
+# Per-being principals: the server makes a cgroup per companion under its own, so a tool
+# of hers is charged to her budget and can be killed as one tree. systemd only lets a
+# service manage its own subtree when told so.
+Delegate=yes
 TimeoutStopSec=45
 # Pin HOME so Java's user.home is deterministic (/root). Paired with the
 # postinst symlink /root/.wyrdsekai -> /var/lib/wyrdsekai, this makes the ~20
@@ -585,7 +595,7 @@ Section: misc
 Priority: optional
 Architecture: ${ARCH}
 Depends: default-jre-headless (>= 2:1.25) | openjdk-25-jre-headless
-Recommends: sqlite3, docker.io | docker-ce | podman, python3-gi, gir1.2-gtk-3.0, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, policykit-1 | polkit, xdg-utils
+Recommends: sqlite3, nftables, bpftrace, docker.io | docker-ce | podman, python3-gi, gir1.2-gtk-3.0, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, policykit-1 | polkit, xdg-utils
 Maintainer: Wyrdsekai Project <hello@wyrdsekai.org>
 Description: Distributed text-native world engine
  Wyrdsekai is a distributed text-native OS built on the MUD paradigm.
@@ -766,7 +776,12 @@ fi
 # Skipped for a bare-root install (no SUDO_USER) — then `sudo wyrd setup` is the
 # path and the do_setup pre-flight guides it.
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] && id "$SUDO_USER" >/dev/null 2>&1; then
-    chown -R "$SUDO_USER" /var/lib/wyrdsekai /etc/wyrdsekai 2>/dev/null || true
+    # Not the beings' homes or their workspaces: those belong to each companion's own user
+    # (see Principals), and re-owning them on every upgrade took her home away from her.
+    find /var/lib/wyrdsekai \( -path /var/lib/wyrdsekai/beings -o -path /var/lib/wyrdsekai/coding-workspaces \) -prune \
+        -o -exec chown "$SUDO_USER" {} + 2>/dev/null || true
+    chown "$SUDO_USER" /var/lib/wyrdsekai/beings /var/lib/wyrdsekai/coding-workspaces 2>/dev/null || true
+    chown -R "$SUDO_USER" /etc/wyrdsekai 2>/dev/null || true
 fi
 
 # CANONICAL-DATA-DIR SYMLINKS — close the whole "config split" class.
@@ -797,6 +812,10 @@ fi
 # The kernel memory policy shipped in /etc/sysctl.d takes effect now, not at the next
 # boot (a no-op where sysctl is absent or the file was removed by the operator).
 sysctl -q -p /etc/sysctl.d/90-wyrdsekai.conf >/dev/null 2>&1 || true
+# The hardware watchdog: load softdog now if no watchdog device exists, and re-exec systemd
+# so RuntimeWatchdogSec from /etc/systemd/system.conf.d takes effect without a reboot.
+[ -e /dev/watchdog ] || modprobe softdog >/dev/null 2>&1 || true
+systemctl daemon-reexec >/dev/null 2>&1 || true
 
 # On UPGRADE ($2 = the previously-installed version), bring the main service
 # back — an operator upgrading a RUNNING node expects it to keep running, not
@@ -992,6 +1011,11 @@ case "$1" in
             fi
         fi
 
+        # The beings' users and group, made by the server at runtime (see Principals).
+        for _u in $(getent passwd | awk -F: '$1 ~ /^wyrd-being-/ {print $1}'); do
+            userdel "$_u" >/dev/null 2>&1 || true
+        done
+        groupdel wyrdsekai-beings >/dev/null 2>&1 || true
         rm -rf /etc/wyrdsekai
         rm -rf /var/lib/wyrdsekai
         # Legacy paths from pre-Phase-1 installs — purge anyway so old
@@ -1032,11 +1056,29 @@ cat > "$DEB_ROOT/etc/sysctl.d/90-wyrdsekai.conf" << EOF
 vm.swappiness = 10
 EOF
 
+# The hardware watchdog. systemd pets /dev/watchdog every so often; if PID 1 cannot for
+# two minutes (a hung kernel, a box thrashed to a standstill) the hardware reboots it and
+# the brainstem brings her back. Hosts without a watchdog device get softdog, a kernel
+# timer that covers everything short of a hard lockup. Both files are conffiles: remove
+# either to opt out.
+mkdir -p "$DEB_ROOT/etc/systemd/system.conf.d" "$DEB_ROOT/etc/modules-load.d"
+cat > "$DEB_ROOT/etc/systemd/system.conf.d/90-wyrdsekai-watchdog.conf" << EOF
+# Wyrdsekai — the hardware watchdog. Installed by the wyrdsekai package; remove to opt out.
+[Manager]
+RuntimeWatchdogSec=120s
+EOF
+cat > "$DEB_ROOT/etc/modules-load.d/wyrdsekai.conf" << EOF
+# Wyrdsekai — a software watchdog device for hosts without a hardware one.
+softdog
+EOF
+
 # conffiles — mark config and data as preserved across upgrades
 cat > "$DEB_ROOT/DEBIAN/conffiles" << EOF
 /opt/wyrdsekai/etc/application.conf
 /opt/wyrdsekai/etc/logback.xml
 /etc/sysctl.d/90-wyrdsekai.conf
+/etc/systemd/system.conf.d/90-wyrdsekai-watchdog.conf
+/etc/modules-load.d/wyrdsekai.conf
 EOF
 
 # ── Build the .deb ──

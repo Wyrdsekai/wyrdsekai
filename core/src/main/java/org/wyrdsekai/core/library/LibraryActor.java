@@ -7,6 +7,7 @@ import org.apache.pekko.actor.typed.javadsl.ActorContext;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.actor.typed.javadsl.Receive;
 import org.slf4j.Logger;
+import org.wyrdsekai.core.body.Immune;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
@@ -256,6 +257,7 @@ public class LibraryActor extends AbstractBehavior<LibraryActor.Command> {
     private Behavior<Command> onBlock(Block cmd) {
         try {
             store.addToBlocklist(cmd.name(), cmd.reason(), "library-admin");
+            Immune.remember("capability", cmd.name(), cmd.reason() != null ? cmd.reason() : "blocklisted by the library admin", "library-admin");
             store.appendAuditEntry(new LibraryStore.AuditEntry(
                 LibraryStore.AuditType.BLOCKED, null, cmd.name(), null,
                 cmd.reason() != null ? cmd.reason() : "Blocked by admin", Instant.now()));

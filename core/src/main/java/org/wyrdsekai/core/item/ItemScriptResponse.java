@@ -68,6 +68,12 @@ public final class ItemScriptResponse {
                 if (v == null) continue;
                 var text = String.valueOf(v);
                 if (!text.isBlank()) {
+                    // An error of the item's own making is not something a person can act on as
+                    // a stack trace. Say what is wrong in plain words; she is told once as well.
+                    if ("error".equals(key)) {
+                        var plain = BrokenItems.usedAndBroke(itemName, text);
+                        if (plain != null) return plain;
+                    }
                     var extra = detailText(result, text);
                     return extra == null ? text : text + "\n" + extra;
                 }

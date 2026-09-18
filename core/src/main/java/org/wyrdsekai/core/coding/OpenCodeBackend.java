@@ -4,6 +4,7 @@ import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
+import org.wyrdsekai.core.host.Principals;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -126,10 +127,10 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         // Run async on a virtual thread — submitTask() must not block.
         Thread.ofVirtual().name("opencode-task-" + taskId).start(() -> {
             try {
+                // This thread is hers: what the runner spawns runs as her principal where the host allows it.
+                Principals.setCurrent(spec != null ? spec.companionDid() : null);
                 var result = runner.run(args, env, config.maxWallclock(),
-                    CodingWorkspace.forTask(
-                        spec != null ? spec.workspaceHint() : null,
-                        taskId.toString()));
+                    CodingWorkspace.forTask(spec != null ? spec.workspaceHint() : null, taskId.toString(), spec != null ? spec.companionDid() : null));
                 long durationMs = System.currentTimeMillis() - started;
 
                 if (result.timedOut()) {
@@ -258,8 +259,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
         // --dir was passed ONLY when a hint existed; with none, opencode worked in the
         // process's own directory — the install root on a packaged node. Always name a
         // directory, and let CodingWorkspace decide which one.
-        var workspace = CodingWorkspace.pathFor(
-            spec != null ? spec.workspaceHint() : null, taskId);
+        var workspace = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId, spec != null ? spec.companionDid() : null);
         if (workspace != null && !workspace.isBlank()) {
             args.add("--dir");
             args.add(workspace);
@@ -351,9 +351,7 @@ public final class OpenCodeBackend implements CodingTaskBackend {
     private List<CodingArtifact> parseArtifacts(
             UUID taskId, TaskSpec spec, ProcessResult result) {
         var files = new ArrayList<String>();
-        var workspace = CodingWorkspace.pathFor(
-            spec != null ? spec.workspaceHint() : null,
-            taskId == null ? null : taskId.toString());
+        var workspace = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId == null ? null : taskId.toString(), spec != null ? spec.companionDid() : null);
 
         var stdout = result.stdout();
         if (stdout != null && !stdout.isBlank()) {

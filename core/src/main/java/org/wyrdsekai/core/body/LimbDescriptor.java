@@ -19,7 +19,13 @@ import java.time.Duration;
  */
 public record LimbDescriptor(String id, BodyKind kind, String name, String owner,
                              String transport, Duration heartbeatEvery, FeltWeight feltWeight,
-                             String numbBehaviour, String shedTier) {
+                             String numbBehaviour, String shedTier, String attachedBy, String claim) {
+
+    /** A part the household put there itself: no provenance to prove, nothing to vouch for. */
+    public LimbDescriptor(String id, BodyKind kind, String name, String owner, String transport,
+                          Duration heartbeatEvery, FeltWeight feltWeight, String numbBehaviour, String shedTier) {
+        this(id, kind, name, owner, transport, heartbeatEvery, feltWeight, numbBehaviour, shedTier, null, null);
+    }
 
     public LimbDescriptor {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("a part needs an id");
@@ -32,6 +38,17 @@ public record LimbDescriptor(String id, BodyKind kind, String name, String owner
         if (feltWeight == null) feltWeight = FeltWeight.PRESENT;
         if (owner == null || owner.isBlank()) owner = "household";
         if (shedTier == null || shedTier.isBlank()) shedTier = "never";
+    }
+
+    /**
+     * Who attached this part: null, "household", "system" or "steward" for the household's own;
+     * otherwise the DID, node id or zone that brought it, which the map treats as foreign until a
+     * person vouches for it. {@code claim} is a hash of what the part says it is (a manifest, a
+     * tool index, a key): when it changes, the part is inflamed, not acted on.
+     */
+    public boolean foreign() {
+        return attachedBy != null && !attachedBy.isBlank()
+            && !attachedBy.equals("household") && !attachedBy.equals("system") && !attachedBy.equals("steward");
     }
 
     /** Past this age without a heartbeat the part is numb: twice the promised interval. */

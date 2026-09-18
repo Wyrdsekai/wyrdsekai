@@ -49,6 +49,8 @@ public final class AcpBackend implements CodingTaskBackend {
     @FunctionalInterface
     public interface TransportFactory {
         Transport open() throws IOException;
+        /** The same, for a being: the agent process runs as her principal where the host allows it. */
+        default Transport open(String beingDid) throws IOException { return open(); }
     }
 
     /** Default registry name — the generic ACP surface. */
@@ -71,7 +73,10 @@ public final class AcpBackend implements CodingTaskBackend {
     /** Production: spawn {@code agentCommand} with an EgressGate-scrubbed env. */
     public AcpBackend(String name, List<String> agentCommand, Map<String, String> env,
                       Duration turnTimeout) {
-        this(name, agentCommand, turnTimeout, () -> spawn(agentCommand, env));
+        this(name, agentCommand, turnTimeout, new TransportFactory() {
+            @Override public Transport open() throws IOException { return spawn(agentCommand, env, null); }
+            @Override public Transport open(String beingDid) throws IOException { return spawn(agentCommand, env, beingDid); }
+        });
     }
 
     /** Test seam: any transport (piped streams, fake agent). */
@@ -91,11 +96,9 @@ public final class AcpBackend implements CodingTaskBackend {
         return this;
     }
 
-    private static Transport spawn(List<String> command, Map<String, String> env)
+    private static Transport spawn(List<String> command, Map<String, String> env, String beingDid)
             throws IOException {
-        var pb = new ProcessBuilder(command);
-        EgressGate.defaultInstance().applyEnv(pb.environment(),
-            env != null ? env : Map.of());
+        var pb = EgressGate.gatedProcessBuilder(command, env != null ? env : Map.of(), beingDid);
         pb.redirectErrorStream(false);
         var process = pb.start();
         // stderr drained so a chatty agent can't block on a full pipe
@@ -121,7 +124,7 @@ public final class AcpBackend implements CodingTaskBackend {
         Thread.ofVirtual().name("acp-task-" + taskId).start(() -> {
             Transport transport = null;
             try {
-                transport = transportFactory.open();
+                transport = transportFactory.open(spec != null ? spec.companionDid() : null);
                 // Steward-consent policy (2026-08-16): git-state writes route
                 // to the steward with a bounded wait; silence/timeout falls
                 // back to reject_once. With no notifier wired (headless,
@@ -132,9 +135,7 @@ public final class AcpBackend implements CodingTaskBackend {
                 try (var client = new AcpClient(transport.connection(), policy)) {
                     client.initialize("wyrdsekai", "0.1.6");
                     // Never the JVM cwd — that is the install root on a packaged node.
-                    var cwd = CodingWorkspace.pathFor(
-                        spec != null ? spec.workspaceHint() : null,
-                        taskId == null ? null : taskId.toString());
+                    var cwd = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId == null ? null : taskId.toString(), spec != null ? spec.companionDid() : null);
                     var sessionId = client.newSession(cwd);
                     // Items-as-tools contract. Every OTHER backend prepends this; ACP
                     // sent the raw description, so an item authored over ACP had never

@@ -14,7 +14,15 @@ import java.time.Instant;
  */
 public record BodyPart(LimbDescriptor descriptor, PartState state, Instant firstAttached,
                        Instant lastHeartbeat, String lastDetail, Instant numbSince,
-                       Instant goneAt, String goneBy, Instant lastUsed) {
+                       Instant goneAt, String goneBy, Instant lastUsed, String vouchedBy, Instant vouchedAt) {
+
+    public BodyPart(LimbDescriptor descriptor, PartState state, Instant firstAttached, Instant lastHeartbeat, String lastDetail,
+                    Instant numbSince, Instant goneAt, String goneBy, Instant lastUsed) {
+        this(descriptor, state, firstAttached, lastHeartbeat, lastDetail, numbSince, goneAt, goneBy, lastUsed, null, null);
+    }
+
+    /** Vouched for, or never needed vouching. */
+    public boolean vouched() { return vouchedBy != null || !descriptor.foreign(); }
 
     public String id() { return descriptor.id(); }
     public String name() { return descriptor.name(); }
@@ -35,6 +43,10 @@ public record BodyPart(LimbDescriptor descriptor, PartState state, Instant first
 
     BodyPart withState(PartState s) {
         return new BodyPart(descriptor, s, firstAttached, lastHeartbeat, lastDetail,
-            numbSince, goneAt, goneBy, lastUsed);
+            numbSince, goneAt, goneBy, lastUsed, vouchedBy, vouchedAt);
+    }
+
+    BodyPart withDescriptor(LimbDescriptor d) {
+        return new BodyPart(d, state, firstAttached, lastHeartbeat, lastDetail, numbSince, goneAt, goneBy, lastUsed, vouchedBy, vouchedAt);
     }
 }

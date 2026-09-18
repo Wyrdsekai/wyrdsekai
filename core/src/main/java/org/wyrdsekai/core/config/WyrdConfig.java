@@ -283,6 +283,39 @@ public final class WyrdConfig {
         return v == null || v.isBlank() ? "observe" : v.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * {@code WYRDSEKAI_BEING_MEMORY_MAX} — the memory budget of one being's tools on the host
+     * (cgroup memory.max: bytes, or a suffixed size such as 4G). Empty means no cap.
+     */
+    /** {@code WYRDSEKAI_BEING_PRINCIPALS} — {@code off} runs every being's tools as the daemon, as before 0.4.1. Default on. */
+    public String beingPrincipals() {
+        var v = resolve("WYRDSEKAI_BEING_PRINCIPALS", "being.principals", () -> "on");
+        return v == null || v.isBlank() ? "on" : v.trim();
+    }
+
+    /** {@code WYRDSEKAI_HOOKS_MODE} — {@code enforce} (default) or {@code record}: the hooks write down what they would cut and cut nothing. */
+    public String hooksMode() {
+        var v = resolve("WYRDSEKAI_HOOKS_MODE", "hooks.mode", () -> "enforce");
+        return v == null || v.isBlank() ? "enforce" : v.trim();
+    }
+
+    /** {@code WYRDSEKAI_HOOKS_REPLAY_DAYS} — how much of her history a new hook rule must be tried against before it may be armed. Default 3. */
+    public int hooksReplayDays() {
+        try { return Math.max(0, Integer.parseInt(resolve("WYRDSEKAI_HOOKS_REPLAY_DAYS", "hooks.replay_days", () -> "3").trim())); }
+        catch (RuntimeException e) { return 3; }
+    }
+
+    /** {@code WYRDSEKAI_ITEM_MEND_MINUTES} — minutes a night the workshop may spend mending broken household items; 0 turns it off. Default 45. */
+    public int itemMendMinutes() {
+        try { return Math.max(0, Integer.parseInt(resolve("WYRDSEKAI_ITEM_MEND_MINUTES", "items.mend_minutes", () -> "45").trim())); }
+        catch (RuntimeException e) { return 45; }
+    }
+
+    public String beingMemoryMax() {
+        var v = resolve("WYRDSEKAI_BEING_MEMORY_MAX", "being.memory_max", () -> "");
+        return v == null ? "" : v.trim();
+    }
+
     /** {@code WYRDSEKAI_BODY_ACHE_HOURS} — how long a quiet part of ordinary weight stays in her felt line. */
     public int bodyAcheHours() { return intOr("WYRDSEKAI_BODY_ACHE_HOURS", "body.ache_hours", 6); }
 

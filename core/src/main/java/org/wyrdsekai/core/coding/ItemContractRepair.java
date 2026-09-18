@@ -11,7 +11,10 @@ import java.time.Duration;
 import java.util.Map;
 import java.nio.file.Files;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.ZoneOffset;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -255,6 +258,62 @@ public final class ItemContractRepair {
     }
 
     private static volatile Escalation escalation;
+
+    /** What became of one placed item handed to {@link #repairPlaced}. */
+    public record PlacedRepair(String item, boolean fixed, List<String> before, List<String> after, String note) {}
+
+    /**
+     * Repair an item that is already placed in the world and is broken: mis-wired, or failing
+     * the contract some other way. The work happens on a COPY in a scratch workspace, through
+     * the same escalation backend and the same revert-if-worse rounds as a task-time repair.
+     * The placed file is replaced only when the copy comes out with no problems at all, and
+     * the version it replaces is kept beside it under {@code .repaired/}. An item that cannot
+     * be fixed is left exactly as it was.
+     *
+     * <p>This exists because of 2026-09-17: eleven mis-wired items sat in a companion's world,
+     * three of which failed when she used them, and the only repair path ran at task time.</p>
+     */
+    public static PlacedRepair repairPlaced(Path itemFile) {
+        var fileName = itemFile.getFileName().toString();
+        try {
+            var original = Files.readString(itemFile);
+            var before = ItemContractCheck.problems(original, fileName);
+            if (before.isEmpty()) return new PlacedRepair(fileName, false, before, before, "nothing to repair");
+            var run = escalation;
+            if (run == null) return new PlacedRepair(fileName, false, before, before, "no coding backend is registered to repair with");
+            var stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
+            var ws = CodingWorkspace.forTask(null, "repair-" + fileName.replaceAll("[^A-Za-z0-9_.-]", "_") + "-" + stamp);
+            if (ws == null) return new PlacedRepair(fileName, false, before, before, "no scratch workspace");
+            var copy = ws.toPath().resolve(fileName);
+            Files.writeString(copy, original);
+            var current = before;
+            for (int round = 1; round <= MAX_ROUNDS && !current.isEmpty(); round++) {
+                var source = Files.readString(copy);
+                log.info("[item-contract] placed-item repair round {}/{} for {} — {}", round, MAX_ROUNDS, fileName, current);
+                final var prompt = buildPrompt(fileName, current);
+                final var done = new boolean[1];
+                withoutEscalation(() -> done[0] = run.rerun(ws.toPath(), prompt));
+                if (!done[0]) break;
+                var after = ItemContractCheck.problems(Files.readString(copy), fileName);
+                if (after.size() > current.size()) { Files.writeString(copy, source); break; }   // never worse
+                current = after;
+            }
+            if (!current.isEmpty()) {
+                return new PlacedRepair(fileName, false, before, current, "could not be made whole; the placed item is unchanged");
+            }
+            var kept = itemFile.resolveSibling(".repaired");
+            Files.createDirectories(kept);
+            Files.writeString(kept.resolve(fileName + "." + stamp + ".bak"), original);
+            var tmp = itemFile.resolveSibling(fileName + ".tmp");
+            Files.writeString(tmp, Files.readString(copy));
+            Files.move(tmp, itemFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[item-contract] placed item {} repaired; the previous version is in {}", fileName, kept);
+            return new PlacedRepair(fileName, true, before, List.of(), "repaired; the previous version is kept under .repaired/");
+        } catch (Exception e) {
+            log.warn("[item-contract] placed-item repair of {} failed: {}", fileName, e.toString());
+            return new PlacedRepair(fileName, false, List.of(), List.of(), "the repair did not run: " + e.getMessage());
+        }
+    }
 
     public static void setEscalation(Escalation e) {
         escalation = e;

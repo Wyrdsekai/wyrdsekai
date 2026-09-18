@@ -26,6 +26,8 @@ import org.wyrdsekai.core.coding.BackendRegistry;
 import org.wyrdsekai.core.coding.CodingBackendPreference;
 import org.wyrdsekai.core.coding.CodingItemRegistry;
 import org.wyrdsekai.core.coding.ItemContractRepair;
+import org.wyrdsekai.core.coding.NightMending;
+import org.wyrdsekai.core.forge.GuardQuestions;
 import org.wyrdsekai.core.forge.SleepWeightWrite;
 import org.wyrdsekai.core.library.FindingsLedger;
 import org.wyrdsekai.core.library.LibraryPatron;
@@ -462,7 +464,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private record PresenceCheck() implements Command {}
     /** Deferred attempt to follow the bondholder after a transit event.
      * Scheduled by EntityLeft on the bondholder. step 2. */
-    private record FollowAttempt(String bondholderDid) implements Command {}
+    /**
+     * @param bondholderDid the bond's other party (a DID)
+     * @param entityId      the id the room and the registry know the bondholder by right now: a
+     *                      web session is the DID, an ssh session is the login id. The bond and
+     *                      the room name the same person by different ids; the room's id is the
+     *                      one to look rooms up by. Over ssh she never followed until this.
+     */
+    private record FollowAttempt(String bondholderDid, String entityId) implements Command {}
     /** External entry point: bondholder invited the companion to come along
      * through a portal. step 5. The in-world tell
      *  detection (`take wyrd with me`) feeds this same handler. Invite TTL
@@ -1393,6 +1402,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     public record HoldStill(String reason, Runnable done) implements Command {}
     /** The day as she told it, back from the thinking brain. */
     private record DreamLanded(String text, int events) implements Command {}
+    /** The dream did not come in time; the night goes on without it. */
+    private record DreamWaitOver() implements Command {}
     /** Bridge ask — send message + wait for companion's spoken response. */
     public record BridgeAsk(String senderId, String senderName, String message,
                              ActorRef<BridgeTextResponse> replyTo) implements Command {}
@@ -2109,6 +2120,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** Per-tick counter used to throttle classification to one per non-overlapping window. */
     private int resilienceTickCounter = 0;
+    /** The trail line for the resilience classification is written on change or hourly; these fold the windows between. */
+    private String resilienceLastWritten;
+    private Instant resilienceLastWrittenAt;
+    private int resilienceWindowsFolded;
 
     // --- Presence mode ( step 1) ---
     /** Current locus of agency relative to the bondholder. */
@@ -2124,6 +2139,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private String pendingFollowRoom;
     /** Display name to use for the next follow narration. */
     private String pendingFollowName;
+    /** The bondholder's room-side id for a deferred follow (see {@link FollowAttempt#entityId}). */
+    private String pendingFollowEntity;
     /** True when cross-zone "stays behind" narration has fired this transit;
      *  reset when bondholder presence returns to PRESENT.
      * step 5. */
@@ -2244,6 +2261,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** The dream in flight for this sleep; the night's write waits for it, briefly. */
     private CompletableFuture<Void> dreamPending;
     private static final Duration DREAM_TIMEOUT = Duration.ofSeconds(90);
+    /** The forge waits for the dream, briefly, so the day is consolidated as a day. */
+    private boolean sleepCycleWaitingForDream;
+    private String dreamForThisSleep;
+    private static final String DREAM_WAIT_TIMER = "dream-wait";
     /** Minimum spacing between operator-forced consolidation cycles. */
     static final Duration FORCED_SLEEP_MIN_INTERVAL = Duration.ofMinutes(5);
 
@@ -3875,6 +3896,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(MailArrived.class, this::onMailArrived)
             .onMessage(HoldStill.class, this::onHoldStill)
             .onMessage(DreamLanded.class, this::onDreamLanded)
+            .onMessage(DreamWaitOver.class, msg -> {
+                if (sleepCycleWaitingForDream) {
+                    sleepCycleWaitingForDream = false;
+                    log.info("Companion '{}': the dream did not come in time; consolidating from the day's parts", profile.name());
+                    executeSleepCycle();
+                }
+                return this;
+            })
             .onMessage(ExternalTell.class, msg -> {
                 // Deliver as if a player sent a tell — goes through normal reactive path
                 log.info("External tell from '{}': {}", msg.senderName(),
@@ -4268,9 +4297,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // cancel any deferred follow that's now moot.
                 noteBondholderActivity(entered.entityId());
                 var bondholderHere = primaryBondholderDid();
-                if (bondholderHere != null && bondholderHere.equals(entered.entityId())) {
+                if (bondholderHere != null && PersonIds.samePerson(bondholderHere, entered.entityId())) {
                     pendingFollowRoom = null;
                     pendingFollowName = null;
+                    pendingFollowEntity = null;
                 }
             }
 
@@ -4280,11 +4310,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // a short-delayed FollowAttempt — gives the player time to land
                 // in the destination room before we resolve via EntityRegistry.
                 var bondholder = primaryBondholderDid();
-                if (bondholder != null && bondholder.equals(left.entityId())
+                if (bondholder != null && PersonIds.samePerson(bondholder, left.entityId())
                         && companionMode == CompanionMode.PRESENT_WITH_USER) {
                     pendingFollowName = left.entityName();
+                    pendingFollowEntity = left.entityId();
                     timers.startSingleTimer("follow-" + bondholder,
-                        new FollowAttempt(bondholder), Duration.ofMillis(750));
+                        new FollowAttempt(bondholder, left.entityId()), Duration.ofMillis(750));
                 }
             }
 
@@ -4344,7 +4375,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 && pc.current() != null && pc.current().hasImprint()) {
             try {
                 var bondholderDid = primaryBondholderDid();
-                if (bondholderDid != null && bondholderDid.equals(pc.entityId())) {
+                if (bondholderDid != null && PersonIds.samePerson(bondholderDid, pc.entityId())) {
                     Bond bond = null;
                     for (var b : activeBonds.values()) {
                         if (b != null && b.active() && b.involves(bondholderDid)) {
@@ -5441,7 +5472,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var bondholderDid = primaryBondholderDid();
         if (bondholderDid != null && currentSnapshot.entities() != null) {
             for (var e : currentSnapshot.entities()) {
-                if (bondholderDid.equals(e.id())) return;
+                if (PersonIds.samePerson(bondholderDid, e.id())) return;
             }
         }
         try {
@@ -7265,7 +7296,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private void noteBondholderActivity(String speakerEntityId) {
         if (speakerEntityId == null) return;
         var bondholder = primaryBondholderDid();
-        if (bondholder == null || !bondholder.equals(speakerEntityId)) return;
+        if (bondholder == null || !PersonIds.samePerson(bondholder, speakerEntityId)) return;
         ownTimePendingSince = null;
         if (companionMode != CompanionMode.PRESENT_WITH_USER) {
             setCompanionMode(CompanionMode.PRESENT_WITH_USER, "bondholder_activity");
@@ -7278,7 +7309,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private void detectCrossZoneInvite(String speakerEntityId, String text) {
         if (speakerEntityId == null || text == null || text.isBlank()) return;
         var bondholder = primaryBondholderDid();
-        if (bondholder == null || !bondholder.equals(speakerEntityId)) return;
+        if (bondholder == null || !PersonIds.samePerson(bondholder, speakerEntityId)) return;
         var lower = text.toLowerCase();
         var myName = profile.name() == null ? "" : profile.name().toLowerCase();
         boolean addressedToMe = !myName.isBlank() && lower.contains(myName);
@@ -7309,7 +7340,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.debug("CrossZoneInvite ignored — no bondholder");
             return this;
         }
-        if (msg.bondholderDid() != null && !msg.bondholderDid().equals(bondholder)) {
+        if (msg.bondholderDid() != null && !PersonIds.samePerson(msg.bondholderDid(), bondholder)) {
             log.debug("CrossZoneInvite ignored — DID mismatch (expected {}, got {})",
                 bondholder, msg.bondholderDid());
             return this;
@@ -7423,10 +7454,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Behavior<Command> onFollowAttempt(FollowAttempt msg) {
         if (companionMode != CompanionMode.PRESENT_WITH_USER) return this;
         var bondholder = primaryBondholderDid();
-        if (bondholder == null || !bondholder.equals(msg.bondholderDid())) return this;
+        if (bondholder == null || !PersonIds.samePerson(bondholder, msg.bondholderDid())) return this;
 
         var registry = EntityRegistry.get();
         if (registry == null) return this;
+        // The registry knows the person by the id their session entered the room with.
+        var roomSide = msg.entityId() != null ? msg.entityId() : bondholder;
 
         // step 5 — cross-zone gate. When the bondholder
         // has stepped through a portal into another zone, default behavior is
@@ -7435,10 +7468,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // RelocateCompanion.depart). Without a guardian wire (single-zone
         // deployments, embedded tests), narrate the follow-through and leave
         // a Hearth journal trace.
-        var presence = registry.presenceOf(bondholder);
+        var presence = registry.presenceOf(roomSide);
         if (presence == EntityRegistry.PresenceState.TRAVELING) {
             var name = pendingFollowName != null ? pendingFollowName : "them";
-            var dest = registry.travelDestinationOf(bondholder).orElse("the other side");
+            var dest = registry.travelDestinationOf(roomSide).orElse("the other side");
             if (!crossZoneNarrated) {
                 // Auto-return: companion is currently a visitor (homeZoneId set
                 // from a prior RestoreTransitState) and bondholder is heading
@@ -7502,7 +7535,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             crossZoneNarrated = false;
         }
 
-        var theirRoom = registry.roomOf(bondholder).orElse(null);
+        var theirRoom = registry.roomOf(roomSide).or(() -> registry.roomOf(bondholder)).orElse(null);
         if (theirRoom == null) {
             log.debug("Follow: bondholder room not resolvable, skipping");
             return this;
@@ -7511,6 +7544,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Already there (or they came back). Clear pending and bail.
             pendingFollowRoom = null;
             pendingFollowName = null;
+            pendingFollowEntity = null;
             return this;
         }
 
@@ -7520,6 +7554,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 log.info("Follow declined ({}): {} stays behind", blocked, profile.name());
                 pendingFollowRoom = null;
                 pendingFollowName = null;
+                pendingFollowEntity = null;
                 return this;
             }
             // Soft block — defer. Single-slot queue: latest target wins.
@@ -7531,6 +7566,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         firePendingOrImmediateFollow(theirRoom, pendingFollowName);
         pendingFollowRoom = null;
         pendingFollowName = null;
+        pendingFollowEntity = null;
         return this;
     }
 
@@ -7564,8 +7600,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         // Resolve fresh room — bondholder may have moved again while we were busy.
         var registry = EntityRegistry.get();
+        var roomSide = pendingFollowEntity != null ? pendingFollowEntity : bondholder;
         var theirRoom = registry != null
-            ? registry.roomOf(bondholder).orElse(pendingFollowRoom)
+            ? registry.roomOf(roomSide).or(() -> registry.roomOf(bondholder)).orElse(pendingFollowRoom)
             : pendingFollowRoom;
         if (theirRoom == null || theirRoom.equals(roomId)) {
             pendingFollowRoom = null;
@@ -12733,11 +12770,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (result != null
                         && result.classification() != null
                         && activityLog != null) {
-                    var agentDid = profile.did() != null ? profile.did() : profile.entityId();
-                    activityLog.resilience(profile.name(), agentDid,
-                        result.classification().name(),
-                        result.confidence(),
-                        result.reason());
+                    // Fold unchanged windows: a line when the classification changes, and one
+                    // an hour otherwise carrying how many windows it stood for. Every window
+                    // as its own line was 91% of her trail.
+                    var cls = result.classification().name();
+                    resilienceWindowsFolded++;
+                    var writtenAt = Instant.now();
+                    boolean changed = !cls.equals(resilienceLastWritten);
+                    boolean stale = resilienceLastWrittenAt == null
+                        || Duration.between(resilienceLastWrittenAt, writtenAt).compareTo(Duration.ofHours(1)) >= 0;
+                    if (changed || stale) {
+                        var agentDid = profile.did() != null ? profile.did() : profile.entityId();
+                        activityLog.resilience(profile.name(), agentDid, cls,
+                            result.confidence(), result.reason(), resilienceWindowsFolded);
+                        resilienceLastWritten = cls;
+                        resilienceLastWrittenAt = writtenAt;
+                        resilienceWindowsFolded = 0;
+                    }
                 }
             }
         }
@@ -20829,8 +20878,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         speak(AgentNarration.sleepEntry(vitality.energy(), dominantEmotion,
             eventsSinceLastSleep.size(), hasUnresolved));
 
-        dreamTheDay();
-        executeSleepCycle();
+        dreamForThisSleep = null;
+        seedGuardQuestions();
+        if (dreamTheDay()) {
+            // The forge consolidates from the day as she told it: wait for the dream, but never
+            // past its timeout. A short night still consolidates.
+            sleepCycleWaitingForDream = true;
+            timers.startSingleTimer(DREAM_WAIT_TIMER, new DreamWaitOver(), DREAM_TIMEOUT.plusSeconds(5));
+        } else {
+            executeSleepCycle();
+        }
     }
 
     /**
@@ -20841,10 +20898,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * of its own kind, hers, private, and a line in the activity trail the nightly write
      * reads beside her spoken words.
      */
-    private void dreamTheDay() {
+    private boolean dreamTheDay() {
         dreamPending = null;
         try {
-            if (inferenceRouter == null || InferenceRouter.isPaused()) return;
+            if (inferenceRouter == null || InferenceRouter.isPaused()) return false;
             var did = profile.did() != null ? profile.did() : profile.entityId();
             List<ChronicleEntry> chronicle = List.of();
             var chron = ChronicleEntryStore.get();
@@ -20857,7 +20914,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 Instant.now(), java.time.ZoneId.systemDefault());
             if (prompt == null) {
                 log.info("Companion '{}': too short a day to dream ({} events)", profile.name(), eventsSinceLastSleep.size());
-                return;
+                return false;
             }
             var self = getContext().getSelf();
             var done = new CompletableFuture<Void>();
@@ -20870,12 +20927,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     } else {
                         log.info("Companion '{}': no dream tonight ({})", profile.name(),
                             err == null ? "empty" : err.toString());
+                        self.tell(new DreamWaitOver());
                     }
                     done.complete(null);
                 });
+            return true;
         } catch (RuntimeException e) {
             log.debug("dream pass skipped: {}", e.toString());
             dreamPending = null;
+            return false;
         }
     }
 
@@ -20893,21 +20953,47 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     "events=" + msg.events() + " chars=" + msg.text().length());
             }
             log.info("Companion '{}' dreamed the day ({} events, {} chars)", profile.name(), msg.events(), msg.text().length());
+            proposeGuardQuestion(msg.text());
         } catch (Exception e) {
             log.warn("Companion '{}': dream not kept: {}", profile.name(), e.toString());
+        }
+        dreamForThisSleep = msg.text();
+        if (sleepCycleWaitingForDream) {
+            sleepCycleWaitingForDream = false;
+            timers.cancel(DREAM_WAIT_TIMER);
+            executeSleepCycle();
         }
         return this;
     }
 
-    /**
-     * Execute the full sleep maintenance cycle:
-     * 1. Run SoulMaintenanceCycle (behavioral extraction + memory consolidation + manifest forge)
-     * 2. If ForgeActor is available, send the new manifest for persistent storage + audit
-     * 3. Otherwise, store directly via SoulStore and complete locally
-     */
+    private void proposeGuardQuestion(String dream) {
+        try {
+            GuardQuestions.propose(SleepWeightWrite.sleepwriteDir(), dream, Instant.now());
+        } catch (Exception e) {
+            log.debug("guard candidate not written: {}", e.toString());
+        }
+    }
+
+    private void seedGuardQuestions() {
+        try {
+            var f = GuardQuestions.seed(SleepWeightWrite.sleepwriteDir(), profile.name(), locale);
+            if (f != null) log.info("Companion '{}': seeded the morning guard's questions at {}", profile.name(), f);
+        } catch (Exception e) {
+            log.debug("guard questions not seeded: {}", e.toString());
+        }
+    }
+
     private void executeSleepCycle() {
         try {
-            var saidEvents = eventsSinceLastSleep.stream()
+            var dayEvents = new ArrayList<WorldEvent>(eventsSinceLastSleep);
+            if (dreamForThisSleep != null && !dreamForThisSleep.isBlank()) {
+                // The day as she told it goes into the forge beside the day's parts, as her own
+                // words at the end of the day: the extractor and the memory consolidation read
+                // one telling of the day, not only fragments. Never into eventsSinceLastSleep.
+                dayEvents.add(new WorldEvent.Said("home-" + profile.entityId(), Instant.now(), profile.entityId(),
+                    profile.name(), dreamForThisSleep, locale, List.of()));
+            }
+            var saidEvents = dayEvents.stream()
                 .filter(e -> e instanceof WorldEvent.Said)
                 .map(e -> (WorldEvent.Said) e)
                 .toList();
@@ -20924,7 +21010,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
             var memoryBefore = cachedManifest.memory();
             var identity = buildSleepIdentity();
-            var eventsCopy = List.copyOf(eventsSinceLastSleep);
+            var eventsCopy = List.copyOf(dayEvents);
             var snapshotsCopy = List.copyOf(vitalitySnapshots);
 
             int realChargeCount = (int) charges.stream()
@@ -22405,6 +22491,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         isSleeping = false;
         ActivityGauge.sleepFinished();
         markSlept(memoryBefore, memoryAfter);
+        // The house is as quiet as it gets right after a sleep: the workshop mends what is broken.
+        NightMending.afterSleep();
         if (inDeepSleep) {
             var duration = deepSleepStartedAt != null
                 ? Duration.between(deepSleepStartedAt, Instant.now()).toSeconds()

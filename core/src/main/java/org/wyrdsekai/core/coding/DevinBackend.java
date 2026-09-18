@@ -391,9 +391,7 @@ public final class DevinBackend implements CodingTaskBackend {
         // The workspace REPORTED on the artifact is what CodingTaskItemBridge scans for
         // the item's .js. Falling back to the process directory pointed that scan at the
         // install root on a packaged node — the same defect as running there.
-        var workspace = CodingWorkspace.pathFor(
-            spec != null ? spec.workspaceHint() : null,
-            taskId == null ? null : taskId.toString());
+        var workspace = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId == null ? null : taskId.toString(), spec != null ? spec.companionDid() : null);
 
         var files = new ArrayList<String>();
         if (terminal != null) {

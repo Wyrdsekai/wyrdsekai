@@ -3,6 +3,7 @@ package org.wyrdsekai.core.coding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.familiar.DynamicFormValidator;
+import org.wyrdsekai.core.item.ItemWiring;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.scripting.api.ItemManifest;
 import org.wyrdsekai.scripting.api.ItemManifestParser;
@@ -70,6 +71,16 @@ public final class ItemContractCheck {
         return problems(script, displayName).stream().findFirst();
     }
 
+    /** What the loader's wiring audit would say about this script (see {@link ItemWiring}). */
+    public static List<String> wiringProblems(String script, ItemManifest manifest) {
+        try {
+            return ItemWiring.problems(script, manifest);
+        } catch (RuntimeException e) {
+            log.debug("wiring check unavailable: {}", e.toString());
+            return List.of();
+        }
+    }
+
     /** True when this script would be accepted for registration. */
     public static boolean isCompliant(String script, String displayName) {
         return firstProblem(script, displayName).isEmpty();
@@ -116,6 +127,16 @@ public final class ItemContractCheck {
         // the validator gains from here on is covered by the repair loop for free.
         for (var error : ItemManifestValidator.validate(manifest).errors()) {
             if (!out.contains(error)) out.add(error);
+        }
+        // WIRING. Every world.* call must exist on this node, on every path through the
+        // script, not only the one path the smoke below happens to take. The loader has
+        // audited this since 2026-09-08 and `wyrd items check` prints it, but this gate did
+        // not ask: on 2026-09-17 three items built for a companion called world.memory.get
+        // and world.memory.list, which do not exist, were declared compliant, placed as
+        // finished, and failed the first time she used them. The messages name what the
+        // API does offer, so the repair loop can act on them.
+        for (var problem : wiringProblems(script, manifest)) {
+            if (!out.contains(problem)) out.add(problem);
         }
         var entrypoint = entrypointProblem(script, name);
         entrypoint.ifPresent(out::add);

@@ -255,6 +255,31 @@
           "key": "WYRDSEKAI_HOST_OPEN_ROOTS",
           "description": "allowlisted host filesystem roots",
           "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_ITEM_MEND_MINUTES",
+          "description": "minutes a night the workshop may spend mending broken household items after a companion's sleep; 0 = off",
+          "default": "45"
+        },
+        {
+          "key": "WYRDSEKAI_BEING_PRINCIPALS",
+          "description": "run each companion's tools as her own user and cgroup on the host (Linux package only): on, off",
+          "default": "on"
+        },
+        {
+          "key": "WYRDSEKAI_HOOKS_MODE",
+          "description": "the kernel hooks on a companion's tools: enforce (cut what the rules say) or record (only write down what would be cut)",
+          "default": "enforce"
+        },
+        {
+          "key": "WYRDSEKAI_HOOKS_REPLAY_DAYS",
+          "description": "days of a companion's recorded tool behaviour a new hook rule is replayed against before it may be armed",
+          "default": "3"
+        },
+        {
+          "key": "WYRDSEKAI_BEING_MEMORY_MAX",
+          "description": "memory budget for one companion's tools on the host (cgroup memory.max: bytes or 4G); empty = no cap",
+          "default": ""
         }
       ]
     },

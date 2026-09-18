@@ -52,7 +52,11 @@ public final class BodyStore {
                   numb_since INTEGER,
                   gone_at INTEGER,
                   gone_by TEXT,
-                  last_used INTEGER)""");
+                  last_used INTEGER,
+                  attached_by TEXT,
+                  claim TEXT,
+                  vouched_by TEXT,
+                  vouched_at INTEGER)""");
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS body_marks (
                   id TEXT PRIMARY KEY,
@@ -79,8 +83,9 @@ public final class BodyStore {
             try (var ins = conn.prepareStatement("""
                     INSERT INTO body_parts (part_id, kind, name, owner, transport, heartbeat_ms,
                       felt_weight, numb_behaviour, shed_tier, state, first_attached,
-                      last_heartbeat, last_detail, numb_since, gone_at, gone_by, last_used)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
+                      last_heartbeat, last_detail, numb_since, gone_at, gone_by, last_used,
+                      attached_by, claim, vouched_by, vouched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
                 ins.setString(1, d.id());
                 ins.setString(2, d.kind().name());
                 ins.setString(3, d.name());
@@ -98,6 +103,10 @@ public final class BodyStore {
                 setInstant(ins, 15, p.goneAt());
                 ins.setString(16, p.goneBy());
                 setInstant(ins, 17, p.lastUsed());
+                ins.setString(18, d.attachedBy());
+                ins.setString(19, d.claim());
+                ins.setString(20, p.vouchedBy());
+                setInstant(ins, 21, p.vouchedAt());
                 ins.executeUpdate();
             }
         } catch (SQLException e) {
@@ -127,7 +136,9 @@ public final class BodyStore {
             Duration.ofMillis(Math.max(1, rs.getLong("heartbeat_ms"))),
             FeltWeight.valueOf(rs.getString("felt_weight")),
             rs.getString("numb_behaviour"),
-            rs.getString("shed_tier"));
+            rs.getString("shed_tier"),
+            rs.getString("attached_by"),
+            rs.getString("claim"));
         return new BodyPart(d,
             PartState.valueOf(rs.getString("state")),
             Instant.ofEpochMilli(rs.getLong("first_attached")),
@@ -136,7 +147,31 @@ public final class BodyStore {
             instant(rs, "numb_since"),
             instant(rs, "gone_at"),
             rs.getString("gone_by"),
-            instant(rs, "last_used"));
+            instant(rs, "last_used"),
+            rs.getString("vouched_by"),
+            instant(rs, "vouched_at"));
+    }
+
+    /** Migration 11: provenance on parts, and the immune memory. Idempotent. */
+    public static void ensureImmune(Connection conn) throws SQLException {
+        try (var stmt = conn.createStatement()) {
+            for (var col : new String[] {"attached_by TEXT", "claim TEXT", "vouched_by TEXT", "vouched_at INTEGER"}) {
+                try { stmt.execute("ALTER TABLE body_parts ADD COLUMN " + col); }
+                catch (SQLException e) { if (!String.valueOf(e.getMessage()).contains("duplicate column")) throw e; }
+            }
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS immune_memory (
+                  id TEXT PRIMARY KEY,
+                  kind TEXT NOT NULL,
+                  subject TEXT NOT NULL,
+                  reason TEXT,
+                  source TEXT,
+                  first_seen INTEGER NOT NULL,
+                  last_seen INTEGER NOT NULL,
+                  count INTEGER NOT NULL DEFAULT 1,
+                  expires_at INTEGER)""");
+            stmt.execute("CREATE UNIQUE INDEX IF NOT EXISTS immune_memory_kind_subject ON immune_memory (kind, subject)");
+        }
     }
 
     // ── marks ──

@@ -156,6 +156,10 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
     public record GetFederationMeshStatus(
         ActorRef<FederationActor.MeshStatusResult> replyTo) implements Command {}
 
+    /** Which zone doors are open, for the body's map. */
+    public record GetZoneLiveness(
+        ActorRef<FederationActor.ZoneLivenessResult> replyTo) implements Command {}
+
     /** Propose federation to a remote zone. */
     public record ProposeFederation(
         String targetZoneId, ActorRef<String> replyTo) implements Command {}
@@ -412,6 +416,14 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
             .onMessage(GetTopology.class, this::onGetTopology)
             .onMessage(GetFederationStatus.class, this::onGetFederationStatus)
             .onMessage(GetFederationMeshStatus.class, this::onGetFederationMeshStatus)
+            .onMessage(GetZoneLiveness.class, msg -> {
+                if (federationActor != null) {
+                    federationActor.tell(new FederationActor.ZoneLiveness(msg.replyTo()));
+                } else {
+                    msg.replyTo().tell(new FederationActor.ZoneLivenessResult("<unknown>", List.of()));
+                }
+                return this;
+            })
             .onMessage(ProposeFederation.class, this::onProposeFederation)
             .onMessage(AcceptFederation.class, this::onAcceptFederation)
             .onMessage(FederationActivated.class, this::onFederationActivated)
@@ -426,6 +438,10 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
             .onMessage(GetPresenceLayer.class, this::onGetPresenceLayer)
             .onMessage(GetRoomEventReplicator.class, this::onGetRoomEventReplicator)
             .onMessage(GetFederationActor.class, msg -> {
+                // Never reply with null: a typed actor may not be told null, the supervisor
+                // stops this actor for it, and the whole between layer goes with it (seen
+                // when NATS was late at start). No reply; the asker times out, which it handles.
+                if (federationActor == null) return this;
                 msg.replyTo().tell(federationActor);
                 return this;
             })

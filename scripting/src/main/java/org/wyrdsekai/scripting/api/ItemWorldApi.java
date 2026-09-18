@@ -3726,6 +3726,26 @@ public class ItemWorldApi {
             this.caps = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
         }
 
+        /**
+         * The mending bench: the household's items that are placed and do not work, in plain
+         * words: {@code [{item, what, fails_on_use}]}. Read-only, no capability.
+         */
+        @HostAccess.Export
+        public List<Map<String, Object>> broken() {
+            return provider.workshopBroken();
+        }
+
+        /**
+         * Hand one broken item to the workshop, which repairs a copy and replaces the placed
+         * item only if the copy comes out whole. Returns at once; she is told afterwards how it
+         * went. Requires {@code workshop.mend}.
+         */
+        @HostAccess.Export
+        public Map<String, Object> mend(String item) {
+            caps.require("workshop.mend");
+            return provider.workshopMend(item);
+        }
+
         /** §4.11 — pick a backend. Tier 1 implicit. */
         @HostAccess.Export
         public String backend_for(String taskType, String taskDesc) {

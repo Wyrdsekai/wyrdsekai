@@ -1,0 +1,171 @@
+[36m[dist][0m Building server, cli, daemon-desktop...
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.2.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :rendezvous:processResources NO-SOURCE
+> Task :scripting:processResources NO-SOURCE
+> Task :clients:daemon-desktop:processResources NO-SOURCE
+> Task :cli:processResources NO-SOURCE
+> Task :between:processResources NO-SOURCE
+> Task :server:processResources
+> Task :core:syncM2Bank
+> Task :clients:daemon-common:compileJava
+> Task :clients:daemon-common:processResources NO-SOURCE
+> Task :clients:daemon-common:classes
+> Task :clients:daemon-common:jar
+> Task :clients:daemon-desktop:compileJava
+> Task :clients:daemon-desktop:classes
+> Task :clients:daemon-desktop:jar
+> Task :common:compileJava
+> Task :core:processResources
+> Task :common:generateVersionProperties
+> Task :common:processResources
+> Task :common:classes
+> Task :common:jar
+> Task :clients:daemon-desktop:startScripts
+> Task :clients:daemon-desktop:installDist
+
+> Task :scripting:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :scripting:classes
+> Task :scripting:jar
+
+> Task :core:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :core:classes
+> Task :cli:compileJava
+> Task :cli:classes
+> Task :rendezvous:compileJava
+> Task :rendezvous:classes
+> Task :cli:jar
+> Task :rendezvous:jar
+
+> Task :between:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :between:classes
+> Task :between:jar
+
+> Task :server:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :server:classes
+> Task :server:jar
+> Task :core:jar
+> Task :rendezvous:startScripts
+> Task :server:startScripts
+> Task :cli:startScripts
+> Task :cli:installDist
+> Task :rendezvous:installDist
+> Task :server:installDist
+
+[Incubating] Problems report is available at: file:///home/mythos/src/wyrdsekai-oss/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.2.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 28s
+31 actionable tasks: 31 executed
+[32m[dist][0m Build complete
+[36m[dist][0m Staging embedding model (bundled default)...
+[36m[fetch-emb][0m Fetching paraphrase-multilingual-MiniLM-L12-v2-q8.onnx...
+#=#=#                                                                                                                                                     0.1%                                                                           0.2%                                                                           0.3%                                                                           0.6%#                                                                          1.9%##                                                                         3.6%####                                                                       5.6%#####                                                                      8.2%########                                                                  11.1%##########                                                                14.0%############                                                              17.9%###############                                                           22.1%###################                                                       26.7%######################                                                    31.1%##########################                                                36.5%#############################                                             41.6%#################################                                         46.8%#####################################                                     52.0%#########################################                                 57.1%############################################                              62.3%################################################                          67.5%####################################################                      72.6%#######################################################                   77.8%###########################################################               83.0%###############################################################           88.0%###################################################################       93.2%######################################################################    98.4%######################################################################## 100.0%
+[32m[fetch-emb][0m Fetched paraphrase-multilingual-MiniLM-L12-v2-q8.onnx (113M)
+[32m[fetch-emb][0m paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json from local cache: /home/mythos/.cache/huggingface/hub/models--Xenova--paraphrase-multilingual-MiniLM-L12-v2/snapshots/2c4055b12046f11709e9df2c122e59ffbdc2f900/tokenizer.json (17M)
+[32m[fetch-emb][0m Embedding-model assets staged in /home/mythos/src/wyrdsekai-oss/packaging/embedding-models
+[36m[dist][0m llama-server absent — fetching the pinned llama.cpp CPU build...
+[36m[fetch][0m Fetching llama.cpp b8838 (ubuntu-x64)...
+ 38 13.2M   38 5165k    0     0  10.5M      0  0:00:01 --:--:--  0:00:01 10.5M100 13.2M  100 13.2M    0     0  20.6M      0 --:--:-- --:--:-- --:--:-- 50.2M
+[36m[fetch][0m Extracting llama.tar.gz...
+[32m[fetch][0m Wrote 8.8M to packaging/llama-server + 30 backend .so files
+load_backend: loaded RPC backend from /home/mythos/src/wyrdsekai-oss/packaging/libggml-rpc.so
+load_backend: loaded CPU backend from /home/mythos/src/wyrdsekai-oss/packaging/libggml-cpu-alderlake.so
+version: 8838 (23b8cc499)
+[36m[dist][0m nats-server absent — fetching the pinned release...
+[36m[fetch-nats][0m fetching v2.12.5 for linux/amd64
+#=#=#                                                                          #                                                                          1.9%########################################                                  56.0%######################################################################## 100.0%
+[32m[fetch-nats][0m installed nats-server: v2.12.5 → packaging/nats-server
+[36m[assets][0m fetching metasearch
+######################################################################## 100.0%#=#=#                                                                          ##=#=#                                                                         ##=O#- #                                                                                                                                                  0.1%                                                                           1.4%########                                                                  11.1%##############################                                            42.6%###############################################                           66.6%######################################################################## 100.0%
+[36m[assets][0m fetching anti_defiance.gguf
+######################################################################## 100.0%#=#=#                                                                          ###                                                                        5.1%#######################################################                   76.8%######################################################################## 100.0%
+[36m[assets][0m fetching es_register_hold.gguf
+######################################################################## 100.0%#=#=#                                                                          ###                                                                        5.1%##################################################                        69.7%######################################################################## 100.0%
+[36m[assets][0m fetching refusal_stability.gguf
+######################################################################## 100.0%                                                                           0.0%############################################                              61.6%######################################################################## 100.0%
+[36m[assets][0m fetching first_person_presence.gguf
+######################################################################## 100.0%#=#=#                                                                          ###                                                                        5.1%######################################################                    76.3%######################################################################## 100.0%
+[36m[assets][0m fetching anti_defiance.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching anti_defiance.safetensors
+######################################################################## 100.0%###                                                                        5.1%############################################                              61.3%######################################################################## 100.0%
+[36m[assets][0m fetching es_register_hold.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching es_register_hold.safetensors
+######################################################################## 100.0%#=#=#                                                                          ###                                                                        5.1%######################################                                    53.8%######################################################################## 100.0%
+[36m[assets][0m fetching factual_recall_anchor.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching factual_recall_anchor.safetensors
+######################################################################## 100.0%###                                                                        5.1%#########################################                                 58.3%######################################################################## 100.0%
+[36m[assets][0m fetching first_person_presence.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching first_person_presence.safetensors
+######################################################################## 100.0%#=#=#                                                                          ###                                                                        5.1%#################################################                         68.1%######################################################################## 100.0%
+[36m[assets][0m fetching inline_creative.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching inline_creative.safetensors
+######################################################################## 100.0%                                                                           0.0%######################################################################## 100.0%
+[36m[assets][0m fetching refusal_stability.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching refusal_stability.safetensors
+######################################################################## 100.0%                                                                           0.0%##########################################################                81.9%######################################################################## 100.0%
+[36m[assets][0m fetching smoketest-happy.meta.json
+######################################################################## 100.0%######################################################################## 100.0%
+[36m[assets][0m fetching smoketest-happy.safetensors
+######################################################################## 100.0%##                                                                         3.2%##########################################################                81.2%######################################################################## 100.0%
+[32m[assets][0m build assets ready (4 already present, 19 fetched)
+[36m[dist][0m Assembling distribution...
+[32m[dist][0m Collected JARs — server: 238, cli: 205, daemon: 10, rendezvous: 233
+[32m[dist][0m classifier gate: all 4 trained heads present in core-0.1.0-SNAPSHOT.jar
+[32m[dist][0m Room scripts copied (39 scripts)
+[32m[dist][0m classifier scripts copied (12 .py files)
+[32m[dist][0m classifier assets copied (bootstrap + pretrained + probe-anchors)
+[32m[dist][0m embedding ONNX + tokenizers copied
+[32m[dist][0m SetFit classifier encoder present (decoupled from retrieval)
+[32m[dist][0m i18n catalogs copied
+[32m[dist][0m scripts/lib copied (build-time tooling pruned)
+[32m[dist][0m recipe-callable script subdirs bundled (dev venvs/__pycache__ pruned)
+[32m[dist][0m Coding-CLI manifest bundled
+[dist] fetching bundled backend codezaiku: https://github.com/Wyrdsekai/codezaiku/releases/download/v0.3.6/codezaiku-0.3.6.tar.gz
+[dist] bundled-backend gate: codezaiku staged and runnable
+[32m[dist][0m Bundled coding backends staged and verified
+[32m[dist][0m Release-evidence bundled (4 JSON artifact(s))
+[36m[dist][0m Bundled FIRST_ENCOUNTER.md
+[32m[dist][0m Dictionary packs bundled (3 chunk file(s): jmdict + freedict-spa-eng)
+[32m[dist][0m V8 voice steering vectors bundled (4 .gguf)
+[32m[dist][0m V8 MLX vectors bundled (4 .safetensors)
+[32m[dist][0m MLX voice LaunchAgent plist bundled
+[dist] recipe gate: 34 script(s) across 19 recipes all present
+[36m[dist][0m Creating archive...
+[32m[dist][0m Distribution: build/dist/wyrdsekai-0.4.1.tar.gz
+1.6G	/home/mythos/src/wyrdsekai-oss/build/dist/wyrdsekai-0.4.1.tar.gz
+1.9G	/home/mythos/src/wyrdsekai-oss/build/dist/wyrdsekai-0.4.1
+
+Contents:
+  bin/     — Launcher scripts (wyrd, wyrdsekai-server, wyrdsekai-cli, wyrdsekai-daemon)
+  lib/     — server: 238, cli: 205, daemon: 10 JARs
+  etc/     — Configuration templates
+  rooms/   — Room scripts
+  docker/  — Docker Compose files
+  scripts/ — Operational scripts
+  data/    — Data directory

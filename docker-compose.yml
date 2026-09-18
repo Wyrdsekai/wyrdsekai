@@ -143,6 +143,10 @@ services:
     # A brain is shed before the record: the kernel takes this container before the JVM
     # (the service unit carries OOMScoreAdjust=-500).
     oom_score_adj: 500
+    # And a brain is capped: the launcher sets this to the model file plus the prompt cache
+    # plus 2 GiB of room, so a runaway brain dies in its own cgroup instead of taking the
+    # record's memory. Unset or 0 means no cap.
+    mem_limit: ${LLAMA_DRIVE_MEM_LIMIT:-0}
     profiles: ["inference"]
     ports:
       - "${LLAMA_PORT:-8200}:8200"
@@ -237,6 +241,10 @@ services:
     # A brain is shed before the record: the kernel takes this container before the JVM
     # (the service unit carries OOMScoreAdjust=-500).
     oom_score_adj: 500
+    # And a brain is capped: the launcher sets this to the model file plus the prompt cache
+    # plus 2 GiB of room, so a runaway brain dies in its own cgroup instead of taking the
+    # record's memory. Unset or 0 means no cap.
+    mem_limit: ${LLAMA_VOICE_MEM_LIMIT:-0}
     profiles: ["voice", "dual"]
     ports:
       - "${LLAMA_VOICE_PORT:-8201}:8201"
@@ -350,6 +358,10 @@ services:
     # A brain is shed before the record: the kernel takes this container before the JVM
     # (the service unit carries OOMScoreAdjust=-500).
     oom_score_adj: 500
+    # And a brain is capped: the launcher sets this to the model file plus the prompt cache
+    # plus 2 GiB of room, so a runaway brain dies in its own cgroup instead of taking the
+    # record's memory. Unset or 0 means no cap.
+    mem_limit: ${LLAMA_EMBED_MEM_LIMIT:-0}
     profiles: ["embed"]
     ports:
       - "${LLAMA_EMBED_PORT:-8202}:8202"

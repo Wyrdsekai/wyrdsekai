@@ -22,6 +22,16 @@ public final class BrainLimbs {
      */
     public static LimbDescriptor forBackend(String name, String type, String url, int priority,
                                             Duration heartbeatEvery, String voiceUrl) {
+        return forBackend(name, type, url, priority, heartbeatEvery, voiceUrl, null);
+    }
+
+    /**
+     * @param attachedBy the node that offers a borrowed brain when that node is not the
+     *                   household's own; null for the household's brains. A stranger's brain
+     *                   waits at the door like any other foreign part.
+     */
+    public static LimbDescriptor forBackend(String name, String type, String url, int priority,
+                                            Duration heartbeatEvery, String voiceUrl, String attachedBy) {
         var lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
         var t = type == null ? "" : type.toLowerCase(Locale.ROOT);
         boolean remote = url != null && url.startsWith("nats://");
@@ -46,8 +56,9 @@ public final class BrainLimbs {
             numb = "I think slower and thinner; the voice brain is carrying my decisions too";
             weight = FeltWeight.LOUD;
         }
-        return new LimbDescriptor(id(name), BodyKind.BRAIN, partName, "household", url,
-            heartbeatEvery, weight, numb, "first");
+        return new LimbDescriptor(id(name), BodyKind.BRAIN, partName, attachedBy == null ? "household" : "peer", url,
+            heartbeatEvery, weight, numb, "first", attachedBy,
+            attachedBy == null ? null : "an inference backend offered across the mesh");
     }
 
     static boolean sameServer(String a, String b) {

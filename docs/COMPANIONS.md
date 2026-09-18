@@ -417,8 +417,9 @@ it starts an own-time turn.
 
 The server keeps a table (`body_parts`) of the parts it depends on: inference backends,
 the database, the host, household peer nodes on the mesh, the relay connection, the
-coding backend, and the librarian's MCP connection. Federated zones are not parts; the
-relay door is what connects to them. Each part has a heartbeat interval. The inference router's
+coding backend, the librarian's MCP connection, and one door per federated zone
+(`door:zone:<id>`, open while the zone answers the federation's minute ping). Each part
+has a heartbeat interval. The inference router's
 health checks update the backends; a watch thread (`body.watch_seconds`, default 30)
 checks the database and reads host memory pressure, heap and disk. A part silent for more
 than twice its interval is marked numb, dated from its last heartbeat, and stays in the
@@ -437,8 +438,13 @@ At the start of each sleep cycle the companion asks the thinking backend to tell
 day as she would remember it, from the day's events, the chronicle and her drive levels.
 The text goes to her Hearth journal with mood `dream` (private; she can read it), to the
 activity trail as a `dream` entry with her felt stamp (the nightly weight-write reads it
-beside her spoken lines), and its opening sentence is in her first prompt after waking. A
-short day, a paused router or a missing backend skips the dream.
+beside her spoken lines), and its opening sentence is in her first prompt after waking. The
+sleep cycle waits for the dream (at most 95 seconds) and hands it to the forge as one more
+line of hers at the end of the day, so consolidation reads the day as she told it and not
+only its fragments. Each dream also proposes a question for the morning guard (see
+"Nightly weight write" in CONFIGURATION.md); nothing is asked until the steward accepts
+it. A short day, a paused router or a missing backend skips the dream and the forge runs
+at once.
 
 Events the companion did not see are stored in `body_marks` and included in her next
 prompt once: a part numb or back, a part removed, a pause and resume, a reflex, each sleep
@@ -453,6 +459,13 @@ companion actor persists its state within a deadline, the database is checkpoint
 mark records the reason, the requester and the duration. The self-updater does not run
 while a companion is in a sleep cycle or the nightly write is running. A companion whose
 forge backlog is past 70% of her sleep target gets a `[Tired: ...]` line.
+
+A part attached by someone outside the household is held at the door (state
+`QUARANTINED`): it is on the map and not used, and she is told once that it waits for the
+steward. `wyrd body vouch <id>` lets it in. Every action the body takes against a part
+passes one tolerance check that refuses to act on what is hers (her own home, the host she
+lives on, the household's own parts); a refusal is a mark to the steward, not a silent
+no-op. What the body did act against is remembered for a year (`wyrd body immune`).
 
 The watch thread also runs a fixed reflex table without any model call: memory pressure,
 a full heap, or the database not answering pauses inference for a set time; low disk

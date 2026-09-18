@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
  * The offline side of the vault, run by {@code wyrd vault} with the server down or up:
  *
  * <pre>
+ *   key     --vault DIR                          the key file and its id
  *   list    --vault DIR
  *   restore --vault DIR --to DIR [ID|latest]      rebuild every file of a copy under a directory
  *   stage   --vault DIR --data DIR [ID|latest]    rebuild world.db and stage it for the next boot
@@ -26,19 +27,33 @@ public final class VaultMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) { usage(); System.exit(64); }
-        String vaultDir = null, to = null, data = null, id = "latest";
+        String vaultDir = null, to = null, data = null, key = null, id = "latest";
         var cmd = args[0];
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
                 case "--vault" -> vaultDir = args[++i];
                 case "--to" -> to = args[++i];
                 case "--data" -> data = args[++i];
+                case "--key" -> key = args[++i];
                 default -> id = args[i];
             }
         }
         if (vaultDir == null) { System.err.println("--vault DIR is required"); System.exit(64); }
-        var vault = new Vault(data == null ? Path.of(vaultDir).getParent() : Path.of(data), Path.of(vaultDir));
+        var dataPath = data == null ? Path.of(vaultDir).getParent() : Path.of(data);
+        var keyPath = key != null ? Path.of(key) : dataPath.resolve(Vault.KEY_FILE);
+        if (!Files.isRegularFile(keyPath) && !"key".equals(cmd)) {
+            System.err.println("No vault key at " + keyPath + ". The store is sealed; pass the node's vault.key with --key FILE.");
+            System.exit(1);
+        }
+        var vault = new Vault(dataPath, Path.of(vaultDir), keyPath);
+        if (vault.keyMismatch() != null) { System.err.println(vault.keyMismatch()); System.exit(1); }
         switch (cmd) {
+            case "key" -> {
+                System.out.println("key file: " + vault.keyFile());
+                System.out.println("key id:   " + vault.keyId());
+                System.out.println("Every chunk and manifest in " + vault.dir() + " is sealed with this key. "
+                    + "Keep a copy of the key file somewhere that is not this disk; an offsite copy of the store is unreadable without it.");
+            }
             case "list" -> {
                 var all = vault.list();
                 if (all.isEmpty()) { System.out.println("The vault is empty."); return; }
@@ -104,6 +119,6 @@ public final class VaultMain {
     }
 
     private static void usage() {
-        System.err.println("usage: VaultMain list|restore|stage --vault DIR [--to DIR] [--data DIR] [ID|latest]");
+        System.err.println("usage: VaultMain key|list|restore|stage --vault DIR [--to DIR] [--data DIR] [--key FILE] [ID|latest]");
     }
 }

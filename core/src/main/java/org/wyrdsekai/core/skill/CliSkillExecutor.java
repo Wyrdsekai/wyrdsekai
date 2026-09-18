@@ -58,7 +58,7 @@ public class CliSkillExecutor implements SkillExecutor {
             if (binding.envVars() != null) {
                 skillEnv.putAll(binding.envVars());
             }
-            ProcessBuilder pb = EgressGate.gatedProcessBuilder(command, skillEnv);
+            ProcessBuilder pb = EgressGate.gatedProcessBuilder(command, skillEnv, context.agentDid());
             pb.redirectErrorStream(false);
 
             Process process = pb.start();

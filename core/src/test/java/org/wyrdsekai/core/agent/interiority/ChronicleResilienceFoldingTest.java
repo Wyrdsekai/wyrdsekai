@@ -100,6 +100,25 @@ class ChronicleResilienceFoldingTest {
 
     // ── helpers ──────────────────────────────────────────────────────
 
+    @Test
+    void a_folded_line_counts_for_the_windows_it_stands_for(@TempDir Path tmp) throws Exception {
+        // The writer folds unchanged windows into one line an hour with a "windows" count;
+        // the count in the chronicle is windows, not lines, so the fold changes nothing she reads.
+        var logFile = tmp.resolve("activity.jsonl");
+        var agent = "did:agent:probe";
+        var t = Instant.now().minusSeconds(120);
+        Files.write(logFile, List.of(
+            tickLine(agent, "probe", t, "acted"),
+            resilienceLine(agent, "probe", t.plusSeconds(10), "HEALTHY_ENDURANCE", 0.9, "steady")
+                .replace("}", ",\"windows\":300}"),
+            resilienceLine(agent, "probe", t.plusSeconds(20), "INTEGRATING", 0.7, "settling")));
+        var chron = new ChronicleService(new TickLogReader(logFile)).build(agent, "probe", ChronicleService.Scale.DAY);
+        assertThat(chron.synthesis())
+            .contains("healthy_endurance(300)")
+            .contains("integrating(1)")
+            .contains("most recent: integrating");
+    }
+
     private String tickLine(String agentId, String agentName, Instant ts, String gateOutcome) {
         return "{\"type\":\"tick\","
             + "\"ts\":\"" + ts.toString() + "\","

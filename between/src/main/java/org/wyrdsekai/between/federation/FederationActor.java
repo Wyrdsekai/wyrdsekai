@@ -78,6 +78,18 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
     /** Periodic cleanup of expired tokens. */
     private record CleanupTick() implements Command {}
 
+    /**
+     * The zone ping: once a minute, every active partner is asked the same agreement question
+     * the mesh status asks, and a reply means the door to that zone is open. This is the only
+     * liveness signal a zone gives; the body's map attaches a door per partner from it.
+     */
+    private record ZonePingTick() implements Command {}
+
+    /** Ask which zone doors are open: every active partner, with when it last answered. */
+    public record ZoneLiveness(ActorRef<ZoneLivenessResult> replyTo) implements Command {}
+
+    public record ZoneLivenessResult(String localZoneId, List<ZoneDoors.Door> doors) {}
+
     // --- Commands from room scripts (via BetweenActor proxy) ---
 
     /** Get federation status. */
@@ -239,6 +251,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
      * accumulated result is sent to the requester and the batch removed.
      */
     private final Map<String, PendingMeshBatch> pendingMeshBatches = new ConcurrentHashMap<>();
+    private final ZoneDoors zoneDoors = new ZoneDoors();
+    static final Duration ZONE_PING_EVERY = Duration.ofSeconds(60);
     private boolean initialized = false;
 
     /** Captured state for an in-flight agreement-state probe. F6. */
@@ -270,6 +284,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             .onMessage(Initialize.class, this::onInitialize)
             .onMessage(FederationMessageReceived.class, this::onFederationMessage)
             .onMessage(CleanupTick.class, this::onCleanupTick)
+            .onMessage(ZonePingTick.class, this::onZonePingTick)
+            .onMessage(ZoneLiveness.class, this::onZoneLiveness)
             .onMessage(GetStatus.class, this::onGetStatus)
             .onMessage(Propose.class, this::onPropose)
             .onMessage(Accept.class, this::onAccept)
@@ -359,6 +375,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
 
         // Start cleanup timer (every 5 minutes)
         timers.startTimerWithFixedDelay("cleanup", new CleanupTick(), Duration.ofMinutes(5));
+        timers.startTimerWithFixedDelay("zone-ping", new ZonePingTick(), Duration.ofSeconds(5), ZONE_PING_EVERY);
 
         // Broadcast our manifest to let federated zones know we're up
         broadcastManifest();
@@ -378,6 +395,49 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             zoneId, service.countActiveAgreements(zoneId));
 
         return this;
+    }
+
+    private List<String> activePartners() {
+        var out = new ArrayList<String>();
+        for (var a : service.listAgreements(zoneId)) if (a.isActive()) out.add(a.remoteZoneId());
+        return out;
+    }
+
+    private Behavior<Command> onZonePingTick(ZonePingTick msg) {
+        if (!initialized) return this;
+        for (var e : zoneDoors.nextRound(activePartners()).entrySet()) {
+            try {
+                emitAgreementQuery(e.getValue(), e.getKey());
+            } catch (RuntimeException ex) {
+                log.debug("Federation: ping to zone '{}' not sent: {}", e.getValue(), ex.toString());
+            }
+        }
+        return this;
+    }
+
+    private Behavior<Command> onZoneLiveness(ZoneLiveness msg) {
+        if (!initialized) {
+            msg.replyTo().tell(new ZoneLivenessResult("<unknown>", List.of()));
+            return this;
+        }
+        var names = new HashMap<String, String>();
+        var hosts = new HashMap<String, List<String>>();
+        for (var z : knownZones.values()) {
+            names.put(z.zoneId(), z.zoneName());
+            var hs = new ArrayList<String>();
+            for (var u : new String[] {z.natsUrl(), z.httpUrl()}) {
+                var h = ZoneDoors.hostOf(u);
+                if (h != null && !hs.contains(h)) hs.add(h);
+            }
+            hosts.put(z.zoneId(), hs);
+        }
+        msg.replyTo().tell(new ZoneLivenessResult(zoneId, zoneDoors.doors(activePartners(), names, hosts)));
+        return this;
+    }
+
+    /** A partner spoke to us, in any form: the door to it is open now. */
+    private void heardFrom(String partnerZoneId) {
+        zoneDoors.heardFrom(partnerZoneId, Instant.now());
     }
 
     private Behavior<Command> onCleanupTick(CleanupTick msg) {
@@ -958,11 +1018,13 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
                 return this;
             }
         }
+        if (zoneDoors.replied(msg.queryId(), Instant.now())) return this;
         var probe = pendingProbes.remove(msg.queryId());
         if (probe == null) {
             // Late reply or duplicate — nothing to do.
             return this;
         }
+        heardFrom(probe.targetZoneId());
         timers.cancel("agreement-probe-" + msg.queryId());
 
         var targetZoneId = probe.targetZoneId();
@@ -1029,6 +1091,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         }
         var queryId = payload.get("queryId").asText();
         var askerZoneId = payload.get("askerZoneId").asText();
+        heardFrom(askerZoneId);
 
         var existing = service.getAgreement(zoneId, askerZoneId);
         String status;

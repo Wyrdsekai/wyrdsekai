@@ -122,6 +122,7 @@ public final class SchemaInitializer {
             () -> migrateSoulFragmentsAuthoringModel(conn));
         runMigration(conn, 9, "mail_table", () -> MailStore.ensureTable(conn));
         runMigration(conn, 10, "body_map", () -> BodyStore.ensureTables(conn));
+        runMigration(conn, 11, "immune", () -> BodyStore.ensureImmune(conn));
 
         // Retry deferred indexes after migrations
         for (var statement : cleaned.split(";")) {
@@ -146,7 +147,7 @@ public final class SchemaInitializer {
      * {@link DataVersion} so an OLDER binary opening a NEWER data dir can refuse
      * instead of silently mangling tables it doesn't understand. Append-only.
      */
-    public static final int SCHEMA_VERSION = 10;
+    public static final int SCHEMA_VERSION = 11;
 
     @FunctionalInterface
     private interface Migration { void run() throws SQLException; }

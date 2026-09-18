@@ -117,7 +117,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
         Thread.ofVirtual().name("codezaiku-task-" + taskId).start(() -> {
             ActivityGauge.codingTaskStarted();
             try {
-                var result = runner.run(args, env, workdir, config.maxWallclock());
+                var result = runner.run(args, env, workdir, config.maxWallclock(), spec != null ? spec.companionDid() : null);
                 long durationMs = System.currentTimeMillis() - started;
 
                 if (result.timedOut()) {
@@ -186,7 +186,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
                     ItemContractRepair.rerunWithPrompt(repairArgs -> {
                         try {
                             var r = runner.run(
-                                repairArgs, env, workdir, config.maxWallclock());
+                                repairArgs, env, workdir, config.maxWallclock(), spec != null ? spec.companionDid() : null);
                             // RAN, not "exited 0". The same disk-is-the-verdict rule as the
                             // task path: three repairs on 2026-08-23 (venture_scout3,
                             // trip_compass2, storm_cellar) fixed the file, exited 1 on the
@@ -378,6 +378,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             var workdir = workspace == null ? null : workspace.toFile();
             var args = fitForWindowsCommandLine(List.copyOf(argv), workdir);
             try {
+                // The steward's repair of an item, not a being's hand: the daemon's own work.
                 var r = runner.run(args, buildEnv(), workdir, config.maxWallclock());
                 if (r.exitCode() != 0) {
                     log.info("[codezaiku] escalation run exited {} — the file on disk "
@@ -543,8 +544,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
      * inherited the original bug on the day of the switch.
      */
     static File resolveWorkdir(TaskSpec spec, String taskId) {
-        return CodingWorkspace.forTask(
-            spec != null ? spec.workspaceHint() : null, taskId);
+        return CodingWorkspace.forTask(spec != null ? spec.workspaceHint() : null, taskId, spec != null ? spec.companionDid() : null);
     }
 
     // -- output parsing (shared shape with the future ACP client) ---------
@@ -615,8 +615,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             ? parsed.get("workspacePath").asText()
             // Never report the process's own directory as the workspace: on a packaged
             // node that is the install root, and the bridge then scans it for items.
-            : CodingWorkspace.pathFor(
-                spec != null ? spec.workspaceHint() : null, taskId.toString());
+            : CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId.toString(), spec != null ? spec.companionDid() : null);
         var gitRef = parsed.hasNonNull("gitRef") ? parsed.get("gitRef").asText() : null;
         var status = parsed.path("status").asText("untested");
 

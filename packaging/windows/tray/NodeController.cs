@@ -48,6 +48,23 @@ internal static class NodeController
         catch { return false; }
     }
 
+    /// <summary>
+    /// True when the node answers <c>/health</c> with status UP: the same question the Linux
+    /// and mac brainstems ask. A listening port that cannot answer is a hang, not a run.
+    /// </summary>
+    public static async Task<bool> IsHealthyAsync()
+    {
+        try
+        {
+            using var resp = await Http.GetAsync(BaseUrl + "/health");
+            if (!resp.IsSuccessStatusCode) return false;
+            var body = await resp.Content.ReadAsStringAsync();
+            return body.Contains("\"status\":\"UP\"", StringComparison.Ordinal)
+                || body.Contains("\"status\": \"UP\"", StringComparison.Ordinal);
+        }
+        catch { return false; }
+    }
+
     /// <summary>Fresh install / never-named → run the onboarding wizard first.</summary>
     public static bool NeedsOnboarding()
     {

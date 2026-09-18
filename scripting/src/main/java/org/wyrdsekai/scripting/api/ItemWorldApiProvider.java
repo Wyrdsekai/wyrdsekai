@@ -2029,6 +2029,14 @@ public interface ItemWorldApiProvider {
      * Her hand on the host under the steward's ladder (observe, localize, propose, guarded,
      * unattended): fixed verbs, argv only, halts and marks. Tier 6.
      */
+    /** The household's items that are placed and do not work, in plain words. */
+    default List<Map<String, Object>> workshopBroken() { return List.of(); }
+
+    /** Hand one broken item to the workshop; returns at once. Tier 4: it spends the coding backend. */
+    default Map<String, Object> workshopMend(String item) {
+        return Map.of("ok", false, "error", "workshop.mend not wired");
+    }
+
     default Map<String, Object> hostHand(String verb, String args) {
         return Map.of("ok", false, "error", "host.hand not wired");
     }

@@ -2,6 +2,7 @@ package org.wyrdsekai.core.body;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.host.HostDoors;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.time.Duration;
@@ -31,15 +32,15 @@ public final class ReflexArena {
     /** What a reflex watches. */
     public enum Input { MEMORY_STALL, HEAP_PCT, DISK_FREE_PCT, PART_NUMB }
 
-    /** What a reflex may do. Nothing here thinks. */
-    public enum Action { THROTTLE, NOTIFY }
+    /** What a reflex may do. Nothing here thinks. {@code CLOSE_DOOR} shuts the door named by the subject. */
+    public enum Action { THROTTLE, NOTIFY, CLOSE_DOOR }
 
     /**
      * One row of the table.
      *
      * @param id          stable name, for the mark and the log
      * @param input       what it watches
-     * @param subject     the part id for {@link Input#PART_NUMB}; null otherwise
+     * @param subject     the part id for {@link Input#PART_NUMB}, or the door id for {@link Action#CLOSE_DOOR}; null otherwise
      * @param threshold   fires at or above (memory, heap) or at or below (disk free)
      * @param consecutive pulses the condition must hold before it fires
      * @param action      what it does
@@ -117,6 +118,10 @@ public final class ReflexArena {
                 log.warn("Reflex {}: inference paused for {}s", r.id(), r.hold().toSeconds());
             }
             case NOTIFY -> log.warn("Reflex {}: {}", r.id(), r.text());
+            case CLOSE_DOOR -> {
+                var res = HostDoors.close(r.subject(), "reflex " + r.id());
+                log.warn("Reflex {}: door {} {}", r.id(), r.subject(), Boolean.TRUE.equals(res.get("ok")) ? "shut" : "not shut: " + res.get("error"));
+            }
         }
         if (map != null) {
             map.mark("reflex", r.id(), null, r.text(), "action=" + r.action().name().toLowerCase()

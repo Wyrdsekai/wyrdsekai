@@ -156,6 +156,11 @@ import org.wyrdsekai.between.layer.RoomEventReplicator;
 import org.wyrdsekai.between.layer.RoomPrimaryProtocol;
 import org.wyrdsekai.between.layer.UnifiedSessionService;
 import org.wyrdsekai.between.federation.FederationActor;
+import org.wyrdsekai.between.federation.ZoneDoors;
+import org.wyrdsekai.core.host.HostDoors;
+import org.wyrdsekai.core.item.BrokenItems;
+import org.wyrdsekai.core.host.Principals;
+import org.wyrdsekai.core.host.ToolHooks;
 import org.wyrdsekai.between.federation.CrossZonePeekBridge;
 import org.wyrdsekai.between.federation.FederationService;
 import org.wyrdsekai.between.federation.AgreementGrantSync;
@@ -207,6 +212,8 @@ import org.wyrdsekai.server.http.SoulRoutes;
 import org.wyrdsekai.server.http.TlsConfig;
 import org.wyrdsekai.core.item.MailboxService;
 import org.wyrdsekai.core.body.BodyMap;
+import org.wyrdsekai.core.body.ImmuneMemory;
+import org.wyrdsekai.core.body.Immune;
 import org.wyrdsekai.core.body.BodyStore;
 import org.wyrdsekai.core.body.BodyWatch;
 import org.wyrdsekai.core.body.Quiesce;
@@ -225,6 +232,7 @@ import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.room.RoomDemolition;
 import org.wyrdsekai.server.http.MailRoutes;
 import org.wyrdsekai.server.http.BodyRoutes;
+import org.wyrdsekai.server.http.ItemRepairRoutes;
 import org.wyrdsekai.server.http.RoomAdminRoutes;
 import org.wyrdsekai.server.http.WardRoutes;
 import org.wyrdsekai.server.http.CompanionAskRoutes;
@@ -916,6 +924,28 @@ public class Main {
         // aged by the watch. Brains attach themselves when the inference router starts;
         // the record and the host attach here. She feels it as one line per turn.
         var bodyMap = BodyMap.install(new BodyStore(jdbcUrl));
+        // The immune system's memory lives in the record, and the tolerance rule needs to know
+        // who is "hers": this node, the household's members, and its companions.
+        ImmuneMemory.install(ImmuneMemory.onRecord(jdbcUrl));
+        {
+            // The node identity file is loaded (never regenerated) once it exists, so reading
+            // it here again is the same identity the federation layer runs under.
+            String ownNode;
+            try {
+                ownNode = NodeIdentity.loadOrGenerate(
+                    SystemPaths.dataDir().resolve("node-identity.json")).nodeId();
+            } catch (IOException e) {
+                ownNode = "";
+            }
+            final var selfNode = ownNode;
+            final var members = new HouseholdStore(jdbcUrl);
+            final var companions = new CompanionRegistry(jdbcUrl);
+            Immune.install(id -> {
+                if (id.equals(selfNode)) return true;
+                try { if (members.get(id).isPresent()) return true; } catch (RuntimeException ignored) { /* no store */ }
+                try { return companions.get(id).isPresent() || companions.findByEntityId(id).isPresent(); } catch (RuntimeException ignored) { return false; }
+            }, SystemPaths.dataDir().toAbsolutePath().normalize().toString());
+        }
         var bodyWatch = new BodyWatch(bodyMap, jdbcUrl, SystemPaths.dataDir(),
             Duration.ofSeconds(WyrdConfig.get().bodyWatchSeconds()))
             // The flinch: memory pressure, a full heap, the record not
@@ -943,6 +973,28 @@ public class Main {
         // becomes marks. Attached only once a heartbeat has ever been seen.
         final var brainstem = new BrainstemLink(SystemPaths.dataDir(), watchEvery);
         bodyWatch.source(() -> brainstem.beats(bodyMap));
+        // Per-being principals and the kernel's eye on her hands: each companion's tools run
+        // as her own user in her own cgroup where the host allows it, and bpftrace watches
+        // what those users open, run and connect to.
+        // A thing that was made for her and does not work is hers to know. Two minutes after
+        // start, off the main path, every household item is put to the contract gate and she is
+        // told once about each that fails it.
+        Thread.ofVirtual().name("broken-items-sweep").start(() -> {
+            try {
+                Thread.sleep(Duration.ofMinutes(2));
+                int told = BrokenItems.tellOnce(BrokenItems.find(), bodyMap, WyrdConfig.get().itemMendMinutes() > 0);
+                if (told > 0) log.info("Broken items: told about {} item(s) that do not work", told);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (RuntimeException e) {
+                log.debug("broken-items sweep: {}", e.toString());
+            }
+        });
+        Principals.init(SystemPaths.dataDir());
+        final var toolHooks = ToolHooks.create(SystemPaths.dataDir());
+        bodyWatch.source(() -> toolHooks.beats(bodyMap), 2);
+        Runtime.getRuntime().addShutdownHook(new Thread(toolHooks::stop, "hooks-stop"));
+        ToolHooks.install(toolHooks);
         // The vault: continuous content-addressed copies of the self, tiered
         // retention, a drill every month, event copies before anything risky. Plain files, so
         // a second copy is `wyrd vault sync`.
@@ -1794,6 +1846,37 @@ public class Main {
         // connection) — fine for the opt-in service set; can be pooled later.
         // Before this, the gateway's transport threw unconditionally, so every
         // external world.mcp() failed and only the in-process Study skill worked.
+        // The doors as firewall sets: which addresses stand behind each door on the map. The
+        // relay from config, the librarian from its MCP endpoint, a zone from its manifest.
+        {
+            final var doorsBetween = betweenActor;
+            final var doorsRegistry = mcpRegistry;
+            HostDoors.setResolver(doorId -> {
+                var hosts = new ArrayList<String>();
+                if ("door:relay".equals(doorId)) {
+                    for (var leg : WyrdConfig.get().relayLegs()) {
+                        var h = ZoneDoors.hostOf(leg.url());
+                        if (h != null && !hosts.contains(h)) hosts.add(h);
+                    }
+                } else if ("door:librarian".equals(doorId)) {
+                    var svc = WyrdConfig.get().libraryPatronService();
+                    doorsRegistry.get(svc).ifPresent(c -> {
+                        var h = ZoneDoors.hostOf(c.endpoint());
+                        if (h != null) hosts.add(h);
+                    });
+                } else if (doorId.startsWith("door:zone:") && doorsBetween != null) {
+                    try {
+                        var live = AskPattern.<BetweenActor.Command, FederationActor.ZoneLivenessResult>ask(
+                            doorsBetween, ref -> new BetweenActor.GetZoneLiveness(ref),
+                            Duration.ofSeconds(2), system.scheduler()).toCompletableFuture().get(3, TimeUnit.SECONDS);
+                        for (var d : live.doors()) if (doorId.equals("door:zone:" + d.zoneId())) hosts.addAll(d.hosts());
+                    } catch (Exception e) {
+                        log.debug("zone door hosts unavailable: {}", e.toString());
+                    }
+                }
+                return hosts;
+            });
+        }
         var mcpGateway = new McpGatewayService(mcpRegistry,
             (endpoint, toolName, params, authHeader) -> {
                 var cfg = mcpRegistry.enabledServices().stream()
@@ -2318,11 +2401,40 @@ public class Main {
                         household ? "household" : "peer", "mesh", Duration.ofSeconds(120),
                         household ? FeltWeight.PRESENT : FeltWeight.QUIET,
                         household ? "the " + shortId + " node is out of reach; whatever it lends me is gone with it"
-                                  : "a peer node is out of reach", "first"),
+                                  : "a peer node is out of reach", "first",
+                        household ? null : peerId, snap.gpuName()),   // a stranger's node waits at the door
                         fresh, snap.gpuName() == null || snap.gpuName().isBlank() ? null : "gpu " + snap.gpuName()));
                 }
                 return beats;
             });
+            // Other zones are the polity, felt only as doors: one per active federation
+            // partner, open while the partner answers the minute's ping.
+            if (betweenActor != null) {
+                final var betweenForDoors = betweenActor;
+                bodyWatch.source(() -> {
+                    var beats = new ArrayList<BodyWatch.Beat>();
+                    FederationActor.ZoneLivenessResult live;
+                    try {
+                        live = AskPattern.<BetweenActor.Command, FederationActor.ZoneLivenessResult>ask(
+                            betweenForDoors, ref -> new BetweenActor.GetZoneLiveness(ref),
+                            Duration.ofSeconds(2), system.scheduler()).toCompletableFuture().get(3, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        return beats;
+                    }
+                    for (var door : live.doors()) {
+                        // Not judged until it has answered once or had a fair chance to.
+                        if (!door.knowable(Instant.now(), Duration.ofSeconds(150))) continue;
+                        boolean open = door.lastSeen() != null
+                            && Duration.between(door.lastSeen(), Instant.now()).compareTo(Duration.ofSeconds(150)) < 0;
+                        beats.add(new BodyWatch.Beat(new LimbDescriptor("door:zone:" + door.zoneId(), BodyKind.DOOR,
+                            "door to " + door.zoneName(), "polity", "federation", Duration.ofSeconds(150),
+                            FeltWeight.QUIET, "the door to " + door.zoneName()
+                                + " is closed; nothing passes between us until it opens", "first"),
+                            open, open ? "answering" : door.lastSeen() == null ? "never answered" : "silent"));
+                    }
+                    return beats;
+                }, 2);
+            }
             final boolean localHasGpu = NodeCapabilities.hostHasGpu();
             final int HOUSEHOLD_GPU_PRIORITY = 2; // below the default local backend (~5), above 0
             var discoveryScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -2358,16 +2470,19 @@ public class Main {
                         if (!knownRemoteBackends.contains(backendName)) {
                             // Prefer this peer iff: borrow enabled, I have no local GPU,
                             // the peer is a household member, and the peer actually has a GPU.
+                            boolean member = householdStore.get(ep.nodeId()).isPresent();
                             boolean householdGpu = householdBorrow && !localHasGpu
-                                    && householdStore.get(ep.nodeId()).isPresent()
+                                    && member
                                     && ResourceRegistry.get().peerHasGpu(ep.nodeId());
                             int priority = householdGpu
                                     ? HOUSEHOLD_GPU_PRIORITY
                                     : 100 + (int) (ep.latencyMs() / 10.0);
+                            // A stranger's brain is a foreign part: it goes on the map held
+                            // at the door and the router does not select it until vouched.
                             router.tell(new InferenceRouter.AddRemoteBackend(
                                 backendName, ep.endpoint().backendType(), ep.resolvedUrl(),
                                 List.of(ep.endpoint().modelName()),
-                                priority, householdGpu));
+                                priority, householdGpu, member ? null : ep.nodeId()));
                             knownRemoteBackends.add(backendName);
                             log.info("Discovered remote inference: {} at {} (latency={}ms{})",
                                 backendName, ep.resolvedUrl(), String.format("%.1f", ep.latencyMs()),
@@ -4118,6 +4233,7 @@ public class Main {
             mailRoutes.register(cfg.routes);
             new VaultRoutes(authService).register(cfg.routes);
             new BodyRoutes(authService).register(cfg.routes);
+            new ItemRepairRoutes(authService).register(cfg.routes);
             new ResidencyRoutes(authService, localZoneId).register(cfg.routes);
             new HouseholdRoutes(permissionChecker, stewardAuditLog, authService).register(cfg.routes);
             new SoulRoutes(finalSoulStore, authService, pairingService, bondStore).register(cfg.routes);

@@ -27,6 +27,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -116,15 +117,66 @@ public final class Vault {
 
     private final Path dataDir;
     private final Path vaultDir;
+    private final Path keyFile;
+    private final VaultCipher cipher;
+    /** Set when the store was sealed with a key other than ours; nothing is written or read until it is resolved. */
+    private final String keyMismatch;
     private volatile Instant lastOk;
     private volatile String lastError;
+    private boolean resealed;
 
+    /** The key lives beside the data, never inside the store: {@code <data>/vault.key}. */
     public Vault(Path dataDir, Path vaultDir) {
+        this(dataDir, vaultDir, dataDir.resolve(KEY_FILE));
+    }
+
+    public Vault(Path dataDir, Path vaultDir, Path keyFile) {
         this.dataDir = dataDir;
         this.vaultDir = vaultDir;
+        this.keyFile = keyFile;
+        VaultCipher c;
+        try {
+            c = VaultCipher.load(keyFile);
+        } catch (IOException e) {
+            throw new IllegalStateException("the vault key at " + keyFile + " could not be read or made: " + e.getMessage(), e);
+        }
+        this.cipher = c;
+        this.keyMismatch = checkKeyId();
+        if (keyMismatch != null) { lastError = keyMismatch; log.error("Vault: {}", keyMismatch); }
+    }
+
+    public static final String KEY_FILE = "vault.key";
+    private static final String KEY_ID_FILE = "key.id";
+
+    /**
+     * The store remembers the fingerprint of the key that sealed it. A different key means
+     * this is someone else's store, or the key file was lost and a new one made; either way
+     * writing with the new key would leave a store no single key can open.
+     */
+    private String checkKeyId() {
+        var f = vaultDir.resolve(KEY_ID_FILE);
+        try {
+            if (Files.isRegularFile(f)) {
+                var have = Files.readString(f).strip();
+                if (!have.isEmpty() && !have.equals(cipher.id())) {
+                    return "the vault at " + vaultDir + " was sealed with key " + have + "; the key at " + keyFile
+                        + " is " + cipher.id() + ". Put the original key file back, or point at it with --key.";
+                }
+                return null;
+            }
+            Files.createDirectories(vaultDir);
+            Files.writeString(f, cipher.id() + "\n");
+        } catch (IOException e) {
+            log.warn("vault: key id not recorded: {}", e.getMessage());
+        }
+        return null;
     }
 
     public Path dir() { return vaultDir; }
+    public Path keyFile() { return keyFile; }
+    /** Eight hex characters naming the key; the same on every copy of the store. */
+    public String keyId() { return cipher.id(); }
+    public String keyMismatch() { return keyMismatch; }
     public Instant lastOk() { return lastOk; }
     public String lastError() { return lastError; }
 
@@ -146,7 +198,8 @@ public final class Vault {
         "manifest_audit.json", "logs", "brainstem/heartbeat", "oracle", "ingest", "jetstream",
         "library.db-wal", "library.db-shm", "world.db-wal", "world.db-shm");
     /** Fetched again by hash: weights, bundles, knowledge packs, and the copies themselves. */
-    static final List<String> REPLACEABLE = List.of("models", "coding-cli-bundle", "backups", "vault-store", "packs");
+    static final List<String> REPLACEABLE = List.of("models", "coding-cli-bundle", "backups", "vault-store", "packs",
+        "mlx-venv", "sleepwrite-venv", "venv", ".venv");   // trainer environments are rebuilt, never copied
 
     static Class classify(String rel) {
         for (var p : REPLACEABLE) if (rel.equals(p) || rel.startsWith(p + "/")) return Class.REPLACEABLE;
@@ -161,12 +214,15 @@ public final class Vault {
         var at = Instant.now();
         var id = ID.format(at) + (keep ? "-keep" : "");
         Path scratch = null;
+        if (keyMismatch != null) { lastError = keyMismatch; return Optional.empty(); }
         try {
             Files.createDirectories(vaultDir.resolve("chunks"));
             Files.createDirectories(vaultDir.resolve("manifests"));
+            if (!resealed) { resealPlain(); resealed = true; }
             scratch = Files.createTempDirectory(vaultDir, ".snap-");
             var entries = new ArrayList<Entry>();
             var seenTop = new HashSet<String>();
+            seenTop.add(KEY_FILE);   // the one file that must never ride inside the store
 
             // Databases come from a consistent copy: VACUUM INTO captures the WAL. The record
             // must be there; a smaller database that is missing is skipped like any other file.
@@ -249,7 +305,7 @@ public final class Vault {
                 if (!Files.exists(dest)) {
                     Files.createDirectories(dest.getParent());
                     var tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
-                    try (OutputStream out = Files.newOutputStream(tmp)) { out.write(buf, 0, n); }
+                    Files.write(tmp, cipher.seal(buf, 0, n));
                     Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 }
                 chunks.add(sha);
@@ -292,8 +348,43 @@ public final class Vault {
     private void writeManifest(Manifest m) throws IOException {
         var f = vaultDir.resolve("manifests").resolve(m.id() + ".json");
         var tmp = f.resolveSibling(f.getFileName() + ".tmp");
-        JSON.writeValue(tmp.toFile(), m);
+        Files.write(tmp, cipher.seal(JSON.writeValueAsBytes(m)));
         Files.move(tmp, f, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private Manifest readManifest(Path f) throws IOException {
+        return JSON.readValue(cipher.open(Files.readAllBytes(f)), Manifest.class);
+    }
+
+    /**
+     * Files written before sealing are plain; seal them in place, once, so the whole store
+     * is unreadable without the key. Cheap when there is nothing to do: four bytes per file.
+     */
+    synchronized int resealPlain() {
+        int n = 0;
+        for (var sub : List.of("chunks", "manifests")) {
+            var dir = vaultDir.resolve(sub);
+            if (!Files.isDirectory(dir)) continue;
+            try (var walk = Files.walk(dir)) {
+                for (var f : walk.filter(Files::isRegularFile).filter(p -> !p.toString().endsWith(".tmp")).toList()) {
+                    try {
+                        byte[] head;
+                        try (var in = Files.newInputStream(f)) { head = in.readNBytes(VaultCipher.MAGIC.length); }
+                        if (head.length == VaultCipher.MAGIC.length && Arrays.equals(head, VaultCipher.MAGIC)) continue;
+                        var tmp = f.resolveSibling(f.getFileName() + ".tmp");
+                        Files.write(tmp, cipher.seal(Files.readAllBytes(f)));
+                        Files.move(tmp, f, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                        n++;
+                    } catch (IOException e) {
+                        log.warn("vault: could not seal {}: {}", f, e.getMessage());
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("vault: reseal walk failed: {}", e.getMessage());
+            }
+        }
+        if (n > 0) log.info("Vault: sealed {} file(s) written before the key existed", n);
+        return n;
     }
 
     /** Every manifest, newest first. */
@@ -303,7 +394,7 @@ public final class Vault {
         if (!Files.isDirectory(dir)) return out;
         try (var s = Files.list(dir)) {
             for (var f : s.filter(p -> p.toString().endsWith(".json")).toList()) {
-                try { out.add(JSON.readValue(f.toFile(), Manifest.class)); }
+                try { out.add(readManifest(f)); }
                 catch (IOException e) { log.warn("vault: unreadable manifest {}: {}", f, e.getMessage()); }
             }
         } catch (IOException e) {
@@ -338,7 +429,7 @@ public final class Vault {
                 long written = 0;
                 try (OutputStream out = Files.newOutputStream(tmp)) {
                     for (var sha : e.chunks()) {
-                        var bytes = Files.readAllBytes(chunkPath(sha));
+                        var bytes = cipher.open(Files.readAllBytes(chunkPath(sha)));
                         if (!sha256(bytes, bytes.length).equals(sha)) throw new IOException("chunk " + sha + " does not match its name");
                         out.write(bytes);
                         written += bytes.length;
@@ -519,6 +610,9 @@ public final class Vault {
         out.put("lastDrillDetail", drilled.map(m -> m.drill().detail()).orElse(""));
         out.put("lastOk", lastOk == null ? null : lastOk.toString());
         out.put("lastError", lastError == null ? "" : lastError);
+        out.put("keyId", cipher.id());
+        out.put("keyFile", keyFile.toString());
+        out.put("keyMismatch", keyMismatch == null ? "" : keyMismatch);
         if (!all.isEmpty()) out.put("unclassified", all.get(0).classes().getOrDefault("unclassified", List.of()));
         return out;
     }

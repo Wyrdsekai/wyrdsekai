@@ -4,6 +4,7 @@ import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
+import org.wyrdsekai.core.host.Principals;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -162,8 +163,9 @@ public final class ClaudeSdkBackend implements CodingTaskBackend {
                 // Never the process's own directory: on a packaged node the JVM cwd is
                 // the INSTALL ROOT. CodingWorkspace gives each task a private scratch dir
                 // and still honours an explicit hint.
-                var workspaceHint = CodingWorkspace.pathFor(
-                    spec != null ? spec.workspaceHint() : null, taskId.toString());
+                var workspaceHint = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId.toString(), spec != null ? spec.companionDid() : null);
+                // This thread is hers: what the runner spawns runs as her principal where the host allows it.
+                Principals.setCurrent(spec != null ? spec.companionDid() : null);
                 var result = runner.run(args, env, description, workspaceHint,
                     config.maxWallclock());
                 long durationMs = System.currentTimeMillis() - started;
@@ -359,9 +361,7 @@ public final class ClaudeSdkBackend implements CodingTaskBackend {
      */
     private ClaudeResponse parseClaudeResponse(
             UUID taskId, TaskSpec spec, ProcessResult result) {
-        var workspace = CodingWorkspace.pathFor(
-            spec != null ? spec.workspaceHint() : null,
-            taskId == null ? null : taskId.toString());
+        var workspace = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId == null ? null : taskId.toString(), spec != null ? spec.companionDid() : null);
         var files = new ArrayList<String>();
         long cuConsumed = 0L;
         String resultText = "";

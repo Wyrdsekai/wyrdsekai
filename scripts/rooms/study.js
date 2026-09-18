@@ -517,7 +517,12 @@ var SCROLL_GROUPS = [
     ["WYRDSEKAI_LIBRARY_SERVE_FINDINGS", "serve the companions' accepted findings on the library door (only those whose sources may travel)", "true"],
     ["WYRDSEKAI_HOST_APPS", "allowlist of host apps agents may launch", ""],
     ["WYRDSEKAI_HOST_HAND", "how far a companion's hand reaches into the host: observe, localize, propose, guarded, unattended", "observe"],
-    ["WYRDSEKAI_HOST_OPEN_ROOTS", "allowlisted host filesystem roots", ""]
+    ["WYRDSEKAI_HOST_OPEN_ROOTS", "allowlisted host filesystem roots", ""],
+    ["WYRDSEKAI_ITEM_MEND_MINUTES", "minutes a night the workshop may spend mending broken household items after a companion's sleep; 0 = off", "45"],
+    ["WYRDSEKAI_BEING_PRINCIPALS", "run each companion's tools as her own user and cgroup on the host (Linux package only): on, off", "on"],
+    ["WYRDSEKAI_HOOKS_MODE", "the kernel hooks on a companion's tools: enforce (cut what the rules say) or record (only write down what would be cut)", "enforce"],
+    ["WYRDSEKAI_HOOKS_REPLAY_DAYS", "days of a companion's recorded tool behaviour a new hook rule is replayed against before it may be armed", "3"],
+    ["WYRDSEKAI_BEING_MEMORY_MAX", "memory budget for one companion's tools on the host (cgroup memory.max: bytes or 4G); empty = no cap", ""]
   ]},
   { id: "skills", title: "skills & external tools", keys: [
     ["WYRDSEKAI_SKILLS_OPENCLAW_URL", "OpenClaw gateway WebSocket URL (wyrd openclaw setup)", ""],

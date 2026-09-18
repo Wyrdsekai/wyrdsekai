@@ -11,6 +11,7 @@ import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.coding.CodingBackendPreference;
+import org.wyrdsekai.core.coding.NightMending;
 import org.wyrdsekai.common.home.Grant;
 import org.wyrdsekai.common.i18n.I18n;
 import org.wyrdsekai.common.model.InnerImprint;
@@ -1134,6 +1135,27 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     @Override
     public List<String> hostApps() {
         return HostActionService.allowedApps();
+    }
+
+    @Override
+    public List<Map<String, Object>> workshopBroken() {
+        var out = new ArrayList<Map<String, Object>>();
+        for (var e : BrokenItems.find()) {
+            var row = new LinkedHashMap<String, Object>();
+            row.put("item", e.item());
+            row.put("what", BrokenItems.plainly(e));
+            row.put("fails_on_use", e.failsOnUse());
+            out.add(row);
+        }
+        return out;
+    }
+
+    @Override
+    public Map<String, Object> workshopMend(String item) {
+        if (item == null || !item.matches("[A-Za-z0-9_.-]{1,80}")) return Map.of("ok", false, "error", "which item?");
+        return NightMending.mendNow(item)
+            ? Map.of("ok", true, "text", "The workshop has the " + item.replace('_', ' ') + " now. It will say how it went.")
+            : Map.of("ok", false, "error", "nothing called " + item + " is broken");
     }
 
     @Override

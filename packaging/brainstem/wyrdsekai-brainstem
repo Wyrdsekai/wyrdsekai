@@ -102,10 +102,25 @@ health_up() {
     curl -s -m 5 "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"status":"UP"'
 }
 
+# The process that holds the server's port, by pid. systemd kills the whole cgroup on a
+# restart; launchd's kickstart -k kills only the job's own process, which on the pkg is a
+# bash wrapper, so a wedged java child survives it, keeps the port, and the new instance can
+# never bind (seen on the first live hang test: three "restarts", no recovery). Killed by
+# pid, never by name.
+kill_port_holder() {
+    [[ -n "${BRAINSTEM_FAKE_UNIT:-}" ]] && return 0
+    command -v lsof >/dev/null 2>&1 || return 0
+    local p
+    for p in $(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null); do
+        log "killing the wedged server process $p (holds port $PORT)"
+        kill -KILL "$p" 2>/dev/null || true
+    done
+}
+
 restart_unit() {
     if [[ -n "${BRAINSTEM_RESTART_CMD:-}" ]]; then $BRAINSTEM_RESTART_CMD; return $?; fi
     if [[ "$OS" == "Linux" ]]; then systemctl restart "$UNIT"; return $?; fi
-    if [[ "$OS" == "Darwin" ]]; then launchctl kickstart -k "system/$LAUNCHD_LABEL"; return $?; fi
+    if [[ "$OS" == "Darwin" ]]; then kill_port_holder; launchctl kickstart -k "system/$LAUNCHD_LABEL"; return $?; fi
     return 1
 }
 
@@ -184,6 +199,10 @@ pass() {
     write_state hang 1            # active, past grace, and silent: this is the case we exist for
     local snap; snap="$(snapshot_record)"
     if restart_unit; then
+        # The grace starts again from this restart. Where the supervisor cannot say when the
+        # unit became active (launchd), the unit goes running to running and nothing else
+        # re-arms it: the first live test restarted a booting server every minute.
+        write_state active_since "$(date +%s)"
         event restarted "the server was up but did not answer for $((misses * INTERVAL)) s; restarted after a snapshot" "$snap"
     else
         event restart-failed "the server did not answer for $((misses * INTERVAL)) s and the restart command failed" "$snap"

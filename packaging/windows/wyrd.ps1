@@ -1794,6 +1794,11 @@ function Invoke-Status {
     Write-Host ("  REST    : {0}" -f $(if ($health) { "http://localhost:$RestPort /health = 200" } elseif ($listen) { "port $RestPort listening (health not 200)" } else { "down" }))
     Write-Host ("  data dir: {0}" -f $DataDir)
     Write-Host ("  config  : {0}" -f $(if (Test-Path $ConfFile) { $ConfFile } else { "MISSING - run 'wyrd setup'" }))
+    # The brainstem on Windows is the tray: it touches brainstem\heartbeat every few seconds
+    # while it runs. A fresh heartbeat means something outside the JVM is watching the node.
+    $hb = Join-Path $DataDir "brainstem\heartbeat"
+    $hbAge = if (Test-Path $hb) { [int]((Get-Date).ToUniversalTime() - (Get-Item $hb).LastWriteTimeUtc).TotalSeconds } else { -1 }
+    Write-Host ("  brainstem: {0}" -f $(if ($hbAge -ge 0 -and $hbAge -lt 60) { "watching (the tray)" } elseif ($hbAge -ge 0) { "not watching (last heartbeat $hbAge s ago; start the tray)" } else { "not watching (start the tray)" }))
     if (Test-Path $ConfFile) {
         $conf = Get-Conf
         $inf = if ($conf.Contains('WYRDSEKAI_LLAMA_URL')) { $conf['WYRDSEKAI_LLAMA_URL'] }
@@ -2502,8 +2507,22 @@ function Get-ReleaseArtifact([string]$Version) {
 
 function Install-ReleaseArtifact([string]$Path) {
     Write-Info (_T 'update.installing' $Path)
+    # The installer cannot replace a jar the running node holds open. It schedules the
+    # replacement for the next reboot and returns 3010, and the node kept running the OLD
+    # code while this launcher said it had updated (found in the 0.4.1 install test). So the
+    # node and the tray are stopped first and started again afterwards.
+    $wasRunning = [bool](Get-ServerPid)
+    if ($wasRunning) { Invoke-Stop }
+    $tray = Get-Process Wyrdsekai.Tray -ErrorAction SilentlyContinue
+    $trayPath = if ($tray) { ($tray | Select-Object -First 1).Path } else { $null }
+    if ($tray) { $tray | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }
     $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$Path`"", '/passive', '/norestart') -Verb RunAs -Wait -PassThru
     if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Write-Err2 "msiexec exited with $($p.ExitCode)"; return $false }
+    if ($p.ExitCode -eq 3010) {
+        Write-Warn2 "The installer asks for a restart of Windows: some files were in use and are replaced at the next boot. Until then this node may run the previous version."
+    }
+    if ($trayPath -and (Test-Path $trayPath)) { Start-Process $trayPath }
+    elseif ($wasRunning) { Invoke-Start }
     Write-Info (_T 'update.done'); return $true
 }
 
@@ -2915,7 +2934,53 @@ function Invoke-Body {
         } catch { Write-Err2 "The server did not accept that: $($_.Exception.Message)"; exit 1 }
         return
     }
-    if ($sub -notin @('show', 'map', 'list')) { Write-Host "Usage: wyrd body [show] | gone <part-id>"; exit 64 }
+    if ($sub -eq 'vouch') {
+        # A part held at the door (attached by someone the household did not put there) is not
+        # used until a person says it belongs. This is that word.
+        if ($Rest.Count -lt 2) { Write-Err2 "Which part? wyrd body vouch <part-id>   (held parts are in: wyrd body immune)"; exit 64 }
+        try {
+            $r = Invoke-RestMethod -Method Post -Uri "$(Get-ApiBase)/api/body/vouch" -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body (@{ part = $Rest[1] } | ConvertTo-Json) -TimeoutSec 15
+            Write-Host "Vouched for $($r.name) ($($r.id)): now $($r.state)"
+        } catch {
+            $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+            if ($code -eq 403) { Write-Err2 "Only the steward vouches for a part."; exit 1 }
+            Write-Err2 "The server did not accept that: $($_.Exception.Message)"; exit 1
+        }
+        return
+    }
+    if ($sub -eq 'forget') {
+        if ($Rest.Count -lt 2) { Write-Err2 "Which entry? wyrd body forget <id>   (ids are in: wyrd body immune)"; exit 64 }
+        try {
+            $r = Invoke-RestMethod -Method Post -Uri "$(Get-ApiBase)/api/body/forget" -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body (@{ id = $Rest[1] } | ConvertTo-Json) -TimeoutSec 15
+            if ($r.forgotten) { Write-Host "forgotten" } else { Write-Host "no such entry" }
+        } catch { Write-Err2 "The server did not accept that: $($_.Exception.Message)"; exit 1 }
+        return
+    }
+    if ($sub -eq 'immune') {
+        # What the body remembers acting against, and what waits at the door.
+        try {
+            $d = Invoke-RestMethod -Uri "$(Get-ApiBase)/api/body/immune" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15
+        } catch {
+            $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+            if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+            if ($code -eq 403) { Write-Err2 "Only the steward reads the immune memory."; exit 1 }
+            Write-Err2 "The server did not answer at $(Get-ApiBase) - is it running?"; exit 1
+        }
+        $held = @($d.held)
+        if ($held.Count -gt 0) { Write-Host "Held at the door (wyrd body vouch <id> to let one in):" } else { Write-Host "Nothing is held at the door." }
+        foreach ($p in $held) { Write-Host ("  {0,-30} {1,-10} from {2}  ({3})" -f "$($p.id)", "$($p.kind)", "$($p.attachedBy)", "$($p.detail)") }
+        $rem = @($d.remembered)
+        Write-Host ""
+        if ($rem.Count -gt 0) { Write-Host "Remembered (wyrd body forget <id> to forget one):" } else { Write-Host "Nothing remembered." }
+        foreach ($e in $rem) {
+            $subj = "$($e.subject)"; if ($subj.Length -gt 40) { $subj = $subj.Substring(0, 40) }
+            $last = "$($e.lastSeen)"; if ($last.Length -gt 16) { $last = $last.Substring(0, 16) }
+            Write-Host ("  {0,-12} {1,-40} x{2,-4} last {3}  {4}" -f "$($e.kind)", $subj, "$($e.count)", $last, "$($e.reason)")
+            Write-Host "      id $($e.id)"
+        }
+        return
+    }
+    if ($sub -notin @('show', 'map', 'list')) { Write-Host "Usage: wyrd body [show] | gone <part-id> | vouch <part-id> | immune | forget <id>"; exit 64 }
     try {
         $d = Invoke-RestMethod -Uri "$(Get-ApiBase)/api/body" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 15
     } catch {
@@ -2957,7 +3022,7 @@ function Invoke-Body {
 function Invoke-Vault {
     # The vault through the running server: status, a copy now, a drill, a prune. Restore and
     # stage rebuild files with the server down; on Windows run them through the Java tool:
-    #   java -cp "<install>\lib\*" org.wyrdsekai.cli.VaultMain restore --vault <dir> --to <dir> latest
+    #   java -cp "<install>\lib\*" org.wyrdsekai.cli.VaultMain restore --vault <dir> --to <dir> --key <data>\vault.key latest
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
     $token = Get-SessionToken
     if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
@@ -2972,7 +3037,15 @@ function Invoke-Vault {
                 Write-Host ("Latest: {0}" -f $(if ($d.latest) { $d.latest } else { "none" }))
                 if ($d.lastDrill) { Write-Host ("Last drill: {0} {1} - {2}" -f $d.lastDrill, $(if ($d.lastDrillOk) { "passed" } else { "FAILED" }), $d.lastDrillDetail) } else { Write-Host "Last drill: never" }
                 if ($d.lastError) { Write-Host "Last error: $($d.lastError)" }
+                if ($d.keyId) { Write-Host ("Sealed with key {0} ({1}); keep a copy of that file off this disk" -f $d.keyId, $d.keyFile) }
+                if ($d.keyMismatch) { Write-Host "KEY MISMATCH: $($d.keyMismatch)" }
                 if ($d.unclassified -and @($d.unclassified).Count -gt 0) { Write-Host ("Unclassified in the data dir (not vaulted): " + (@($d.unclassified) -join ", ")) }
+            }
+            "key" {
+                $d = Invoke-RestMethod -Uri "$base/api/vault" -Headers $hdr -TimeoutSec 15
+                Write-Host "key file: $($d.keyFile)"
+                Write-Host "key id:   $($d.keyId)"
+                Write-Host "Every chunk and manifest in $($d.dir) is sealed with this key. Keep a copy of the key file somewhere that is not this disk."
             }
             "snapshot" {
                 $reason = if ($Rest.Count -ge 2) { $Rest[1] } else { "the steward asked" }
@@ -2987,7 +3060,7 @@ function Invoke-Vault {
                 $d = Invoke-RestMethod -Method Post -Uri "$base/api/vault/prune" -Headers $hdr -TimeoutSec 120
                 Write-Host ("Pruned {0}; {1} copies remain" -f $d.removed, $d.copies)
             }
-            default { Write-Host "Usage: wyrd vault [status] | snapshot [reason] | drill | prune   (restore/stage: see the comment in wyrd.ps1)"; exit 64 }
+            default { Write-Host "Usage: wyrd vault [status] | snapshot [reason] | drill | prune | key   (restore/stage: see the comment in wyrd.ps1)"; exit 64 }
         }
     } catch {
         $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
@@ -3488,7 +3561,38 @@ function Invoke-Items {
             finally { if ($null -eq $prevOpts) { Remove-Item Env:\JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue } else { $env:JAVA_TOOL_OPTIONS = $prevOpts } }
             exit $rc
         }
-        default { Write-Host "Usage: wyrd items check [--quiet] [dir...]"; if ($sub -ne 'help') { exit 2 } }
+        { $_ -in @("broken", "repair") } {
+            # Items that are placed and would be refused by today's contract gate, and the way to
+            # have one repaired: a copy goes through the coding backend, and the placed file is
+            # replaced only when the copy has no problems left.
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            $hdr = @{ Authorization = "Bearer $token" }
+            $base = Get-ApiBase
+            try {
+                $broken = @((Invoke-RestMethod -Uri "$base/api/items/broken" -Headers $hdr -TimeoutSec 120).broken)
+                if ($sub -eq "broken") {
+                    if ($broken.Count -eq 0) { Write-Host "Every household item passes the contract gate."; return }
+                    foreach ($r in $broken) { Write-Host "BROKEN  $($r.item)"; foreach ($q in $r.problems) { Write-Host "    $q" } }
+                    Write-Host "$($broken.Count) item(s). Repair one with: wyrd items repair <name>   (or --all)"
+                    return
+                }
+                $names = if ($args2.Count -ge 1 -and $args2[0] -eq '--all') { @($broken | ForEach-Object { $_.item }) } elseif ($args2.Count -ge 1) { @($args2[0]) } else { @() }
+                if ($names.Count -eq 0) { Write-Host "Usage: wyrd items repair <name> | --all"; exit 64 }
+                foreach ($n in $names) {
+                    Write-Info "Repairing $n (a copy goes through the coding backend; this can take a few minutes)..."
+                    $d = Invoke-RestMethod -Method Post -Uri "$base/api/items/repair" -Headers $hdr -ContentType 'application/json' -Body (@{ item = $n } | ConvertTo-Json) -TimeoutSec 1800
+                    Write-Host ("    {0}: {1}" -f $(if ($d.fixed) { "FIXED" } else { "not fixed" }), $d.note)
+                    foreach ($q in @($d.after)) { Write-Host "    still: $q" }
+                }
+            } catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                if ($code -eq 403) { Write-Err2 "Only the steward repairs items."; exit 1 }
+                Write-Err2 "The server did not answer at $base - is it running?"; exit 1
+            }
+        }
+        default { Write-Host "Usage: wyrd items check [--quiet] [dir...] | broken | repair <name>|--all"; if ($sub -ne 'help') { exit 2 } }
     }
 }
 

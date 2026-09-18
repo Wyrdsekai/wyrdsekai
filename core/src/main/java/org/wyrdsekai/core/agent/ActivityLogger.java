@@ -184,10 +184,22 @@ public final class ActivityLogger {
      */
     public void resilience(String agentName, String agentId,
                             String classification, double confidence, String reason) {
+        resilience(agentName, agentId, classification, confidence, reason, 1);
+    }
+
+    /**
+     * @param windows how many classification windows this line stands for: the writer folds
+     *                unchanged windows into one line, so readers that count lines weight by
+     *                this instead. One line every twelve seconds saying "steady" was 91% of a
+     *                companion's trail (7,100 lines a day) before the fold.
+     */
+    public void resilience(String agentName, String agentId,
+                            String classification, double confidence, String reason, int windows) {
         write(event("resilience", agentName, agentId)
             .put("classification", classification)
             .put("confidence", Math.round(confidence * 100.0) / 100.0)
-            .put("reason", truncate(reason, 200)));
+            .put("reason", truncate(reason, 200))
+            .put("windows", Math.max(1, windows)));
     }
 
     /**

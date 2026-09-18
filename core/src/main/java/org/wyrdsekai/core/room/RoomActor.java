@@ -30,6 +30,7 @@ import org.wyrdsekai.core.item.EquipmentService;
 import org.wyrdsekai.core.item.EquipmentState;
 import org.wyrdsekai.core.item.CarriedItemUse;
 import org.wyrdsekai.core.item.ItemProviderRegistry;
+import org.wyrdsekai.core.item.BrokenItems;
 import org.wyrdsekai.core.item.ItemScriptResponse;
 import org.wyrdsekai.core.item.ScriptedItemDef;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
@@ -1270,6 +1271,11 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
         // ItemScriptResponse — this path kept its own and so `narrative` rendered when an
         // item sat in the room and vanished when the same item was picked up.
         String text = ItemScriptResponse.firstTextField(result);
+        if (text != null && result.get("error") != null && text.equals(String.valueOf(result.get("error")))) {
+            // The item broke in someone's hands: plain words instead of the raw script error.
+            var plain = BrokenItems.usedAndBroke(scriptedId, text);
+            if (plain != null) text = plain;
+        }
         if (text == null) {
             var pretty = new StringBuilder("[").append(scriptedId).append("]");
             for (var e : result.entrySet()) {

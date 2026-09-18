@@ -156,7 +156,11 @@ Two rules keep a household's items from breaking each other:
 - **Every `world.*` call must exist on this node**, with a number of arguments an overload takes.
   The loader checks this when it loads a script; a copy that fails never replaces a working copy
   of the same item, and alone it loads with the fix in the log and under `misWired` in
-  `data/manifest_audit.json`. `wyrd items check [dir…]` runs the same check by hand over the
+  `data/manifest_audit.json`. The contract gate an item passes before it is placed asks the same questions, so a
+  mis-wired item enters repair instead of being placed as finished; `wyrd items broken` lists
+  household items the gate would refuse today and `wyrd items repair <name>|--all` repairs a
+  copy and replaces the placed file only when the copy comes out whole.
+  `wyrd items check [dir…]` runs the same check by hand over the
   bundled items and the household's own (exit 1 on any mis-wired script), so a release or a
   freshly written item can be gated on it.
 - **A same-named copy from another author replaces a loaded item only when its version is

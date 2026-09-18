@@ -168,10 +168,9 @@ public final class PiCodingBackend implements CodingTaskBackend {
                 // Never the process's own directory: on a packaged node the JVM cwd is
                 // the INSTALL ROOT. CodingWorkspace gives each task a private scratch dir
                 // and still honours an explicit hint.
-                var workspaceHint = CodingWorkspace.pathFor(
-                    spec != null ? spec.workspaceHint() : null, taskId.toString());
+                var workspaceHint = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId.toString(), spec != null ? spec.companionDid() : null);
                 var result = runWithWorkspace(args, description,
-                    workspaceHint, config.maxWallclock());
+                    workspaceHint, config.maxWallclock(), spec != null ? spec.companionDid() : null);
                 long durationMs = System.currentTimeMillis() - started;
 
                 if (result.timedOut()) {
@@ -203,7 +202,7 @@ public final class PiCodingBackend implements CodingTaskBackend {
                     repairPrompt -> {
                         try {
                             var r = runWithWorkspace(args, repairPrompt,
-                                workspaceHint, config.maxWallclock());
+                                workspaceHint, config.maxWallclock(), spec != null ? spec.companionDid() : null);
                             return !r.timedOut() && r.exitCode() == 0;
                         } catch (Exception e) {
                             return false;
@@ -293,10 +292,16 @@ public final class PiCodingBackend implements CodingTaskBackend {
     private ClaudeSdkBackend.ProcessResult runWithWorkspace(
             List<String> args, String stdin, String workspace, Duration timeout)
             throws IOException, InterruptedException {
+        return runWithWorkspace(args, stdin, workspace, timeout, null);
+    }
+
+    private ClaudeSdkBackend.ProcessResult runWithWorkspace(
+            List<String> args, String stdin, String workspace, Duration timeout, String beingDid)
+            throws IOException, InterruptedException {
         // Pi previously spawned with NO env handling
         // (full inherit). Route through the shared egress gate: scrubs
         // SSH_AUTH_SOCK/ambient creds, keeps PATH/HOME + OPENAI_* (local llama).
-        var pb = EgressGate.gatedProcessBuilder(args, null);
+        var pb = EgressGate.gatedProcessBuilder(args, null, beingDid);
         if (workspace != null && !workspace.isBlank()) {
             var dir = new File(workspace);
             if (dir.isDirectory()) pb.directory(dir);
@@ -469,9 +474,7 @@ public final class PiCodingBackend implements CodingTaskBackend {
         // The workspace REPORTED on the artifact is what CodingTaskItemBridge scans for
         // the item's .js. Falling back to the process directory pointed that scan at the
         // install root on a packaged node — the same defect as running there.
-        var workspace = CodingWorkspace.pathFor(
-            spec != null ? spec.workspaceHint() : null,
-            taskId == null ? null : taskId.toString());
+        var workspace = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId == null ? null : taskId.toString(), spec != null ? spec.companionDid() : null);
         var files = new ArrayList<String>();
         long cuConsumed = 0L;
         String resultText = "";

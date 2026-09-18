@@ -48,6 +48,13 @@ public final class HearthFurnishingKit {
             + "`use host hand` says how far; `use host hand disk|memory|load|containers|updates|log` "
             + "reads its gauges and logs; `use host hand propose <text>` writes to the steward; "
             + "and at the rung the steward set, `say <text>`, `restart-brain voice`, `upgrade`, `reboot`.");
+        // The mending bench (2026-09-17): a thing she had made that does not work is hers to
+        // know about and hers to take to the workshop, not only the steward's.
+        addSubstrateFurnishing(items, "mending_bench",
+            "Mending Bench",
+            "Where things that were made for you and do not work get mended. `use mending bench` "
+            + "lists what is broken, in plain words; `use mending bench mend <name>` hands one to the "
+            + "workshop, which works on a copy and only replaces yours if the copy comes out whole.");
         // Wave 7-Furnishings — substrate read-surface
         // furnishings (bondholder_pinboard, repair_mirror, substrate_scroll)
         // ship as scripted-JS items under scripts/items/ and are picked up

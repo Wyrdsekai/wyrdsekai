@@ -4,6 +4,7 @@ import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
+import org.wyrdsekai.core.host.Principals;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -205,7 +206,7 @@ public final class GooseBackend implements CodingTaskBackend {
         // Run async on a virtual thread — submitTask() must not block.
         Thread.ofVirtual().name("goose-task-" + taskId).start(() -> {
             try {
-                var result = runner.run(args, env, workdir, config.maxWallclock());
+                var result = runner.run(args, env, workdir, config.maxWallclock(), spec != null ? spec.companionDid() : null);
                 long durationMs = System.currentTimeMillis() - started;
 
                 if (result.timedOut()) {
@@ -253,7 +254,7 @@ public final class GooseBackend implements CodingTaskBackend {
                     ItemContractRepair.rerunWithPrompt(repairArgs -> {
                         try {
                             var r = runner.run(
-                                repairArgs, env, workdir, config.maxWallclock());
+                                repairArgs, env, workdir, config.maxWallclock(), spec != null ? spec.companionDid() : null);
                             return !r.timedOut() && r.exitCode() == 0;
                         } catch (Exception e) {
                             return false;
@@ -568,8 +569,7 @@ public final class GooseBackend implements CodingTaskBackend {
      * scratch directory instead; an explicit hint is still honoured.
      */
     static File resolveWorkdir(TaskSpec spec, String taskId) {
-        return CodingWorkspace.forTask(
-            spec != null ? spec.workspaceHint() : null, taskId);
+        return CodingWorkspace.forTask(spec != null ? spec.workspaceHint() : null, taskId, spec != null ? spec.companionDid() : null);
     }
 
     // -- output parsing ---------------------------------------------------
@@ -591,9 +591,7 @@ public final class GooseBackend implements CodingTaskBackend {
     private List<CodingArtifact> parseArtifacts(
             UUID taskId, TaskSpec spec, ProcessResult result) {
         var files = new ArrayList<String>();
-        var workspace = CodingWorkspace.pathFor(
-            spec != null ? spec.workspaceHint() : null,
-            taskId == null ? null : taskId.toString());
+        var workspace = CodingWorkspace.pathFor(spec != null ? spec.workspaceHint() : null, taskId == null ? null : taskId.toString(), spec != null ? spec.companionDid() : null);
 
         var stdout = result.stdout();
         if (stdout != null && !stdout.isBlank()) {
@@ -744,6 +742,13 @@ public final class GooseBackend implements CodingTaskBackend {
         ProcessResult run(List<String> args, Map<String, String> env,
                           File workdir, Duration timeout)
                 throws IOException, InterruptedException;
+
+        /** The same, as a being's hand: runs as her principal where the host allows it. */
+        default ProcessResult run(List<String> args, Map<String, String> env,
+                                  File workdir, Duration timeout, String beingDid)
+                throws IOException, InterruptedException {
+            return run(args, env, workdir, timeout);
+        }
     }
 
     /** Default {@link ProcessRunner} — spawns the real subprocess. */
@@ -764,13 +769,22 @@ public final class GooseBackend implements CodingTaskBackend {
         public ProcessResult run(List<String> args, Map<String, String> env,
                                   File workdir, Duration timeout)
                 throws IOException, InterruptedException {
-            var pb = new ProcessBuilder(args);
+            return run(args, env, workdir, timeout, null);
+        }
+
+        @Override
+        public ProcessResult run(List<String> args, Map<String, String> env,
+                                  File workdir, Duration timeout, String beingDid)
+                throws IOException, InterruptedException {
+            var pb = new ProcessBuilder(Principals.wrap(args, beingDid));
             // route the inherited env through the
             // egress gate instead of blindly inheriting it. Enforcing (default)
             // scrubs ambient credentials (SSH_AUTH_SOCK etc.) and re-adds only
             // the allowlisted vars + the backend's own env. Disabled = legacy
             // inherit-then-layer.
             egressGate.applyEnv(pb.environment(), env);
+            // Her home, not the daemon's, when the tool runs as her.
+            Principals.homeOf(beingDid).ifPresent(h -> pb.environment().put("HOME", h.toString()));
             if (workdir != null) pb.directory(workdir);
             pb.redirectErrorStream(false);
             var process = pb.start();

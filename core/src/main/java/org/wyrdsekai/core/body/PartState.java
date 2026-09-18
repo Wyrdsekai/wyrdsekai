@@ -7,5 +7,7 @@ package org.wyrdsekai.core.body;
  * cortex missing for a month and nothing missing it.
  */
 public enum PartState {
-    ATTACHED, NUMB, GONE
+    ATTACHED, NUMB, GONE,
+    /** Attached by someone the household did not put there: on the map, visible, not used, until a person vouches for it. */
+    QUARANTINED
 }

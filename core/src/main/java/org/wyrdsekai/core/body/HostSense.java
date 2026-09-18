@@ -2,6 +2,7 @@ package org.wyrdsekai.core.body;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryType;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,10 +39,35 @@ public final class HostSense {
 
     private HostSense() {}
 
+    /**
+     * The heap as the live set, not the fill line. Used-over-max from the runtime touches 95%
+     * every few seconds on a healthy JVM, right before each collection: the heap-full reflex
+     * fired on that three times in a row on the household node and paused her for three
+     * minutes. The number that means something is what survived the last collection, which
+     * the memory pools report as collection usage. Falls back to used-over-max where a pool
+     * cannot say.
+     */
+    static double heapAfterGcPct(Runtime rt) {
+        if (rt.maxMemory() <= 0) return -1;
+        long live = 0; boolean any = false;
+        try {
+            for (var pool : ManagementFactory.getMemoryPoolMXBeans()) {
+                if (pool.getType() != MemoryType.HEAP || !pool.isCollectionUsageThresholdSupported()) continue;
+                var cu = pool.getCollectionUsage();
+                if (cu == null) continue;
+                live += cu.getUsed();
+                any = true;
+            }
+        } catch (RuntimeException ignored) {
+            any = false;
+        }
+        if (!any) return 100.0 * (rt.totalMemory() - rt.freeMemory()) / rt.maxMemory();
+        return 100.0 * live / rt.maxMemory();
+    }
+
     public static Reading read(Path dataDir) {
         var rt = Runtime.getRuntime();
-        double heapPct = rt.maxMemory() > 0
-            ? 100.0 * (rt.totalMemory() - rt.freeMemory()) / rt.maxMemory() : -1;
+        double heapPct = heapAfterGcPct(rt);
         double stall = readMemoryStall();
         double diskFree = -1; long diskBytes = -1;
         try {

@@ -456,6 +456,7 @@ public final class ItemManifestValidator {
         // Her hand on the host (2026-09-16): fixed verbs under the steward's rung. Tier 6, real
         // side effects on the machine she lives in.
         addAll(m, 6, "host.hand");
+        addAll(m, 4, "workshop.mend");
 
         // §4.8 MCP
         addAll(m, 1, "mcp.budget_remaining", "mcp.available");

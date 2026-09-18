@@ -2,6 +2,8 @@ package org.wyrdsekai.core.coding;
 
 
 import com.typesafe.config.ConfigFactory;
+import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.host.Principals;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -680,7 +682,14 @@ public final class CodingCli {
                     .map(CodingTaskBackend::name).toList());
                 return 3;
             }
-            var workspace = java.nio.file.Files.createTempDirectory("wyrd-coding-probe");
+            var workspace = Files.createTempDirectory("wyrd-coding-probe");
+            // The probe runs the tool the way the server would: as the probe's own principal
+            // on the host where the host allows it (root, Linux, the wrapper installed), so
+            // a probe proves the hands too, not only the backend. Shared elsewhere, and says so.
+            var probeData = WyrdConfig.get().dataDir();
+            if (probeData != null && !probeData.isBlank()) Principals.init(Path.of(probeData));
+            Principals.own(workspace, "did:wyrd:probe");
+            out.println("probe: hands=" + Principals.status());
             out.println("probe: backend=" + backend + " class=" + chosen.getClass().getSimpleName()
                 + (drive == null ? "" : " drive=" + drive));
             var spec = new TaskSpec(java.util.UUID.randomUUID(), "did:wyrd:probe",

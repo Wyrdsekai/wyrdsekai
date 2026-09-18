@@ -147,6 +147,35 @@ class TwoThingsWatchingEachOtherTest {
         assertTrue(Files.exists(state.resolve("heartbeat")), "and it heartbeats on every pass");
     }
 
+    @Test
+    @DisplayName("after its own restart the brainstem waits out the grace again, even where the supervisor cannot say when the unit started")
+    void theGraceIsReArmedByARestart(@TempDir Path tmp) throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(SCRIPT));
+        var state = tmp.resolve("state");
+        Files.createDirectories(state);
+        var restarts = tmp.resolve("restarts");
+        var env = new java.util.HashMap<String, String>();
+        env.put("BRAINSTEM_STATE_DIR", state.toString());
+        env.put("BRAINSTEM_DB", tmp.resolve("no.db").toString());
+        env.put("BRAINSTEM_BACKUPS_DIR", tmp.resolve("backups").toString());
+        env.put("BRAINSTEM_HOOKS_DIR", tmp.resolve("no-hooks").toString());
+        env.put("BRAINSTEM_MISSES", "2");
+        var restartScript = tmp.resolve("restart.sh");
+        Files.writeString(restartScript, "#!/usr/bin/env bash\necho r >> \"" + restarts + "\"\n");
+        restartScript.toFile().setExecutable(true);
+        env.put("BRAINSTEM_RESTART_CMD", restartScript.toString());
+        env.put("BRAINSTEM_FAKE_UNIT", "active");
+        env.put("BRAINSTEM_FAKE_HEALTH", "down");
+        // No fake uptime: the unit is not known to systemd here, so the watcher's own
+        // active_since is the only clock, as on launchd. It says the unit has been up an hour.
+        Files.writeString(state.resolve("unit"), "active");
+        Files.writeString(state.resolve("active_since"), Long.toString(java.time.Instant.now().getEpochSecond() - 3600));
+        run(env); run(env);
+        assertEquals(1, Files.readAllLines(restarts).size(), "a hang past the grace is restarted");
+        for (int i = 0; i < 6; i++) run(env);
+        assertEquals(1, Files.readAllLines(restarts).size(), "and the booting server is left alone until the grace is over again");
+    }
+
     private static void run(Map<String, String> env) throws Exception {
         var pb = new ProcessBuilder("bash", SCRIPT.toString(), "--once");
         pb.environment().putAll(env);

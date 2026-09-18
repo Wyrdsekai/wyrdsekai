@@ -305,11 +305,16 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      */
     public record AddRemoteBackend(String name, String type, String url,
                                     List<String> models, int priority,
-                                    boolean household) implements Command {
+                                    boolean household, String attachedBy) implements Command {
         /** Back-compat — a discovered backend with no household-trust tag. */
         public AddRemoteBackend(String name, String type, String url,
                                 List<String> models, int priority) {
-            this(name, type, url, models, priority, false);
+            this(name, type, url, models, priority, false, null);
+        }
+        /** A backend whose offering node is not named: treated as the household's own. */
+        public AddRemoteBackend(String name, String type, String url,
+                                List<String> models, int priority, boolean household) {
+            this(name, type, url, models, priority, household, null);
         }
     }
 
@@ -517,14 +522,24 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
     // ── the body map: brains are parts ──
     private void attachBrain(String name, String type, String url, int priority) {
+        attachBrain(name, type, url, priority, null);
+    }
+
+    private void attachBrain(String name, String type, String url, int priority, String attachedBy) {
         var map = BodyMap.get();
         if (map == null) return;
         try {
             map.attach(BrainLimbs.forBackend(name, type, url, priority, healthCheckInterval,
-                WyrdConfig.get().voiceUrl()));
+                WyrdConfig.get().voiceUrl(), attachedBy));
         } catch (RuntimeException e) {
             log.debug("Body map: could not attach brain {}: {}", name, e.toString());
         }
+    }
+
+    /** A brain held at the door (offered by a stranger, not vouched for) is never selected. */
+    private static boolean held(String name) {
+        var map = BodyMap.get();
+        return map != null && map.held(BrainLimbs.id(name));
     }
 
     private static void brainHeartbeat(String name, boolean alive) {
@@ -2009,6 +2024,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         if (model != null && !model.equals(defaultModel) && !model.startsWith("cap:")) {
             for (var b : backends) {
                 if (excludeRemote && b instanceof InferenceBackend.NatsRemote) continue;
+                if (held(b.name())) continue;
                 if (healthStatus.getOrDefault(b.name(), false)
                         && !b.models().isEmpty() && b.models().contains(model)) {
                     return b;
@@ -2018,18 +2034,18 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         // First healthy backend by priority
         for (var b : backends) {
             if (excludeRemote && b instanceof InferenceBackend.NatsRemote) continue;
+            if (held(b.name())) continue;
             if (healthStatus.getOrDefault(b.name(), false)) {
                 return b;
             }
         }
         // Last resort: first backend regardless of health (might recover)
-        if (excludeRemote) {
-            for (var b : backends) {
-                if (!(b instanceof InferenceBackend.NatsRemote)) return b;
-            }
-            return null;
+        for (var b : backends) {
+            if (excludeRemote && b instanceof InferenceBackend.NatsRemote) continue;
+            if (held(b.name())) continue;
+            return b;
         }
-        return backends.isEmpty() ? null : backends.getFirst();
+        return null;
     }
 
     private InferenceBackend selectBackendByName(String name, String model) {
@@ -2042,6 +2058,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 // Honor excludeRemote even on an exact name match — a NatsRemote
                 // named "local" would still be wrong to use for a local-only call.
                 if (excludeRemote && b instanceof InferenceBackend.NatsRemote) continue;
+                if (held(b.name())) continue;
                 return b;
             }
         }
@@ -2056,6 +2073,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     private InferenceBackend selectBackendExcluding(String excludeName, boolean excludeRemote) {
         for (var b : backends) {
             if (excludeRemote && b instanceof InferenceBackend.NatsRemote) continue;
+            if (held(b.name())) continue;
             if (!b.name().equals(excludeName)
                     && healthStatus.getOrDefault(b.name(), false)) {
                 return b;
@@ -2091,7 +2109,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 msg.name(), msg.priority(), msg.models(),
                 targetZone, localZone, natsRemoteCaller);
             backends.add(nats);
-            attachBrain(msg.name(), msg.type(), msg.url(), msg.priority());
+            attachBrain(msg.name(), msg.type(), msg.url(), msg.priority(), msg.attachedBy());
             remoteBackendNames.add(msg.name());
             healthStatus.put(msg.name(), true);
             backends.sort(Comparator.comparingInt(InferenceBackend::priority));
@@ -2120,7 +2138,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         };
 
         backends.add(backend);
-        attachBrain(msg.name(), msg.type(), msg.url(), msg.priority());
+        attachBrain(msg.name(), msg.type(), msg.url(), msg.priority(), msg.attachedBy());
         remoteBackendNames.add(msg.name());
         healthStatus.put(msg.name(), true); // optimistic — health check will verify
         backends.sort(Comparator.comparingInt(InferenceBackend::priority));

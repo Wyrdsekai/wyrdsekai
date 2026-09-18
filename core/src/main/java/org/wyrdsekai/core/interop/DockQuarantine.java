@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.interop;
 
+import org.wyrdsekai.core.body.Immune;
+
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -145,6 +147,10 @@ public class DockQuarantine {
 
     /** Reject an item (during Forge cycle). */
     public boolean reject(String quarantineId) {
+        // A visitor turned away at the dock is remembered by the body: a limb it later
+        // offers waits at the door on sight.
+        pool.stream().filter(i -> i.quarantineId().equals(quarantineId)).findFirst()
+            .ifPresent(i -> Immune.remember("visitor", i.sourceDid(), "turned away at the dock: " + i.category(), "steward"));
         return updateStatus(quarantineId, QuarantineStatus.REJECTED);
     }
 

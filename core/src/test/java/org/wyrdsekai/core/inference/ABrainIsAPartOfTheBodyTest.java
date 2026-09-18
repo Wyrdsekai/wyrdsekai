@@ -97,6 +97,40 @@ class ABrainIsAPartOfTheBodyTest {
         testKit.stop(router);
     }
 
+    @Test
+    @DisplayName("a stranger's brain is held at the door and never selected; vouched, it thinks for her")
+    void aStrangersBrainWaitsAtTheDoor() {
+        var map = BodyMap.get();
+        var router = testKit.spawn(InferenceRouter.create(List.of(), "wyrdsekai-3.5-9b", null));
+        router.tell(new InferenceRouter.SetNatsRemoteCaller(answering("from the stranger")));
+        router.tell(new InferenceRouter.AddRemoteBackend(
+            "remote-stranger-mlx", "mlx", "nats://orchard", List.of("wyrdsekai-3.5-9b"), 105, false, "did:key:z6MkStranger"));
+        sleep(120);
+
+        var id = BrainLimbs.id("remote-stranger-mlx");
+        var part = map.part(id).orElseThrow();
+        assertEquals(PartState.QUARANTINED, part.state(), "offered by a node the household does not know");
+        assertEquals("did:key:z6MkStranger", part.descriptor().attachedBy());
+        assertTrue(map.held(id));
+
+        // The router's health loop heartbeats it; it stays held (the first live foreign node was let in this way).
+        router.tell(new InferenceRouter.SetBackendHealth("remote-stranger-mlx", true));
+        sleep(80);
+        assertEquals(PartState.QUARANTINED, map.part(id).orElseThrow().state());
+
+        var probe = testKit.<InferenceRouter.InferResponse>createTestProbe();
+        router.tell(new InferenceRouter.ChatRequest("req-held", null,
+            List.of(new InferenceClient.ChatMessage("user", "hi")), 64, 0.0, probe.ref()));
+        var answer = probe.receiveMessage();
+        assertTrue(answer instanceof InferenceRouter.InferError, "the only brain is held, so there is no brain: " + answer);
+
+        map.vouch(id, "the steward");
+        router.tell(new InferenceRouter.ChatRequest("req-vouched", null,
+            List.of(new InferenceClient.ChatMessage("user", "hi")), 64, 0.0, probe.ref()));
+        probe.expectMessageClass(InferenceRouter.InferOk.class);
+        testKit.stop(router);
+    }
+
     private static void sleep(long ms) {
         try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }

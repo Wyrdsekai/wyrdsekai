@@ -217,6 +217,26 @@ companion prompt. See COMPANIONS.md, "Body map, marks and reflexes".
 `wyrd body` prints the table and recent marks; `wyrd body gone <id>` removes a numb part.
 Both need a steward login.
 
+### Foreign parts, vouching and the immune memory
+
+A part attached by someone outside the household (a federation partner's node, a peer
+that is not a member, an inference backend such a node offers) is held in state
+`QUARANTINED`: it is on the map, it is not used (the router does not select a held brain),
+and one mark tells the companion it waits. Parts the household itself attaches are never
+held. Every action the body takes against a part (a cut, a shut door, a hold, a
+severance) passes one tolerance check: nothing is done against the being's own home, the
+host itself, or a household part; a refused action becomes a mark to the steward.
+
+```
+wyrd body immune              # parts held at the door, and what the body remembers acting against
+wyrd body vouch <part-id>     # let a held part in; the vouch is recorded and kept
+wyrd body forget <entry-id>   # drop one remembered entry
+```
+
+The memory (`immune_memory`) keeps each shut door, cut tool, rejected dock offer and refused
+capability for one year from its last sighting, with a count. A part from a remembered
+source is held with the memory named. All three verbs need a steward login.
+
 ### Quiet hours and reflexes
 
 `wyrd household quiet HH:MM-HH:MM` stores quiet hours in the database; `wyrd household
@@ -231,7 +251,13 @@ containers set `oom_score_adj: 500`, so the kernel kills a container before the 
 ### Brainstem
 
 `wyrdsekai-brainstem` runs outside the JVM as its own unit (systemd on the deb, launchd on
-the pkg; not on Windows yet). It restarts the server only when the unit is active and
+the pkg). On Windows the tray application is the brainstem: it writes the same heartbeat
+and events files, asks `/health` every four seconds, and after six misses in a row past a
+three-minute grace it copies `world.db` to `backups\brainstem.world.db.<ts>.bak` and runs
+`wyrd restart`. It only restarts a node it has seen answering since the last start, so a
+node stopped from the menu stays stopped. `wyrd status` shows whether the tray is watching.
+The systemd and launchd brainstems snapshot with `sqlite3` when it is installed and fall
+back to a plain copy otherwise; `wyrd doctor` says which. It restarts the server only when the unit is active and
 `/health` has not answered for 60 seconds after a 3 minute start-up grace, snapshotting
 `world.db` first. Optional hooks: `/etc/wyrdsekai/brainstem/doors-close` and `doors-open`,
 run when the server stops answering and when it answers again; use them for firewall
@@ -251,8 +277,160 @@ them as marks and `wyrd status` says whether the brainstem is running.
 `wyrd vault status` shows copies, store size, the last drill and anything unclassified in
 the data directory. `wyrd vault stage <id>` needs the server stopped; the restore applies at
 the next start and keeps the displaced database. The vault directory is plain files; a
-second copy is `wyrd vault sync user@vaultnode:/srv/wyrdsekai-vault`. Copies synced offsite
-are not encrypted at rest yet.
+second copy is `wyrd vault sync user@vaultnode:/srv/wyrdsekai-vault`.
+
+The store is sealed at rest. Every chunk and manifest is AES-256-GCM under one key in
+`<data>/vault.key`, made on the first copy (mode 600) and never written into the store. A
+synced copy is unreadable without that file, so keep a copy of the key somewhere that is not
+this disk; `wyrd vault key` prints the path and the key's eight-character id. The store
+records the id of the key that sealed it in `key.id`; a node started with a different key
+refuses to write or read the store and says which key it wants (`wyrd vault status` shows
+`KEY MISMATCH`). Restoring on another machine: `wyrd vault restore latest <dir> --key
+/path/to/vault.key`, or the same flag on `stage`. A store from 0.4.0 holds plain files; the
+first pass after the upgrade seals them in place.
+
+### Nightly weight write: the morning guard's questions
+
+The morning guard (`wyrd sleepwrite guard`, run by `apply`) asks the served voice a fixed
+set of generic probes with and without the night's adapter. Beside those it asks her own
+questions from `<data>/adapters/sleepwrite/guard-questions.jsonl`, one JSON object per
+line:
+
+```
+{"id": "h-name", "family": "identity", "prompt": "What is your name? Answer with just the name.", "check": ["contains", "mira"]}
+{"id": "h-lang", "family": "language", "prompt": "Responde en una frase: ¿qué hiciste hoy? (Answer in English.)", "check": ["script", "en"]}
+```
+
+The server writes those two at her first sleep and never overwrites the file. Families are
+`identity` (fails when the base answers and the night does not, or when the last known-good
+night answered and this one does not) and `language` (the check is absolute: the reply must
+be in the household's script). Check kinds: `contains`, `contains_any` (arguments split on
+`|`), `exact_word`, `min_lines`, `script` (`en`, `es`, `ja`).
+
+Each dream appends a candidate to `guard-candidates.jsonl`. `wyrd sleepwrite questions list`
+shows both files; `accept <id>` moves a candidate into the asked set; `reject <id>` drops
+it. On a PASS morning the night's identity and language answers are written to
+`guard-known-good.json`, which the next mornings compare against. Delete that file to reset
+the baseline.
+
+### Memory caps on the brains
+
+The launcher gives each llama container a memory limit when it starts inference: the model
+file's size plus the prompt cache (`LLAMA_CACHE_RAM`, default 1024 MiB) plus 2 GiB. The
+model is mmapped, so under the cap the kernel drops its file pages before it kills anything;
+what the cap really bounds is the working memory a runaway server can take from the record.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `LLAMA_DRIVE_MEM_LIMIT` | model + cache + 2 GiB | cap on the drive container |
+| `LLAMA_VOICE_MEM_LIMIT` | model + cache + 2 GiB | cap on the voice container |
+| `LLAMA_EMBED_MEM_LIMIT` | model + 2 GiB | cap on the embedding container |
+
+Values are docker sizes (`6144m`, `8g`); `0` removes the cap. A running container takes a
+new value on the next `wyrd start` or `wyrd inference restart`. `wyrd doctor` prints the caps
+docker holds and warns when a brain has none.
+
+### Doors as firewall sets
+
+`wyrd body door close <door-id>` shuts a door on the body map without inference: the door's
+addresses (the relay's hosts from the relay config, the librarian's MCP endpoint, a zone's
+manifest) go into an nftables set that the host's output chain rejects. `open <door-id>`
+removes exactly the addresses `close` added; `list` shows what is shut. The work is done by
+`/opt/wyrdsekai/bin/wyrdsekai-doors`, a fixed script with no shell interpolation, which the
+server runs as root on the Linux package. A door whose address is loopback, link-local or one
+of the host's own addresses is refused, since shutting it would cut the server off from its own
+brains and its own health check. State lives under `<data>/brainstem/door-sets`; the
+nftables table is created on demand and is lost at reboot, so a reboot opens every door.
+The reflex table has a `CLOSE_DOOR` action for this, with no default row; a row's subject
+names the door. Linux only.
+
+### Per-being principals and the hooks
+
+On the Linux package each companion's tools run as her own user in her own cgroup. The
+server makes the user (`wyrd-being-<slug>`, uid 62000 to 62999, group `wyrdsekai-beings`,
+no shell) and the cgroup on first use; the `wyrdsekai-being` wrapper joins the cgroup as
+root and drops to her user with no capabilities before it execs the tool. Her home is
+`<data>/beings/<slug>/home`; her coding workspaces under `<data>/coding-workspaces` are
+chowned to her. Purging the package removes the users and the group.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `WYRDSEKAI_BEING_PRINCIPALS` | `on` | `off` runs every being's tools as the daemon, as before 0.4.1 |
+| `WYRDSEKAI_BEING_MEMORY_MAX` | none | memory budget of one being's tools (cgroup `memory.max`: bytes or a size such as `4G`) |
+
+A being's tool has to reach three places under the data directory: `coding-cli-bundle`,
+`coding-workspaces` and `beings`. At boot the server removes all access for others from every
+top-level entry except those three and `models` (which the on-demand llama units read as
+`nobody`), and sets the data directory to mode 711: a path can be walked, nothing can be
+listed, and the record and the keys are closed to her by the kernel. The package's
+post-install step no longer re-owns `beings` and `coding-workspaces` to the installing user. Before a tool is wrapped the server checks that its
+executable can be started as her; when it cannot, the tool runs as the daemon that once, the
+hands line counts it, and the steward gets a mark naming the path to fix.
+
+`wyrd body` has a hands line: `per being (N known)` when principals work, or `shared:` with
+the reason (not Linux, not root, no `Delegate=yes`, wrapper or `setpriv` missing). The
+service unit shipped by the package sets `Delegate=yes`; a source checkout runs shared.
+
+With principals in place the server also runs `bpftrace` on the open, exec and connect
+system calls for the beings' uid range. A tool that opens the record, the keys, the vault
+store, the brainstem's or another being's files, or `/etc/wyrdsekai`, or that execs one of
+the host's levers, is cut: the being's tool tree is killed through her cgroup and she reads
+a mark. Every other exec and every connection goes to `<data>/brainstem/hooks.jsonl` with
+the verdict. The hooks appear on the map as `sense:hooks`. They need `bpftrace` and a kernel
+with BTF (`/sys/kernel/btf/vmlinux`); without them the line says why.
+
+### Broken items and night mending
+
+| Key | Default | Meaning |
+|---|---|---|
+| `WYRDSEKAI_ITEM_MEND_MINUTES` | 45 | minutes a night the workshop may spend mending broken household items; 0 turns it off |
+
+A household item that fails the contract gate is broken: it calls a `world.*` member that
+does not exist, declares commands it never reads, carries a builtin's name, or fails its
+manifest checks. `wyrd items broken` lists them. The companion is told once about each, in
+plain words, as a mark. After each of her sleeps the workshop repairs them on copies through
+the coding backend until the night's minutes are spent or someone else needs inference; when
+the household has quiet hours, only inside them. A placed file is replaced only when its
+copy has no problems left, and the version it replaces is kept in `items/.repaired/`, beside
+`state.json`, which records what she has been told and how often each file has been tried
+(three times unchanged, then it is left for a person). `wyrd items repair <name>|--all` does
+the same by hand, and the Hearth's mending bench lets her ask for it herself.
+
+### Hook rules and the replay gate
+
+| Key | Default | Meaning |
+|---|---|---|
+| `WYRDSEKAI_HOOKS_MODE` | `enforce` | `record` makes the hooks write down what they would cut and cut nothing |
+| `WYRDSEKAI_HOOKS_REPLAY_DAYS` | 3 | how much recorded tool behaviour a new rule set is replayed against before it may be armed |
+
+The rules in force are the built-in list or `<data>/brainstem/hook-rules.json`:
+
+```
+{"cut": ["${data}/world.db", "${data}/vault-store/"], "closed": ["${data}/souls/"], "cutExecs": ["systemctl"]}
+```
+
+A path ending in `/` is a directory prefix; any other path matches the file and its
+`-suffix` and `.suffix` siblings. A being's own home under `<data>/beings/<slug>/` is always
+allowed to her and always cut for anyone else; that rule is not in the file.
+
+```
+wyrd body hooks                      # mode, rules in force, how much history there is
+wyrd body hooks rules > rules.json   # the rules in force, to edit
+wyrd body hooks replay rules.json    # what these rules would have cut, over her recorded behaviour
+wyrd body hooks arm rules.json       # install them, only if the replay is clean and the history long enough
+```
+
+The history is `<data>/brainstem/hooks-seen.jsonl`: one line per distinct thing her tools
+did and were not cut for, with a count and first and last times. At every start the node's
+own rules are replayed over it; rules that would cut her ordinary work are not enforced,
+and the hooks say `record-only` with the reason on the hands line of `wyrd body`.
+
+### Hardware watchdog
+
+The Linux package installs `/etc/systemd/system.conf.d/90-wyrdsekai-watchdog.conf` with
+`RuntimeWatchdogSec=120s` and `/etc/modules-load.d/wyrdsekai.conf` loading `softdog` for
+hosts without a watchdog device. If PID 1 cannot pet `/dev/watchdog` for two minutes the
+box reboots. Both are conffiles; remove either to opt out. `wyrd doctor` shows the state.
 
 ### Host hand
 

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# wyrdsekai-being — run one of her hands as her own principal on the host.
+#
+#   wyrdsekai-being <uid> <gid> <cgroup-dir> <home> -- <argv>...
+#
+# The server (root on the Linux package) calls this around every tool process a companion
+# starts: a coding backend, a skill. It joins the being's cgroup while still root, so the
+# kernel charges the tool's memory to her budget and the whole tool tree can be killed as
+# one, then drops to her user and group with no capabilities and no way to gain any, and
+# execs the tool. The tool sees her HOME, not the daemon's.
+set -euo pipefail
+
+[[ $# -ge 6 && "${5:-}" == "--" ]] || { echo "usage: wyrdsekai-being <uid> <gid> <cgroup-dir> <home> -- <argv>..." >&2; exit 64; }
+uid="$1"; gid="$2"; cg="$3"; home="$4"; shift 5
+[[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]] || { echo "wyrdsekai-being: uid and gid are numbers" >&2; exit 64; }
+
+if [[ -d "$cg" && -w "$cg/cgroup.procs" ]]; then
+    echo $$ > "$cg/cgroup.procs" || echo "wyrdsekai-being: could not join $cg" >&2
+fi
+export HOME="$home"
+export USER="$(id -nu "$uid" 2>/dev/null || echo "being-$uid")"
+export LOGNAME="$USER"
+exec setpriv --reuid="$uid" --regid="$gid" --init-groups --inh-caps=-all --no-new-privs -- "$@"

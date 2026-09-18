@@ -1056,8 +1056,31 @@ resolve_voice_model() {
 # llama-server default; OOM-killed four times a day) after the cap shipped.
 # Env for the service (model names, data dir, adapter) must already be set by
 # the caller exactly as at creation, or the recreate is a needless one.
+# Each brain gets a memory cap: the model file (mmapped, so the kernel reclaims its pages
+# under the cap before it kills anything) plus the prompt cache (--cache-ram, MiB) plus
+# 2 GiB of working room. A runaway brain then dies inside its own cgroup instead of taking
+# the record's memory, which is what happened in September 2026. Override with
+# LLAMA_DRIVE_MEM_LIMIT / LLAMA_VOICE_MEM_LIMIT / LLAMA_EMBED_MEM_LIMIT in wyrdsekai.conf
+# (docker sizes: 6144m, 8g), or set one to 0 for no cap. Every compose call must see the
+# same values, or compose recreates the container on each call.
+_brain_mem_limit() {   # <model-file-or-name> [cache-ram-mib]
+    local f="$1" cache="${2:-${LLAMA_CACHE_RAM:-1024}}" bytes=0
+    [[ -f "$f" ]] || f="$MODELS_DIR/$(basename "$f")"
+    [[ -f "$f" ]] || f="$PROJECT_ROOT/data/models/$(basename "$f")"
+    [[ -f "$f" ]] && bytes=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null || echo 0)
+    [[ "$cache" =~ ^[0-9]+$ ]] || cache=1024
+    echo "$(( bytes / 1048576 + cache + 2048 ))m"
+}
+_export_brain_mem_limits() {
+    [[ -z "${LLAMA_DRIVE_MEM_LIMIT:-}" ]] && export LLAMA_DRIVE_MEM_LIMIT="$(_brain_mem_limit "${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf}")"
+    [[ -z "${LLAMA_VOICE_MEM_LIMIT:-}" ]] && export LLAMA_VOICE_MEM_LIMIT="$(_brain_mem_limit "${LLAMA_VOICE_MODEL:-$(resolve_voice_model)}")"
+    [[ -z "${LLAMA_EMBED_MEM_LIMIT:-}" ]] && export LLAMA_EMBED_MEM_LIMIT="$(_brain_mem_limit "${LLAMA_EMBED_MODEL:-bge-m3-Q8_0.gguf}" 0)"
+    return 0
+}
+
 _reconcile_container() {  # <profile> <service>
     local out
+    _export_brain_mem_limits
     if ! out=$(docker compose --profile "$1" up -d "$2" 2>&1); then
         warn "$2: compose reconcile failed — still running the previous definition"
         return 0
@@ -1285,6 +1308,7 @@ start_inference() {
                 # at the end of this function handles that wait. Crying
                 # "No inference backend found" here — mid-cold-start — was a
                 # false alarm that read as a broken install on every fresh run.
+                _export_brain_mem_limits
                 local _docker_started=0
                 if [[ "$_drive_was_running" == "1" ]]; then
                     _docker_started=1  # :8200 already serving — leave it be…
@@ -3576,8 +3600,10 @@ do_start() {
             echo "$(_t start.systemd.already_running "$(systemctl show wyrdsekai.service -p MainPID --value)")"
             # Service is up, but inference is separate — self-heal it if it died
             # under a running node (idempotent no-op if already healthy).
+            # Already running is what start asks for: exit 0, so scripts and
+            # the desktop shell do not read it as a failed start.
             ensure_inference
-            return 1
+            return 0
         fi
         # First-boot companion naming — MUST run before the JVM launches, since
         # the systemd unit reads WYRDSEKAI_COMPANION_NAME from ENV_FILE at start.
@@ -3631,7 +3657,7 @@ do_start() {
         if [[ -n "$_ld_pid" ]]; then
             echo "$(_t start.launchd.already_running "$_ld_pid")"
             ensure_inference
-            return 1
+            return 0
         fi
         _bootstrap_companion_names
         log "$(_t start.launchd.starting)"
@@ -3659,7 +3685,7 @@ do_start() {
         # Server up, but inference is separate — self-heal it if it died under a
         # running node (idempotent no-op if already healthy).
         ensure_inference
-        return 1
+        return 0
     fi
 
     # F8: split-brain refusal. If we'd be the second JVM (e.g. LaunchDaemon
@@ -4354,6 +4380,18 @@ _release_download_verify() {   # <version>
     echo "$dir/$art"
 }
 
+# Install a .deb. `dpkg -i` ignores Recommends, so a node installed that way had no
+# sqlite3 and the brainstem's snapshot fell back to a plain copy. apt-get resolves
+# Recommends and dependencies; it needs a path with a slash. dpkg stays the fallback.
+_install_deb() {   # <file.deb>
+    local deb; deb="$(readlink -f "$1" 2>/dev/null || printf '%s' "$1")"
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --allow-downgrades "$deb" && return 0
+        warn "$(_t update.apt_failed)"
+    fi
+    sudo dpkg -i "$deb"
+}
+
 _update_now() {   # [VERSION] [--yes]
     local want="" yes=0 a
     for a in "$@"; do case "$a" in --yes|-y) yes=1 ;; [0-9]*) want="$a" ;; esac; done
@@ -4412,7 +4450,7 @@ do_update() {
         *.deb)
             log "$(_t update.installing "$artifact")"
             _quiesce_notice "an update"
-            sudo dpkg -i "$artifact" || { err "$(_t update.install_failed)"; return 1; }
+            _install_deb "$artifact" || { err "$(_t update.install_failed)"; return 1; }
             ;;
         *.pkg)
             log "$(_t update.installing "$artifact")"
@@ -4478,6 +4516,42 @@ do_doctor() {
                 _oom="$(cat "/proc/$_mpid/oom_score_adj" 2>/dev/null || true)"
                 if [[ "${_oom:-0}" -lt 0 ]]; then log "$(_t doctor.oom_score "$_oom")"; else warn "$(_t doctor.oom_score_unset "${_oom:-0}")"; _wbump; fi
             fi
+        fi
+        # The brains' memory caps, as docker holds them (0 = uncapped; restart inference to apply).
+        if command -v docker >/dev/null 2>&1; then
+            local _caps="" _c _m
+            for _c in wyrdsekai-llama wyrdsekai-llama-voice wyrdsekai-llama-embed; do
+                _m="$(docker inspect -f '{{.HostConfig.Memory}}' "$_c" 2>/dev/null || true)"
+                [[ -n "$_m" ]] || continue
+                if [[ "$_m" == "0" ]]; then _caps+="${_c#wyrdsekai-}=none "; else _caps+="${_c#wyrdsekai-}=$(( _m / 1048576 ))M "; fi
+            done
+            if [[ -n "$_caps" ]]; then
+                if [[ "$_caps" == *"=none"* ]]; then warn "$(_t doctor.brain_caps_missing "$_caps")"; _wbump; else log "$(_t doctor.brain_caps "$_caps")"; fi
+            fi
+        fi
+        # Per-being principals and the hooks: what the running server reports for its hands.
+        local _hands; _hands="$(curl -sf -m 3 -H "Authorization: Bearer $(wyrd_session_token 2>/dev/null)" "http://localhost:${WYRDSEKAI_PORT:-7070}/api/body" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hands",""))' 2>/dev/null || true)"
+        if [[ -n "$_hands" ]]; then
+            if [[ "$_hands" == *"shared"* || "$_hands" == *"not watching"* ]]; then warn "$(_t doctor.hands "$_hands")"; _wbump; else log "$(_t doctor.hands "$_hands")"; fi
+        fi
+        # The hardware watchdog: systemd pets /dev/watchdog; a hung kernel reboots the box.
+        if is_systemd_managed 2>/dev/null; then
+            local _wd; _wd="$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || true)"
+            if [[ -e /dev/watchdog ]]; then
+                if [[ -n "$_wd" && "$_wd" != "0" ]]; then log "$(_t doctor.watchdog "$_wd")"; else warn "$(_t doctor.watchdog_off)"; _wbump; fi
+            else
+                log "$(_t doctor.watchdog_nodev)"
+            fi
+        fi
+        # Doors shut by the body (nftables sets); normally none.
+        if command -v nft >/dev/null 2>&1 && sudo -n nft list table inet wyrdsekai >/dev/null 2>&1; then
+            local _closed; _closed="$(sudo -n nft list set inet wyrdsekai closed4 2>/dev/null | grep -c '\.' || true)"
+            [[ "${_closed:-0}" -gt 0 ]] && { warn "$(_t doctor.doors_closed "$_closed")"; _wbump; }
+        fi
+        # The brainstem snapshots the record with sqlite3 before a restart; without it the
+        # snapshot is a plain copy of a live database.
+        if [[ -x /opt/wyrdsekai/bin/wyrdsekai-brainstem || -f /etc/systemd/system/wyrdsekai-brainstem.service ]]; then
+            if command -v sqlite3 >/dev/null 2>&1; then log "$(_t doctor.sqlite3_present)"; else warn "$(_t doctor.sqlite3_missing)"; _wbump; fi
         fi
         local _swp; _swp="$(cat /proc/sys/vm/swappiness 2>/dev/null || true)"
         [[ -n "$_swp" && "$_swp" -gt 20 ]] && info "$(_t doctor.swappiness "$_swp")"
@@ -5418,7 +5492,7 @@ do_purge() {
         echo "$(_t purge.state_wiped_hint)"
         return 0
     fi
-    sudo dpkg -i "$deb" || { err "$(_t purge.dpkg_failed)"; return 1; }
+    _install_deb "$deb" || { err "$(_t purge.dpkg_failed)"; return 1; }
     sudo systemctl start wyrdsekai || { err "systemctl start failed"; return 1; }
     log "$(_t purge.done)"
     log "$(_t purge.steward_hint)"
@@ -5606,12 +5680,11 @@ do_backup() {
     # NATS config
     [ -f "$DATA_DIR/nats.conf" ] && cp "$DATA_DIR/nats.conf" "$backup_path/"
 
-    # Lucene search indexes
+    # The search index is not copied. It is derivable (rebuilt from the library and the
+    # record) and on a node with a full library it is larger than everything else together:
+    # this copy once wrote 163 GB per run. The nightly snapshot hard-links it instead.
     for idx_dir in "$DATA_DIR/search" "$DATA_DIR/lucene"; do
-        if [ -d "$idx_dir" ]; then
-            cp -r "$idx_dir" "$backup_path/"
-            echo "  $(basename "$idx_dir")/"
-        fi
+        [ -d "$idx_dir" ] && echo "  $(_t backup.index_skipped "$(basename "$idx_dir")")"
     done
 
     # Souls
@@ -5689,6 +5762,8 @@ print("Latest: %s" % (d.get("latest") or "none"))
 ld=d.get("lastDrill")
 print("Last drill: %s" % ("never" if not ld else "%s %s — %s" % (ld, "passed" if d.get("lastDrillOk") else "FAILED", d.get("lastDrillDetail",""))))
 if d.get("lastError"): print("Last error: %s" % d["lastError"])
+if d.get("keyId"): print("Sealed with key %s (%s); keep a copy of that file off this disk" % (d["keyId"], d.get("keyFile","")))
+if d.get("keyMismatch"): print("KEY MISMATCH: %s" % d["keyMismatch"])
 if d.get("unclassified"): print("Unclassified in the data dir (not vaulted): %s" % ", ".join(d["unclassified"]))
 rec=d.get("recent",[])
 if rec:
@@ -5711,23 +5786,30 @@ if rec:
             [[ -z "$remote" ]] && { err "Where to? wyrd vault sync <rsync destination>  (or set WYRDSEKAI_VAULT_REMOTE)"; return 64; }
             command -v rsync >/dev/null 2>&1 || { err "rsync is not installed"; return 1; }
             [[ -d "$vault_dir" ]] || { err "No vault at $vault_dir yet"; return 1; }
+            # The store is sealed with $DATA_DIR/vault.key, which is not in it: the copy is
+            # unreadable without the key file. Say so every time, so it is never a surprise.
             log "Syncing $vault_dir → $remote"
-            rsync -a --delete "$vault_dir/" "$remote/" && log "Synced." ;;
-        list)      _vault_java list --vault "$vault_dir" ;;
+            rsync -a --delete "$vault_dir/" "$remote/" && log "Synced. The copy is sealed; restoring it needs $DATA_DIR/vault.key (wyrd vault key)." ;;
+        key)
+            # Where the key is and what it is called. The store is useless without it.
+            [[ -f "$DATA_DIR/vault.key" ]] || { err "No vault key yet at $DATA_DIR/vault.key (it is made on the first copy)."; return 1; }
+            _vault_java key --vault "$vault_dir" --data "$DATA_DIR" ;;
+        list)      _vault_java list --vault "$vault_dir" --data "$DATA_DIR" "${@:2}" ;;
         restore)
             # Rebuild a copy under a directory of your choosing (the server may be up).
+            # On another machine: wyrd vault restore latest <dir> --key /path/to/vault.key
             local id="${2:-latest}" to="${3:-}"
-            [[ -z "$to" ]] && { err "Usage: wyrd vault restore <id|latest> <dir>"; return 64; }
-            _vault_java restore --vault "$vault_dir" --to "$to" "$id" ;;
+            [[ -z "$to" ]] && { err "Usage: wyrd vault restore <id|latest> <dir> [--key FILE]"; return 64; }
+            _vault_java restore --vault "$vault_dir" --data "$DATA_DIR" --to "$to" "${@:4}" "$id" ;;
         stage)
             # Rebuild the record from a copy and stage it for the next start. Stop first.
             local id="${2:-latest}"
             if curl -sf -m 3 "$api/health" >/dev/null 2>&1; then
                 err "The server is running. Stop it first (wyrd stop), then stage, then start."; return 1
             fi
-            _vault_java stage --vault "$vault_dir" --data "$DATA_DIR" "$id" ;;
+            _vault_java stage --vault "$vault_dir" --data "$DATA_DIR" "${@:3}" "$id" ;;
         *)
-            echo "Usage: wyrd vault [status] | snapshot [reason] | drill | prune | sync [dest] | list | restore <id|latest> <dir> | stage <id|latest>"
+            echo "Usage: wyrd vault [status] | snapshot [reason] | drill | prune | sync [dest] | key | list | restore <id|latest> <dir> [--key FILE] | stage <id|latest> [--key FILE]"
             return 64 ;;
     esac
 }
@@ -10497,8 +10579,50 @@ do_items() {
             WYRDSEKAI_DATA_DIR="${WYRDSEKAI_DATA_DIR:-$DATA_DIR}" \
                 "$JAVA_CMD" --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Dpolyglot.engine.WarnInterpreterOnly=false -Dpolyglot.log.level=OFF -cp "$CP" org.wyrdsekai.core.item.ItemWiringCli "$@" 2> >(grep -vE "^\[engine\]|^\[To redirect|^\* |^Execution without|^The following cause|^For more information|^To disable this warning|^WARNING: |^\s*$" >&2)
             ;;
+        broken|repair)
+            # Items that are placed in the world and would be refused by today's contract gate,
+            # and the way to have one repaired: a copy goes through the coding backend, and the
+            # placed file is replaced only when the copy has no problems left.
+            local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            if [[ "$sub" == "broken" ]]; then
+                curl -s -m 120 -H "Authorization: Bearer $token" "$api/api/items/broken" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+if d.get("error"): print(d["error"]); sys.exit(1)
+rows=d.get("broken",[])
+if not rows: print("Every household item passes the contract gate.")
+for r in rows:
+    print("BROKEN  %s" % r["item"])
+    for p in r["problems"]: print("    " + p)
+if rows: print("%d item(s). Repair one with: wyrd items repair <name>   (or --all)" % len(rows))
+'
+                return $?
+            fi
+            local names=()
+            if [[ "${1:-}" == "--all" ]]; then
+                while read -r n; do [[ -n "$n" ]] && names+=("$n"); done < <(curl -s -m 120 -H "Authorization: Bearer $token" "$api/api/items/broken" | python3 -c 'import json,sys; [print(r["item"]) for r in json.load(sys.stdin).get("broken",[])]')
+            elif [[ -n "${1:-}" ]]; then names=("$1")
+            else err "Usage: wyrd items repair <name> | --all"; return 64; fi
+            [[ ${#names[@]} -eq 0 ]] && { log "Nothing to repair."; return 0; }
+            local n
+            for n in "${names[@]}"; do
+                log "Repairing $n (a copy goes through the coding backend; this can take a few minutes)…"
+                curl -s -m 1800 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                    -d "{\"item\": \"$n\"}" "$api/api/items/repair" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+if d.get("error"): print("    " + d["error"]); sys.exit(0)
+print("    %s: %s" % ("FIXED" if d.get("fixed") else "not fixed", d.get("note","")))
+for p in d.get("after",[]): print("    still: " + p)
+'
+            done
+            ;;
         *)
-            echo "Usage: wyrd items check [--quiet] [dir…]"
+            echo "Usage: wyrd items check [--quiet] [dir…] | broken | repair <name>|--all"
+            echo "  broken  household items the contract gate would refuse today, with their problems"
+            echo "  repair  repair a placed item through the coding backend; the placed file changes only if the copy comes out whole"
             echo "  check   every item script's world.* calls against the API this build serves (bundled + the household's items by default)"
             [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 1
             ;;
@@ -11335,7 +11459,11 @@ PYEOF
 wyrd_session_token_file() {
     local dir="${HOME}/.wyrdsekai"
     mkdir -p "$dir" 2>/dev/null
-    chmod 700 "$dir" 2>/dev/null || true
+    # On the Linux package ~/.wyrdsekai is a link to the shared data directory, whose mode
+    # the server manages (the beings' group needs search permission on it). chmod follows
+    # the link, so this line reset that mode on every command. A real per-user directory
+    # is still closed; the token file is 600 either way.
+    [[ -L "$dir" ]] || chmod 700 "$dir" 2>/dev/null || true
     echo "$dir/session.token"
 }
 
@@ -11992,7 +12120,9 @@ def ago(ms):
     if s<3600: return "%dm ago"%(s//60)
     if s<172800: return "%dh ago"%(s//3600)
     return "%dd ago"%(s//86400)
-if d.get("host"): print("host: "+d["host"]); print()
+if d.get("host"): print("host: "+d["host"])
+if d.get("hands"): print("hands: "+d["hands"])
+if d.get("host") or d.get("hands"): print()
 parts=d.get("parts",[])
 if not parts: print("No parts attached yet.")
 else:
@@ -12008,6 +12138,110 @@ if marks:
         print("  %s  %s%s" % (when, m["text"], "" if m.get("read") else "  (unread)"))
 '
             ;;
+        vouch)
+            # A part held at the door (attached by someone the household did not put there) is not
+            # used until a person says it belongs. This is that word.
+            [[ -z "${2:-}" ]] && { err "Which part? wyrd body vouch <part-id>   (held parts are in: wyrd body immune)"; return 64; }
+            local resp code
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                -d "{\"part\": \"$2\"}" "$api/api/body/vouch") || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward vouches for a part."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            printf '%s\n' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Vouched for %s (%s): now %s" % (d["name"], d["id"], d["state"]))'
+            ;;
+        immune|forget)
+            # What the body remembers acting against, and what waits at the door; forget one by id.
+            local resp code
+            if [[ "$sub" == "forget" ]]; then
+                [[ -z "${2:-}" ]] && { err "Which entry? wyrd body forget <id>   (ids are in: wyrd body immune)"; return 64; }
+                resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"id\": \"$2\"}" "$api/api/body/forget")
+            else
+                resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/body/immune")
+            fi
+            [[ $? -eq 0 ]] || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward reads the immune memory."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            printf '%s\n' "$resp" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+if "forgotten" in d: print("forgotten" if d["forgotten"] else "no such entry"); sys.exit(0)
+held=d.get("held",[])
+print("Held at the door (wyrd body vouch <id> to let one in):" if held else "Nothing is held at the door.")
+for p in held: print("  %-30s %-10s from %s  (%s)" % (p["id"], p["kind"], p.get("attachedBy",""), p.get("detail","")))
+rem=d.get("remembered",[])
+print(); print("Remembered (wyrd body forget <id> to forget one):" if rem else "Nothing remembered.")
+for e in rem: print("  %-12s %-40s x%-4s last %s  %s\n      id %s" % (e["kind"], e["subject"][:40], e["count"], e["lastSeen"][:16], e.get("reason") or "", e["id"]))
+'
+            ;;
+        hooks)
+            # The kernel hooks on her tools. Rules are never armed blind: replay tries a rule
+            # file against what her hands have been seen to do; arm installs it only when
+            # that replay is clean and her history is long enough (or --force).
+            local action="${2:-status}" file="${3:-}" force="false"
+            [[ "${4:-}" == "--force" || "${3:-}" == "--force" ]] && force="true"
+            [[ "$file" == "--force" ]] && file="${4:-}"
+            local path="/api/body/hooks" method="GET" body=""
+            case "$action" in
+                status|rules) ;;
+                replay) method="POST"; path="/api/body/hooks/replay"
+                        if [[ -n "$file" ]]; then [[ -f "$file" ]] || { err "No such rules file: $file"; return 1; }; body="{\"rules\": $(cat "$file")}"; else body="{}"; fi ;;
+                arm)    [[ -f "$file" ]] || { err "Usage: wyrd body hooks arm <rules.json> [--force]"; return 64; }
+                        method="POST"; path="/api/body/hooks/arm"; body="{\"rules\": $(cat "$file"), \"force\": $force}" ;;
+                *) err "Usage: wyrd body hooks [status] | rules | replay [rules.json] | arm <rules.json> [--force]"; return 64 ;;
+            esac
+            local resp code
+            if [[ "$method" == "POST" ]]; then
+                resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "$body" "$api$path")
+            else
+                resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api$path")
+            fi
+            [[ $? -eq 0 ]] || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward works the hooks."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            printf '%s' "$resp" | WYRD_HOOKS_ACTION="$action" python3 -c '
+import json,os,sys
+d=json.load(sys.stdin); a=os.environ.get("WYRD_HOOKS_ACTION")
+def show_replay(r):
+    print("Tried against %s events (%s distinct, %.1f h of her history): %s allowed, %s recorded, %s would be CUT" % (r["events"], r["distinct"], r["spanHours"], r["allowed"], r["recorded"], r["wouldCutEvents"]))
+    for c in r.get("wouldCut", []): print("  would cut: %-10s uid %s  x%-5s %s %s" % (c["comm"], c["uid"], c["count"], c["kind"], c["arg"]))
+if a == "rules": print(json.dumps(d.get("rules"), indent=2))
+elif a == "replay": show_replay(d)
+elif a == "arm":
+    print(("ARMED" if d.get("armed") else "NOT ARMED") + ((": " + d["why"]) if d.get("why") else ""))
+    show_replay(d["replay"])
+else:
+    print("hooks: %s" % d.get("status")); print("mode:  %s%s" % (d.get("mode"), (" (" + d["modeWhy"] + ")") if d.get("modeWhy") else ""))
+    print("rules: %s (%d cut paths, %d recorded paths, %d cut programs)" % (d.get("rulesFile"), len(d["rules"]["cut"]), len(d["rules"]["closed"]), len(d["rules"]["cutExecs"])))
+    print("history: %s events, %s distinct, %.1f h" % (d.get("historyEvents"), d.get("historyDistinct"), d.get("historyHours")))
+'
+            ;;
+        door)
+            # Shut or open a door without inference: its addresses go into an nftables set
+            # the output chain rejects. Linux only; the server runs the doors helper as root.
+            local action="${2:-list}" door="${3:-}"
+            case "$action" in
+                list) ;;
+                close|open) [[ -n "$door" ]] || { err "Which door? wyrd body door $action <door-id>   (door ids are in: wyrd body)"; return 64; } ;;
+                *) err "Usage: wyrd body door list | close <door-id> | open <door-id>"; return 64 ;;
+            esac
+            local resp code
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                -d "{\"door\": \"$door\", \"action\": \"$action\"}" "$api/api/body/door") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward works the doors."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+            # A refused door (no known address, or one that opens onto this host) is not a
+            # success: say why and exit 1, so a script that shuts a door can tell.
+            printf '%s\n' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("output") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
+            ;;
         gone)
             [[ -z "${2:-}" ]] && { err "Which part? wyrd body gone <part-id>   (ids are in: wyrd body)"; return 64; }
             local resp code
@@ -12018,7 +12252,7 @@ if marks:
             [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
             log "Declared gone: $2"
             ;;
-        *) echo "Usage: wyrd body [show] | gone <part-id>"; return 64 ;;
+        *) echo "Usage: wyrd body [show] | gone <part-id> | vouch <part-id> | immune | forget <id> | door list|close <door-id>|open <door-id> | hooks [status|rules|replay [file]|arm <file> [--force]]"; return 64 ;;
     esac
 }
 
@@ -13152,7 +13386,7 @@ do_sleepwrite() {
             log "$(_t sleepwrite.apply.restarting)"
             ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
               export WYRDSEKAI_DATA="$DATA_DIR" LLAMA_VOICE_ADAPTER="sleepwrite/current.gguf"
-              docker compose --profile voice up -d --force-recreate llama-voice )
+              _export_brain_mem_limits; docker compose --profile voice up -d --force-recreate llama-voice )
             log "$(_t sleepwrite.apply.applied)"
             # Morning-after behavioral guard (§11.3). The training gates are
             # NLL-only and cannot see a write that changed how she BEHAVES.
@@ -13189,7 +13423,7 @@ do_sleepwrite() {
                     log "$(_t sleepwrite.guard.quarantined "$sw_dir/rejected")"
                     ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
                       export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
-                      docker compose --profile voice up -d --force-recreate llama-voice )
+                      _export_brain_mem_limits; docker compose --profile voice up -d --force-recreate llama-voice )
                     log "$(_t sleepwrite.guard.back_on_base "$sw_dir/guard-last.json")"
                     return 0
                 elif [[ "$grc" -eq 0 ]]; then
@@ -13207,12 +13441,42 @@ do_sleepwrite() {
                 --out "$sw_dir/guard-last.json" \
                 --history "$sw_dir/guard-history.jsonl"
             ;;
+        questions)
+            # The guard's own questions: guard-questions.jsonl is what it asks,
+            # guard-candidates.jsonl is what her dreams have proposed. accept
+            # moves a candidate across by id; reject drops it.
+            local qf="$sw_dir/guard-questions.jsonl" cf="$sw_dir/guard-candidates.jsonl"
+            case "${2:-list}" in
+                list)
+                    log "$(_t sleepwrite.questions.asked "$qf")"
+                    [[ -s "$qf" ]] && sed 's/^/    /' "$qf" || log "    $(_t sleepwrite.questions.none)"
+                    log "$(_t sleepwrite.questions.candidates "$cf")"
+                    [[ -s "$cf" ]] && sed 's/^/    /' "$cf" || log "    $(_t sleepwrite.questions.none)"
+                    ;;
+                accept|reject)
+                    local qid="${3:-}"
+                    [[ -n "$qid" ]] || { err "$(_t sleepwrite.questions.usage)"; return 1; }
+                    local line
+                    line=$(grep -F "\"id\":\"$qid\"" "$cf" 2>/dev/null | head -1 || true)
+                    [[ -n "$line" ]] || line=$(grep -F "\"id\": \"$qid\"" "$cf" 2>/dev/null | head -1 || true)
+                    [[ -n "$line" ]] || { err "$(_t sleepwrite.questions.missing "$qid")"; return 1; }
+                    grep -vF "$line" "$cf" > "$cf.tmp" && mv "$cf.tmp" "$cf"
+                    if [[ "$2" == accept ]]; then
+                        printf '%s\n' "$line" >> "$qf"
+                        log "$(_t sleepwrite.questions.accepted "$qid")"
+                    else
+                        log "$(_t sleepwrite.questions.rejected "$qid")"
+                    fi
+                    ;;
+                *) err "$(_t sleepwrite.questions.usage)"; return 1 ;;
+            esac
+            ;;
         rollback)
             rm -f "$sw_dir/current.gguf"
             log "$(_t sleepwrite.rollback.removed)"
             ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
               export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
-              docker compose --profile voice up -d --force-recreate llama-voice )
+              _export_brain_mem_limits; docker compose --profile voice up -d --force-recreate llama-voice )
             log "$(_t sleepwrite.rollback.done "$sw_dir")"
             ;;
         setup)
@@ -13435,6 +13699,7 @@ do_voice() {
             mkdir -p "$_voice_data/adapters" "$_voice_data/training/v8/vectors"
             ( cd "$(dirname "$compose_file")" && \
                 WYRDSEKAI_DATA="$_voice_data" \
+                LLAMA_VOICE_MODEL="$(basename "$voice_model_file")" _export_brain_mem_limits
                 LLAMA_VOICE_MODEL="$(basename "$voice_model_file")" \
                 docker compose --profile voice up -d llama-voice )
             log "$(_t voice.enable.done)"

@@ -153,7 +153,9 @@ class TheVaultKeepsTheSelfTest {
         // Write manifests by hand at chosen ages, all sharing one real copy's chunks.
         var real = vault.snapshot("seed", false).orElseThrow();
         var manifests = vault.dir().resolve("manifests");
-        var json = Files.readString(manifests.resolve(real.id() + ".json"));
+        // The real manifest is sealed; the hand-written ones below are plain, as a 0.4.0 store's are.
+        var cipher = VaultCipher.load(data.resolve(Vault.KEY_FILE));
+        var json = new String(cipher.open(Files.readAllBytes(manifests.resolve(real.id() + ".json"))), java.nio.charset.StandardCharsets.UTF_8);
         record Fake(String id, Instant at, boolean keep) {}
         var fakes = List.of(
             new Fake("m30", now.minus(Duration.ofMinutes(30)), false),

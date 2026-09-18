@@ -12,6 +12,7 @@ import com.typesafe.config.ConfigException;
 import com.typesafe.config.ConfigFactory;
 
 import org.slf4j.Logger;
+import org.wyrdsekai.core.host.Principals;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -198,8 +199,18 @@ public final class EgressGate {
      * ProcessBuilder(...)} directly is the bug; use this instead.</p>
      */
     public static ProcessBuilder gatedProcessBuilder(List<String> args, Map<String, String> backendEnv) {
-        var pb = new ProcessBuilder(args);
+        return gatedProcessBuilder(args, backendEnv, Principals.currentBeing());
+    }
+
+    /**
+     * The same seam, for a hand of a particular being: the process runs as her principal on
+     * the host (her user, her cgroup, her HOME) where the host allows it, and as the daemon
+     * where it does not. Pass the companion's DID; null means the daemon's own work.
+     */
+    public static ProcessBuilder gatedProcessBuilder(List<String> args, Map<String, String> backendEnv, String beingDid) {
+        var pb = new ProcessBuilder(Principals.wrap(args, beingDid));
         defaultInstance().applyEnv(pb.environment(), backendEnv);
+        Principals.homeOf(beingDid).ifPresent(h -> pb.environment().put("HOME", h.toString()));
         return pb;
     }
 
