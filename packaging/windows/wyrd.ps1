@@ -389,6 +389,7 @@ function Invoke-WyrdJavaClass {
     $cp = Join-Path $AppDir "*"
     $jvm = @(
         "-Djava.net.preferIPv4Stack=true",
+        "-Dpolyglot.engine.WarnInterpreterOnly=false",
         "--add-opens","java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens","java.base/java.lang=ALL-UNNAMED",
         "--add-opens","java.base/sun.nio.ch=ALL-UNNAMED",
@@ -429,6 +430,7 @@ function Invoke-WyrdJavaClassStream {
     }
     $jvm = @(
         "-Djava.net.preferIPv4Stack=true",
+        "-Dpolyglot.engine.WarnInterpreterOnly=false",
         "--add-opens","java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens","java.base/java.lang=ALL-UNNAMED",
         "--add-opens","java.base/sun.nio.ch=ALL-UNNAMED",

@@ -182,7 +182,15 @@ install a newer release itself at a quiet moment inside its window (see
 mmapped model pages before swapping out the server; it is a conffile, yours to
 edit or remove.
 
+The package recommends `sqlite3` (the brainstem's database snapshots),
+`nftables` (doors as firewall sets) and `bpftrace` (the kernel hooks on the
+companions' tools). `apt-get install` pulls them in; `dpkg -i` does not, and a
+node without them runs with those parts absent (`wyrd body` says so).
+Per-being users (`wyrd-being-<slug>`, uid 62000–62999) are created as
+companions first run a tool.
+
 Systemd units shipped: `wyrdsekai` (the zone — enabled by `wyrd start`),
+`wyrdsekai-brainstem` (the watcher outside the JVM, enabled by the package),
 `wyrdsekai-oracle` (enabled by default, `:7073`), `wyrdsekai-nats` (disabled;
 standalone NATS only), `wyrdsekai-llama` (disabled; enabled on demand by
 `wyrd inference local`), `wyrdsekai-metasearch`, and `wyrdsekai-rendezvous`
@@ -403,9 +411,12 @@ this order:
 
 Inside it: `world.db` (the world, accounts, invites, bonds), `models/`
 (downloaded GGUF and embedding models), `env` (CLI-visible environment file),
-`credentials.safe` (encrypted credential slots, mode `0600`), `.server.pid` /
-`.server.log`, and `oracle/` + `.venv-oracle/`. Under Docker, all of it lives
-at `/data` in the container.
+`credentials.safe` (encrypted credential slots, mode `0600`), `vault.key` and
+`vault-store/` (the sealed copies of the self — back up the key; a copy cannot
+be read without it), `brainstem/` (the watcher's heartbeat, its door state and
+the hooks' ledgers), `beings/<slug>/` (each companion's home and workspace),
+`.server.pid` / `.server.log`, and `oracle/` + `.venv-oracle/`. Under Docker,
+all of it lives at `/data` in the container.
 
 Config lives at `/etc/wyrdsekai/wyrdsekai.conf` on an installed Linux node —
 this is what the systemd unit reads, and where `wyrd config set`, `wyrd relay`,

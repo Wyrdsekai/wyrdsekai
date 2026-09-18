@@ -67,6 +67,8 @@ public final class ClientCommandMapper {
                 new C2SMessage.Examine(id, currentRoomId, ex.target());
             case CommandParser.ParsedCommand.Rename rn ->
                 new C2SMessage.Rename(id, rn.target(), rn.newName());
+            case CommandParser.ParsedCommand.Call c ->
+                new C2SMessage.Call(id, currentRoomId, c.target());
 
             // ── social / say-shaped (server parses the prefix) ──
             case CommandParser.ParsedCommand.Say say ->

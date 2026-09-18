@@ -252,6 +252,47 @@ households' tunnel sessions.
 
 All three are covered by regression tests.
 
+## Hands, hooks and the vault (0.4.x)
+
+**Per-being principals (Linux).** Every tool a companion starts (the coding
+backend, a skill) runs as its own Linux user, `wyrd-being-<slug>` in the
+`wyrdsekai-beings` group, inside a cgroup under the service, with
+`no_new_privs` and all capabilities dropped. The data directory is mode `711`:
+traversable by path, not listable, and every top-level entry except the coding
+bundle, the workspaces and the beings' homes has no access for others. A
+being's user can reach the coding bundle, her own workspace and her own home;
+the database, the vault, the credentials file and other beings' homes are
+closed by the kernel. When a user cannot
+be created or reached, the tool runs as the daemon and the steward is told
+(`WYRDSEKAI_BEING_PRINCIPALS=off` chooses that outright).
+
+**Kernel hooks (Linux).** One `bpftrace` program watches `openat`, `execve` and
+`connect` for the beings' uid range. Opening the database, the vault, another
+being's home or the credentials file cuts the tool (its cgroup is killed);
+executing `systemctl`, the firewall helper or the like cuts it; other reaches
+are recorded. Rules are data (`<data>/brainstem/hook-rules.json`) and every
+rule set is replayed over the node's own recorded history before it is
+enforced; one that would cut ordinary work runs record-only. Hooks see events
+after the fact: a cut ends a tool that has already opened a file. They are a
+detector and a tripwire, not an access-control layer; the user boundary above
+is the access control.
+
+**Doors.** A door on the body map can be closed as an nftables set the output
+chain rejects, by the steward, by the brainstem while the server is down, or by
+a reflex row. A door whose addresses include this host is refused.
+
+**The immune check.** Every automatic action against a part — a cut, a closed
+door, quarantine, severance — passes one check that refuses to act on the
+companion's own resources, and writes the refusal to the steward as a proposal.
+A part attached by a node outside the household is quarantined until the
+steward vouches for it; the inference router never selects a quarantined
+backend. What the body acted against is kept for a year.
+
+**Vault.** The vault store is sealed with AES-256-GCM under `<data>/vault.key`
+(mode `0600`), so an offsite copy is ciphertext. The key is generated on the
+first copy and never leaves the node unless you copy it; a restore with the
+wrong key is refused. Keep a copy of `vault.key` somewhere other than the node.
+
 ## Known limitations
 
 We would rather you knew these than discovered them.

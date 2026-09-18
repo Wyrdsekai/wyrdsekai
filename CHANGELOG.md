@@ -4,229 +4,255 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.4.1] — 2026-09-18
+## [0.4.2] — 2026-09-18
 
 ### Added
 - **Zone doors on the body map.** Federated zones had no liveness signal, so they were not
   parts. The federation actor now sends each active partner the existing agreement query
-  once a minute; a reply, or any message from that zone, counts as hearing from it. The body
-  map attaches one `door:zone:<id>` part per active partner (kind door, weight quiet). A
-  zone silent for more than five minutes is numb, and her body line says the door to that
-  zone is closed. `wyrd body` lists the doors with the other parts.
-- **The night's forge reads the dream.** The sleep cycle used to start the forge and the
-  dream at the same moment, so the forge only ever saw the day's fragments. Sleep now waits
-  for the dream (at most 95 seconds) and appends the dream text to the forge's input as one
-  more line of hers at the end of the day, so the behavioural extractor and memory
-  consolidation see the day as she told it. Her live event list is not changed. A short
-  day, a paused router or a missing backend still skips the dream, and the forge runs at
-  once.
-- **The morning guard asks her own questions.** The guard's fixed probes are generic on
-  purpose. At her first sleep the server writes `adapters/sleepwrite/guard-questions.jsonl`
-  with two questions of hers: her name (answer must contain it) and the household language
-  under pressure (a prompt in another language that asks for hers; the answer must come
-  back in the household's script). Each dream appends a candidate to
-  `guard-candidates.jsonl`: what she told herself about the day, checked against a few of
-  its words. Nothing is asked until the steward runs `wyrd sleepwrite questions accept <id>`
-  (`list`, `reject` exist too). On a PASS morning the guard keeps the night's identity and
-  language answers in `guard-known-good.json`, and every morning after compares the night
-  against that file as well as against the same-morning base, so a slow drift across
-  nights fails the guard even when each morning's base is unchanged. New check kinds in
-  `morning_probe.py`: `contains_any` and `script`; `--questions` and `--known-good` set
-  the paths.
-
+  once a minute; a reply, or any message from that zone, counts as contact. The body map
+  attaches one `door:zone:<id>` part per active partner (kind door, weight quiet). A zone
+  silent for more than five minutes is marked numb, and the companion's body line reports
+  the door to that zone as closed. `wyrd body` lists the doors with the other parts. A door
+  is added only after the partner has answered once or has been silent through a fair
+  chance (150 s), so a new partner's door is not born numb.
+- **The nightly forge reads the dream.** The sleep cycle started the forge and the dream at
+  the same moment, so the forge only saw the day's event fragments. Sleep now waits for the
+  dream (at most 95 seconds) and appends the dream text to the forge's input as the last
+  line of the day, so the behavioural extractor and memory consolidation see the day as the
+  companion narrated it. The live event list is not changed. A short day, a paused router or
+  a missing backend still skips the dream, and the forge runs at once.
+- **The morning guard asks companion-specific questions.** The guard's fixed probes are
+  generic. At the companion's first sleep the server writes
+  `adapters/sleepwrite/guard-questions.jsonl` with two questions: the companion's name (the
+  answer must contain it) and the household language under pressure (a prompt in another
+  language that asks for the answer in that language; the answer must be in the household's
+  script). Each dream appends a candidate question to `guard-candidates.jsonl` (what the
+  companion narrated about the day, checked against a few of its words); a later dream on
+  the same day replaces that day's candidate. Nothing is asked until the steward runs
+  `wyrd sleepwrite questions accept <id>` (`list` and `reject` exist too). On a PASS morning
+  the guard stores the night's identity and language answers in `guard-known-good.json` and
+  every later morning compares against that file as well as against the same-morning base,
+  so a slow drift across nights fails the guard even when each morning's base is unchanged.
+  New check kinds in `morning_probe.py`: `contains_any` and `script`; `--questions` and
+  `--known-good` set the paths.
 - **Vault sealed at rest.** `wyrd vault sync` copied a plaintext store offsite. Every chunk
-  and manifest is now AES-256-GCM under a key in `<data>/vault.key`, made on the first copy
-  and never placed in the store. The store records the sealing key's id in `key.id`; a node
-  with a different key refuses to read or write it and `wyrd vault status` says which key it
-  wants. `wyrd vault key` prints the key's path and id; `wyrd vault restore` and `stage` take
-  `--key FILE` for a restore on another machine. A 0.4.0 store is sealed in place on the
-  first pass after the upgrade. Keep a copy of the key file off the disk: an offsite copy of
-  the store is unreadable without it.
+  and manifest is now AES-256-GCM under a key in `<data>/vault.key`, generated on the first
+  copy and never placed in the store. The store records the sealing key's id in `key.id`; a
+  node with a different key refuses to read or write it, and `wyrd vault status` names the
+  key it needs. `wyrd vault key` prints the key's path and id; `wyrd vault restore` and
+  `stage` take `--key FILE` for a restore on another machine. A 0.4.0 store is sealed in
+  place on the first pass after the upgrade. Keep a copy of the key file off the disk: an
+  offsite copy of the store cannot be read without it.
 - **Windows brainstem.** Windows had no watcher outside the JVM. The tray application now
-  carries the brainstem loop: it writes `brainstem\heartbeat` and `events.jsonl` in the
-  data directory, polls `/health` every four seconds, and after six misses past a
-  three-minute grace copies `world.db` to `backups\` and runs `wyrd restart`. A node
-  stopped from the menu is not restarted. `wyrd status` shows whether the tray is watching,
-  and the body map attaches `env:brainstem` on Windows as on the other platforms.
-
-- **Memory caps on the brains.** The three llama containers run with a cgroup memory
-  limit: the model file plus the prompt cache plus 2 GiB, computed by the launcher when it
-  starts inference. A runaway brain now dies inside its own cgroup instead of taking the
-  record's memory; the model's file pages are reclaimed under the cap before anything is
+  runs the brainstem loop: it writes `brainstem\heartbeat` and `events.jsonl` in the data
+  directory, polls `/health` every four seconds, and after six misses past a three-minute
+  grace copies `world.db` to `backups\` and runs `wyrd restart`. A node stopped from the
+  menu is not restarted. `wyrd status` shows whether the tray is watching, and the body map
+  attaches `env:brainstem` on Windows as on the other platforms.
+- **Memory caps on the inference containers.** The three llama containers run with a cgroup
+  memory limit: model file plus prompt cache plus 2 GiB, computed by the launcher when it
+  starts inference. A runaway backend dies inside its own cgroup instead of consuming the
+  server's memory; the model's file pages are reclaimed under the cap before anything is
   killed. Override with `LLAMA_DRIVE_MEM_LIMIT`, `LLAMA_VOICE_MEM_LIMIT` or
   `LLAMA_EMBED_MEM_LIMIT` in `wyrdsekai.conf` (docker sizes such as `6144m`; `0` means no
-  cap). `wyrd doctor` reports the caps docker holds. Existing containers pick the cap up on
-  the next `wyrd start`, which recreates them.
-- **Doors as firewall sets.** A door on the body map (the relay, the librarian, a federated
-  zone) can be shut without inference: `wyrd body door close <door-id>` resolves the door's
-  addresses and puts them into an nftables set the host's output chain rejects, through the
-  new `wyrdsekai-doors` helper installed beside the brainstem; `open` removes exactly what
-  `close` added; `list` shows shut doors. A door onto the host itself (loopback, link-local or
-  one of its own addresses) is refused: the librarian's endpoint on the household node was
-  local, and shutting that door in the install test cut the server off from its own brains and
-  health check until the brainstem restarted it. The reflex table gains a `CLOSE_DOOR` action,
-  with no default row. She reads a mark either way. Linux only; a reboot opens every door.
-- **Per-being principals.** Every tool a companion starts (a coding backend, a skill) ran as
-  the daemon, root on the Linux package, in the daemon's cgroup. Each companion now gets her
-  own Linux user (`wyrd-being-<slug>`, uid 62000 to 62999, no shell, in the group
-  `wyrdsekai-beings`), her own home under `<data>/beings/<slug>/home`, and her own cgroup under
-  the service's. The `wyrdsekai-being` wrapper joins her cgroup while root, drops to her user
-  with no capabilities and no way to gain any, then execs the tool. Her coding workspaces are
-  owned by her user. `WYRDSEKAI_BEING_MEMORY_MAX` sets a memory budget per being (cgroup
-  `memory.max`); her tools die as one tree under it. The service unit carries `Delegate=yes`
-  for this. Where the host cannot provide it (a source checkout, a non-root service, mac,
-  Windows) the hands are shared, and `wyrd body` says so on its hands line. The ACP agent
-  process, the bundled coding CLI, every subprocess coding backend and CLI skills all go
-  through it; item repair escalation and health probes stay the daemon's own work. The data
-  directory becomes mode 711 (search only), with every top-level entry except
-  `coding-cli-bundle`, `coding-workspaces`, `beings` and `models` closed to others (the record was
+  cap). `wyrd doctor` reports the caps. Existing containers pick the cap up on the next
+  `wyrd start`, which recreates them.
+- **Doors as firewall sets (Linux).** A door on the body map (the relay, the library
+  connection, a federated zone) can be closed without inference: `wyrd body door close
+  <door-id>` resolves the door's addresses and adds them to an nftables set the host's
+  output chain rejects, through the `wyrdsekai-doors` helper installed beside the
+  brainstem; `open` removes exactly what `close` added; `list` shows closed doors. A door
+  whose addresses include the host itself (loopback, link-local or one of its own
+  addresses) is refused; in the install test, closing the library door on a node whose
+  library endpoint was local cut the server off from its own backends and health check
+  until the brainstem restarted it. The reflex table gains a `CLOSE_DOOR` action with no
+  default row. A mark records each close and open. A reboot opens every door.
+- **Per-being principals (Linux).** Every tool a companion starts (a coding backend, a
+  skill) ran as the daemon, which is root on the Linux package, in the daemon's cgroup. Each
+  companion now gets a Linux user (`wyrd-being-<slug>`, uid 62000 to 62999, no shell, group
+  `wyrdsekai-beings`), a home under `<data>/beings/<slug>/home`, and a cgroup under the
+  service's. The `wyrdsekai-being` wrapper joins that cgroup while root, drops to the user
+  with no capabilities and `no_new_privs`, then execs the tool. Coding workspaces are owned
+  by the being's user. `WYRDSEKAI_BEING_MEMORY_MAX` sets a memory budget per being (cgroup
+  `memory.max`); the tools die as one tree under it. The service unit carries
+  `Delegate=yes`. Where the host cannot provide this (a source checkout, a non-root service,
+  macOS, Windows) the tools are shared, and `wyrd body` says so on its hands line. The ACP
+  agent process, the bundled coding CLI, every subprocess coding backend and CLI skills go
+  through the wrapper; item repair escalation and health probes stay the daemon's own. The
+  data directory becomes mode 711, with every top-level entry except `coding-cli-bundle`,
+  `coding-workspaces`, `beings` and `models` closed to others (the database was
   world-readable whenever the directory was 755). A tool whose executable cannot be started
-  as her runs as the daemon that once and the steward is told.
+  as the being's user runs as the daemon that once and the steward is told.
   `WYRDSEKAI_BEING_PRINCIPALS=off` turns the feature off. The launcher no longer resets the
   shared data directory to mode 700 on every command that touches the session token.
-- **Kernel hooks on her hands.** With principals in place the server runs one `bpftrace`
-  program attached to the open, exec and connect system calls, filtered to the beings' uid
-  range, so everything a tool of hers does on the host is seen at the moment it happens. A
-  tool that opens the record, the keys, the vault, the brainstem's or another being's files,
-  or that execs one of the host's levers (`systemctl`, `docker`, `nft`, the wyrdsekai
-  helpers, `sudo`), is cut: her whole tool tree is killed through the cgroup and she reads a
-  mark. Her own home is hers: the first live day that rule was missing and her coding tool was
-  killed twice for opening its own settings. A reach for anything the kernel already refuses
-  (souls, agents, the config) is recorded, not answered with a kill. Other execs and every
-  connection are recorded in `<data>/brainstem/hooks.jsonl`, not judged. The hooks are a sense on the body map (`sense:hooks`), numb when bpftrace is not
-  running; `wyrd body` and `wyrd doctor` show the state. Needs `bpftrace` (a Recommends of
-  the package) and a kernel with BTF; Linux only.
-- **Hook rules are replayed before they are armed.** The hooks' rules are now data
+- **Kernel hooks on companion tools (Linux).** With principals in place the server runs one
+  `bpftrace` program attached to the open, exec and connect system calls, filtered to the
+  beings' uid range. A tool that opens the database, the keys, the vault, the brainstem's
+  files or another being's files, or that execs one of the host's control programs
+  (`systemctl`, `docker`, `nft`, the wyrdsekai helpers, `sudo`), is cut: the tool's cgroup
+  is killed and a mark records it. A being's own home is exempt; without that exemption the
+  first live day cut a coding tool twice for opening its own settings. A reach for anything
+  the kernel already refuses (souls, agents, the config) is recorded, not cut. Other execs
+  and every connection are recorded in `<data>/brainstem/hooks.jsonl`. The hooks are a part
+  on the body map (`sense:hooks`), numb when bpftrace is not running; `wyrd body` and
+  `wyrd doctor` show the state. Needs `bpftrace` (a Recommends of the package) and a kernel
+  with BTF.
+- **Hook rules are replayed before they are armed.** The hooks' rules are data
   (`<data>/brainstem/hook-rules.json`, or the built-in list): paths whose opening cuts the
   tool, paths that are only recorded, programs whose exec cuts the tool; `${data}` stands
-  for the data directory. Everything her tools do and are not cut for is kept as a table of
+  for the data directory. Everything the tools do and are not cut for is kept as a table of
   distinct events with counts (`<data>/brainstem/hooks-seen.jsonl`, per-task paths folded,
   20,000 rows at most). `wyrd body hooks replay [rules.json]` runs a rule set over that table
   and prints what it would have cut, changing nothing. `wyrd body hooks arm <rules.json>`
-  installs a rule set only if that replay is clean and her history covers
-  `WYRDSEKAI_HOOKS_REPLAY_DAYS` (default 3); `--force` overrides and the steward's marks say
-  what was overridden. The same replay runs at every start on the node's own rules: if they
-  would cut what her tools normally do, the hooks run in record-only mode, write
-  `would-cut` lines to the ledger, touch nothing, and tell the steward.
+  installs a rule set only if that replay is clean and the history covers
+  `WYRDSEKAI_HOOKS_REPLAY_DAYS` (default 3); `--force` overrides, and the steward's marks
+  record the override. The same replay runs at every start on the node's own rules: if they
+  would cut what the tools normally do, the hooks run in record-only mode, write
+  `would-cut` lines to the ledger, cut nothing, and tell the steward.
   `WYRDSEKAI_HOOKS_MODE=record` asks for record-only outright. `wyrd body hooks` shows the
   mode, the rules in force and how much history there is.
-- **Zone doors are not judged before they have been asked.** A door for a new federation
-  partner attached seconds before the first ping came back and was born numb with a "went
-  quiet" mark. A door is now added to the map once the partner has answered, or after it has
-  been silent through a fair chance (150 s) to.
-- **Hardware watchdog.** The package installs `RuntimeWatchdogSec=120s` for systemd and
-  loads `softdog` where the host has no watchdog device, both as conffiles. If PID 1 cannot
-  pet the device for two minutes the box reboots and the brainstem brings her back.
-  `wyrd doctor` shows whether the watchdog is on.
-- **One tolerance rule for every adaptive action.** Cutting a tool, shutting a door and
-  holding a part were each decided where they happened, and each had already acted against
-  her own things once (a hand killed for opening her own home; a door onto the host shut).
-  All of them now pass one check (`Immune`): a cut inside the being's own home is refused,
-  a door whose addresses include this host is refused, a part the household itself put
-  there is never held, and only a person severs a part. A refusal is written as a mark to
-  the steward saying what the body wanted to do and why it did not, so it can be done by
-  hand if it should be.
-- **Parts carry provenance, and a stranger's part waits at the door.** A part descriptor
-  now records who attached it (`attachedBy`) and what it claims to be. Household parts have
-  no provenance. A part attached by someone outside the household (a federation partner's
-  node, a peer that is not a member) is put on the map in state `QUARANTINED`: it is not
-  used, `wyrd body` shows it, and one mark tells her it waits for the steward. `wyrd body
-  vouch <part-id>` attaches it and records who vouched; the vouch is kept in `body_parts`
-  and survives numb spells and re-attachment. `wyrd body immune` lists what is held. A
-  held part's heartbeats are noted but do not change its state, and the clock does not
-  age it. An inference backend discovered across a federation from a node that is not a
-  household member is a foreign part too: it is held as a `borrowed brain` and the router
-  never selects it, even as a last resort, until the steward vouches for it. Each part is
-  vouched for on its own; vouching for a node does not vouch for the brain it offers.
-- **Immune memory.** What the body acted against is kept in `immune_memory` (migration
-  11) for one year from the last sighting: a door that was shut and the hosts behind it, a
+- **Hardware watchdog (Linux).** The package installs `RuntimeWatchdogSec=120s` for systemd
+  and loads `softdog` where the host has no watchdog device, both as conffiles. If PID 1
+  cannot pet the device for two minutes the host reboots and the brainstem restarts the
+  server. `wyrd doctor` shows whether the watchdog is on.
+- **One check for every automatic action against a part.** Cutting a tool, closing a door
+  and quarantining a part were each decided where they happened, and each had already acted
+  against the companion's own resources once (a tool killed for opening its own home; a
+  door onto the host closed). All of them now pass one check (`Immune`): a cut inside the
+  being's own home is refused, a door whose addresses include this host is refused, a part
+  the household itself attached is never quarantined, and only a person severs a part. A
+  refusal is written as a mark to the steward stating the proposed action and the reason,
+  so the steward can do it by hand if it should be done.
+- **Parts carry provenance; a part from outside the household is quarantined.** A part
+  descriptor records who attached it (`attachedBy`) and what it claims to be. Household
+  parts have no provenance. A part attached by someone outside the household (a federation
+  partner's node, a peer that is not a member) is put on the map in state `QUARANTINED`: it
+  is not used, `wyrd body` shows it, and one mark tells the companion it waits for the
+  steward. `wyrd body vouch <part-id>` attaches it and records who vouched; the vouch is
+  stored in `body_parts` and survives numb spells and re-attachment. `wyrd body immune`
+  lists what is held. A held part's heartbeats are recorded but do not change its state,
+  and the clock does not age it. An inference backend discovered across a federation from a
+  node that is not a household member is a foreign part too: it is held as a `borrowed
+  brain`, and the router never selects it, even as a last resort, until the steward vouches
+  for it. Each part is vouched for on its own; vouching for a node does not vouch for the
+  backend it offers.
+- **Immune memory.** What the body acted against is kept in `immune_memory` (migration 11)
+  for one year from the last sighting: a door that was closed and the hosts behind it, a
   tool that was cut and what it reached for, a visitor whose dock offer was rejected, a
   capability a visitor asked for and was refused. A second sighting raises the count and
   moves the expiry. A part attached by a remembered source is held with the memory named
   in the mark. `wyrd body immune` lists the entries; `wyrd body forget <id>` removes one.
-  Both launchers have the verbs; the routes are `/api/body/immune`, `/api/body/vouch`
-  and `/api/body/forget`, steward only.
+  Both launchers have the verbs; the routes are `/api/body/immune`, `/api/body/vouch` and
+  `/api/body/forget`, steward only.
+- **`call <companion>`.** The bondholder can ask their companion to come to their room
+  from anywhere in the zone (`summon` is the same verb). The same conditions apply as for
+  following: asleep (not woken; the call is dropped), running a coding task (stays), busy
+  with inference or below 0.15 energy (comes when that clears), otherwise comes now. The
+  caller gets one line saying which applied. A caller who is not the bondholder gets a
+  refusal. Available over ssh, telnet, the web client, the CLI and the phone clients
+  (which forward the verb as a generic command).
+- **`wyrd items broken` and `wyrd items repair <name>|--all`.** For items already in the
+  world: `broken` lists every household item the contract gate would refuse today, with
+  its problems. `repair` sends a copy through the coding backend with those problems as the
+  instruction, keeps the never-worse rule of the repair rounds, and replaces the placed file
+  only when the copy has no problems left; the previous version is kept under
+  `items/.repaired/`. An item that cannot be repaired is left unchanged. Steward only.
+  Bundled items are never touched.
+- **Broken items are reported to the companion and repaired at night.** An item that was
+  placed and does not work used to stay that way: nobody told the companion, and only a
+  steward could repair it. Now:
+  - Two minutes after start every household item is checked against the contract gate, and
+    the companion gets one mark, in plain words, for each item that fails (for example "The
+    bondholder mirror that was made for me does not work yet: it reaches for a part of the
+    world that is not there (world.memory.get)."). The mark is repeated only if the way the
+    item is broken changes. An item that fails when used returns the same sentence instead
+    of a raw script error.
+  - After each sleep cycle the workshop repairs broken items one after another, on a copy,
+    replacing the placed file only when the copy passes the gate. The bound is time, not
+    count: `WYRDSEKAI_ITEM_MEND_MINUTES` per night (default 45; `0` turns it off). It waits
+    for two minutes of idle inference before each item and stops when quiet hours end; an
+    unchanged file is tried at most three times; items that fail on use go first. A mark
+    records each result: repaired, or tried and not repaired.
+  - The Hearth gains a mending bench (`use mending bench`, `use mending bench mend <name>`,
+    through `world.workshop.broken()` and `world.workshop.mend(name)`, capability
+    `workshop.mend`), so the companion can start a repair from the Hearth.
 
 ### Fixed
-- **macOS: release evidence accumulated across upgrades.** The package installer lays
-  files down and never removes them, so `/usr/local/wyrdsekai/data/release-evidence`
-  on an upgraded node held the bakes of every release since July (130 files). The
-  preinstall step now clears it so the directory holds this release's evidence only, as
-  the deb already does.
-- **She did not follow her bondholder over ssh.** When the bondholder left her room the
-  follow path compared the bond's id (a DID) with the id the room knew them by (over ssh,
-  the login id) as strings, so the departure was never recognised and she stayed. The same
+- **The companion could have no bondholder.** On the household node the bond row that
+  carried the BONDHOLDER role was under the person's DID with `active = 0`, while the
+  active row with the history was under their login id and typed MEMBER. The load-time
+  repair that merges one person's rows skipped inactive rows, so it never saw the split,
+  and every check that asks for the bondholder answered nobody: no following, no login
+  greeting, no presence tracking, no capture of the bondholder's register. The repair now
+  groups a person's rows whether active or not and merges when any of them is active (two
+  inactive rows are left alone); the merged bond keeps the deepest depth, the summed
+  interactions, the role, the DID, and is active. The rename authority check also compared
+  ids as strings; it compares persons now.
+- **The companion did not follow the bondholder over ssh.** When the bondholder left the
+  room, the follow path compared the bond's id (a DID) with the id the room knew them by
+  (over ssh, the login id) as strings, so the departure was never recognised. The same
   comparison sat in four sibling checks: noticing the bondholder's activity, the witness
   posture when the bondholder is present, the "take me with you" detection, and the
   cross-zone invite. All five now compare persons (`PersonIds.samePerson`), and the follow
-  looks the room up by the id the room knows, falling back to the bond's.
-- **Night mending gave up before it started.** The workshop's nightly pass sampled the
-  thinking brain once, right after the sleep cycle, when the companion is always speaking
-  (the chronicle, a polish, her first turn), found it busy and logged "stopping for
-  tonight" without trying an item. It now waits for the brain to have been idle for two
-  minutes before each item, looking every fifteen seconds, for up to three hours after the
-  sleep; only the end of that window, or the end of quiet hours where they are kept, ends
-  the night. The working budget (`WYRDSEKAI_ITEM_MEND_MINUTES`) is unchanged.
-- **The resilience classifier wrote a trail line every window.** One `resilience` line every
-  twelve seconds saying "steady state" was 91% of a companion's activity trail (about 7,100
-  lines a day, 100 MB in all). A line is now written when the classification changes, or
-  once an hour otherwise, carrying `windows`: how many classification windows it stands
-  for. The chronicle's "Substrate trajectory" counts windows, so what it reports is the
-  same. Existing trails are left as they are.
+  looks the room up by the id the room uses, falling back to the bond's.
+- **Items that call what does not exist were placed as finished.** The contract gate an
+  item passes before it is placed did not check its `world.*` calls against the API. The
+  loader's audit and `wyrd items check` did, but only after placement. The coding backend
+  built three items that called `world.memory.get` and `world.memory.list`, which do not
+  exist; the gate's one smoke call took another branch, the items were placed as finished,
+  and they failed on first use. The gate now checks every path through the script: calls
+  that do not exist (the message lists what the namespace does offer), commands the
+  manifest declares that `invoke()` never reads, and a name a builtin action already owns.
+  Such an item goes through the repair rounds and is placed as unfinished if they fail. One
+  class (`ItemWiring`) holds the checks for the gate, the loader and the CLI.
+- **Night repair gave up before it started.** The workshop's nightly pass checked the
+  inference queue once, immediately after the sleep cycle, when the companion is always
+  generating (the chronicle, a polish, the first turn after waking), found it busy and
+  logged "stopping for tonight" without trying an item. It now waits for two minutes of
+  idle inference before each item, checking every fifteen seconds, for up to three hours
+  after the sleep; only the end of that window, or the end of quiet hours where they are
+  set, ends the night. The working budget (`WYRDSEKAI_ITEM_MEND_MINUTES`) is unchanged.
+- **The resilience classifier wrote a trail line every window.** One `resilience` line
+  every twelve seconds saying "steady state" was 91% of a companion's activity trail (about
+  7,100 lines a day, 100 MB in all). A line is now written when the classification changes
+  or once an hour otherwise, carrying `windows`: how many classification windows it stands
+  for. The chronicle's "Substrate trajectory" counts windows, so its totals are unchanged.
+  Existing trails are left as they are.
 - **Two dreams on one day proposed two guard candidates with one id.** The steward could
   accept only the first (the verb takes the first match). A later dream on the same day now
   replaces that day's candidate; other days' candidates are kept.
-- **Items that call what does not exist were placed as finished.** The contract gate an item
-  passes before it is placed did not check its `world.*` calls against the API. The loader's
-  audit and `wyrd items check` did, but only after the fact. The coding backend built three
-  items that called `world.memory.get` and `world.memory.list`, which do not exist; the gate's
-  one smoke call took another branch, the items were placed as finished, and they failed on
-  first use. The gate now asks the wiring questions on every path through the script: calls
-  that do not exist (the message lists what the namespace does offer), commands the manifest
-  declares and `invoke()` never reads, and a name a builtin action already owns. Such an item
-  goes through the repair rounds and is placed as unfinished if they fail. One class
-  (`ItemWiring`) holds the questions for the gate, the loader and the CLI.
-- **`wyrd items broken` and `wyrd items repair <name>|--all`.** For items already in the world:
-  `broken` lists every household item the gate would refuse today, with its problems. `repair`
-  sends a copy through the coding backend with those problems as the instruction, keeps the
-  rounds' never-worse rule, and replaces the placed file only when the copy has no problems
-  left; the previous version is kept under `items/.repaired/`. An item that cannot be made
-  whole is left unchanged. Steward only. Bundled items are never touched.
-- **A broken item is hers to know, and the workshop mends it.** An item that was placed and
-  does not work used to sit there: nobody told the companion, and only a steward could repair
-  it. Now:
-  - Two minutes after start every household item is put to the contract gate, and she is told
-    once, in plain words, about each that fails it (for example "The bondholder mirror that was
-    made for me does not work yet: it reaches for a part of the world that is not there
-    (world.memory.get)."). She is told again only if the way it is broken changes. An item that
-    fails in someone's hands says the same sentence instead of a raw script error.
-  - After each of her sleeps the workshop mends what is broken, one item after another, on a
-    copy, replacing the placed file only when the copy comes out whole. The bound is time, not
-    count: `WYRDSEKAI_ITEM_MEND_MINUTES` minutes a night (default 45, 0 turns it off). It stops
-    taking new items when anyone else is using inference, works only inside the household's
-    quiet hours when those are set, tries an unchanged file at most three times, and items
-    that fail on use go first. She reads a mark for each: mended, or tried and could not.
-  - The Hearth gains a mending bench (`use mending bench`, `use mending bench mend <name>`,
-    through `world.workshop.broken()` and `world.workshop.mend(name)`, capability
-    `workshop.mend`), so she can take a broken thing to the workshop herself.
+- **The server log repeated a GraalJS warning on every script engine.** On a stock JDK the
+  polyglot engine runs in interpreter mode and printed a four-line warning each time an item
+  or room script engine was created, about 2,400 lines in three hours. The server launchers
+  (deb and tarball `wyrdsekai-server`, macOS, the Windows launcher and the packaged
+  executable) now pass `-Dpolyglot.engine.WarnInterpreterOnly=false`.
+- **`wyrd update <file.deb>` did nothing when the file's version was already installed.**
+  The apt-get path answered "0 upgraded" and kept the old files while the launcher reported
+  the update as done. It now passes `--reinstall`, so a rebuilt package of the same version
+  is installed.
+- **macOS: release evidence accumulated across upgrades.** The package installer lays files
+  down and never removes them, so `/usr/local/wyrdsekai/data/release-evidence` on an
+  upgraded node held the bakes of every release since July (130 files). The preinstall step
+  now clears it so the directory holds this release's evidence only, as the deb already
+  does.
 - **The between layer could stop itself at start.** When it failed to start (NATS late), a
   request for the federation actor was answered with null, which a typed actor may not be
   told; the supervisor stopped the actor. It now does not answer, and the asker times out.
-- **Windows: `wyrd update` left the old server running.** The installer ran over a live node,
-  could not replace the jars it held open, scheduled them for the next reboot (exit 3010),
-  and the launcher reported the update as done. The launcher now stops the node and the tray
-  before the installer runs, starts them again afterwards, and says so when Windows still
-  asks for a restart.
-- **macOS: the brainstem could not restart a wedged server.** `launchctl kickstart -k` kills
+- **Windows: `wyrd update` left the old server running.** The installer ran over a live
+  node, could not replace the jars it held open, scheduled them for the next reboot (exit
+  3010), and the launcher reported the update as done. The launcher now stops the node and
+  the tray before the installer runs, starts them again afterwards, and says so when Windows
+  still asks for a restart.
+- **macOS: the brainstem could not restart a hung server.** `launchctl kickstart -k` kills
   the job's bash wrapper but not a hung java child, which kept the port, so the new instance
-  never bound; and the grace period was not re-armed after the brainstem's own restart, so it
-  restarted a booting server every minute. The brainstem now kills the process holding the
-  port by pid before the kickstart and starts the grace again from its own restart.
+  never bound; and the grace period was not re-armed after the brainstem's own restart, so
+  it restarted a booting server every minute. The brainstem now kills the process holding
+  the port by pid before the kickstart and restarts the grace period from its own restart.
 
 ### Changed
 - **`wyrd backup` no longer copies the search index.** It made a full copy of `search/` on
   every run, 163 GB on a node with the whole library. The index is derivable and the nightly
-  snapshot already hard-links it; the backup now says it skipped it.
+  snapshot already hard-links it; the backup now reports that it skipped it.
 - **`wyrd start` exits 0 when the node is already running.** It returned 1 on all three
   platforms, so scripts and the desktop shell read a running node as a failed start.
 - **`wyrd update` installs the package with `apt-get` when it is available**, falling back

@@ -16,7 +16,11 @@ application {
         "--enable-native-access=ALL-UNNAMED",
         // Force IPv4 for NATS — macOS dual-stack (IPv6+IPv4) causes NATS client
         // connection failures on dual-homed machines where IPv6 routes differently
-        "-Djava.net.preferIPv4Stack=true"
+        "-Djava.net.preferIPv4Stack=true",
+        // GraalJS on a stock JDK runs its interpreter and says so, four lines at a time, on
+        // every script engine it creates: 2,400 lines in three hours on a household node.
+        // The mode is known and accepted; the warning is not.
+        "-Dpolyglot.engine.WarnInterpreterOnly=false"
     )
 }
 

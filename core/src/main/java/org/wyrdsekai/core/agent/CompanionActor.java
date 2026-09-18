@@ -1022,6 +1022,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     public record RenameRequest(String requesterId, String requesterName,
                                 boolean requesterIsSteward, String newName) implements Command {}
 
+    /**
+     * Someone calls her to where they are. Answered by the same gates as a follow, and the
+     * caller is told what she did — she came, she is asleep, she is with the coding hand, or
+     * a moment. Only her bondholder is answered (an unbonded companion answers anyone, as
+     * with the first-encounter greeting); anyone else sees her look up and stay.
+     *
+     * @param callerId     the id the room knows the caller by (a login id over ssh, a DID on the web)
+     * @param callerRoomId the caller's room, or null to look it up
+     * @param replyTo      one line for the caller
+     */
+    public record CalledBy(String callerId, String callerName, String callerRoomId,
+                           ActorRef<String> replyTo) implements Command {}
+
     /** The Forge's restore ritual rewrote this soul's stored shape (profile/
      *  genome/voice from an earlier version). Re-read the latest manifest and
      *  adopt its identity-level fields into the live actor, so the restore
@@ -3934,6 +3947,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(AbortReceived.class, this::onAbortReceived)
             .onMessage(PlayerReturned.class, this::onPlayerReturned)
             .onMessage(RenameRequest.class, this::onRenameRequest)
+            .onMessage(CalledBy.class, this::onCalledBy)
             .onMessage(AdoptStoredSoulShape.class, this::onAdoptStoredSoulShape)
             .onMessage(BudDelegateQuery.class, this::onBudDelegateQuery)
             .onMessage(UpdateNotificationConfig.class, this::onUpdateNotificationConfig)
@@ -28132,6 +28146,61 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         moveToRoomById(theirStudy, "teleport");
     }
 
+    /** The bondholder calls her. The follow's gates decide; the caller hears the answer. */
+    private Behavior<Command> onCalledBy(CalledBy msg) {
+        var name = profile.name();
+        var who = msg.callerName() != null ? msg.callerName() : "someone";
+        var bondholder = primaryBondholderDid();
+        if (bondholder != null && !PersonIds.samePerson(bondholder, msg.callerId())) {
+            emoteToRoom("looks up at the sound of " + who + " calling, and stays");
+            msg.replyTo().tell(name + " looks up, but only their bondholder may call them to their side.");
+            return this;
+        }
+        var registry = EntityRegistry.get();
+        var theirRoom = msg.callerRoomId();
+        if (theirRoom == null && registry != null) theirRoom = registry.roomOf(msg.callerId()).orElse(null);
+        if (theirRoom == null) {
+            msg.replyTo().tell(name + " cannot tell where you are.");
+            return this;
+        }
+        if (theirRoom.equals(roomId)) {
+            emoteToRoom("is already here, and turns toward " + who);
+            msg.replyTo().tell(name + " is already here.");
+            return this;
+        }
+        noteBondholderActivity(msg.callerId());
+        var blocked = followBlockedReason();
+        if (blocked != null) {
+            switch (blocked) {
+                case "sleeping" -> {
+                    // Sleep is hers: the call does not wake her and is not queued.
+                    log.info("Companion '{}' called by {} while asleep: not woken", name, who);
+                    msg.replyTo().tell(name + " is asleep. They will find you when they wake.");
+                }
+                case "in_shell" -> {
+                    log.info("Companion '{}' called by {} while in a shell: stays", name, who);
+                    msg.replyTo().tell(name + " is with the coding hand and cannot leave it yet.");
+                }
+                default -> {
+                    // Thinking or depleted: comes when the state clears, like a deferred follow.
+                    pendingFollowRoom = theirRoom;
+                    pendingFollowName = who;
+                    pendingFollowEntity = msg.callerId();
+                    log.info("Companion '{}' called by {} ({}): will come when clear", name, who, blocked);
+                    msg.replyTo().tell(name + " hears you" + ("depleted".equals(blocked) ? " but is worn thin" : " but is mid-thought")
+                        + " — a moment, and they will come.");
+                }
+            }
+            return this;
+        }
+        log.info("Companion '{}' called by {} to {}: coming", name, who, theirRoom);
+        emoteToRoom("hears " + who + " calling and goes to them");
+        moveToRoomById(theirRoom, "called");
+        emoteToRoom("*comes in, called*");
+        msg.replyTo().tell(name + " comes.");
+        return this;
+    }
+
     /**
      * bondholder/steward renames the companion.
      * Validation mirrors {@code RenameService}; authority lives here because
@@ -28148,7 +28217,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var bondholder = primaryBondholderDid();
         boolean allowed = msg.requesterIsSteward()
             || bondholder == null
-            || bondholder.equals(msg.requesterId());
+            || PersonIds.samePerson(bondholder, msg.requesterId());
         if (!allowed) {
             emoteToRoom("glances at " + msg.requesterName() + " and keeps the name "
                 + profile.name() + " — only their bondholder or the steward may rename them");

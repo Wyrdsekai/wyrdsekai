@@ -98,6 +98,13 @@ public final class CommandParser {
         record Rename(String target, String newName) implements ParsedCommand {}
 
         /**
+         * Call a companion to where the caller is: {@code call <name>} or {@code summon <name>}.
+         * Only her bondholder is answered; she comes by the same gates as a follow (asleep,
+         * mid-thought, depleted, in a shell), and the caller is told what she did.
+         */
+        record Call(String target) implements ParsedCommand {}
+
+        /**
          * Passive observation of an object, entity, or readable. SPEC §2.2.
          *
          * <p>Distinguished from {@link Use}: examine does NOT invoke onUse
@@ -519,6 +526,14 @@ public final class CommandParser {
             if (!newName.isEmpty()) {
                 return new ParsedCommand.Rename(target, newName);
             }
+        }
+
+        // "call <name>" / "summon <name>" — the bondholder calls her to them. A trailing
+        // "here" / "to me" is what a person says and not part of the name.
+        if ((firstWord.equals("call") || firstWord.equals("summon")) && words.length >= 2) {
+            var name = String.join(" ", Arrays.copyOfRange(words, 1, words.length)).trim();
+            name = name.replaceFirst("(?i)\\s+(here|to me|over|over here)$", "").trim();
+            if (!name.isEmpty()) return new ParsedCommand.Call(name);
         }
 
         // "describe me <text>" / "describe room <text>"

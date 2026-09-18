@@ -81,6 +81,7 @@ import org.wyrdsekai.core.item.ItemScriptResponse;
 import org.wyrdsekai.core.item.StudyFurnishingKit;
 import org.wyrdsekai.core.item.VisitorItemProvider;
 import org.wyrdsekai.core.room.ExamineLookup;
+import org.wyrdsekai.core.room.CallService;
 import org.wyrdsekai.core.room.RenameService;
 import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.Rooms;
@@ -1330,6 +1331,9 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             case C2SMessage.Rename rn ->
                 handleRename(sessionId, sessionRef, playerId, currentRoomId, rn);
 
+            case C2SMessage.Call c ->
+                handleCall(sessionId, sessionRef, playerId, currentRoomId, c);
+
             case C2SMessage.Go go ->
                 handleGo(sessionId, sessionRef, playerId, room, currentRoomId, go, locale);
 
@@ -1474,6 +1478,17 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
         sessionRef.tell(new ClientSessionActor.SendMessage(
             new S2CMessage.Prose(
                 0L, "narrator", text, List.of(), null, "normal")));
+    }
+
+    /** {@code call <companion>} over WS: same service as ssh, one narrator line back. */
+    private void handleCall(String sessionId,
+                            ActorRef<ClientSessionActor.SessionMessage> sessionRef,
+                            String playerId, String currentRoomId, C2SMessage.Call c) {
+        var callerName = sessionPlayerNames.getOrDefault(sessionId, "player");
+        var text = CallService.call(playerId, callerName, c.target(),
+            c.roomId() != null ? c.roomId() : currentRoomId, ASK_TIMEOUT);
+        sessionRef.tell(new ClientSessionActor.SendMessage(
+            new S2CMessage.Prose(0L, "narrator", text, List.of(), null, "normal")));
     }
 
     /**

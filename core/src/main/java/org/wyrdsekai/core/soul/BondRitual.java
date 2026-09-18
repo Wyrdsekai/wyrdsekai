@@ -262,6 +262,19 @@ public class BondRitual {
             .toList();
     }
 
+    /** As {@link #bondsForAgent} but with the inactive rows too: the split repair needs them. */
+    List<Bond> allBondsForAgent(String agentDid) {
+        var merged = new LinkedHashMap<String, Bond>();
+        var s = store;
+        if (s != null) {
+            for (var b : s.all()) if (b.involves(agentDid)) merged.put(b.bondId(), b);
+        }
+        for (var b : bonds.values()) {
+            if (b.involves(agentDid)) merged.put(b.bondId(), b);
+        }
+        return List.copyOf(merged.values());
+    }
+
     /**
      * Active bonds this agent holds that name the SAME person more than once.
      *
@@ -284,15 +297,21 @@ public class BondRitual {
      */
     public Map<String, List<Bond>> splitBondholders(String agentDid) {
         var byPerson = new LinkedHashMap<String, List<Bond>>();
-        for (var b : bondsForAgent(agentDid)) {
-            if (!b.active()) continue;
+        for (var b : allBondsForAgent(agentDid)) {
             var other = PersonIds.canonical(b.otherParty(agentDid));
             if (other == null) continue;
             byPerson.computeIfAbsent(other, k -> new ArrayList<>()).add(b);
         }
+        // A person is split when more than one row names them and at least one of those
+        // rows is alive. The inactive rows count: on the household node the row that
+        // carried the BONDHOLDER role was the inactive one (the DID row, five interactions,
+        // gone dormant), and the living row was the login-id one typed MEMBER. Skipping
+        // inactive rows here meant the split was never seen, the merge never ran, and she
+        // had no bondholder at all: no following, no easing at his presence. Two rows that
+        // are both dead are left alone; those are history, not a split.
         var split = new LinkedHashMap<String, List<Bond>>();
         byPerson.forEach((person, list) -> {
-            if (list.size() > 1) split.put(person, list);
+            if (list.size() > 1 && list.stream().anyMatch(Bond::active)) split.put(person, list);
         });
         return split;
     }

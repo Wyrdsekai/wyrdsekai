@@ -40,6 +40,7 @@ import org.wyrdsekai.core.persistence.InventoryService;
 import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.WardService;
 import org.wyrdsekai.core.room.ExamineLookup;
+import org.wyrdsekai.core.room.CallService;
 import org.wyrdsekai.core.room.RenameService;
 import org.wyrdsekai.core.item.ItemRetirement;
 import org.wyrdsekai.core.room.RoomCommand;
@@ -708,6 +709,13 @@ public class TelnetSession implements Runnable {
             case ParsedCommand.Examine ex -> handleExamine(ex.target(), out);
 
             case ParsedCommand.Rename rn -> handleRename(rn.target(), rn.newName(), out);
+            case ParsedCommand.Call c -> {
+                try {
+                    TelnetCodec.sendLine(out, CallService.call(playerId, playerName, c.target(), currentRoomId, ASK_TIMEOUT));
+                } catch (Exception e) {
+                    log.error("Error sending call response", e);
+                }
+            }
 
             case ParsedCommand.Give give -> handleGive(give.objectName(), give.targetName(), out);
 
@@ -942,6 +950,7 @@ public class TelnetSession implements Runnable {
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_inventory"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_actions"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_home"));
+                    TelnetCodec.sendLine(out, catalog.get("telnet.help_call"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_travel"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_hints"));
                     TelnetCodec.sendLine(out, catalog.get("telnet.help_account"));

@@ -43,6 +43,7 @@ export const HELP_TEXT =
   '  take <object>  -- Pick up an object\n' +
   '  drop <object>  -- Drop an object\n' +
   '  use <object>  -- Use an object\n' +
+  '  call <companion>  -- Ask your companion to come to you\n' +
   '  /inventory or /i  -- Check your inventory\n' +
   '  /socials  -- List social emotes\n' +
   '  /help  -- Show this help';

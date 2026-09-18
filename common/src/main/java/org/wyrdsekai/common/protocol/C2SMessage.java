@@ -24,6 +24,7 @@ import java.util.Map;
     @JsonSubTypes.Type(value = C2SMessage.Use.class, name = "use"),
     @JsonSubTypes.Type(value = C2SMessage.Examine.class, name = "examine"),
     @JsonSubTypes.Type(value = C2SMessage.Rename.class, name = "rename"),
+    @JsonSubTypes.Type(value = C2SMessage.Call.class, name = "call"),
     @JsonSubTypes.Type(value = C2SMessage.Look.class, name = "look"),
     @JsonSubTypes.Type(value = C2SMessage.HintSelect.class, name = "hint_select"),
     @JsonSubTypes.Type(value = C2SMessage.Reconnect.class, name = "reconnect"),
@@ -107,6 +108,9 @@ public sealed interface C2SMessage {
      * SoulManifest writes).</p>
      */
     record Rename(String id, String target, String newName) implements C2SMessage {}
+
+    /** Call a companion to the caller's room; see {@code CommandParser.ParsedCommand.Call}. */
+    record Call(String id, String roomId, String target) implements C2SMessage {}
 
     /** Observe the current room. */
     record Look(String id, String roomId) implements C2SMessage {}

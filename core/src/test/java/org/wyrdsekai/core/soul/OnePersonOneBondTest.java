@@ -78,6 +78,37 @@ class OnePersonOneBondTest {
     }
 
     @Test
+    @DisplayName("the role can sit on an INACTIVE row: the household node's real shape, which the first merge never saw")
+    void mergeSeesAnInactiveBondholderRow(@TempDir Path dir) throws Exception {
+        // Rita, 2026-09-18: login-id row ITEM/119/MEMBER/active; DID row ACQUAINTANCE/5/BONDHOLDER/INACTIVE.
+        // The split detector skipped inactive rows, so this was never merged and she had no bondholder.
+        var jdbc = dbWithPerson(dir);
+        PersonIds.resetForTesting(new PersonIdentityResolver(jdbc));
+        var store = new BondStore(jdbc);
+        store.save(row(LOGIN, Bond.BondDepth.ITEM, 119, BondKind.MEMBER, true));
+        store.save(row(PERSON, Bond.BondDepth.ACQUAINTANCE, 5, BondKind.BONDHOLDER, false));
+
+        var ritual = new BondRitual(store);
+
+        var rows = store.bondsForAgent(HER);
+        assertEquals(1, rows.size(), "one person, one row: " + rows);
+        var b = rows.getFirst();
+        assertEquals(PERSON, b.otherParty(HER));
+        assertEquals(BondKind.BONDHOLDER, b.canonicalKind(), "the role survives even from the dead row");
+        assertTrue(b.active(), "the merged bond is alive: one of its halves was");
+        assertEquals(Bond.BondDepth.ITEM, b.depth());
+        assertEquals(124, b.interactionCount());
+        assertTrue(ritual.splitBondholders(HER).isEmpty());
+
+        // Two dead rows for one person are history, not a split: left alone.
+        store.delete(b.bondId());
+        store.save(row(LOGIN, Bond.BondDepth.ACQUAINTANCE, 1, BondKind.MEMBER, false));
+        store.save(row(PERSON, Bond.BondDepth.ACQUAINTANCE, 1, BondKind.MEMBER, false));
+        assertTrue(new BondRitual(store).splitBondholders(HER).isEmpty());
+        assertEquals(2, store.all().size());
+    }
+
+    @Test
     @DisplayName("a row that still names the person by their login id converges on the DID without losing anything")
     void withOtherPartyConverges() {
         var old = row(LOGIN, Bond.BondDepth.ITEM, 119, BondKind.BONDHOLDER, true);

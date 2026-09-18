@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.4.1}"
+VERSION="${WYRDSEKAI_VERSION:-0.4.2}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -269,6 +269,7 @@ JVM_ARGS=(
     --add-opens java.base/sun.nio.ch=ALL-UNNAMED
     --enable-native-access=ALL-UNNAMED
     -XX:+UseCompactObjectHeaders
+    -Dpolyglot.engine.WarnInterpreterOnly=false
     -cp "$CLASSPATH"
 )
 

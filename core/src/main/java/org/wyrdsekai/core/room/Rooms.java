@@ -26,6 +26,9 @@ public final class Rooms {
         Rooms.scheduler = scheduler;
     }
 
+    /** The scheduler the server installed, or null before it did. */
+    public static Scheduler scheduler() { return scheduler; }
+
     /** Ask a room actor for a response. Drop-in replacement for EntityRef.ask(). */
     public static <Res> CompletionStage<Res> ask(
             ActorRef<RoomCommand> room,

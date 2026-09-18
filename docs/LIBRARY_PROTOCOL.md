@@ -33,7 +33,7 @@ or removal bumps the major, and a patron speaking 1.x reads any 1.y. ResearchZos
 All tools accept an optional `patron` object:
 
 ```json
-{"did": "did:key:…", "name": "Mia", "runtime": "wyrdsekai"}
+{"did": "did:key:…", "name": "Ada", "runtime": "wyrdsekai"}
 ```
 
 A library uses it for writer labels (`patron:<did>`), circulation, and any per-patron

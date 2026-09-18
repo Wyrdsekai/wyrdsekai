@@ -4386,7 +4386,9 @@ _release_download_verify() {   # <version>
 _install_deb() {   # <file.deb>
     local deb; deb="$(readlink -f "$1" 2>/dev/null || printf '%s' "$1")"
     if command -v apt-get >/dev/null 2>&1; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --allow-downgrades "$deb" && return 0
+        # --reinstall: a file with the version already installed (a rebuilt candidate) must
+        # still be laid down; without it apt-get says "0 upgraded" and the old files stay.
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --allow-downgrades --reinstall "$deb" && return 0
         warn "$(_t update.apt_failed)"
     fi
     sudo dpkg -i "$deb"

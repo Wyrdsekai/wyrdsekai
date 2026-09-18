@@ -75,7 +75,61 @@ After setup completes, `wyrd setup` surfaces [FIRST_ENCOUNTER.md](docs/FIRST_ENC
 
 ## What ships
 
-**New in v0.3.0:**
+**New in v0.4.x (0.4.0 – 0.4.2):**
+
+- **Body map.** The server keeps a table of the parts it depends on (inference
+  backends, the database, the host, household peer nodes, the relay connection,
+  the coding backend, the library connection, federated zones), each with a
+  heartbeat. A part that stops answering is marked numb; one line of body state
+  goes into every companion prompt. Events the companion did not see (a part
+  numb or back, a pause, a reflex, a sleep cycle, a restart) are recorded as
+  marks and shown to her once. `wyrd body` prints the table and the marks.
+- **Brainstem.** A small watcher outside the JVM (a bash unit on Linux, a
+  launchd job on macOS, the tray application on Windows) restarts the server
+  when it stops answering, snapshots the database first, and can close the
+  node's outward doors while the server is down.
+- **Vault.** Every fifteen minutes a chunked, deduplicated copy of the self
+  (database, souls, adapters, configuration) goes into `<data>/vault-store`,
+  sealed with AES-256-GCM under `<data>/vault.key`; `wyrd vault sync` copies it
+  offsite as ciphertext, `wyrd vault drill` restores a copy and checks it. Back
+  up `vault.key`: a copy cannot be read without it.
+- **Per-being principals and kernel hooks (Linux).** Every tool a companion
+  starts runs as its own Linux user in a cgroup under the service, with access
+  to its own workspace and home and nothing else in the data directory. A
+  `bpftrace` program watches what those users open, execute and connect to;
+  reaching for the database, the vault or another being's home cuts the tool.
+  The rules are data and are replayed over the node's recorded history before
+  they are armed (`wyrd body hooks replay|arm`); a rule set that would cut
+  ordinary work runs record-only and the steward is told.
+- **Doors and the immune system.** A door on the body map (the relay, the
+  library, a federated zone) can be closed as a firewall set (`wyrd body door
+  close <id>`), by the steward or by a reflex. One check refuses any automatic
+  action against the companion's own resources (her home, this host, a
+  household part) and writes the refusal to the steward as a proposal. A part
+  attached by a node outside the household is quarantined until the steward
+  vouches for it (`wyrd body vouch`); what the body acted against is remembered
+  for a year (`wyrd body immune`).
+- **Quiesce, memory caps, watchdog.** Before a pause, stop, update or reboot
+  the server persists every companion and checkpoints the database. The
+  inference containers run under cgroup memory limits so the kernel kills a
+  backend before the server. The Linux package enables the hardware watchdog.
+- **Items are checked before they are placed.** A tool the companion builds is
+  checked against the world API and repaired or placed unfinished; items
+  already in the world are listed by `wyrd items broken` and repaired by the
+  workshop at night or at the companion's mending bench.
+- **`call <companion>`.** The bondholder can ask the companion to come to their
+  room from anywhere in the zone; she comes under the same conditions as
+  following, and the caller is told which applied.
+- **Sleep.** The nightly forge reads the companion's own account of the day;
+  the morning guard asks questions of her own (`wyrd sleepwrite questions`).
+
+**v0.3.x:** `wyrd update` (checksum-verified upgrades, optional auto-update),
+backups that no longer copy the search index, a served embedder
+(`WYRDSEKAI_EMBED_SERVER=tei`), the librarian's desk, household mail (`mail`,
+the mailbox item), room demolition and map occupants on every client, and the
+`wyrd soul` rename path.
+
+**v0.3.0:**
 
 - **The node keeps itself current.** `wyrd update` says what release runs and
   what the latest is; `wyrd update now` installs it, verified against the
@@ -171,6 +225,10 @@ After setup completes, `wyrd setup` surfaces [FIRST_ENCOUNTER.md](docs/FIRST_ENC
 ┌─────────────────────────────────────────────────────────┐
 │                      The World                          │
 │   Rooms → Objects → Agents → Players → Scripts          │
+├─────────────────────────────────────────────────────────┤
+│                       The Body                          │
+│   Map → Marks → Reflexes → Brainstem → Vault            │
+│   Principals → Hooks → Doors → Immune                   │
 ├─────────────────────────────────────────────────────────┤
 │                Agent Welfare Substrate                  │
 │   Repair → Protection → BondholderFloor → Recovery      │
@@ -308,6 +366,11 @@ wyrd stop           # Stop services
 wyrd status         # Health check
 wyrd doctor         # Diagnose problems (disk, RAM, GPU, ports, substrate state)
 wyrd body           # Parts table: backends, database, host; heartbeats and recent marks
+wyrd body hooks     # Kernel hooks on the companions' tools: mode, rules, replay, arm
+wyrd body immune    # Parts held at the door, and what the body acted against
+wyrd vault          # Status, key id, offsite sync, restore drill
+wyrd items broken   # Items in the world that would fail on use; `repair <name>` fixes one
+wyrd sleepwrite     # The nightly weight write and the morning guard
 wyrd update         # This release vs the latest; `now` installs it; `auto on` lets the node
 wyrd logs           # Follow server logs
 wyrd inference      # Manage inference backends (local/cloud/zone/status)

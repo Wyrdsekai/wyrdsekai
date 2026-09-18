@@ -529,6 +529,79 @@ exit- and room-creation requests. Around 35 room scripts ship. Items have a
 parallel scripting path (`ItemScriptExecutor`) with pre-compiled per-item
 sources and a richer capability set.
 
+## 12. The body
+
+`core/body/` holds a table of the parts the node depends on and the code that
+acts on it without a model call.
+
+**Map.** `BodyMap` keeps one `BodyPart` per part: a `LimbDescriptor` (id, kind,
+owner, heartbeat interval, felt weight, what its silence costs, provenance), a
+state (`ATTACHED`, `NUMB`, `GONE`, `QUARANTINED`), timestamps, and who vouched
+for it. The inference router attaches its backends and heartbeats them from its
+health checks. `BodyWatch` runs on its own thread every `body.watch_seconds`
+(30): it checks the database, reads host memory pressure, heap and disk, pulses
+the sources that describe parts the watch cannot probe itself (mesh peers,
+the relay, the coding backend, the library connection, federated zones), and
+ages the table: a part silent for more than twice its interval goes numb. The
+table is persisted in `body_parts`; marks (`BodyMark`) in `body_marks`. Both
+are read at start.
+
+**Interoception.** `Interoception` renders one line from the table for every
+companion prompt. Marks are addressed to a companion or to the steward and are
+shown once; `BodyMark.isFor` keeps a steward mark out of a companion prompt.
+
+**Reflexes.** `ReflexArena` evaluates a fixed table on every pulse (memory
+stall, full heap, database not answering, low disk) and acts without inference:
+pause inference for a set time, write a mark, or close a door. Rows are data.
+
+**Brainstem.** Outside the JVM: `packaging/brainstem/wyrdsekai-brainstem` (a
+bash systemd unit), the macOS launchd job, and the Windows tray application.
+Each watches the server's heartbeat file, restarts the server when it stops
+answering (after a grace period, at most once per window), snapshots the
+database first, and can close the outward firewall sets while the server is
+down. The server heartbeats the brainstem back and shows it as a part.
+
+**Host shims (Linux).** The package sets `OOMScoreAdjust` so the kernel kills an
+inference container before the server, runs the containers under cgroup memory
+limits, enables the hardware watchdog (`RuntimeWatchdogSec`, `softdog` where
+there is no device), and installs `wyrdsekai-doors`, a fixed script that puts a
+door's addresses into an nftables set the output chain rejects. `HostDoors` is
+the JVM side; it only names the door.
+
+**Principals and hooks (Linux).** `Principals` creates one Linux user per
+companion (`wyrd-being-<slug>`, uid 62000–62999, group `wyrdsekai-beings`) and
+starts her tools through `wyrdsekai-being`, a wrapper that drops to that user
+inside a cgroup under the service. The data directory is traversable but not
+readable by the group; a being's workspace and home are hers. `ToolHooks` runs
+one `bpftrace` program over `openat`, `execve` and `connect` for that uid range
+and decides per event from `HookRules` (cut paths, recorded paths, cut
+programs): a cut kills the tool's cgroup and writes a mark. Everything else is
+appended to `<data>/brainstem/hooks-seen.jsonl` as a table of distinct events
+with counts; `HookReplay` runs a candidate rule set over that table and reports
+what it would have cut. At start, and on `wyrd body hooks arm`, rules are only
+enforced if the replay is clean and the history is long enough; otherwise the
+hooks run record-only and the steward is told.
+
+**Immune.** `Immune.consider` is the one check every automatic action against a
+part passes: cutting a tool, closing a door, quarantining a part, severing one.
+It refuses a cut inside the being's own home, a door whose addresses include
+this host, quarantine of anything the household attached, and severance not
+requested by a person; a refusal is a mark to the steward with the proposed
+action. `ImmuneMemory` (`immune_memory`) records what the body acted against
+for a year: doors closed, tools cut, dock offers rejected, capabilities refused.
+A part whose provenance is outside the household is attached as `QUARANTINED`;
+the router never selects a quarantined brain; `wyrd body vouch` attaches it.
+
+**Vault.** `core/vault/` chunks the self (content-defined chunks, deduplicated),
+seals every chunk and manifest with AES-256-GCM under `<data>/vault.key`, and
+writes to `<data>/vault-store` every fifteen minutes. `wyrd vault sync` copies
+the store offsite; `wyrd vault drill` restores a copy and verifies it.
+
+**Quiesce.** One routine runs before a pause, stop, update, backend restart or
+host reboot: the router stops accepting turns, each companion actor persists
+its state within a deadline, the database is checkpointed, and a mark records
+the reason and duration.
+
 ---
 
 Where this document and the code disagree, the code is right — a correction here

@@ -363,7 +363,17 @@ snaps to present and any deferred follow fires. Otherwise a 30 s grace timer
 
 Following is gated by `followBlockedReason()`: `sleeping` and `in_shell` are hard
 blocks (skip), while `thinking` (active inference) and `depleted` (energy < 0.15)
-defer and fire on clear.
+defer and fire on clear. The bondholder is matched as a person, not as an id
+string: over ssh a session is in the room under its login id and the bond names
+the same person by DID.
+
+`call <companion>` (or `summon <companion>`) asks her to come to the caller's
+room. It is a tell she hears wherever she is, not a teleport: she comes by the
+same gates, and the caller is told what she did — she comes; she is asleep (not
+woken, not queued); she is with the coding hand; or she is mid-thought or worn
+thin and comes when that clears. Only her bondholder is answered; anyone else
+sees her look up and stay. The verb works over ssh, telnet, the web client, the
+CLI and the phones.
 
 The spec frames this as a partnership constraint, not a mechanical lock — the
 companion can defer or refuse for its own reasons, and those are not modeled as

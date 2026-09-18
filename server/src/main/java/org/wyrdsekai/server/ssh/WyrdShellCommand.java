@@ -49,6 +49,7 @@ import org.wyrdsekai.core.persistence.InventoryService;
 import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.WardService;
 import org.wyrdsekai.core.room.ExamineLookup;
+import org.wyrdsekai.core.room.CallService;
 import org.wyrdsekai.core.room.RenameService;
 import org.wyrdsekai.core.item.ItemRetirement;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
@@ -139,7 +140,7 @@ public class WyrdShellCommand implements Command {
     private static final List<String> COMPLETION_VERBS = List.of(
         "look", "go", "exits", "say", "tell", "whisper", "take", "drop", "use",
         "examine", "inventory", "actions", "home", "help", "quit", "who",
-        "key", "passwd", "sessions", "logout", "travel");
+        "key", "passwd", "sessions", "logout", "travel", "call");
 
     private final String sessionId;
     private volatile String playerId;
@@ -1440,6 +1441,7 @@ public class WyrdShellCommand implements Command {
 
             case ParsedCommand.Describe desc -> handleDescribe(desc);
             case ParsedCommand.Rename rn -> handleRename(rn);
+            case ParsedCommand.Call c -> handleCall(c);
             case ParsedCommand.Examine ex -> handleExamine(ex);
 
             case ParsedCommand.Give give -> handleGive(give.objectName(), give.targetName());
@@ -1745,6 +1747,7 @@ public class WyrdShellCommand implements Command {
                     sendLine(catalog.get("telnet.help_inventory"));
                     sendLine(catalog.get("telnet.help_actions"));
                     sendLine(catalog.get("telnet.help_home"));
+                    sendLine(catalog.get("telnet.help_call"));
                     sendLine(catalog.get("telnet.help_travel"));
                     sendLine(catalog.get("telnet.help_hints"));
                     sendLine(catalog.get("telnet.help_account"));
@@ -2361,6 +2364,17 @@ public class WyrdShellCommand implements Command {
             renderer.sendPrompt(currentRoomName, currentZoneLabel());
         } catch (IOException e) {
             log.error("Error in handleRename output", e);
+        }
+    }
+
+    /** {@code call <companion>}: she comes by her own gates; the answer is one line. */
+    private void handleCall(ParsedCommand.Call c) {
+        var line = CallService.call(playerId, playerName, c.target(), currentRoomId, ASK_TIMEOUT);
+        try {
+            sendLine(line);
+            renderer.sendPrompt(currentRoomName, currentZoneLabel());
+        } catch (IOException e) {
+            log.error("Error in handleCall output", e);
         }
     }
 

@@ -336,6 +336,11 @@ public class InputHandler {
                 yield true;
             }
 
+            case ParsedCommand.Call c -> {
+                connection.send(new C2SMessage.Call(connection.newId(), null, c.target()));
+                yield true;
+            }
+
             case ParsedCommand.Give give -> {
                 // Forward as say command — server will handle give semantics
                 connection.send(new C2SMessage.Say(
@@ -516,6 +521,7 @@ public class InputHandler {
               drop <object>                - Drop an object
               use <object> [on <target>]   - Use an object
               inventory (i)                - Show what you're carrying
+              call <companion>             - Ask your companion to come to you
               1-9                          - Select a hint by number
               /login <user> <pass>         - Log in
               /register <user> <pass>      - Create account
