@@ -4,7 +4,7 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.5.0] — unreleased
+## [0.5.0] — 2026-09-30
 
 The main additions in this release:
 
