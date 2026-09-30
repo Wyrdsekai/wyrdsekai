@@ -15,6 +15,7 @@ import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.inference.MeshDispatch;
+import org.wyrdsekai.core.inference.NowLine;
 
 import java.util.concurrent.CompletableFuture;
 import org.wyrdsekai.scripting.codemode.CodeModeExecutor;
@@ -391,7 +392,8 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
                 + buildCodeModeNamespaceDescription()
                 + "\n";
             conversation.add(new InferenceClient.ChatMessage("system", system));
-            conversation.add(new InferenceClient.ChatMessage("user", "Task: " + task));
+            conversation.add(new InferenceClient.ChatMessage("user",
+                NowLine.dateTimeText(startedAt, NowLine.zone()) + "\nTask: " + task));
             nextInferenceTurn();
             return this;
         }
@@ -413,7 +415,8 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
             + "and final output is " + DONE_MARKER + " with a short summary — "
             + "reflection, tending, and everything else belongs to your primary.";
         conversation.add(new InferenceClient.ChatMessage("system", system));
-        conversation.add(new InferenceClient.ChatMessage("user", "Task: " + task));
+        conversation.add(new InferenceClient.ChatMessage("user",
+                NowLine.dateTimeText(startedAt, NowLine.zone()) + "\nTask: " + task));
 
         nextInferenceTurn();
         return this;
@@ -456,6 +459,10 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
         // through the primary's channel. Mesh unavailable or declining →
         // the local router path, unchanged.
         var mesh = MeshDispatch.installed();
+        // She is working, so she knows the day: the Task line carries it, written once at
+        // dispatch, so every turn of the run keeps the same prefix (stamped on the last user
+        // message, it moved to each tool result and the slot re-read the run from there).
+        var today = NowLine.NONE;
         if (mesh != null) {
             var clientRequest = new InferenceClient.ChatRequest(
                 "default", List.copyOf(conversation),
@@ -480,7 +487,7 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
                             reqId, null, List.copyOf(conversation),
                             budget, 0.5, inferenceAdapter, null, null, null,
                             tools, tools == null || tools.isEmpty() ? null : "auto",
-                            null, null, null));
+                            null, null, null).withNow(today));
                         return;
                     }
                     try {
@@ -506,7 +513,7 @@ public class BunshinActor extends AbstractBehavior<BunshinActor.Command> {
             null, null, null,
             tools,
             tools == null || tools.isEmpty() ? null : "auto",
-            null, null, null));
+            null, null, null).withNow(today));
     }
 
     private Behavior<Command> onInferenceCame(InferenceCame msg) {

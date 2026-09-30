@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import javax.crypto.AEADBadTagException;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,7 +60,8 @@ class RecoverySeedTest {
             List.of("personal-uuid-1"),
             List.of("identity_persistence"),
             "stock-2026-05-17",
-            "anchor-hash-deadbeef"
+            "anchor-hash-deadbeef",
+            null, null, List.of()
         );
 
         char[] passphrase = "the right passphrase".toCharArray();
@@ -129,7 +131,28 @@ class RecoverySeedTest {
         assertThat(file[1]).isEqualTo((byte) 'S');
         assertThat(file[2]).isEqualTo((byte) 'R');
         assertThat(file[3]).isEqualTo((byte) 'S');
-        assertThat(file[4]).isEqualTo((byte) 0x01); // version
+        assertThat(file[4]).isEqualTo((byte) RecoverySeedCodec.CURRENT_VERSION);
+    }
+
+    @Test
+    void a_crafted_iteration_count_is_refused_before_any_work() throws Exception {
+        var seed = RecoverySeed.minimal("did:k", "pk", "n", "e", "sp");
+        byte[] file = RecoverySeedCodec.encrypt(seed, "p".toCharArray());
+        byte[] crafted = file.clone();
+        crafted[5] = 0x7f; crafted[6] = (byte) 0xff; crafted[7] = (byte) 0xff; crafted[8] = (byte) 0xff;
+        long started = System.nanoTime();
+        assertThatThrownBy(() -> RecoverySeedCodec.decrypt(crafted, "p".toCharArray()))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(System.nanoTime() - started).isLessThan(2_000_000_000L);
+    }
+
+    @Test
+    void a_truncated_file_is_refused_not_misread() throws Exception {
+        var seed = RecoverySeed.minimal("did:k", "pk", "n", "e", "sp");
+        byte[] file = RecoverySeedCodec.encrypt(seed, "p".toCharArray());
+        byte[] cut = Arrays.copyOf(file, file.length / 2);
+        assertThatThrownBy(() -> RecoverySeedCodec.decrypt(cut, "p".toCharArray()))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

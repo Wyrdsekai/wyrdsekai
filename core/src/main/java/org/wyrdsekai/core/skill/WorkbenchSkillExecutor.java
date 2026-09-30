@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.soul.FamilyLocker;
 import org.wyrdsekai.core.soul.SoulItem;
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 
 import java.util.ArrayList;
@@ -54,10 +55,12 @@ public class WorkbenchSkillExecutor implements SkillExecutor {
         // Execute the skill code via GraalJS sandbox (ItemScriptExecutor)
         try {
             var executor = new ItemScriptExecutor();
+            // A workbench skill is agent-authored code: the crafted ceiling, like a crafted item.
             var result = executor.execute(
                 "skill-" + skillName, def.code(),
                 params != null ? params : Map.of(),
-                null); // no ItemWorldApiProvider for standalone skills
+                null, // no ItemWorldApiProvider for standalone skills
+                ItemCapabilitySet.craftedDefault());
             executor.close();
 
             long elapsed = System.currentTimeMillis() - start;

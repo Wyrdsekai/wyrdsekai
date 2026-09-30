@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.coding;
 
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
+import org.wyrdsekai.core.inference.NowLine;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.wyrdsekai.core.inference.LocalInferenceEndpoint;
@@ -137,6 +138,15 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         scripted item placed in the player's room. When a player types
         `use <name>`, Wyrdsekai loads this file and calls invoke(params)
         inside a sandboxed GraalJS context with a `world` API binding.
+
+        TEXT PEOPLE WILL READ — description, descriptor_template, and anything
+        the item prints into a room. Write it the way a person talks: plain words,
+        real things, short sentences. One figure of speech at most, the everyday kind.
+        Do not describe feelings with abstract nouns (weight, space, shape, thread,
+        presence, "holds you without asking", "does not weigh you"), and do not
+        write "it's not X, it's Y". Say what the thing is and what it does.
+        Good: "A low bench by the window. Sit here to read; the room stays quiet."
+        Not: "A floor that holds you without asking, a place to be, not to solve."
 
         EMBODIMENT — REQUIRED, not optional.
 
@@ -389,7 +399,8 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         return ITEMS_AS_TOOLS_PREAMBLE + ItemApiSurface.manifestRulesBlock()
             + ItemApiSurface.callingConventionBlock()
             + ItemApiSurface.practiceBlock()
-            + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling);
+            + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling)
+            + today();
     }
 
     /** The CWD-workspace variant, with the same generated surface appended. */
@@ -397,7 +408,18 @@ public final class OpenHandsBackend implements CodingTaskBackend {
         return ITEMS_AS_TOOLS_PREAMBLE_CWD + ItemApiSurface.manifestRulesBlock()
             + ItemApiSurface.callingConventionBlock()
             + ItemApiSurface.practiceBlock()
-            + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling);
+            + ItemApiSurface.hostBlock(ceiling) + ItemApiSurface.adapterBlock(ceiling)
+            + today();
+    }
+
+    /**
+     * Work made for her knows what day it is. Every backend puts this preamble
+     * right before its "--- TASK ---", so the line lands there, not in the task
+     * description (the item bridge keeps that as what the work was meant to be).
+     * Date only: it changes once a day, so the preamble stays a stable prefix.
+     */
+    private static String today() {
+        return "\n\n" + NowLine.dateText(Instant.now(), NowLine.zone());
     }
 
     static final String ITEMS_AS_TOOLS_PREAMBLE_CWD = ITEMS_AS_TOOLS_PREAMBLE
@@ -958,7 +980,7 @@ public final class OpenHandsBackend implements CodingTaskBackend {
             msg.put("role", "user");
             msg.put("content", List.of(Map.of(
                 "type", "text",
-                "text", ITEMS_AS_TOOLS_PREAMBLE + "\n\n--- TASK ---\n"
+                "text", itemsAsToolsPreamble(ItemCapabilitySet.craftedDefault()) + "\n\n--- TASK ---\n"
                     + spec.description())));
             // We trigger /run explicitly — leave run=false here.
             msg.put("run", false);

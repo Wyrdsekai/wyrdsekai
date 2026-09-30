@@ -87,6 +87,33 @@ expect class TokenStore() {
     // the home zone; this is the local mirror (the RN zustand-store equivalent).
     fun saveZoneBank(blobJson: String)
     fun loadZoneBank(): String?
+    // The home's public tunnel key `zk` (base64url) from the pairing invite. The
+    // phone seals its relay tunnel and its requests to it, so the relay only
+    // routes ( W3). Public: not a secret.
+    fun saveZoneKey(zk: String)
+    fun loadZoneKey(): String?
+    // The home's own network (W2), from the invite: the household CA's SHA-256
+    // (lowercase hex) that the phone pins, and the home's HTTPS address
+    // (`lan_https`, https://host:7443).
+    fun saveHomeCaFp(fp: String)
+    fun loadHomeCaFp(): String?
+    fun saveLanHttps(url: String)
+    fun loadLanHttps(): String?
+    // This phone's own NATS account on the home's bus (wss://host:4223), from
+    // the pairing reply (`nats_user` / `nats_pass`). Not the relay's credentials.
+    fun saveHomeNatsUser(user: String)
+    fun loadHomeNatsUser(): String?
+    fun saveHomeNatsPassword(password: String)
+    fun loadHomeNatsPassword(): String?
+    // The home's bus as this phone reaches it on the home network (the
+    // invite's `home_bus` or the pairing reply's `natsUrl`, wss://host:port).
+    // Never the relay: the relay's address is [loadRelayUrl], from the invite.
+    fun saveHomeBusUrl(url: String)
+    fun loadHomeBusUrl(): String?
+    // Set once the person has been told that a phone paired before home TLS
+    // must pair again to connect directly on the home network.
+    fun saveLanRepairNoticed(noticed: Boolean)
+    fun loadLanRepairNoticed(): Boolean
     fun clearAuth()  // logout — clears auth token, userId, role
     fun clear()
     /** Drop the home-zone relay leg (relay/nats/zone) → local-only. Keeps the

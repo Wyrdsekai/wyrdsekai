@@ -94,6 +94,7 @@ public record ActionPolicy(
 
         // ── VISIBLE — steward-feed surfaces ──────────────────────────────
         Map.entry("tell_agent",           AutonomyTier.VISIBLE),
+        Map.entry("write_letter",         AutonomyTier.VISIBLE),   // her letter to the absent, in the household mail
         Map.entry("respond_agent",        AutonomyTier.VISIBLE),
         Map.entry("whisper",              AutonomyTier.VISIBLE),
         Map.entry("write_journal",        AutonomyTier.VISIBLE),
@@ -347,6 +348,7 @@ public record ActionPolicy(
         entry("travel_to",            0, 0.0,  true,  true,  "navigation"),
         entry("teleport_to",          0, 0.0,  true,  true,  "navigation"),
         entry("tell_agent",           0, 0.0,  false, true,  "communication"),
+        entry("write_letter",         0, 0.0,  false, true,  "communication"),
         entry("library_search",       0, 0.0,  true,  true,  "search"),
         entry("remember",             0, 0.0,  false, true,  "memory"),
         entry("note",                 0, 0.0,  false, true,  "memory"),

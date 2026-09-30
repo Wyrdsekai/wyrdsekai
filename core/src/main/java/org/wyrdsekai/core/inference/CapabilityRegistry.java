@@ -3,6 +3,7 @@ package org.wyrdsekai.core.inference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.config.HotReloadableConfig;
+import org.wyrdsekai.core.config.WyrdConfig;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -311,11 +312,39 @@ public class CapabilityRegistry {
             }
         }
 
+        if (WyrdConfig.get().singleBrain()) {
+            registerSingleBrain(registry, backends);
+        }
+
         log.info("CapabilityRegistry auto-detected {} capabilities from {} backends: {}",
             registry.availableCapabilities().size(), backends.size(),
             registry.availableCapabilities());
 
         return registry;
+    }
+
+    /** The lanes one resident model has to serve when it is the only local model. */
+    static final List<String> SINGLE_BRAIN_CAPABILITIES =
+        List.of("quick", "full", "reasoning", "summarize", "tool_dispatch");
+
+    /**
+     * Serving profile {@code single-sparse}: one local model serves every lane. The size
+     * heuristics above name a lane from the digits in a model's file name, so a lone large model
+     * registers {@code reasoning}/{@code full} and never {@code quick}; the voice lane then only
+     * reached it by falling through to priority order. Register the lanes on the first local
+     * backend deliberately, ahead of anything the heuristics registered for them.
+     */
+    static void registerSingleBrain(CapabilityRegistry registry, List<InferenceBackend> backends) {
+        for (var backend : backends) {
+            if (!"local".equals(inferTier(backend))) continue;
+            var model = backend.models().isEmpty() ? "default" : backend.models().getFirst();
+            for (var cap : SINGLE_BRAIN_CAPABILITIES) {
+                registry.register(new CapabilityEntry(cap, backend.name(), model, "local", 0));
+            }
+            log.info("Single-brain profile: '{}' ({}) serves {}", backend.name(), model, SINGLE_BRAIN_CAPABILITIES);
+            return;
+        }
+        log.warn("Single-brain profile is set but no local backend is configured; lanes resolve by priority order");
     }
 
     /**

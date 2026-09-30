@@ -149,7 +149,7 @@ class TheWholeArcFromAskToStoryTest {
      */
     @Test
     void a_recorded_build_becomes_a_story_a_person_can_hear() throws Exception {
-        var src = recorded("accepted.js", "library_keeper.js");
+        var src = recordedAsRepaired("accepted.js", "library_keeper.js");
 
         // 1. The gates the bridge applies, on the real file.
         assertThat(CodingTaskItemBridge.willRegister(src))
@@ -210,7 +210,7 @@ class TheWholeArcFromAskToStoryTest {
         CarriedItemUse.attachRoomVoice(provider, ROOM, PLAYER);
         var result = executor.execute(resolved.item().objectId(), resolved.source(),
             CarriedItemUse.params(PLAYER, resolved.target()), provider,
-            CarriedItemUse.capabilitiesFor(resolved.item().objectId()));
+            CarriedItemUse.capabilitiesFor(resolved));
 
         // 6. What the person reads.
         var printed = ItemScriptResponse.extractText(result, name);
@@ -275,6 +275,19 @@ class TheWholeArcFromAskToStoryTest {
             .contains("unfinished");
     }
 
+    /**
+     * The accepted file calls {@code world.llm.summarize} and its manifest never said so. That
+     * did not matter while manifests were not enforced; since 2026-09-28 the call would be
+     * refused in the person's hands, so the gate sends the file back to be repaired instead.
+     */
+    @Test
+    void the_accepted_file_as_recorded_is_sent_back_for_its_undeclared_call() throws Exception {
+        var src = recorded("accepted.js", "library_keeper.js");
+        assertThat(ItemContractCheck.problems(readCorpus("accepted.js"), "library_keeper.js"))
+            .anySatisfy(p -> assertThat(p).contains("llm.summarize").contains("capabilities"));
+        assertThat(CodingTaskItemBridge.willRegister(src)).isFalse();
+    }
+
     /** A refused file must never be made permanent — the items dir is for what works. */
     @Test
     void a_refused_file_is_never_kept() throws Exception {
@@ -295,6 +308,18 @@ class TheWholeArcFromAskToStoryTest {
     /** Copy a recorded file into a real workspace and describe it as a run would. */
     private SourceArtifact recorded(String corpusName, String asFile) throws Exception {
         Files.writeString(workspace.resolve(asFile), readCorpus(corpusName));
+        return new SourceArtifact(UUID.randomUUID(), GooseBackend.NAME,
+            "task-" + UUID.randomUUID(), workspace.toString(), List.of(asFile), null,
+            Instant.now(), Map.of());
+    }
+
+    /**
+     * The recorded file as the repair loop hands it back since manifests are enforced: the
+     * one change is {@code llm.summarize} declared, the call it always made.
+     */
+    private SourceArtifact recordedAsRepaired(String corpusName, String asFile) throws Exception {
+        Files.writeString(workspace.resolve(asFile), readCorpus(corpusName).replace(
+            "capabilities: [\"library.search\",", "capabilities: [\"llm.summarize\", \"library.search\","));
         return new SourceArtifact(UUID.randomUUID(), GooseBackend.NAME,
             "task-" + UUID.randomUUID(), workspace.toString(), List.of(asFile), null,
             Instant.now(), Map.of());
@@ -343,7 +368,7 @@ class TheWholeArcFromAskToStoryTest {
      */
     @Test
     void an_item_used_from_the_floor_gets_its_arguments_too() throws Exception {
-        var src = recorded("accepted.js", "library_keeper.js");
+        var src = recordedAsRepaired("accepted.js", "library_keeper.js");
         var name = CodingTaskItemBridge.manifestNameOf(src).orElseThrow();
         var roomObject = new org.wyrdsekai.common.model.RoomObject(
             "codex-floor01", name, "…", true, true);

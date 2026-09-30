@@ -13,6 +13,7 @@ import org.wyrdsekai.scripting.api.ItemManifest;
 import org.wyrdsekai.scripting.api.ItemManifestParser;
 import org.wyrdsekai.core.update.ReleaseManifest;
 import org.wyrdsekai.scripting.api.ItemApiSurface;
+import org.wyrdsekai.scripting.api.ItemCapabilityAudit;
 import org.wyrdsekai.scripting.api.ItemManifestValidator;
 
 import java.io.IOException;
@@ -391,6 +392,9 @@ public final class ScriptedItemLoader {
             var unresolved = ItemApiSurface.check(script);
             var calls = new ArrayList<String>();
             for (var u : unresolved) calls.add(u.reason());
+            // A call the manifest does not declare is refused when the item runs (2026-09-28).
+            var undeclared = ItemCapabilityAudit.undeclared(script, manifest);
+            calls.addAll(undeclared);
             // A tool that names commands it does not honour is mis-wired the same way: it says
             // it does something and does not (2026-09-10).
             ItemApiSurface.commandsNeverRead(script,
@@ -403,7 +407,8 @@ public final class ScriptedItemLoader {
                 }
                 log.warn("ScriptedItemLoader: '{}' at {} is mis-wired{}: {}",
                     itemId, path,
-                    unresolved.isEmpty() ? " and does not do what it says" : " and WILL fail on use",
+                    unresolved.isEmpty() && undeclared.isEmpty()
+                        ? " and does not do what it says" : " and WILL fail on use",
                     String.join(" | ", calls));
                 wiringAudit.put(itemId, new WiringAuditEntry(itemId, path.toString(), calls));
             } else {

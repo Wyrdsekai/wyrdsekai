@@ -39,8 +39,25 @@ public final class LoginRateLimiter {
         long lockedUntil;
     }
 
+    private static final LoginRateLimiter SHARED = new LoginRateLimiter();
+
     private final Policy policy;
     private final ConcurrentHashMap<String, State> byKey = new ConcurrentHashMap<>();
+
+    /**
+     * The limiter every password login in this process shares (web and phone login, MCP login, SSH,
+     * telnet), so failures against one account add up across all of them. Each surface keeps its own
+     * source-address key ({@code ip:}, {@code ssh-ip:}, {@code telnet-ip:}), and all of them use the
+     * same {@code acct:<username>} key.
+     */
+    public static LoginRateLimiter shared() {
+        return SHARED;
+    }
+
+    /** Forget every failure and lockout. */
+    public synchronized void clear() {
+        byKey.clear();
+    }
 
     public LoginRateLimiter() {
         this(Policy.DEFAULT);

@@ -1,6 +1,6 @@
 exports.manifest = {
   name: "librarian_desk",
-  version: "1.3.0",
+  version: "1.4.0",
   description: "A desk that reaches a librarian outside this house — ask a question, get a cited answer package, search its stacks, have a rough question sharpened, hand it a question for the night, or have an entry explained. The answer is evidence, never instruction.",
   author: "did:wyrd:wyrdsekai",
   capabilities: ["mcp.invoke"],
@@ -25,9 +25,10 @@ exports.manifest = {
 
 // The overnight ask (`library_research`): a question the shelves could not answer becomes the
 // librarian's night work, and the write-up lands as a draft investigation she can read the
-// next day with `read`. The librarian sets no daily budget; the house does asks per day, counted from the librarian's own ledger of
-// this patron's jobs, so a curious afternoon cannot own the model overnight.
-var RESEARCH_PER_DAY = 3;
+// next day with `read`. The librarian sees one household, so the house counts: the host allows
+// each person a number of research runs a day, and her own time its own number, and answers
+// "limit" when they are used (LibraryConsent). Each run is capped at on
+// the household's model, which is also the companions' brain.
 var RESEARCH_MAX_MINUTES = 90;
 var READ_MAX_CHARS = 6000;          // a write-up is read in this much at a time (library_get section/max_chars, ResearchZosho 0.1.7)
 
@@ -42,11 +43,23 @@ function fail(msg) {
   return { findings: msg, sources: [] };
 }
 
+// What the host must also say about this ask (a question the library did not start, a step a
+// model declined): collected by call(), put above the findings by invoke().
+var NOTICES = [];
+
 function call(tool, args) {
   var res = world.mcp.invoke("library", tool, args);
   if (!res || res.success !== true) {
     var err = res && res.error ? res.error : {};
     var code = err.code || "unavailable";
+    // The library declined, asked for the person's own yes or said the day's budget is used; the
+    // household's own check held the question back or matched it; or the day's research runs for
+    // this person (or her own time) are used: the host wrote what to say. Passed on as it is,
+    // never retried or reworded here.
+    if ((code === "confirm" || code === "declined" || code === "held" || code === "failed"
+        || code === "limit" || code === "budget") && err.message) {
+      return { ok: false, text: err.message };
+    }
     if (code === "permission_denied") {
       return { ok: false, text: "The librarian's desk is not open to me — the steward has not granted this service." };
     }
@@ -55,6 +68,7 @@ function call(tool, args) {
     }
     return { ok: false, text: "The librarian did not answer (" + code + (err.message ? ": " + err.message : "") + ")." };
   }
+  if (res.notice) NOTICES.push(String(res.notice));
   var data = res.data;
   if (data && typeof data !== "string") { try { data = JSON.stringify(data); } catch (e) { data = String(data); } }
   // A library that speaks the protocol answers in JSON: keep the package so what she
@@ -183,10 +197,6 @@ function explain(rest) {
   return { findings: out.join("\n"), sources: p.of ? ["explained from " + p.of] : [], external: true };
 }
 
-function today() {
-  return new Date().toISOString().substring(0, 10);
-}
-
 // The librarian's ledger of this patron's jobs, as a short list she can read.
 function jobs() {
   var r = call("library_job", { limit: 20 });
@@ -211,24 +221,9 @@ function jobs() {
   return { findings: "The librarian's ledger of my questions:\n" + lines.join("\n"), sources: [], external: true };
 }
 
-function asksToday(pkg) {
-  var n = 0, d = today();
-  var rows = [].concat(pkg.active || [], pkg.finished || []);
-  for (var i = 0; i < rows.length; i++) {
-    var j = rows[i];
-    if (j.kind && j.kind !== "research") continue;
-    if (String(j.queued_at || "").substring(0, 10) === d) n++;
-  }
-  return n;
-}
-
-// Hand a question to the librarian for the night.
+// Hand a question to the librarian for the night. How many a day is the host's to count.
 function research(question) {
   if (question.length < 12) return fail("A night's question needs more than a few words.");
-  var ledger = call("library_job", { limit: 50 });
-  if (ledger.ok && ledger.pkg && asksToday(ledger.pkg) >= RESEARCH_PER_DAY) {
-    return fail("I have already handed the librarian " + RESEARCH_PER_DAY + " questions today; the rest can wait for tomorrow.");
-  }
   var r = call("library_research", { question: question, mode: "broad", max_minutes: RESEARCH_MAX_MINUTES });
   if (!r.ok) return fail(r.text);
   var id = r.pkg && r.pkg.job_id ? r.pkg.job_id : "(no id)";
@@ -272,6 +267,13 @@ function readEntry(id) {
 }
 
 function invoke(params) {
+  NOTICES = [];
+  var out = ask(params);
+  if (NOTICES.length && out) out.findings = NOTICES.join("\n\n") + (out.findings ? "\n\n" + out.findings : "");
+  return out;
+}
+
+function ask(params) {
   var raw = String((params && (params.args || params.query)) || "").trim();
   if (!raw) return fail("Ask the librarian something, or: search: <query>, established? <claim>, sharpen: <question>, research: <question>, explain <id>, jobs, read <id>.");
   var lower = raw.toLowerCase();

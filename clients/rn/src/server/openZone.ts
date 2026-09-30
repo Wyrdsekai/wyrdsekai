@@ -12,6 +12,11 @@
  *   4. On success: remember the password (this device), bump the winning relay
  *      to the front, touch lastUsedAt. Return the connected client for the
  *      session to adopt.
+ *
+ * Before any of that the zone must have its home key `zk` from an invite
+ * (, W3): every request is sealed to it. A zone banked
+ * from an invite older than 0.5.0 has none, so the phone asks to be paired
+ * again rather than send a password the relay could read.
  */
 import { connectToZone, connectToZoneWith } from './zoneConnect';
 import type { ZoneConnectOk } from './zoneConnect';
@@ -20,10 +25,13 @@ import type { HeldRelay } from '../state/zoneBankStore';
 import { useZoneBankStore, zonePasswordKey } from '../state/zoneBankStore';
 import { secureStorage } from '../state/secureStorage';
 import { syncZoneBank } from './zoneBankSync';
+import { ensureHomeBusCredentials } from './homeBus';
+import { securityText } from '../security/securityText';
 
 export type OpenZoneResult =
   | { ok: true; client: NatsServerClient; relayUrl: string }
   | { ok: false; reason: 'needs-password' }
+  | { ok: false; reason: 'pair-again'; error: string }
   | { ok: false; reason: 'auth-rejected'; error: string }
   | { ok: false; reason: 'unreachable'; error: string };
 
@@ -37,6 +45,10 @@ export async function openZone(
     return { ok: false, reason: 'unreachable', error: 'That server is not in your bank.' };
   }
   const relays = bank.relaysForZone(zoneId);
+  const zk = bank.getZoneTrust(zoneId)?.zk;
+  if (!zk) {
+    return { ok: false, reason: 'pair-again', error: securityText().pairAgain };
+  }
 
   // Resolve password: explicit wins, else the per-device remembered one.
   let password = opts?.password;
@@ -51,6 +63,7 @@ export async function openZone(
 
   const res = await connectToZone(zone, relays, password, {
     requestTimeoutMs: opts?.requestTimeoutMs,
+    zk,
   });
 
   if (!res.ok) {
@@ -66,7 +79,7 @@ export async function openZone(
 export type CreateZoneAccountResult =
   | { ok: true; client: NatsServerClient; relayUrl: string;
       role?: string; recoveryKey?: string }
-  | { ok: false; reason: 'registration-closed' | 'rejected' | 'unreachable'; error: string };
+  | { ok: false; reason: 'registration-closed' | 'rejected' | 'unreachable' | 'pair-again'; error: string };
 
 /**
  * Create a NAMED account on a banked zone over the relay — the phone-first
@@ -88,6 +101,10 @@ export async function createZoneAccount(
     return { ok: false, reason: 'unreachable', error: 'That server is not in your bank.' };
   }
   const relays = bank.relaysForZone(zoneId);
+  const zk = bank.getZoneTrust(zoneId)?.zk;
+  if (!zk) {
+    return { ok: false, reason: 'pair-again', error: securityText().pairAgain };
+  }
   await pinRelays(relays);
 
   let recoveryKey: string | undefined;
@@ -102,7 +119,7 @@ export async function createZoneAccount(
       role = auth.role;
       return auth;
     },
-    { requestTimeoutMs: opts?.requestTimeoutMs },
+    { requestTimeoutMs: opts?.requestTimeoutMs, zk },
   );
 
   if (!res.ok) {
@@ -150,7 +167,7 @@ async function pinRelays(relays: HeldRelay[]): Promise<void> {
         // (no TLS round-trip). The served leaf's SHA-256 IS one of these, so the
         // WS serverTrust challenge will match. Robust against relays that don't
         // serve HTTP/3 (which would break the cert-fetch probe on iOS).
-        await pinInviteFingerprints(u.hostname, fps);
+        await pinInviteFingerprints(relay.wsUrl, fps);
         // Supplement (best-effort): also try the cert-chain grab so a CA-pin
         // (rotation-proof) lands too where the probe works. Never required.
         const pinned = await trustFromInviteFingerprints(u.hostname, port, fps);
@@ -199,6 +216,8 @@ async function persistZoneSession(
   // the session. Fire-and-forget after bumping/touching so the upload
   // carries the freshest local view.
   void syncZoneBank(res.client, Date.now()).catch(() => {});
+  // This phone's own home-bus credentials, for the home network (D3).
+  void ensureHomeBusCredentials(res.client, zoneId).catch(() => {});
 }
 
 /** Forget the remembered password for a zone (e.g. after an auth rejection,

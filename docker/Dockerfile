@@ -4,9 +4,14 @@
 #
 # Usage:
 #   docker build -t wyrdsekai:latest -f docker/Dockerfile .
-#   docker run -p 7070:7070 -p 7071:7071 wyrdsekai:latest
+#   docker run -p 127.0.0.1:7070:7070 -p 7443:7443 wyrdsekai:latest
+#   (plain 7070 for the browser on this machine only; 7443 is the encrypted door for the network)
 
 FROM eclipse-temurin:25-jre
+
+# The plain web port listens inside the container so the host can reach it; publish it on the
+# host's loopback only. Every /api call still needs a login.
+ENV WYRDSEKAI_HTTP_BIND=0.0.0.0
 
 LABEL org.opencontainers.image.title="Wyrdsekai"
 LABEL org.opencontainers.image.description="Distributed text-native OS built on MUD paradigm"

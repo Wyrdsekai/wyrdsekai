@@ -56,6 +56,75 @@ mkdir -p "$STATE" 2>/dev/null || true
 
 log() { echo "$(date -u +%FT%TZ) $*"; }
 
+# ── The card is shared ─────────────────────────────────────────────────────────────────────
+# Under the single model her brain holds most of the card. When something else on the machine
+# needs it (a game, a render, a desktop), this pass moves her brain's experts into system RAM
+# and, when the card is free again for a while, moves them back. Each move is a container
+# recreate, a minute or two in which she does not answer, so it happens only at a quiet moment
+# (nothing in flight, no night write) and only after the pressure has lasted. Off with
+# BRAINSTEM_CARD_SHARE=0. Every move is an event, which reaches her as a mark.
+CARD_SHARE="${BRAINSTEM_CARD_SHARE:-1}"
+CARD_MIN_MB="${BRAINSTEM_CARD_MIN_MB:-1024}"      # others below this are not pressure
+CARD_HOLD="${BRAINSTEM_CARD_HOLD:-120}"           # seconds of pressure before she yields
+CARD_RECLAIM_HOLD="${BRAINSTEM_CARD_RECLAIM_HOLD:-600}"   # seconds of a free card before she takes it back
+CARD_EVERY="${BRAINSTEM_CARD_EVERY:-30}"          # seconds between looks
+WYRD=""
+for _c in "${WYRD_BIN:-}" /opt/wyrdsekai/bin/wyrd /usr/local/wyrdsekai/bin/wyrd; do [[ -n "$_c" && -x "$_c" ]] && { WYRD="$_c"; break; }; done
+
+inflight() {   # requests in flight at the server, or "" when it cannot say
+    curl -s -m 3 "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -oE '"inFlight":[0-9]+' | head -1 | cut -d: -f2
+}
+plan_rank() {   # a number that grows with what the plan puts on the card: 0 all … 40 gpu-full
+    case "$1" in gpu-full) echo 40 ;; all|not-viable) echo 0 ;; *) [[ "$1" =~ ^[0-9]+$ ]] && echo $(( 40 - $1 )) || echo 0 ;; esac
+}
+card_share() {
+    [[ "$CARD_SHARE" == "1" && -n "$WYRD" && "$OS" == "Linux" && "${BRAINSTEM_ONCE:-}" != "1" ]] || return 0
+    command -v nvidia-smi >/dev/null 2>&1 || return 0
+    local now; now="$(date +%s)"
+    local last; last="$(read_state card_looked 0)"
+    # The first look is a look at the clock only: nothing moves in the first CARD_EVERY seconds
+    # of a brainstem's life, and the hang watch above keeps its timing.
+    if [[ "$last" == "0" || -z "$last" ]]; then write_state card_looked "$now"; return 0; fi
+    (( now - last < CARD_EVERY )) && return 0
+    write_state card_looked "$now"
+    grep -qE '^WYRDSEKAI_SERVING_PROFILE=(single-sparse|sparse-drive)' "$CONFIG_FILE" 2>/dev/null || return 0
+    local have; have="$(docker inspect wyrdsekai-llama-brain --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -E '^LLAMA_CPU_MOE=' | cut -d= -f2)"
+    [[ -z "$have" ]] && return 0                      # her brain is not up: nothing to move
+    case "$have" in 0|none) have=gpu-full ;; on) have=all ;; esac
+    local others want; others="$("$WYRD" brain others-mb 2>/dev/null)"; want="$("$WYRD" brain plan-value 2>/dev/null)"
+    [[ "$others" =~ ^[0-9]+$ ]] || return 0
+    [[ "$want" == "not-viable" ]] && want=all
+    if (( others >= CARD_MIN_MB )); then
+        write_state card_free_since ""; [[ -n "$(read_state card_busy_since "")" ]] || write_state card_busy_since "$now"
+    else
+        write_state card_busy_since ""; [[ -n "$(read_state card_free_since "")" ]] || write_state card_free_since "$now"
+    fi
+    [[ "$want" == "$have" ]] && return 0
+    local wr hr; wr="$(plan_rank "$want")"; hr="$(plan_rank "$have")"
+    if (( wr < hr )); then   # yield
+        local since; since="$(read_state card_busy_since "")"
+        [[ -n "$since" ]] && (( now - since >= CARD_HOLD )) || return 0
+    else                     # reclaim
+        local since; since="$(read_state card_free_since "")"
+        [[ -n "$since" ]] && (( now - since >= CARD_RECLAIM_HOLD )) || return 0
+    fi
+    # a quiet moment: the server answers, nothing in flight, no night write on the card
+    health_up || return 0
+    local inf; inf="$(inflight)"; [[ "$inf" == "0" ]] || return 0
+    pgrep -f 'sleepwrite/brain_write.py' >/dev/null 2>&1 && return 0
+    local out rc; out="$("$WYRD" brain reshape 2>&1)"; rc=$?
+    if [[ $rc -eq 0 ]]; then
+        # One move re-arms both holds: the next move, either way, needs its own full stretch of
+        # pressure or of a free card. Without this the first live run moved her twice in 38 s as
+        # the other program grew into the memory the first move had freed (second-node, 2026-09-26).
+        write_state card_busy_since ""; write_state card_free_since ""
+        if (( wr < hr )); then event card-shared "something else needed the card ($(( (others + 512) / 1024 )) GB in use by it); her brain moved its experts toward system RAM ($have → $want)"
+        else event card-reclaimed "the card was free for $(( (now - since) / 60 )) min; her brain moved back onto it ($have → $want)"; fi
+    elif [[ $rc -ne 3 ]]; then
+        log "card share: reshape failed (rc=$rc): $(printf '%s' "$out" | tail -1)"
+    fi
+}
+
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 event() {   # <event> <reason> [snapshot]
@@ -221,6 +290,7 @@ esac
 log "brainstem watching $UNIT on :$PORT every ${INTERVAL}s (state $STATE)"
 while true; do
     pass
+    card_share
     [[ "${BRAINSTEM_ONCE:-}" == "1" ]] && exit 0
     sleep "$INTERVAL"
 done

@@ -122,9 +122,10 @@ async function connectClient(
   // Advance timer to trigger WebSocket onopen
   await jest.advanceTimersByTimeAsync(1);
 
-  // Server sends INFO
+  // Server sends INFO; the client answers CONNECT + PING; the server's PONG accepts the login
   const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
   ws.simulateInfo();
+  ws.simulateMessage('PONG\r\n');
 
   await connectPromise;
   return { client: c, ws };
@@ -561,6 +562,7 @@ describe('NativeNatsClient reconnection', () => {
 
     // Complete handshake on new connection
     newWs.simulateInfo();
+    newWs.simulateMessage('PONG\r\n');
 
     // Need to let the promise chain resolve
     await jest.advanceTimersByTimeAsync(0);
@@ -595,6 +597,7 @@ describe('NativeNatsClient reconnection', () => {
     const newWs = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     await jest.advanceTimersByTimeAsync(1);
     newWs.simulateInfo();
+    newWs.simulateMessage('PONG\r\n');
     await jest.advanceTimersByTimeAsync(0);
 
     // Check new WebSocket received SUB commands for both subjects
@@ -720,6 +723,7 @@ describe('NatsBetweenAdapter platform switching', () => {
 
     const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     ws.simulateInfo();
+    ws.simulateMessage('PONG\r\n');
 
     await connectPromise;
 
@@ -734,6 +738,7 @@ describe('NatsBetweenAdapter platform switching', () => {
     await jest.advanceTimersByTimeAsync(1);
     const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     ws.simulateInfo();
+    ws.simulateMessage('PONG\r\n');
     await connectPromise;
 
     // Subscribe
@@ -762,6 +767,7 @@ describe('NatsBetweenAdapter platform switching', () => {
     await jest.advanceTimersByTimeAsync(1);
     const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     ws.simulateInfo();
+    ws.simulateMessage('PONG\r\n');
     await connectPromise;
 
     await adapter.disconnect();

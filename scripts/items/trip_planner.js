@@ -23,15 +23,15 @@ exports.manifest = {
   // adapter namespace are "openweather" (see OpenWeatherAdapter.namespace()),
   // not "openweathermap" — the old spelling was an unknown capability, so
   // this manifest was rejected and the planner never loaded.
-  capabilities: ["amadeus.read", "openweather.read"],
+  capabilities: ["amadeus.flight_search", "maps.geocode", "openweather.forecast"],
   embodiment: {
     silent: false,
     emits: ["ambient_shift"],
     descriptor_template: "A parchment map brightens; a slender route-line traces from here to the destination."
   },
   rate_limits: {
-    "amadeus.read": { per_minute: 10, per_hour: 60, per_day: 300 },
-    "openweather.read": { per_minute: 10, per_hour: 60, per_day: 300 }
+    "amadeus.flight_search": { per_minute: 10, per_hour: 60, per_day: 300 },
+    "openweather.forecast": { per_minute: 10, per_hour: 60, per_day: 300 }
   },
   data_sensitivity: "low",
   // Items-as-tools contract — invoke() reads structured params (origin,

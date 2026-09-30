@@ -1,6 +1,8 @@
 package org.wyrdsekai.app.network
 
 import java.time.Duration
+import org.wyrdsekai.app.crypto.decodeZoneKey
+import org.wyrdsekai.app.i18n.currentUiStrings
 
 /**
  * ZoneConnect — cross-relay AUTO-ATTEMPT login for a zone bank entry
@@ -67,6 +69,9 @@ object ZoneConnect {
                 authRejected = false,
             )
         }
+        // Requests to the zone are sealed to its key; without one nothing is sent.
+        val zoneKey = decodeZoneKey(zone.zk)
+            ?: return ZoneConnectResult.Error(error = currentUiStrings().secRepairTunnel, authRejected = false)
 
         for (relay in relays) {
             val client = NatsServerClient(
@@ -74,6 +79,7 @@ object ZoneConnect {
                 zoneId = zone.zoneId,
                 natsUser = relay.natsUser,
                 natsPassword = relay.natsPass,
+                zoneKey = zoneKey,
                 requestTimeout = requestTimeout,
             )
 

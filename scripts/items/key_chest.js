@@ -14,7 +14,7 @@ exports.manifest = {
   version: "2.0.0",
   description: "Cedar chest clasped in brass — every backup snapshot the household keeps; it can pack a new one or stage an old one for restore.",
   author: "did:wyrd:system",
-  capabilities: ["maintenance.backup", "maintenance.stage_restore"],
+  capabilities: ["maintenance.backup", "maintenance.stage_restore", "safe.snapshots"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

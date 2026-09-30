@@ -3,6 +3,7 @@ package org.wyrdsekai.core.mcp.transport;
 import org.wyrdsekai.core.mcp.McpServiceConfig;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +35,13 @@ public final class McpTransportFactory {
         var args = parts.length > 1
             ? List.of(Arrays.copyOfRange(parts, 1, parts.length))
             : List.<String>of();
-        return new StdioTransportHandler(command, args, Map.of());
+        // The server's own variables (its key), by name from the service entry; the rest of
+        // the daemon's environment does not reach it.
+        var env = new HashMap<String, String>();
+        for (var name : config.passEnv()) {
+            var value = System.getenv(name);
+            if (value != null) env.put(name, value);
+        }
+        return new StdioTransportHandler(command, args, env);
     }
 }

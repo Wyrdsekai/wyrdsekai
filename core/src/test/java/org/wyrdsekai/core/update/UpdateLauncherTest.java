@@ -23,4 +23,15 @@ class UpdateLauncherTest {
         assertTrue(win.contains("stage"), "Windows only stages: the .msi needs an elevation prompt a service cannot show");
         assertFalse(win.contains("now"));
     }
+
+    @Test
+    void the_nodes_own_update_leaves_codezaiku_and_researchzosho_to_their_own_settings() {
+        // Their contract: they update on their own only by CODEZAIKU_UPDATE / RESEARCHZOSHO_UPDATE; a
+        // person's `wyrd update now` asks them. The node's automatic update is nobody asking.
+        var log = Path.of("/var/lib/wyrdsekai/logs/self-update.log");
+        var linux = UpdateLauncher.command("Linux", Path.of("/opt/wyrdsekai/bin/wyrd"), log);
+        assertTrue(String.join(" ", linux).contains("update now --yes --no-siblings"), linux.toString());
+        var mac = UpdateLauncher.command("Mac OS X", Path.of("/usr/local/wyrdsekai/bin/wyrd"), log);
+        assertTrue(mac.contains("--no-siblings"), mac.toString());
+    }
 }

@@ -133,6 +133,28 @@ class PhoneNode(
     }
 
     /**
+     * This phone's login on the home's bus ([attachHomeBus]); Study sync frames
+     * are addressed by it there. Null on any other Between link.
+     */
+    private var homeBusUser: String? = null
+
+    /**
+     * Adopt the home's own bus (wss, pinned to the household CA, logged in as
+     * this phone's pairing account [busUser]) and run Study sync on it — the
+     * only Between subsystem a phone's bus login may use. The home lets a phone
+     * publish Study frames only as `between.<zone>.<busUser>.…` and hear only
+     * frames addressed to `<busUser>`: other people's frames carry their
+     * session tokens. Presence, headlines, items, dock, the MCP gateway,
+     * household events, handoff, delegation and the oracle feed are not
+     * started here: the home refuses their subjects to a phone.
+     */
+    fun attachHomeBus(bc: BetweenClient, busUser: String) {
+        homeBusUser = busUser
+        attachedBetween = bc
+        startStudySync()
+    }
+
+    /**
      * The userId that OWNS the Study: the account id when logged into a home zone
      * (stable across the user's devices, matches the zone's account-keyed Study),
      * else the companion soul DID in pure-local mode. Used for both local Study
@@ -187,8 +209,11 @@ class PhoneNode(
         studySyncJob?.cancel(); studySyncJob = null
         studySync?.stopListening(); studySync = null
         store.setDeviceId(nodeId)
-        val ss = StudySyncLayer(bc, store, nodeId, zoneId ?: familyId, studyUserDid(), scope,
-            authToken = studyAuthToken ?: deviceToken)
+        // On the home's bus the frames are addressed by this phone's login there,
+        // and it listens only for frames addressed to it.
+        val busUser = homeBusUser
+        val ss = StudySyncLayer(bc, store, busUser ?: nodeId, zoneId ?: familyId, studyUserDid(), scope,
+            authToken = studyAuthToken ?: deviceToken, directedOnly = busUser != null)
         // Surface sync outcomes as room prose — merges tell the user their Study
         // moved; a CONCURRENT conflict keeps the local copy and must be VISIBLE
         // (silent conflict-drop was a wired-but-dead audit find).
@@ -203,7 +228,7 @@ class PhoneNode(
         }
         ss.startListening()
         studySync = ss
-        println("[StudySync] up: device=$nodeId household=${zoneId ?: familyId} user=${studyUserDid()}")
+        println("[StudySync] up: device=${busUser ?: nodeId} household=${zoneId ?: familyId} user=${studyUserDid()}")
         studySyncJob = scope.launch {
             while (isActive) {
                 // println → logcat (System.out): the broadcast is the sync heartbeat;

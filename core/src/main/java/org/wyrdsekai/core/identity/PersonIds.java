@@ -94,6 +94,22 @@ public final class PersonIds {
         CACHE.clear();
     }
 
+    /**
+     * Does this identifier name a person (not a companion or a zone)? Without a resolver it
+     * answers yes, the strict reading for callers that guard a person's things.
+     */
+    public static boolean isPerson(String identifier) {
+        if (identifier == null || identifier.isBlank()) return false;
+        var r = resolverOrNull();
+        if (r == null) return true;
+        try {
+            return r.isResolvable(identifier);
+        } catch (Exception e) {
+            log.debug("isPerson('{}') failed, answering yes: {}", identifier, e.toString());
+            return true;
+        }
+    }
+
     /** Do these identifiers name the same person? Null-safe; null never matches. */
     public static boolean samePerson(String a, String b) {
         if (a == null || b == null) return false;

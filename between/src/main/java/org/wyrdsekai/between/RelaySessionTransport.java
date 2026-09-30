@@ -308,7 +308,7 @@ public class RelaySessionTransport {
             } else if (user != null && !user.isEmpty()) {
                 opts.userInfo(user, password != null ? password : "");
             }
-            var conn = Nats.connect(opts.build());
+            var conn = RelayTls.connect(opts, relayUrl);   // encrypted, relay pinned (RelayTls)
             log.info("RelaySessionTransport connected to {} (auth={})",
                 relayUrl, nodeIdentity != null ? "nkey" : "password");
             var transport = new RelaySessionTransport(conn);

@@ -102,6 +102,29 @@ class ProtectionFlagTrackerTest {
     }
 
     @Test
+    void time_decay_counts_from_when_the_flag_became_suspected_not_from_the_first_note() {
+        // "SUSPECTED held for N days". A flag NOTED on day 0 and
+        // raised to SUSPECTED on day 13 has been SUSPECTED for one day on day 14.
+        var t = new ProtectionFlagTracker();
+        t.setNoted(STEWARD, AGENT_A, "first sign", T0);
+        t.setSuspected(STEWARD, AGENT_A, "it kept landing", T0.plus(Duration.ofDays(13)));
+        var dayFourteen = t.setSuspected(STEWARD, AGENT_A, "still", T0.plus(Duration.ofDays(14)));
+        assertThat(dayFourteen.state()).isEqualTo(ProtectionFlag.State.SUSPECTED);
+        var laterStill = t.setSuspected(STEWARD, AGENT_A, "still",
+            T0.plus(Duration.ofDays(13)).plus(ProtectionFlagTracker.SUSPECTED_TIME_DECAY));
+        assertThat(laterStill.state()).isEqualTo(ProtectionFlag.State.CONFIRMED);
+    }
+
+    @Test
+    void time_decay_needs_a_sign_after_the_flag_was_raised() {
+        // "...escalates if signals continue": the sign that raised the flag is not a continuing one.
+        var t = new ProtectionFlagTracker();
+        t.setSuspected(STEWARD, AGENT_A, "initial", T0);
+        var quiet = t.escalateIfWarranted(STEWARD, T0.plus(Duration.ofDays(30)));
+        assertThat(quiet.state()).isEqualTo(ProtectionFlag.State.SUSPECTED);
+    }
+
+    @Test
     void time_decay_does_not_escalate_at_day_one() {
         var t = new ProtectionFlagTracker();
         t.setSuspected(STEWARD, AGENT_A, "initial", T0);

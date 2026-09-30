@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.wyrdsekai.between.RelaySessionTransport;
 import org.wyrdsekai.between.inference.NatsInferenceProtocol;
+import org.wyrdsekai.common.model.QuotaPolicy;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.net.InetSocketAddress;
@@ -142,12 +143,15 @@ class NatsInferenceServerDeadBackendTest {
         var server = new NatsInferenceServer(
             transport, "alpha", router, testKit.system(),
             "no-such-backend", "", true);  // empty URL → streamingEnabled=false
+        // Let beta through the agreement and signature checks so the request reaches the router.
+        server.setQuotaResolver(zone -> QuotaPolicy.family());
+        server.setZoneVerifier((zone, data, sig) -> true);
         server.start();
 
         var req = new NatsInferenceProtocol.Request(
             "s-noback", "beta", "agent-x", "m",
             List.of(new NatsInferenceProtocol.Message("user", "hi")),
-            50, 0.0, false);
+            50, 0.0, false, "beta-node", "c2lnbmVk", System.currentTimeMillis());
 
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
             .accept(MAPPER.writeValueAsBytes(req));

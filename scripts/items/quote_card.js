@@ -17,7 +17,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Compose a literary quote card from Open Library + Unsplash.",
   author: "did:wyrd:system",
-  capabilities: ["openlib.read", "unsplash.read"],
+  capabilities: ["openlib.search", "unsplash.search"],
   embodiment: {
     silent: false,
     emits: ["ambient_shift"],

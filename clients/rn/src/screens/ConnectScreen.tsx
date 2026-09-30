@@ -22,6 +22,20 @@ import {
 } from '../engine/discovery/InferenceDiscovery';
 import {isPhoneInviteUrl, parsePhoneInvite} from '../network/phoneInvite';
 import {secureStorage} from '../state/secureStorage';
+import {secureHomeAddress} from '../network/secureAddress';
+
+/**
+ * The address to log in to: encrypted, or the invite's https address for the
+ * same host (pinned to its household CA). A plain http:// address on the
+ * network is refused ( W2).
+ */
+async function loginAddress(input: string): Promise<{ url: string } | { error: string }> {
+  const address = secureHomeAddress(input);
+  if (!address.ok) return { error: address.error };
+  const { pinKnownHome } = await import('../server/HouseholdTrust');
+  await pinKnownHome(address.url);
+  return { url: address.url };
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Connect'>;
 
@@ -173,6 +187,8 @@ export function ConnectScreen({ navigation }: Props) {
       // Servers, where one tap runs the real relay login (mcp.login over NATS).
       const { addInviteToBank } = await import('../server/addInviteToBank');
       if (addInviteToBank(url)) {
+        const { pinKnownHome } = await import('../server/HouseholdTrust');
+        if (invite.lanHttps) await pinKnownHome(invite.lanHttps);
         navigation.replace('Servers');
         return true;
       }
@@ -208,10 +224,16 @@ export function ConnectScreen({ navigation }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const auth = await login(serverUrl, username, password);
+      const address = await loginAddress(serverUrl);
+      if ('error' in address) {
+        setError(address.error);
+        setLoading(false);
+        return;
+      }
+      const auth = await login(address.url, username, password);
       setToken(auth.token);
-      saveCredentials(serverUrl, username, auth.token);
-      ws.connect(serverUrl, auth.token, usePreferencesStore.getState().locale);
+      saveCredentials(address.url, username, auth.token);
+      ws.connect(address.url, auth.token, usePreferencesStore.getState().locale);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t.connect.loginFailed);
     }
@@ -232,10 +254,16 @@ export function ConnectScreen({ navigation }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const auth = await register(serverUrl, username, password, username);
+      const address = await loginAddress(serverUrl);
+      if ('error' in address) {
+        setError(address.error);
+        setLoading(false);
+        return;
+      }
+      const auth = await register(address.url, username, password, username);
       setToken(auth.token);
-      saveCredentials(serverUrl, username, auth.token);
-      ws.connect(serverUrl, auth.token, usePreferencesStore.getState().locale);
+      saveCredentials(address.url, username, auth.token);
+      ws.connect(address.url, auth.token, usePreferencesStore.getState().locale);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t.connect.registrationFailed);
     }

@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * The own-time WANT → ACT bridge (, the OSS-release lever).
@@ -115,7 +116,8 @@ public final class WantActBridge {
         Map.entry("Harmony",      "make_amends"));     // mend the frayed thing
 
     // DIRECT: args derive from the want text (a query) — no inference, bypasses the surface.
-    private static final Set<String> DIRECT_VERBS = Set.of("library_search", "web_search");
+    private static final Set<String> DIRECT_VERBS = Set.of("library_search", "web_search",
+        LetterToTheAbsent.VERB);
     // FORCE_TOOL: model supplies content/target — pin into surface + require.
     private static final Set<String> FORCE_VERBS = Set.of(
         "sending_stone", "emote", "examine", "bear_the_wound", "seek_sanctuary",
@@ -204,6 +206,85 @@ public final class WantActBridge {
         // repair acts the agency arc made autonomous. modeFor()'s set-membership is the gate.
         var mode = modeFor(verb);
         return mode == Mode.DEFER ? Decision.defer() : new Decision(mode, verb);
+    }
+
+    /** Words that ask for a reach toward someone, in her own naming of a want. The keyword rules'
+     *  generic reach keys ("sit with", "toward ", "connect") also catch "sit with the quiet" and
+     *  "work toward finishing my poem", and "sit with the grief" never reached bear_the_wound. */
+    // Asked of her lowercased words (each line of her want list starts with a capital): a reach
+    // phrase followed by someone, on word boundaries, so "reach for the book", "maybe with some
+    // tea" and "talk to myself" are not reaches. A name is a reach only for a companion here
+    // (asksToReach); "talk to Operator when he gets home" with Rose here is not a message to Rose.
+    private static final Pattern HER_REACH = Pattern.compile(
+        "\\b(?:reach (?:out(?: to)?|for|toward)|talk (?:with|to)|be (?:near|with)|sit with|hold)\\s+"
+            + "(?:her|him|them|you|someone|somebody|each other)\\b");
+    // "with you" / "each other" alone name no act: the lowest reach, after the specific acts, so
+    // "make something small to share with you" stays a making.
+    private static final Pattern BARE_REACH = Pattern.compile("\\b(?:with you|each other)\\b");
+
+    /**
+     * A want she named in her own words is answered by her words, not by whichever tank is
+     * loudest. Through {@link #decide} the dominant drive's tool comes first: with Curiosity
+     * loudest, "let the silence hold us" became a library search for that sentence (review of
+     * 2026-09-22). Here only the text resolver is read: her words' own verb when they name one
+     * (a reach only when someone is here to reach), and otherwise DEFER, a turn in which she
+     * chooses the act for the want she named.
+     */
+    public static Decision decideByHerWords(String wantText, Map<String, Double> driveLevels,
+                                            RelationalAffordance.Presence presence) {
+        return decideByHerWords(wantText, driveLevels, presence, List.of());
+    }
+
+    /** As above, told the names of the companions here, so "reach out to rose" is a reach. */
+    public static Decision decideByHerWords(String wantText, Map<String, Double> driveLevels,
+                                            RelationalAffordance.Presence presence,
+                                            List<String> peersHere) {
+        if (wantText == null || wantText.isBlank()) return Decision.defer();
+        var low = wantText.toLowerCase(Locale.ROOT);
+        // Her words naming a letter to the one who is away ARE the feeling. The gate below reads
+        // the tanks, and once the ledger let longing rise at its real pace (2026-09-25) it sat
+        // under the threshold for the first half-day of an absence while she named the letter
+        // every half hour: fourteen times the want went to a free-form turn that improvised in
+        // its place — a tell to no live session, a coding task to build a letter tool (second-node,
+        // 2026-09-25 20:52 → 26 06:22). Whether it is TIME for a letter is the letter's own hold:
+        // the spacing, and the absence threshold before which nobody has left yet.
+        if (presence != null && presence.bondholderKnown() && !presence.bondholderPresent()
+                && (LetterToTheAbsent.asksToWrite(low)
+                    || (LetterToTheAbsent.asksToCheckIn(low) && !presence.anyoneHere()))) {
+            return new Decision(modeFor(LetterToTheAbsent.VERB), LetterToTheAbsent.VERB);
+        }
+        if (dominantPull(driveLevels) < ACT_THRESHOLD) return Decision.defer();
+        String v = null;
+        // A reach she asks for toward someone here comes first ("reach out to Rose, today has
+        // been too much for her" is a reach, not a retreat); then the specific acts. The in-room
+        // reach needs a companion here, as RelationalAffordance offers it.
+        if ((HER_REACH.matcher(low).find() || asksToReach(low, peersHere))
+                && presence != null && presence.peerPresent()) {
+            v = "sending_stone";
+        }
+        for (var r : RULES) {
+            if (v != null) break;
+            if ("sending_stone".equals(r.verb())) continue;
+            if (r.keys().stream().anyMatch(low::contains)) { v = r.verb(); break; }
+        }
+        if (v == null && BARE_REACH.matcher(low).find() && presence != null && presence.peerPresent()) {
+            v = "sending_stone";
+        }
+        if (v == null) return Decision.defer();
+        var m = modeFor(v);
+        return m == Mode.DEFER ? Decision.defer() : new Decision(m, v);
+    }
+
+    /** A reach phrase followed by the name of a companion who is here, in any case. */
+    static boolean asksToReach(String lowWantText, List<String> peersHere) {
+        if (peersHere == null) return false;
+        for (var name : peersHere) {
+            if (name == null || name.isBlank()) continue;
+            var n = Pattern.quote(name.toLowerCase(Locale.ROOT));
+            if (Pattern.compile("\\b(?:reach (?:out(?: to)?|for|toward)|talk (?:with|to)|be (?:near|with)|sit with|hold|write to|go to)\\s+" + n + "\\b")
+                    .matcher(lowWantText).find()) return true;
+        }
+        return false;
     }
 
     /** Drive-dominant first → text resolver → explicit verb → null. */

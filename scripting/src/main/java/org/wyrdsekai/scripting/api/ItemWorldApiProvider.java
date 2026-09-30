@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -91,6 +92,15 @@ public interface ItemWorldApiProvider {
      */
     String llmAnalyze(String text, String prompt);
 
+    /**
+     * Rewrite text by an instruction (polish, translate, reformat). Unlike analyze, nothing about
+     * today is added to the request: a date in front of the model ends up in the rewritten text.
+     * Scripts reach it as {@code world.llm.analyze(text, prompt, {now: "none"})}.
+     */
+    default String llmRewrite(String text, String instruction) {
+        return llmAnalyze(text, instruction);
+    }
+
     // ─── Agent Actions (thread-safe) ─────────────────────────────
 
     /** Speak text in the current room. Thread-safe: sends tell to room actor. */
@@ -170,6 +180,15 @@ public interface ItemWorldApiProvider {
      * @return Result map from the invoked item, or error map
      */
     Map<String, Object> inventoryUse(String itemId, Map<String, Object> params, int depth);
+
+    /**
+     * Composition under the calling item's capabilities: the item being used may do no more than
+     * the item using it ({@code ceiling}), whatever its own manifest says.
+     */
+    default Map<String, Object> inventoryUse(String itemId, Map<String, Object> params, int depth,
+                                             ItemCapabilitySet ceiling) {
+        return inventoryUse(itemId, params, depth);
+    }
 
     // ─── Zone Awareness ──────────────────────────────────────────
 
@@ -407,7 +426,9 @@ public interface ItemWorldApiProvider {
     /**
      * Parental controls per member (parental-controls scroll). Each entry:
      * {@code username, displayName, dailyMinutes, dailyInference,
-     * contentFilter, blockedRooms, minutesUsedToday, inferencesUsedToday}.
+     * dailyResearch (null = the household's setting), researchPerDay (what
+     * holds), contentFilter, blockedRooms, minutesUsedToday,
+     * inferencesUsedToday, researchAskedToday}.
      * Steward sees every controlled member; a non-steward sees only their
      * own entry. Empty when no parental service is wired on this surface.
      */
@@ -425,7 +446,9 @@ public interface ItemWorldApiProvider {
     /**
      * Set one control field for a member (steward-only at the service;
      * caller = acting player). Fields: {@code minutes} / {@code inference}
-     * (number or {@code "off"}), {@code filter} ({@code strict}/{@code off}),
+     * (number or {@code "off"}), {@code research} (library research runs a
+     * day: a number, 0 = none, or {@code "default"} for the household's
+     * setting), {@code filter} ({@code strict}/{@code off}),
      * {@code block-room} / {@code unblock-room} (room-id glob).
      */
     default Map<String, Object> parentalSet(String username, String field, Object value) {
@@ -1816,8 +1839,11 @@ public interface ItemWorldApiProvider {
     /** §4.18 — does a slot exist. Tier 4. */
     default boolean safeHas(String slot) { return false; }
 
-    /** §4.18 — read a slot value. Tier 5. */
-    default String safeGet(String slot) { return null; }
+    /**
+     * §4.18 — the secret in a slot, for the HTTP layer to put into a request header. Scripts never
+     * see this: {@code world.safe.get} hands them a reference ({@link SafeRefs}). Empty when unset.
+     */
+    default Optional<String> safeSecretForRequest(String slot) { return Optional.empty(); }
 
     /** §4.18 — write a slot value. Tier 5. */
     default Map<String, Object> safeSet(String slot, String value) {

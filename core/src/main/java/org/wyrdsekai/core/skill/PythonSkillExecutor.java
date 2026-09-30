@@ -2,6 +2,7 @@ package org.wyrdsekai.core.skill;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.security.SubprocessEnv;
 import org.wyrdsekai.core.soul.FamilyLocker;
 import org.wyrdsekai.core.soul.SoulItem;
 
@@ -27,6 +28,8 @@ import java.util.concurrent.TimeUnit;
 public class PythonSkillExecutor implements SkillExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(PythonSkillExecutor.class);
+    /** A skill script gets a clean environment: no daemon credential reaches it. */
+    static final SubprocessEnv ENV = SubprocessEnv.of("PYTHONIOENCODING", "PYTHONUTF8");
     private static final String PREFIX = "workbench.";
 
     /** Default script timeout in seconds. */
@@ -113,7 +116,7 @@ public class PythonSkillExecutor implements SkillExecutor {
             if (timeoutSec <= 0) timeoutSec = DEFAULT_TIMEOUT_SECONDS;
 
             // Execute
-            var pb = new ProcessBuilder("python3", scriptFile.toString())
+            var pb = ENV.builder("python3", scriptFile.toString())
                 .directory(workspaceRoot.toFile())
                 .redirectErrorStream(false);
 

@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * Group B wiring.
@@ -57,8 +58,8 @@ class SaudadeCeilingTest {
         var farFuture = t0.plus(Duration.ofDays(30));
         var ceilings = Map.of(alice, SaudadeLedger.ceilingForBondState(BondState.ACTIVE));
         ledger.accumulate(Duration.ofDays(30).toSeconds(), farFuture, ceilings);
-        // 30 days * 0.005/min should saturate to 1.0
-        assertThat(ledger.saudadeFor(alice)).isEqualTo(1.0);
+        // 30 days of absence settle at the set point; nothing pins at 1.0 any more.
+        assertThat(ledger.saudadeFor(alice)).isCloseTo(VitalityState.SAUDADE_SETPOINT, within(0.01));
     }
 
     @Test
@@ -68,10 +69,10 @@ class SaudadeCeilingTest {
         var t0 = Instant.parse("2026-05-17T10:00:00Z");
         ledger.recordInteraction(alice, t0);
 
-        // First: 30 days at ACTIVE → tank goes to 1.0
+        // First: 30 days at ACTIVE for a temperament that feels it acutely → the value caps at 1.0
         var phase1 = t0.plus(Duration.ofDays(30));
         ledger.accumulate(Duration.ofDays(30).toSeconds(), phase1,
-            Map.of(alice, SaudadeLedger.ceilingForBondState(BondState.ACTIVE)));
+            Map.of(alice, SaudadeLedger.ceilingForBondState(BondState.ACTIVE)), 1.5);
         assertThat(ledger.saudadeFor(alice)).isEqualTo(1.0);
 
         // Now bond transitions to DORMANT. Even a zero-delta accumulate
@@ -90,9 +91,9 @@ class SaudadeCeilingTest {
         var t0 = Instant.parse("2026-05-17T10:00:00Z");
         ledger.recordInteraction(alice, t0);
         var farFuture = t0.plus(Duration.ofDays(30));
-        // Old 2-arg call — no ceilings — should saturate to 1.0 as before.
+        // Old 2-arg call — no ceilings — settles at the default set point.
         ledger.accumulate(Duration.ofDays(30).toSeconds(), farFuture);
-        assertThat(ledger.saudadeFor(alice)).isEqualTo(1.0);
+        assertThat(ledger.saudadeFor(alice)).isCloseTo(VitalityState.SAUDADE_SETPOINT, within(0.01));
     }
 
     @Test

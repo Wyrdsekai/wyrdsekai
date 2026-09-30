@@ -39,6 +39,8 @@ type SendData = string | ArrayBuffer | ArrayBufferView;
 interface NativeRelaySocketModule {
   connect(socketId: string, url: string): void;
   send(socketId: string, base64: string): void;
+  /** A text frame (text mode: the home's /ws reads text frames only). */
+  sendText?(socketId: string, text: string): void;
   close(socketId: string): void;
 }
 
@@ -102,8 +104,10 @@ let nextSocketId = 1;
  * WebSocket-style handler properties.
  */
 class NativeRelaySocket {
-  // WebSocket-compat fields NativeNatsClient touches.
+  // WebSocket-compat fields NativeNatsClient / WyrdWebSocket touch.
   binaryType: 'arraybuffer' | 'blob' = 'arraybuffer';
+  /** WebSocket readyState: 0 connecting, 1 open, 3 closed. */
+  readyState = 0;
   onopen: ((ev?: unknown) => void) | null = null;
   onmessage: ((ev: RelayMessageEvent) => void) | null = null;
   onerror: ((ev?: unknown) => void) | null = null;
@@ -114,8 +118,12 @@ class NativeRelaySocket {
   private readonly emitter: NativeEventEmitter;
   private subscription: { remove: () => void } | null = null;
   private closed = false;
+  private readonly text: boolean;
+  private closeCode: number | undefined;
+  private closeReason: string | undefined;
 
-  constructor(url: string, module: NativeRelaySocketModule) {
+  constructor(url: string, module: NativeRelaySocketModule, text = false) {
+    this.text = text;
     this.socketId = `relay-${nextSocketId++}`;
     this.module = module;
     // The native module IS a non-null argument, so this NativeEventEmitter
@@ -134,6 +142,7 @@ class NativeRelaySocket {
     if (ev.id !== this.socketId) return; // Not our socket.
     switch (ev.type) {
       case 'open':
+        this.readyState = 1;
         this.onopen?.();
         break;
       case 'message':
@@ -143,7 +152,9 @@ class NativeRelaySocket {
         // NativeNatsClient handles ArrayBuffer too.
         if (typeof ev.data === 'string') {
           const bytes = base64ToBytes(ev.data);
-          this.onmessage?.({ data: bytes.buffer as ArrayBuffer });
+          this.onmessage?.({
+            data: this.text ? new TextDecoder().decode(bytes) : (bytes.buffer as ArrayBuffer),
+          });
         }
         break;
       case 'error':
@@ -151,11 +162,15 @@ class NativeRelaySocket {
         break;
       case 'closing':
         // No discrete CLOSING callback on the JS WebSocket surface
-        // NativeNatsClient uses; the terminal 'closed' drives onclose.
+        // NativeNatsClient uses; the terminal 'closed' drives onclose. Keep the
+        // server's close code and reason for it (e.g. the home's 4001).
+        this.closeCode = ev.code;
+        this.closeReason = ev.reason;
         break;
       case 'closed':
+        this.readyState = 3;
         this.cleanupListener();
-        this.onclose?.({ code: ev.code, reason: ev.reason });
+        this.onclose?.({ code: ev.code ?? this.closeCode, reason: ev.reason ?? this.closeReason });
         break;
     }
   }
@@ -169,12 +184,18 @@ class NativeRelaySocket {
 
   send(data: SendData): void {
     if (this.closed) return;
+    if (this.text && typeof data === 'string' && this.module.sendText) {
+      this.module.sendText(this.socketId, data);
+      return;
+    }
     this.module.send(this.socketId, bytesToBase64(sendDataToBytes(data)));
   }
 
-  close(): void {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  close(_code?: number, _reason?: string): void {
     if (this.closed) return;
     this.closed = true;
+    this.readyState = 3;
     this.module.close(this.socketId);
     // The native 'closed' event fires onclose + cleans the listener; if the
     // module never reports back (shouldn't happen), drop the listener anyway.
@@ -189,12 +210,13 @@ class NativeRelaySocket {
  */
 export interface RelaySocketLike {
   binaryType: 'arraybuffer' | 'blob';
+  readonly readyState: number;
   onopen: ((ev?: unknown) => void) | null;
   onmessage: ((ev: RelayMessageEvent) => void) | null;
   onerror: ((ev?: unknown) => void) | null;
   onclose: ((ev?: unknown) => void) | null;
   send(text: string): void;
-  close(): void;
+  close(code?: number, reason?: string): void;
 }
 
 /**
@@ -202,9 +224,9 @@ export interface RelaySocketLike {
  * module is linked; otherwise the global WebSocket (Android OkHttp-pinned, web,
  * tests). Returns a RelaySocketLike either way.
  */
-export function createRelaySocket(url: string): RelaySocketLike {
+export function createRelaySocket(url: string, opts?: { text?: boolean }): RelaySocketLike {
   if (nativeRelaySocket) {
-    return new NativeRelaySocket(url, nativeRelaySocket) as unknown as RelaySocketLike;
+    return new NativeRelaySocket(url, nativeRelaySocket, opts?.text === true) as unknown as RelaySocketLike;
   }
   // eslint-disable-next-line no-undef
   const ws = new WebSocket(url);

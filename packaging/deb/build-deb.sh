@@ -7,14 +7,14 @@
 #
 # Usage:
 #   ./packaging/deb/build-deb.sh               # Uses build/dist/wyrdsekai-<version>/
-#   WYRDSEKAI_VERSION=0.4.2 ./packaging/deb/build-deb.sh
+#   WYRDSEKAI_VERSION=0.5.0 ./packaging/deb/build-deb.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.4.2}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.0}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
@@ -242,18 +242,27 @@ if compgen -G "$ORACLE_WHL/oracle_core-*.whl" >/dev/null 2>&1; then
     info "Bundled oracle-core wheel for native Oracle sidecar"
 fi
 
+# The household bus of a package install: the wyrdsekai-nats service, run as its own user. The
+# node starts it once it has written the household include (NatsServerManager), and falls back to a
+# nats-server of its own only when the service does not come up. The settings match the one the node
+# would start (NatsServerManager.writeConfig): payload, connections, write deadline, JetStream (account
+# replication). The listen addresses, TLS, every client's login and the phones' websocket are in the
+# household include the node writes at boot and rewrites when a machine or phone is paired
+# ( W2). nats-server resolves includes against this file's folder only, hence
+# the relative path. Until the node has booted once the include is missing and the service does not
+# start: it never runs without login and encryption.
 cat > "$DEB_ROOT/opt/wyrdsekai/etc/nats.conf" << 'NATSCONF'
-listen: 0.0.0.0:4222
-max_payload: 65536
+http: "127.0.0.1:8222"
+max_payload: 1048576
+max_connections: 64
+write_deadline: "60s"
 
-# JetStream disabled by default (enable for Between persistence)
-# jetstream { store_dir: /var/lib/wyrdsekai/jetstream }
-
-# WebSocket listener for mobile clients (NATS-over-WS, G2 2026-07-11)
-websocket {
-  listen: "0.0.0.0:4223"
-  no_tls: true
+# JetStream for persistent streams (account replication, checkpoints); the unit's StateDirectory.
+jetstream {
+  store_dir: "/var/lib/wyrdsekai-nats"
 }
+
+include "../../../var/lib/wyrdsekai/nats/household-bus.conf"
 NATSCONF
 
 # Data directory (marked as config so upgrades preserve it)
@@ -350,10 +359,21 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/opt/wyrdsekai/bin/nats-server -c /opt/wyrdsekai/etc/nats.conf
+# The node rewrites the household include when a machine or phone is paired, then reloads.
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=5
-User=nobody
-Group=nogroup
+# Its own system user (postinst). May read the household certificate's key and the include (0640 to
+# this group, through folders open to this group only), nothing else of the node's.
+User=wyrdsekai-nats
+Group=wyrdsekai-nats
+# JetStream's store: /var/lib/wyrdsekai-nats, made and owned for the user above by systemd.
+StateDirectory=wyrdsekai-nats
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -449,10 +469,9 @@ WantedBy=multi-user.target
 EOF
 
 # Main Wyrdsekai server service
-# Note: no dependency on wyrdsekai-nats.service — BetweenActor spawns its own
-# embedded nats-server. The bundled wyrdsekai-nats.service exists only for
-# nodes that want NATS standalone (no Java server), and would collide on
-# port 4222 if both were running.
+# Note: no dependency on wyrdsekai-nats.service. The node starts it once it has written the
+# household include the service reads (NatsServerManager), and runs a nats-server of its own only
+# when the service does not come up.
 # The brainstem watches the server from outside the JVM: heartbeat, hang detection with a
 # database snapshot before the restart, door hooks, an event ledger the server reads. It is
 # independent of the server unit (no After=), lives below it in the OOM order, and never acts
@@ -639,7 +658,7 @@ update-desktop-database -q 2>/dev/null || true
 # Canonical state + config dirs (Phase 1 + Phase 3). /var/lib follows FHS,
 # /etc/wyrdsekai holds the single config file the systemd unit reads.
 mkdir -p /var/lib/wyrdsekai /etc/wyrdsekai
-chmod 755 /var/lib/wyrdsekai /etc/wyrdsekai
+chmod 755 /etc/wyrdsekai
 
 # If there is no config file yet, drop a skeleton so `wyrd config list`
 # has something to show and admins know where to edit.
@@ -705,22 +724,23 @@ if [ -d /opt/wyrdsekai/share/oracle ]; then
         echo "[wyrdsekai] oracle bootstrap deferred (no network?) — run 'wyrd oracle bootstrap' later"
 fi
 
-# Reload systemd unit cache. BetweenActor spawns its own embedded nats-server
-# when the main wyrdsekai service starts, so we do NOT enable wyrdsekai-nats
-# by default — it exists only for standalone-NATS deployments and would
-# collide on port 4222 with the embedded server. wyrdsekai-llama is also
+# Reload systemd unit cache. wyrdsekai-nats is not enabled: the node starts it at every start,
+# after writing the household include it reads (see the unit). wyrdsekai-llama is also
 # disabled by default — `wyrd inference local` enables it on demand.
 systemctl daemon-reload 2>/dev/null || true
 # Defensive: Phase 1 cleanup in case an old install left nats masked.
 systemctl unmask wyrdsekai-nats 2>/dev/null || true
+# The wyrdsekai-nats service's group: the node makes the household certificate's key and the bus
+# include readable to it (0640), so the service, run as its own user in that group, can serve TLS
+# and logins.
+getent group wyrdsekai-nats >/dev/null 2>&1 || groupadd --system wyrdsekai-nats 2>/dev/null || true
+# ...and its own user (it ran as nobody before 0.5.0; a user that owns files should not be nobody).
+getent passwd wyrdsekai-nats >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent \
+    --gid wyrdsekai-nats --shell /usr/sbin/nologin wyrdsekai-nats 2>/dev/null || true
 
-# Deliberately NOT enabled/started here. The server spawns its own nats-server
-# (NatsServerManager) from a *generated* /var/lib/wyrdsekai/nats.conf carrying
-# the household accounts and per-session ACLs. This unit uses the packaged
-# /opt/wyrdsekai/etc/nats.conf, which has neither. Since NatsServerManager
-# reuses any healthy :4222 rather than replacing it, enabling this unit would
-# make the zone come up on the un-scoped config after every reboot. It exists
-# for operators who deliberately run NATS externally.
+# Deliberately NOT enabled/started here: until the node has written the household include
+# (listen addresses, TLS, logins) the service cannot start, and the node starts it itself
+# once it has.
 
 # Oracle forecasting sidecar — enable + start by default so the Oracle is
 # available on native installs. The unit's ExecStartPre guards against a
@@ -763,6 +783,22 @@ if [ ! -f "$BOOTSTRAP_INVITE" ] && command -v wyrd >/dev/null 2>&1; then
         :
     fi
 fi
+
+# The data directory holds the household's private life (the record, souls, journals,
+# keys, backups): closed to other local users (audit W4, 2026-09-28; it was 755 with the
+# umask's 644 files). 0711: the unprivileged llama unit (User=nobody) can still reach
+# models/ by path and nobody can list anything. Every entry except models/ loses all access
+# for others; the three the per-being principals open to the beings' users are left to the
+# server, which closes them too when the hands are shared (Principals.closeToOthers, at boot).
+chmod 0711 /var/lib/wyrdsekai
+for _p in /var/lib/wyrdsekai/* /var/lib/wyrdsekai/.[!.]*; do
+    [ -e "$_p" ] || continue
+    [ -L "$_p" ] && continue
+    case "${_p##*/}" in
+        models|beings|coding-workspaces|coding-cli-bundle) continue ;;
+    esac
+    chmod o-rwx "$_p" 2>/dev/null || true
+done
 
 # Single-owner household: hand the state + config dirs to the human who ran
 # `sudo dpkg -i`, so `wyrd setup` and `wyrd config` work WITHOUT sudo. The bug
@@ -853,6 +889,25 @@ if [ -n "$2" ]; then
         fi
     else
         echo "wyrdsekai: upgraded (service was stopped before the upgrade — left stopped)."
+    fi
+    # The search sidecar reads its settings file only when it starts, and dpkg replaces the
+    # file by rename, so a running container keeps the old one mounted. Compare what the
+    # running container has mounted with the new file and restart it when they differ (a few
+    # seconds of search). This needs only docker, not the main service, so it runs on every
+    # upgrade, and a restart an earlier upgrade missed is caught by the next one.
+    if command -v docker >/dev/null 2>&1 \
+       && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx wyrdsekai-searxng; then
+        new_sx="$(sha256sum /opt/wyrdsekai/docker/searxng-settings.yml 2>/dev/null | cut -c1-64 || true)"
+        run_sx="$(docker exec wyrdsekai-searxng sha256sum /etc/searxng/settings.yml 2>/dev/null | cut -c1-64 || true)"
+        # An exec that cannot start prints docker's own error on stdout, not a digest.
+        case "$run_sx" in *[!0-9a-f]*) run_sx='' ;; esac
+        if [ -n "$new_sx" ] && [ "${#run_sx}" -eq 64 ] && [ "$run_sx" != "$new_sx" ]; then
+            if docker restart wyrdsekai-searxng >/dev/null 2>&1; then
+                echo "wyrdsekai: search was running older settings — restarted with this version's."
+            else
+                echo "wyrdsekai: search is running older settings — could not restart it; run 'docker restart wyrdsekai-searxng'."
+            fi
+        fi
     fi
     # Upgrades skip the first-run banner below.
     exit 0

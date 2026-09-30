@@ -111,7 +111,7 @@ public final class SecurityPatternManager {
 
     // --- Built-in patterns ---
 
-    private static List<SecurityPattern> builtinInjectionPatterns() {
+    static List<SecurityPattern> builtinInjectionPatterns() {
         var patterns = new ArrayList<SecurityPattern>();
 
         // System prompt overrides

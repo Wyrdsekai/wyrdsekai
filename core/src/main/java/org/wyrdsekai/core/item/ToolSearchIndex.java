@@ -204,7 +204,7 @@ public class ToolSearchIndex {
         // drag EmbeddingService.init() (a 118 MB model load) onto the actor thread — the very stall
         // warmAsync() exists to avoid. A cold index answers lexically and gets vectors on the next
         // turn; that is a far better trade than freezing the companion mid-sentence.
-        if (embeddingAvailable && !embeddings.isEmpty()) {
+        if (vectorsReady()) {
             var queryVec = embed(query);
             if (queryVec != null) return vectorSearch(query, queryVec, topK);
         }
@@ -221,6 +221,18 @@ public class ToolSearchIndex {
                 + "embedding model.");
         }
         return keywordSearch(query, topK);
+    }
+
+    /**
+     * Whether every registered tool has a vector. vectorSearch scores a tool with no vector at
+     * cosine 0, so a half-finished warm-up ranked whatever registered last (a crafted item, a
+     * room's tools, the tell_agent a forced reach adds) below everything embedded before it; the
+     * gate caught it on 2026-09-23 when an embedder already warm in the same JVM made the race
+     * likely. Until then the lexical ranker answers, as {@link #warmAsync()} says.
+     */
+    boolean vectorsReady() {
+        return embeddingAvailable && !embeddings.isEmpty()
+            && embeddings.keySet().containsAll(descriptions.keySet());
     }
 
     /**

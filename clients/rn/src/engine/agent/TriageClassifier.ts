@@ -1,4 +1,5 @@
 import {ChatMessage, CompletionOptions, ChatResponse} from '../../inference/types';
+import {NowLine} from '../../inference/NowLine';
 
 /**
  * Classifies user input as ROUTINE, SIMPLE, or COMPLEX to route between
@@ -132,7 +133,8 @@ async function llmClassify(text: string, infer: InferFn): Promise<Tier> {
     {role: 'system', content: CLASSIFICATION_PROMPT},
     {role: 'user', content: `Message: "${text}"`},
   ];
-  const response = await infer(messages, {maxTokens: 8, temperature: 0.1});
+  // A classifier: the date would only be noise in a one-word answer.
+  const response = await infer(messages, {maxTokens: 8, temperature: 0.1, now: NowLine.NONE});
   const answer = response.content.trim().toUpperCase();
   return answer.includes('COMPLEX') ? 'complex' : 'simple';
 }

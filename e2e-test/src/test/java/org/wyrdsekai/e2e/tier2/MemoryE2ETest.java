@@ -255,8 +255,14 @@ class MemoryE2ETest {
         }
 
         // Phase 2: Wait for conversation grace period, then force sleep
-        System.out.println("[MEMORY-6] Waiting 36s for conversation grace period...");
-        Thread.sleep(36_000);
+        // The companion rightly will not fall asleep within 30 s of the last thing said. A fixed
+        // 36 s wait assumed her last line had already landed; a slower model (or a model across
+        // the network) speaks later, the single sleep check then saw too little quiet, and she
+        // stayed awake (2026-09-21, 35B over the mesh). Listen until the room has really been quiet.
+        System.out.println("[MEMORY-6] Waiting for the room to be quiet for 40s...");
+        try (var quietWs = connect()) {
+            waitForQuietRoom(quietWs, 40_000, 180_000);
+        }
 
         var ref = ZoneGuardian.getCompanionRef(null, "companion-wyrd");
         assertNotNull(ref, "Companion ref should be resolvable");
@@ -318,6 +324,7 @@ class MemoryE2ETest {
             .connectTimeout(Duration.ofSeconds(10)).build();
         var askRequest = HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + "/api/resident/ask"))
+            .header("Authorization", "Bearer " + server.residentToken())
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(
                 "{\"message\":\"What do you know about Alice Chen?\",\"timeout\":60}"))
@@ -370,6 +377,23 @@ class MemoryE2ETest {
     }
 
     // ── Infrastructure ──────────────────────────────────────────────────
+
+    /** Block until nothing has been said in the room for {@code quietMs}, or {@code maxMs} passes. */
+    private static void waitForQuietRoom(TestWebSocketClient ws, long quietMs, long maxMs) {
+        long quietSince = System.currentTimeMillis();
+        long giveUp = quietSince + maxMs;
+        while (System.currentTimeMillis() - quietSince < quietMs && System.currentTimeMillis() < giveUp) {
+            try {
+                var heard = ws.waitForMessage(m -> {
+                    var type = m.path("type").asText("");
+                    return "prose".equals(type) || "emote".equals(type);
+                }, Duration.ofSeconds(5));
+                if (heard != null) quietSince = System.currentTimeMillis();
+            } catch (ConditionTimeoutException quiet) {
+                // nothing said in the last five seconds
+            }
+        }
+    }
 
     private TestWebSocketClient connect() throws Exception {
         var ws = TestWebSocketClient.connect(server.baseUrl());

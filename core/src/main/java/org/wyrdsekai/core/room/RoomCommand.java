@@ -159,15 +159,30 @@ public sealed interface RoomCommand {
         }
     }
 
-    /** Initialize a new room. */
+    /**
+     * Initialize a new room. {@code createdBy} is who made it, as the steward reads it in
+     * {@code wyrd rooms list} (a companion's name, a person's username); null means the node
+     * itself, recorded as "system". Until 2026-09-26 every room said "system", the 31 a
+     * companion built that week included, so a steward could not tell whose a room was.
+     */
     record CreateRoom(String name, String description, String zone,
                       List<String> aliases, List<Exit> exits, List<RoomObject> objects,
-                      ActorRef<RoomResponse> replyTo) implements RoomCommand {
-        /** Backward-compatible constructor — no aliases. */
+                      String createdBy, ActorRef<RoomResponse> replyTo) implements RoomCommand {
+        /** Backward-compatible constructor — with aliases, no maker. */
+        public CreateRoom(String name, String description, String zone,
+                          List<String> aliases, List<Exit> exits, List<RoomObject> objects,
+                          ActorRef<RoomResponse> replyTo) {
+            this(name, description, zone, aliases, exits, objects, null, replyTo);
+        }
+        /** Backward-compatible constructor — no aliases, no maker. */
         public CreateRoom(String name, String description, String zone,
                           List<Exit> exits, List<RoomObject> objects,
                           ActorRef<RoomResponse> replyTo) {
-            this(name, description, zone, List.of(), exits, objects, replyTo);
+            this(name, description, zone, List.of(), exits, objects, null, replyTo);
+        }
+        /** The maker for the record: what was given, else the node. */
+        public String makerOrSystem() {
+            return createdBy == null || createdBy.isBlank() ? "system" : createdBy.strip();
         }
     }
 

@@ -1,3 +1,4 @@
+import json
 """tests for the relay registration sidecar.
 
 Covers /register-nkey idempotency, /re-register-nkey signature verification,
@@ -75,6 +76,8 @@ authorization {
     users = [
         { user: "peer_trainer", password: "secret",
           permissions: { publish: { allow: ["training.>"] } } }
+        { user: "ops_monitor", password: "secret",
+          permissions: { subscribe: { allow: ["ops.>"] } } }
     ]
 }
 """)
@@ -96,6 +99,25 @@ sys.path.insert(0, str(Path(__file__).parent))
 import registration  # noqa: E402
 
 
+# Keys made by the tests, so _register_nkey can sign for them.
+_SIGNERS = {}
+
+
+def _register_nkey(ip, pubkey, **kw):
+    """register_nkey with what the relay requires since zone binding: a zone
+    label (a per-key default unless the test names one) and the NKey's
+    signature over register-nkey:{ts}:{pubkey}:{zone_id}."""
+    if isinstance(pubkey, str):
+        kw.setdefault("zone_id", "z-" + pubkey[-10:].lower())
+    kp = _SIGNERS.get(pubkey)
+    if kp is not None and "signature" not in kw:
+        ts = int(time.time())
+        kw["ts"] = ts
+        kw["signature"] = base64.b64encode(
+            kp.sign(f"register-nkey:{ts}:{pubkey}:{kw['zone_id']}".encode())).decode()
+    return registration.register_nkey(ip, pubkey, **kw)
+
+
 def _make_keypair():
     """Return (pubkey_str, signer) for a fresh NATS user NKey.
 
@@ -109,6 +131,7 @@ def _make_keypair():
     seed = nkeys.encode_seed(sk.encode(), nkeys.PREFIX_BYTE_USER)
     kp = nkeys.from_seed(seed)
     pubkey = kp.public_key.decode("ascii")
+    _SIGNERS[pubkey] = kp
     return pubkey, kp
 
 
@@ -120,7 +143,7 @@ def reset_state():
               registration.RELAY_ADMIN_GRANTS_FILE,
               registration.OWNER_CLAIM_TOKENS_FILE,
               registration.RELAY_POLICY_FILE, registration.RELAY_VOUCHES_FILE,
-              registration.RELAY_REPORTS_FILE):
+              registration.RELAY_REPORTS_FILE, registration.ZONE_MEMBERS_FILE):
         if f.exists():
             f.unlink()
     # Reset the env-seeded owner so owner_did() doesn't leak across tests.
@@ -276,7 +299,7 @@ class TestNkeyToDid:
 
     def test_register_nkey_stamps_did(self):
         pubkey, _ = _make_keypair()
-        r = registration.register_nkey("127.0.0.1", pubkey,
+        r = _register_nkey("127.0.0.1", pubkey,
                                        household_tag="hh-d", zone_id="z")
         assert "pubkey" in r
         regs = registration.load_registrations()
@@ -313,17 +336,17 @@ class TestNkeyToDid:
 class TestRegisterNkey:
     def test_idempotent_same_pubkey_succeeds_twice(self):
         pubkey, _ = _make_keypair()
-        r1 = registration.register_nkey("127.0.0.1", pubkey,
+        r1 = _register_nkey("127.0.0.1", pubkey,
                                         household_tag="hh-x", zone_id="z")
         assert "pubkey" in r1, f"first call should succeed: {r1}"
         # Second call with the SAME pubkey should also succeed (drift-recovery).
-        r2 = registration.register_nkey("127.0.0.1", pubkey,
+        r2 = _register_nkey("127.0.0.1", pubkey,
                                         household_tag="hh-x", zone_id="z")
         assert "pubkey" in r2
         assert r1["pubkey"] == r2["pubkey"]
 
     def test_invalid_pubkey_format_rejected(self):
-        bad = registration.register_nkey("127.0.0.1", "not-a-valid-nkey")
+        bad = _register_nkey("127.0.0.1", "not-a-valid-nkey")
         assert "error" in bad
 
     def test_capacity_enforced_on_new_pubkeys_only(self):
@@ -333,12 +356,12 @@ class TestRegisterNkey:
         try:
             pk1, _ = _make_keypair()
             pk2, _ = _make_keypair()
-            r1 = registration.register_nkey("127.0.0.1", pk1)
+            r1 = _register_nkey("127.0.0.1", pk1)
             assert "pubkey" in r1
-            r2 = registration.register_nkey("127.0.0.1", pk2)
+            r2 = _register_nkey("127.0.0.1", pk2)
             assert "error" in r2 and "capacity" in r2["error"].lower()
             # But re-registering pk1 (already counted) still works.
-            r1b = registration.register_nkey("127.0.0.1", pk1)
+            r1b = _register_nkey("127.0.0.1", pk1)
             assert "pubkey" in r1b
         finally:
             registration.CAPACITY = original_cap
@@ -462,15 +485,55 @@ class TestUpdateNatsConfig:
         assert '"wyrd.discover.>"' in nkey_block, "discovery remains global"
 
     def test_preserves_non_household_users(self):
-        # Seed with both peer_trainer (already in baseline conf) + an nkey.
+        # Seed with an operator's own account (already in baseline conf) + an nkey.
         pubkey, _ = _make_keypair()
         _seed_nkey_registration(pubkey)
         regs = registration.load_registrations()
         registration.update_nats_config(regs)
         conf = _NATS_CONF.read_text()
-        assert 'user: "peer_trainer"' in conf, \
+        assert 'user: "ops_monitor"' in conf, \
             "non-hh user must be preserved across updates"
         assert f'nkey: "{pubkey}"' in conf
+
+    def test_shared_peer_trainer_account_is_off_by_default(self):
+        registration.update_nats_config(registration.load_registrations())
+        assert 'user: "peer_trainer"' not in _NATS_CONF.read_text()
+
+    def test_peer_trainer_when_turned_on_has_its_own_password_and_inbox(self, monkeypatch):
+        monkeypatch.setattr(registration, "RELAY_PEER_TRAINER", True)
+        registration.update_nats_config(registration.load_registrations())
+        block = _user_block(_NATS_CONF.read_text(), 'user: "peer_trainer"')
+        assert "__GENERATED_ON_FIRST_RUN__" not in block and 'password: "secret"' not in block
+        assert registration._relay_secret("peer_trainer") in block
+        assert '"_INBOX.peer_trainer.>"' in block and '"_INBOX.>"' not in block
+
+    def test_a_relay_with_no_registrations_still_rebuilds_its_accounts_at_start(self, monkeypatch):
+        monkeypatch.setattr(registration, "load_registrations", lambda: {})
+        conf = _NATS_CONF.read_text()
+        if 'user: "peer_trainer"' not in conf:
+            conf = conf.replace('{ user: "ops_monitor", password: "secret",',
+                '{ user: "peer_trainer", password: "__GENERATED_ON_FIRST_RUN__",\n'
+                '          permissions: { subscribe: { allow: ["_INBOX.>"] } } }\n'
+                '        { user: "ops_monitor", password: "secret",')
+            _NATS_CONF.write_text(conf)
+        assert 'user: "peer_trainer"' in _NATS_CONF.read_text()
+        assert registration.rehydrate_conf_at_boot() == 0
+        conf = _NATS_CONF.read_text()
+        assert 'user: "peer_trainer"' not in conf and "__GENERATED_ON_FIRST_RUN__" not in conf
+        assert 'user: "relay_sidecar"' in conf and 'user: "relay_join"' in conf
+
+    def test_account_on_the_template_placeholder_password_is_dropped(self):
+        conf = _NATS_CONF.read_text().replace(
+            '{ user: "ops_monitor", password: "secret",',
+            '{ user: "leftover", password: "__GENERATED_ON_FIRST_RUN__",\n'
+            '          permissions: { subscribe: { allow: ["_INBOX.>"] } } }\n'
+            '        { user: "ops_monitor", password: "secret",')
+        assert 'user: "leftover"' in conf
+        _NATS_CONF.write_text(conf)
+        registration.update_nats_config(registration.load_registrations())
+        conf = _NATS_CONF.read_text()
+        assert 'user: "leftover"' not in conf and "__GENERATED_ON_FIRST_RUN__" not in conf
+        assert 'user: "ops_monitor"' in conf
 
     def test_unspecified_tags_fall_back_to_permissive(self):
         pubkey, _ = _make_keypair()
@@ -504,7 +567,7 @@ class TestUpdateNatsConfig:
         assert '"wyrd.tunnel.alpha.*.down"' in conf, "phone reads only .down (F1)"
         assert '"wyrd.tunnel.alpha.*.open"' in conf, "phone publishes .open (F1)"
         assert '"wyrd.tunnel.alpha.*.up"' in conf, "phone publishes .up (F1)"
-        assert '"between.alpha.*.*.study.state"' in conf, "study scoped to own zone"
+        assert "study" not in phone_block, "no Study sync over the relay for phones"
         # The derived credential is deterministic (survives conf regens).
         assert registration._phone_password_for("hh-phonetest") in conf
 
@@ -523,16 +586,25 @@ class TestUpdateNatsConfig:
         conf2 = _NATS_CONF.read_text()
         assert conf2.count('user: "phone-hh-pwphone"') == 1
 
-    def test_shared_relay_phone_has_no_study_grants(self):
+    def test_legacy_phone_account_has_no_study_or_inference_grants(self):
+        regs = registration.load_registrations()
+        regs["hh-pwlegacy01"] = {"token": "tok-pwlegacy-0001", "active": True}
+        registration.save_registrations(regs)
+        registration.update_nats_config(regs)
+        block = _user_block(_NATS_CONF.read_text(), 'user: "phone-hh-pwlegacy01"')
+        assert "study" not in block and "federation" not in block, block
+
+    def test_shared_relay_phone_has_no_study_grants(self, monkeypatch):
         # The DEPRECATED shared relay_phone account must never regain study
         # subjects — a shared credential + study grants = any phone can read/
-        # write any user's Study. Study sync requires the per-household user.
+        # write any user's Study. It exists only when the operator keeps it.
+        monkeypatch.setattr(registration, "RELAY_SHARED_PHONE_ACCOUNT", True)
         regs = registration.load_registrations()
         registration.update_nats_config(regs)
         conf = _NATS_CONF.read_text()
         import re as _re
         m = _re.search(r'user: "relay_phone".*?\}\s*\}', conf, _re.S)
-        assert m, "relay_phone account present (back-compat)"
+        assert m, "relay_phone account present when RELAY_SHARED_PHONE_ACCOUNT=true"
         assert "study" not in m.group(0), "no study subjects on the shared account"
 
 
@@ -664,6 +736,9 @@ class TestLivenessReaper:
         # connz reports only fresh_pk connected (nkey field, NATS 2.10 auth=1).
         monkeypatch.setattr(registration, "_fetch_connected_nkeys",
                             lambda: {fresh_pk})
+        # Counts unavailable: the presence seam above decides, not whatever nats-server
+        # happens to answer on this machine's :8222.
+        monkeypatch.setattr(registration, "_fetch_connection_counts", lambda: None)
         deleted = registration._reap_stale_registrations()
         assert deleted == 1
         after = registration.load_registrations()
@@ -684,6 +759,7 @@ class TestLivenessReaper:
         registration.save_registrations(regs)
 
         monkeypatch.setattr(registration, "_fetch_connected_nkeys", lambda: None)
+        monkeypatch.setattr(registration, "_fetch_connection_counts", lambda: None)
         deleted = registration._reap_stale_registrations()
         assert deleted == 0
         assert stale_pk in registration.load_registrations(), \
@@ -884,6 +960,44 @@ class TestClaimOwner:
         old = int(time.time()) - 4000
         r = self._mint_and_claim(did, sk, ts=old)
         assert r.get("_status") == 401
+
+    def test_an_owned_relay_is_not_taken_with_an_ordinary_token(self):
+        owner, owner_sk = _make_did_keypair()
+        assert self._mint_and_claim(owner, owner_sk).get("_status") == 200
+        other, other_sk = _make_did_keypair()
+        token = registration.mint_owner_claim_token(600)["claim_token"]
+        ts = int(time.time())
+        sig = _sign_b64(other_sk, f"claim-owner:{ts}:{other}".encode())
+        r = registration.claim_owner(token=token, did=other, ts=ts, signature_b64=sig)
+        assert r.get("_status") == 409
+        assert registration.owner_did() == owner
+        # The owner may use it (the token was not consumed by the refusal).
+        sig = _sign_b64(owner_sk, f"claim-owner:{ts}:{owner}".encode())
+        assert registration.claim_owner(token=token, did=owner, ts=ts, signature_b64=sig).get("_status") == 200
+
+    def test_a_replacement_token_hands_the_relay_over(self):
+        owner, owner_sk = _make_did_keypair()
+        assert self._mint_and_claim(owner, owner_sk).get("_status") == 200
+        other, other_sk = _make_did_keypair()
+        token = registration.mint_owner_claim_token(600, replace=True)["claim_token"]
+        ts = int(time.time())
+        sig = _sign_b64(other_sk, f"claim-owner:{ts}:{other}".encode())
+        assert registration.claim_owner(token=token, did=other, ts=ts, signature_b64=sig).get("_status") == 200
+        assert registration.owner_did() == other
+
+    def test_a_token_edited_to_say_replace_is_refused(self):
+        owner, owner_sk = _make_did_keypair()
+        assert self._mint_and_claim(owner, owner_sk).get("_status") == 200
+        other, other_sk = _make_did_keypair()
+        token = registration.mint_owner_claim_token(600)["claim_token"]
+        payload_b64, sig_b64 = token.split(".", 1)
+        payload = json.loads(registration._b64url_decode(payload_b64))
+        payload["replace"] = True
+        forged = registration._b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()) + "." + sig_b64
+        ts = int(time.time())
+        sig = _sign_b64(other_sk, f"claim-owner:{ts}:{other}".encode())
+        assert registration.claim_owner(token=forged, did=other, ts=ts, signature_b64=sig).get("_status") == 401
+        assert registration.owner_did() == owner
 
 
 # ---: signed /admin authorize + ops ---
@@ -1109,7 +1223,7 @@ class TestRegistrationModes:
     def test_register_nkey_invite_only_stamps_household(self):
         self._seed_mode("invite-only")
         pubkey, _ = _make_keypair()
-        r = registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        r = _register_nkey("1.2.3.4", pubkey=pubkey,
                                        entrant_tier=registration.TIER_HOUSEHOLD)
         assert r.get("tier") == registration.TIER_HOUSEHOLD
         assert r.get("identity_verified") is False
@@ -1117,7 +1231,7 @@ class TestRegistrationModes:
     def test_register_nkey_commons_stamps_floor(self):
         self._seed_mode("commons")
         pubkey, _ = _make_keypair()
-        r = registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        r = _register_nkey("1.2.3.4", pubkey=pubkey,
                                        entrant_tier=registration.TIER_FLOOR)
         assert r.get("tier") == registration.TIER_FLOOR
 
@@ -1125,9 +1239,9 @@ class TestRegistrationModes:
         # A node that was promoted to VOUCHED must not drop to FLOOR by
         # re-registering in commons mode.
         pubkey, _ = _make_keypair()
-        registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        _register_nkey("1.2.3.4", pubkey=pubkey,
                                    entrant_tier=registration.TIER_VOUCHED)
-        r = registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        r = _register_nkey("1.2.3.4", pubkey=pubkey,
                                        entrant_tier=registration.TIER_FLOOR)
         assert r.get("tier") == registration.TIER_VOUCHED
 
@@ -1256,6 +1370,7 @@ class TestIdentityOutbox:
         seed = nkeys.encode_seed(sk.encode(), nkeys.PREFIX_BYTE_USER)
         kp = nkeys.from_seed(seed)
         pubkey = kp.public_key.decode("ascii")
+        _SIGNERS[pubkey] = kp
         did = registration.nkey_to_did(pubkey)
         rec = {
             "did": did, "displayName": "self", "primaryZone": "alpha",
@@ -1263,7 +1378,7 @@ class TestIdentityOutbox:
         }
         msg = registration.identity_outbox_signing_bytes(rec)
         rec["sig"] = _sign_b64(sk, msg)
-        r = registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        r = _register_nkey("1.2.3.4", pubkey=pubkey,
                                        entrant_tier=registration.TIER_FLOOR,
                                        identity_outbox=rec)
         assert r.get("identity_verified") is True
@@ -1277,7 +1392,7 @@ class TestIdentityOutbox:
             "sig": "AAAA",  # garbage signature
         }
         pubkey, _ = _make_keypair()
-        r = registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        r = _register_nkey("1.2.3.4", pubkey=pubkey,
                                        entrant_tier=registration.TIER_FLOOR,
                                        identity_outbox=rec)
         assert "error" in r
@@ -1306,6 +1421,7 @@ class TestVouchPromoteDemote:
         import nkeys
         kp = nkeys.from_seed(nkeys.encode_seed(sk.encode(), nkeys.PREFIX_BYTE_USER))
         pubkey = kp.public_key.decode("ascii")
+        _SIGNERS[pubkey] = kp
         did = registration.nkey_to_did(pubkey)
         outbox = None
         if identity_verified:
@@ -1313,7 +1429,7 @@ class TestVouchPromoteDemote:
                    "writeZones": [], "readZones": [], "channels": [], "updatedAt": 1}
             rec["sig"] = _sign_b64(sk, registration.identity_outbox_signing_bytes(rec))
             outbox = rec
-        registration.register_nkey("1.2.3.4", pubkey=pubkey,
+        _register_nkey("1.2.3.4", pubkey=pubkey,
                                    entrant_tier=registration.TIER_FLOOR,
                                    identity_outbox=outbox)
         return did
@@ -1321,7 +1437,7 @@ class TestVouchPromoteDemote:
     def _make_voucher(self, tier):
         """Register a node at `tier` and return its DID (used as a voucher)."""
         pubkey, _ = _make_keypair()
-        registration.register_nkey("9.9.9.9", pubkey=pubkey, entrant_tier=tier)
+        _register_nkey("9.9.9.9", pubkey=pubkey, entrant_tier=tier)
         return registration.nkey_to_did(pubkey)
 
     def test_owner_vouch_then_threshold_auto_promotes(self):
@@ -1553,10 +1669,10 @@ class TestQuotaEnforcement:
         registration.save_policy({"tiers": {"floor": {"max_registrations": 1}}})
         pk1, _ = _make_keypair()
         pk2, _ = _make_keypair()
-        r1 = registration.register_nkey("1.2.3.4", pubkey=pk1,
+        r1 = _register_nkey("1.2.3.4", pubkey=pk1,
                                         entrant_tier=registration.TIER_FLOOR)
         assert "error" not in r1, r1
-        r2 = registration.register_nkey("1.2.3.4", pubkey=pk2,
+        r2 = _register_nkey("1.2.3.4", pubkey=pk2,
                                         entrant_tier=registration.TIER_FLOOR)
         assert "error" in r2, "second FLOOR entrant past the cap must be refused"
         assert r2.get("tier") == registration.TIER_FLOOR
@@ -1566,10 +1682,10 @@ class TestQuotaEnforcement:
         # A full FLOOR tier must not block a HOUSEHOLD entrant.
         registration.save_policy({"tiers": {"floor": {"max_registrations": 1}}})
         f1, _ = _make_keypair()
-        registration.register_nkey("1.2.3.4", pubkey=f1,
+        _register_nkey("1.2.3.4", pubkey=f1,
                                    entrant_tier=registration.TIER_FLOOR)
         h1, _ = _make_keypair()
-        rh = registration.register_nkey("1.2.3.4", pubkey=h1,
+        rh = _register_nkey("1.2.3.4", pubkey=h1,
                                         entrant_tier=registration.TIER_HOUSEHOLD)
         assert "error" not in rh, rh
 
@@ -1577,9 +1693,9 @@ class TestQuotaEnforcement:
         # An existing record re-registering is NEVER blocked by the cap.
         registration.save_policy({"tiers": {"floor": {"max_registrations": 1}}})
         pk1, _ = _make_keypair()
-        registration.register_nkey("1.2.3.4", pubkey=pk1,
+        _register_nkey("1.2.3.4", pubkey=pk1,
                                    entrant_tier=registration.TIER_FLOOR)
-        r = registration.register_nkey("1.2.3.4", pubkey=pk1,
+        r = _register_nkey("1.2.3.4", pubkey=pk1,
                                        entrant_tier=registration.TIER_FLOOR)
         assert "error" not in r, "re-register of an existing record must pass"
 
@@ -1587,7 +1703,7 @@ class TestQuotaEnforcement:
         # HOUSEHOLD default max_registrations = -1 (unlimited): many entrants ok.
         for _ in range(3):
             pk, _ = _make_keypair()
-            r = registration.register_nkey("1.2.3.4", pubkey=pk,
+            r = _register_nkey("1.2.3.4", pubkey=pk,
                                            entrant_tier=registration.TIER_HOUSEHOLD)
             assert "error" not in r, r
 
@@ -2036,3 +2152,307 @@ class TestInfrastructureSecrets:
         assert registration._join_password() == "operator-supplied-join-pw"
         monkeypatch.setenv("NATS_PHONE_PASSWORD", "operator-supplied-phone-pw")
         assert registration._phone_password() == "operator-supplied-phone-pw"
+
+
+# --- Zone binding (security review 2026-09-28) ---
+
+def _user_block(conf: str, marker: str) -> str:
+    """The relay.conf user entry that contains `marker`, brace-matched."""
+    i = conf.index(marker)
+    start = conf.rfind("{", 0, i)
+    depth, j = 0, start
+    while True:
+        if conf[j] == "{":
+            depth += 1
+        elif conf[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return conf[start:j + 1]
+        j += 1
+
+
+def _sign(kp, text: str) -> str:
+    return base64.b64encode(kp.sign(text.encode())).decode()
+
+
+def _mac(token: str, text: str) -> str:
+    import hashlib as _h
+    import hmac as _hm
+    return base64.b64encode(_hm.new(token.encode(), text.encode(), _h.sha256).digest()).decode()
+
+
+class TestZoneBinding:
+    def test_register_requires_zone_and_signature(self):
+        pubkey, kp = _make_keypair()
+        r = registration.register_nkey("1.2.3.4", pubkey)
+        assert r.get("_status") == 400 and "zone_id required" in r["error"]
+        r = registration.register_nkey("1.2.3.4", pubkey, zone_id="alpha")
+        assert r.get("_status") == 401, "no proof of the NKey seed"
+        other, other_kp = _make_keypair()
+        ts = int(time.time())
+        r = registration.register_nkey("1.2.3.4", pubkey, zone_id="alpha", ts=ts,
+                                       signature=_sign(other_kp, f"register-nkey:{ts}:{pubkey}:alpha"))
+        assert r.get("_status") == 401, "a signature by another key is refused"
+        assert pubkey not in registration.load_registrations()
+
+    def test_zone_label_held_by_another_household_is_refused(self):
+        a, _ = _make_keypair()
+        b, _ = _make_keypair()
+        assert "pubkey" in _register_nkey("1.2.3.4", a, zone_id="home-server")
+        r = _register_nkey("5.6.7.8", b, zone_id="home-server")
+        assert r.get("_status") == 409, r
+        r = _register_nkey("5.6.7.8", b, zone_id="HOME_SERVER")
+        assert r.get("_status") == 409, "labels compare without case"
+        assert "pubkey" in _register_nkey("1.2.3.4", a, zone_id="home-server"), "the holder re-registers"
+        # A password registration cannot take the label either.
+        r = registration.register_household("9.9.9.9", zone_id="home-server")
+        assert r.get("_status") == 409
+
+    def test_holder_vouches_for_its_other_node(self):
+        a, akp = _make_keypair()
+        b, _ = _make_keypair()
+        _register_nkey("1.2.3.4", a, zone_id="alpha")
+        ts = int(time.time())
+        r = registration.add_zone_member({
+            "pubkey": a, "zone_id": "alpha", "member": b, "ts": ts,
+            "signature": _sign(akp, f"zone-member:{ts}:{a}:alpha:{b}")})
+        assert r["status"] == "vouched", r
+        assert "pubkey" in _register_nkey("5.6.7.8", b, zone_id="alpha")
+        # Both now hold the zone; the first holder still re-registers and re-binds its own zone.
+        assert "pubkey" in _register_nkey("1.2.3.4", a, zone_id="alpha")
+        ts = int(time.time())
+        r = registration.bind_zone({"pubkey": a, "zone_id": "alpha", "ts": ts,
+                                    "signature": _sign(akp, f"bind-zone:{ts}:{a}:alpha")})
+        assert r["status"] == "bound", r
+
+    def test_non_holder_cannot_vouch(self):
+        a, _ = _make_keypair()
+        c, ckp = _make_keypair()
+        b, _ = _make_keypair()
+        _register_nkey("1.2.3.4", a, zone_id="alpha")
+        _register_nkey("1.2.3.4", c, zone_id="gamma")
+        ts = int(time.time())
+        r = registration.add_zone_member({
+            "pubkey": c, "zone_id": "alpha", "member": b, "ts": ts,
+            "signature": _sign(ckp, f"zone-member:{ts}:{c}:alpha:{b}")})
+        assert r.get("_status") == 403
+        assert _register_nkey("5.6.7.8", b, zone_id="alpha").get("_status") == 409
+
+    @pytest.mark.parametrize("label", ['x.>', 'a b', 'x"] } }', '*', '>', 'inference',
+                                       'recipe', 'zonegrant', 'local', 'unspecified', 'a' * 65])
+    def test_unsafe_or_reserved_labels_refused(self, label):
+        pubkey, _ = _make_keypair()
+        r = _register_nkey("1.2.3.4", pubkey, zone_id=label)
+        assert r.get("_status") == 400, (label, r)
+
+    def test_registrant_cannot_choose_another_households_phone_tag(self):
+        # The tag names the phone account and derives its password: a tag the
+        # registrant chooses could name another household's phone account.
+        regs = registration.load_registrations()
+        regs["hh-victim00001"] = {"token": "tok-victim-000000", "household_tag": "hh-victim00001",
+                                  "zone_id": "victim", "active": True}
+        registration.save_registrations(regs)
+        pubkey, kp = _make_keypair()
+        r = _register_nkey("1.2.3.4", pubkey, zone_id="attacker", household_tag="hh-victim00001")
+        assert r["household_id"].startswith("nk-")
+        ts = int(time.time())
+        inv = registration.mint_phone_invite(pubkey=pubkey, ts=ts,
+                                             signature_b64=_sign(kp, f"phone-invite:{ts}:{pubkey}"))
+        assert inv["payload"]["relays"][0]["nats_user"] == r["household_id"].join(["phone-", ""])
+        assert inv["payload"]["relays"][0]["nats_password"] != \
+            registration._phone_password_for("hh-victim00001")
+
+    def test_bound_grant_is_zone_scoped_with_own_inbox(self):
+        pubkey, _ = _make_keypair()
+        _register_nkey("1.2.3.4", pubkey, zone_id="alpha")
+        conf = _NATS_CONF.read_text()
+        block = _user_block(conf, f'nkey: "{pubkey}"')
+        sub = block[block.index("subscribe:"):block.index("]", block.index("subscribe:"))]
+        assert f'"_INBOX.{pubkey}.>"' in sub
+        assert '"_INBOX.>"' not in block, "no user reads every reply (D4)"
+        assert '"federation.>"' not in sub, "no user reads every zone's federation traffic"
+        for s in ('"federation.alpha.>"', '"federation.*.alpha.gate.>"', '"federation.*.alpha.tell"',
+                  '"federation.inference.alpha.complete"', '"federation.inference.stream.alpha.>"',
+                  '"federation.recipe.result.alpha.>"', '"federation.zonegrant.result.alpha.>"'):
+            assert s in sub, s
+        assert "allow_responses" in block, "replies go out through allow_responses"
+
+    def test_bound_phone_account_scoped_to_zone(self):
+        pubkey, _ = _make_keypair()
+        r = _register_nkey("1.2.3.4", pubkey, zone_id="alpha")
+        phone = "phone-" + r["household_id"]
+        conf = _NATS_CONF.read_text()
+        block = _user_block(conf, f'user: "{phone}"')
+        assert f'"_INBOX.{phone}.>"' in block
+        assert '"_INBOX.>"' not in block
+        assert "federation" not in block, "phones read no inference streams"
+        assert "study" not in block and "between" not in block, "no Study sync over the relay for phones"
+        assert '"wyrd.tunnel.alpha.*.down"' in block and '"wyrd.zone.alpha.>"' in block
+        # Another household's door: the knock only, not its other requests.
+        assert '"wyrd.zone.*.directory.knock"' in block
+        assert '"wyrd.zone.*.>"' not in block and '"wyrd.zone.>"' not in block
+
+    def test_infrastructure_accounts_scoped(self):
+        registration.update_nats_config(registration.load_registrations())
+        conf = _NATS_CONF.read_text()
+        assert 'user: "relay_phone"' not in conf, "shared phone account off by default"
+        assert '"_INBOX.relay_sidecar.>"' in _user_block(conf, 'user: "relay_sidecar"')
+        join = _user_block(conf, 'user: "relay_join"')
+        assert '"_INBOX.relay_join.>"' in join and '"_INBOX.>"' not in join
+
+    def test_legacy_unbound_keeps_wide_grant_unless_turned_off(self, monkeypatch):
+        pubkey, _ = _make_keypair()
+        _seed_nkey_registration(pubkey, household_tag="unspecified", zone_id="unspecified")
+        registration.update_nats_config(registration.load_registrations())
+        assert '"between.>"' in _user_block(_NATS_CONF.read_text(), f'nkey: "{pubkey}"')
+        monkeypatch.setattr(registration, "RELAY_LEGACY_GRANT", False)
+        registration.update_nats_config(registration.load_registrations())
+        assert pubkey not in _NATS_CONF.read_text()
+
+    def test_malformed_nkey_in_ledger_never_reaches_relay_conf(self):
+        regs = registration.load_registrations()
+        evil = 'U' + 'A' * 20 + '"}]}, { user: "x", password: "y"' + 'A' * 4
+        evil = evil[:56].ljust(56, "A")
+        regs[evil] = {"kind": "nkey", "pubkey": evil, "zone_id": "alpha",
+                      "household_tag": "nk-0", "active": True}
+        registration.save_registrations(regs)
+        registration.update_nats_config(regs)
+        assert 'user: "x"' not in _NATS_CONF.read_text()
+
+    def test_register_reply_carries_relay_tls_fingerprints(self):
+        pubkey, _ = _make_keypair()
+        r = _register_nkey("1.2.3.4", pubkey, zone_id="alpha")
+        import hashlib as _h
+        pem = (_CERT_DIR / "leaf.crt").read_text()
+        der = base64.b64decode("".join(l for l in pem.splitlines() if l and not l.startswith("-----")))
+        assert r["nats_tls_fp"] == _h.sha256(der).hexdigest()
+        assert r["ca_fp"] and ":" not in r["ca_fp"]
+        assert r["inbox_prefix"] == f"_INBOX.{pubkey}"
+
+    def test_password_registration_binds_zone(self):
+        r = registration.register_household("1.2.3.4", zone_id="beta")
+        assert r["zone_id"] == "beta" and r["inbox_prefix"] == f"_INBOX.{r['household_id']}"
+        assert registration.register_household("1.2.3.4").get("_status") == 400
+        block = _user_block(_NATS_CONF.read_text(), f'user: "{r["household_id"]}"')
+        assert '"between.beta.>"' in block and '"between.>"' not in block
+
+
+class TestBindZone:
+    def test_legacy_nkey_binds_itself(self):
+        pubkey, kp = _make_keypair()
+        _seed_nkey_registration(pubkey, household_tag="unspecified", zone_id="unspecified")
+        ts = int(time.time())
+        r = registration.bind_zone({"pubkey": pubkey, "zone_id": "alpha", "ts": ts,
+                                    "signature": _sign(kp, f"bind-zone:{ts}:{pubkey}:alpha")})
+        assert r["status"] == "bound" and r["changed"] is True, r
+        entry = registration.load_registrations()[pubkey]
+        assert entry["zone_id"] == "alpha" and entry["household_tag"].startswith("nk-")
+        assert '"between.alpha.>"' in _user_block(_NATS_CONF.read_text(), f'nkey: "{pubkey}"')
+
+    def test_bad_or_stale_proof_refused(self):
+        pubkey, kp = _make_keypair()
+        _seed_nkey_registration(pubkey, zone_id="unspecified")
+        ts = int(time.time())
+        r = registration.bind_zone({"pubkey": pubkey, "zone_id": "alpha", "ts": ts,
+                                    "signature": _sign(kp, f"bind-zone:{ts}:{pubkey}:beta")})
+        assert r["_status"] == 401
+        old = ts - 3600
+        r = registration.bind_zone({"pubkey": pubkey, "zone_id": "alpha", "ts": old,
+                                    "signature": _sign(kp, f"bind-zone:{old}:{pubkey}:alpha")})
+        assert r["_status"] == 401
+
+    def test_held_zone_refused(self):
+        a, _ = _make_keypair()
+        b, bkp = _make_keypair()
+        _register_nkey("1.2.3.4", a, zone_id="alpha")
+        _seed_nkey_registration(b, zone_id="unspecified")
+        ts = int(time.time())
+        r = registration.bind_zone({"pubkey": b, "zone_id": "alpha", "ts": ts,
+                                    "signature": _sign(bkp, f"bind-zone:{ts}:{b}:alpha")})
+        assert r["_status"] == 409
+
+    def test_password_registration_binds_with_token_mac(self):
+        regs = registration.load_registrations()
+        regs["hh-0123456789ab"] = {"token": "tok-abcdefgh-123", "active": True}
+        registration.save_registrations(regs)
+        ts = int(time.time())
+        bad = registration.bind_zone({"household_id": "hh-0123456789ab", "zone_id": "gamma",
+                                      "ts": ts, "mac": _mac("wrong-token", f"bind-zone:{ts}:hh-0123456789ab:gamma")})
+        assert bad["_status"] == 401
+        r = registration.bind_zone({"household_id": "hh-0123456789ab", "zone_id": "gamma", "ts": ts,
+                                    "mac": _mac("tok-abcdefgh-123", f"bind-zone:{ts}:hh-0123456789ab:gamma")})
+        assert r["status"] == "bound", r
+        assert registration.load_registrations()["hh-0123456789ab"]["zone_id"] == "gamma"
+
+
+class TestMigrateZoneBindings:
+    def test_migration(self):
+        a, _ = _make_keypair()
+        b, _ = _make_keypair()
+        c, _ = _make_keypair()
+        d, _ = _make_keypair()
+        regs = registration.load_registrations()
+        regs[a] = {"kind": "nkey", "zone_id": "alpha", "household_tag": "unspecified",
+                   "registered_at": "2026-01-01", "active": True}
+        regs[b] = {"kind": "nkey", "zone_id": 'x.>"', "household_tag": "hh-0123456789ab",
+                   "registered_at": "2026-01-02", "active": True}
+        regs[c] = {"kind": "nkey", "zone_id": "unspecified", "household_tag": "unspecified",
+                   "registered_at": "2026-01-03", "active": True}
+        regs[d] = {"kind": "nkey", "zone_id": "alpha", "household_tag": "shared",
+                   "registered_at": "2026-01-04", "active": True}
+        regs["hh-0123456789ab"] = {"token": "tok-abcdefgh-123", "registered_at": "2025-12-01",
+                                   "active": True}
+        registration.save_registrations(regs)
+        s = registration.migrate_zone_bindings()
+        regs = registration.load_registrations()
+        assert regs[a]["zone_id"] == "alpha" and regs[a]["household_tag"].startswith("nk-")
+        assert regs[b]["zone_id"] == "unspecified", "an unsafe stored label is dropped"
+        assert regs[b]["household_tag"].startswith("nk-"), "an NKey may not hold an hh- tag"
+        assert regs["hh-0123456789ab"]["household_tag"] == "hh-0123456789ab"
+        assert s["bound"] == 2
+        assert {k for k, _ in s["legacy"]} == {b[:12], c[:12], "hh-012345678"}
+        assert set(s["shared_labels"]["alpha"]) == {a, d}
+        assert set(registration.load_zone_members()["alpha"]) == {a, d}
+        again = registration.migrate_zone_bindings()
+        assert again["retagged"] == [], "idempotent"
+
+
+class TestPasswordModeProofs:
+    def _seed(self):
+        regs = registration.load_registrations()
+        regs["hh-0123456789ab"] = {"token": "tok-abcdefgh-123", "household_tag": "hh-0123456789ab",
+                                   "zone_id": "beta", "active": True}
+        registration.save_registrations(regs)
+
+    def test_phone_invite_with_mac(self):
+        self._seed()
+        ts = int(time.time())
+        r = registration.mint_phone_invite(household_id="hh-0123456789ab", ts=ts,
+                                           mac=_mac("tok-abcdefgh-123", f"phone-invite:{ts}:hh-0123456789ab"))
+        assert "error" not in r, r
+        relay = r["payload"]["relays"][0]
+        assert relay["nats_user"] == "phone-hh-0123456789ab"
+        assert relay["inbox_prefix"] == "_INBOX.phone-hh-0123456789ab"
+        r = registration.mint_phone_invite(household_id="hh-0123456789ab", ts=ts,
+                                           mac=_mac("nope", f"phone-invite:{ts}:hh-0123456789ab"))
+        assert r["_status"] == 401
+
+    def test_bare_token_refused_unless_allowed(self, monkeypatch):
+        self._seed()
+        r = registration.mint_phone_invite(household_id="hh-0123456789ab", token="tok-abcdefgh-123")
+        assert r["_status"] == 401
+        monkeypatch.setattr(registration, "RELAY_ALLOW_PLAIN_TOKEN_PROOF", True)
+        r = registration.mint_phone_invite(household_id="hh-0123456789ab", token="tok-abcdefgh-123")
+        assert "error" not in r
+
+    def test_password_leave_removes_registration(self):
+        self._seed()
+        ts = int(time.time())
+        bad = registration.deregister_password("hh-0123456789ab", ts,
+                                               _mac("nope", f"deregister:{ts}:hh-0123456789ab"))
+        assert bad["_status"] == 401
+        r = registration.deregister_password("hh-0123456789ab", ts,
+                                             _mac("tok-abcdefgh-123", f"deregister:{ts}:hh-0123456789ab"))
+        assert r["status"] == "deregistered"
+        assert "hh-0123456789ab" not in registration.load_registrations()
+        assert 'user: "hh-0123456789ab"' not in _NATS_CONF.read_text()

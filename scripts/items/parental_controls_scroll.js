@@ -5,14 +5,16 @@
 // The scroll's clauses are now SWORN: ParentalControlService enforces
 // per-member time limits (login gate + 60s accrual ticker), room
 // restrictions (RoomActor entry check, glob-matched), inference quotas
-// (CompanionActor speech-trigger gate), and content filters (per-session
-// prose screen). This scroll reads and writes those rules through
+// (CompanionActor speech-trigger gate), library research runs a day
+// (LibraryConsent: unset = the household's WYRDSEKAI_LIBRARY_RESEARCH_PER_DAY,
+// 0 = no library research), and content filters (per-session prose
+// screen). This scroll reads and writes those rules through
 // world.parental.*; the service answers writes only to the steward's hand,
 // and the scroll renders every refusal honestly.
 exports.manifest = {
   name: "parental_controls_scroll",
-  version: "2.0.0",
-  description: "The household's sworn scroll of per-member rules — time limits, room restrictions, inference quotas, content filters — read and rewritten by the steward's hand.",
+  version: "2.1.0",
+  description: "The household's sworn scroll of per-member rules — time limits, room restrictions, inference quotas, library research runs, content filters — read and rewritten by the steward's hand.",
   author: "did:wyrd:system",
   capabilities: ["parental.set", "parental.clear"],
   data_sensitivity: "private", // household rules about members must not leak via give_copy
@@ -25,6 +27,7 @@ exports.manifest = {
     { label: "Read the scroll", args: "" },
     { label: "Set a daily time limit", args: "set <username> minutes <n|off>" },
     { label: "Set a daily inference quota", args: "set <username> inference <n|off>" },
+    { label: "Set how many library research runs a day", args: "set <username> research <n|default>" },
     { label: "Set the content filter", args: "set <username> filter <strict|off>" },
     { label: "Bar a room", args: "block <username> <room-glob>" },
     { label: "Unbar a room", args: "unblock <username> <room-glob>" },
@@ -40,6 +43,8 @@ function usageFooter() {
     "  use parental controls scroll                                — read the sworn clauses",
     "  use parental controls scroll set <username> minutes <n|off>   — daily time limit (minutes)",
     "  use parental controls scroll set <username> inference <n|off> — daily inference quota",
+    "  use parental controls scroll set <username> research <n|default> — library research runs a day",
+    "                                                                    (0 = none; default = the household's number)",
     "  use parental controls scroll set <username> filter <strict|off> — content filter",
     "  use parental controls scroll block <username> <room-glob>     — bar rooms (e.g. gpu-chamber, study-*)",
     "  use parental controls scroll unblock <username> <room-glob>   — lift a room bar",
@@ -51,6 +56,14 @@ function usageFooter() {
 
 function fmtLimit(v) {
   return (v === null || v === undefined) ? "unlimited" : String(v);
+}
+
+// Library research runs a day: the steward's own number, or the household's when none is set.
+function fmtResearch(m) {
+  var n = (m.researchPerDay === null || m.researchPerDay === undefined) ? "?" : String(m.researchPerDay);
+  if (n === "0") return "none (no library research)";
+  var unset = m.dailyResearch === null || m.dailyResearch === undefined;
+  return n + " /day" + (unset ? " (the household's number)" : "");
 }
 
 function renderScroll() {
@@ -77,6 +90,8 @@ function renderScroll() {
       + "  (" + (m.minutesUsedToday || 0) + " spent today)");
     lines.push("    inference : " + fmtLimit(m.dailyInference) + " /day"
       + "  (" + (m.inferencesUsedToday || 0) + " spent today)");
+    lines.push("    research  : " + fmtResearch(m)
+      + "  (" + (m.researchAskedToday || 0) + " asked today)");
     lines.push("    filter    : " + (m.contentFilter || "off"));
     var rooms = m.blockedRooms || [];
     lines.push("    rooms barred: " + (rooms.length ? rooms.join(", ") : "none"));
@@ -90,14 +105,14 @@ function doSet(rest) {
   var parts = rest.split(/\s+/).filter(function (p) { return p !== ""; });
   if (parts.length < 3) {
     return "The pen hovers — set needs a name, a field, and a value: "
-      + "set <username> <minutes|inference|filter> <value>." + usageFooter();
+      + "set <username> <minutes|inference|research|filter> <value>." + usageFooter();
   }
   var username = parts[0];
   var field = parts[1].toLowerCase();
   var value = parts[2];
-  if (field !== "minutes" && field !== "inference" && field !== "filter") {
+  if (field !== "minutes" && field !== "inference" && field !== "research" && field !== "filter") {
     return "The scroll knows no clause named '" + field
-      + "' — only minutes, inference, and filter take the pen here." + usageFooter();
+      + "' — only minutes, inference, research, and filter take the pen here." + usageFooter();
   }
   var res = null;
   try { res = world.parental.set(username, field, value); } catch (e) { res = null; }
@@ -106,6 +121,13 @@ function doSet(rest) {
       + usageFooter();
   }
   if (res.ok) {
+    if (field === "research") {
+      if (res.researchPerDay === 0) return "The clause is sworn: the library's research is closed to " + username + ".";
+      var unset = res.dailyResearch === null || res.dailyResearch === undefined;
+      return "The clause is sworn: " + username + " may hand the library " + res.researchPerDay
+        + " research run" + (res.researchPerDay === 1 ? "" : "s") + " a day"
+        + (unset ? " (the household's number)" : "") + ".";
+    }
     return "The clause is sworn: " + username + "'s " + field + " is now " + value + ".";
   }
   return "The scroll's ink resists: " + (res.error || "the change was refused") + "." + usageFooter();
@@ -162,6 +184,8 @@ function invoke(params) {
       text: "The parental controls scroll binds per-member rules the substrate now enforces: "
         + "daily time limits (sessions close when the hours are spent), room restrictions "
         + "(barred doors refuse entry), inference quotas (companions rest their thinking), "
+        + "library research runs a day (the household's number unless you write another; 0 closes the "
+        + "library's research to them), "
         + "and content filters (rough remarks are blotted before they reach a strict-filtered member)."
         + usageFooter()
     };

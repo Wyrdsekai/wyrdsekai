@@ -10,6 +10,9 @@ import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -142,7 +145,7 @@ class LibrarianDeskAsksThePatronServiceTest {
     }
 
     @Test
-    void research_hands_the_question_to_the_librarian_for_the_night_within_the_daily_cap() {
+    void research_hands_the_question_to_the_librarian_for_the_night() {
         var lib = new Librarian();
         lib.byTool.put("library_job", "{\"library_id\":\"lib-1\",\"library_name\":\"The Stacks\",\"contract\":\"1.4\",\"active\":[],\"finished\":[]}");
         lib.byTool.put("library_research", "{\"library_id\":\"lib-1\",\"job_id\":\"J-0007\",\"state\":\"queued\",\"queued_ahead\":1}");
@@ -150,21 +153,39 @@ class LibrarianDeskAsksThePatronServiceTest {
         assertEquals("library_research", lib.lastTool);
         assertEquals("how were the gear teeth of the Antikythera mechanism cut", lib.lastArgs.get("question"));
         assertEquals("broad", lib.lastArgs.get("mode"));
-        assertTrue(((Number) lib.lastArgs.get("max_minutes")).intValue() > 0, "an ask carries a ceiling — the GPU is shared");
+        assertEquals(90, ((Number) lib.lastArgs.get("max_minutes")).intValue(), "an ask carries a ceiling — the GPU is shared");
         var text = String.valueOf(r.get("findings"));
         assertTrue(text.contains("J-0007"), text);
         assertTrue(text.contains("1 question(s) are ahead"), text);
+    }
 
-        // Three asked today already → the house says no before the wire is touched.
-        // the desk counts the day in UTC (ISO instants from the librarian's ledger); after 20:00 in
-        // an American evening the local date is still yesterday's — match the desk, not the wall clock
-        var today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+    @Test
+    void the_desk_keeps_no_household_count_the_host_counts_per_person() {
+        // The librarian's ledger is the whole household's (one token): three asked today by
+        // anyone used to stop everyone. The host now counts per person (LibraryConsent).
+        var lib = new Librarian();
+        var today = LocalDate.now(ZoneOffset.UTC).toString();
         var row = "{\"job_id\":\"J-000%d\",\"kind\":\"research\",\"state\":\"done\",\"queued_at\":\"" + today + "T01:00:00Z\",\"question\":\"q\"}";
         lib.byTool.put("library_job", "{\"library_id\":\"lib-1\",\"active\":[],\"finished\":[" + row.formatted(1) + "," + row.formatted(2) + "," + row.formatted(3) + "]}");
+        lib.byTool.put("library_research", "{\"library_id\":\"lib-1\",\"job_id\":\"J-0004\",\"state\":\"queued\"}");
+        var fourth = run(lib, "research: another question for the night please");
+        assertEquals(List.of("library_research"), lib.tools, "straight to the librarian, no ledger count first");
+        assertTrue(String.valueOf(fourth.get("findings")).contains("J-0004"), String.valueOf(fourth.get("findings")));
+
+        // When the host says the person's runs for the day are used, that is what she reads.
+        var said = "Ada has asked the library for 5 research runs today, the household's limit for them. "
+            + "It can wait for tomorrow. Nothing was sent to the library. Tell them, and do not send it again today.";
+        lib.answer = Map.of("success", false, "error", Map.of("code", "limit", "message", said, "retryable", false));
+        lib.byTool.remove("library_research");
         lib.tools.clear();
-        var capped = run(lib, "research: another question for the night please");
-        assertFalse(lib.tools.contains("library_research"), "capped: the ask must not reach the librarian");
-        assertTrue(String.valueOf(capped.get("findings")).contains("already handed"), String.valueOf(capped.get("findings")));
+        var capped = run(lib, "research: a sixth question for the night");
+        assertEquals(said, capped.get("findings"));
+        assertEquals(List.of("library_research"), lib.tools, "asked once, never retried");
+
+        // And an older library's own budget_exceeded, as the host wrote it.
+        var budget = "The library did not take this: the household has used up its research budget with the library for today.";
+        lib.answer = Map.of("success", false, "error", Map.of("code", "budget", "message", budget, "retryable", false));
+        assertEquals(budget, run(lib, "research: a seventh question for the night").get("findings"));
     }
 
     @Test
@@ -255,5 +276,39 @@ class LibrarianDeskAsksThePatronServiceTest {
         var changed = String.valueOf(run(lib, "what changed since 2026-09-01").get("findings"));
         assertTrue(changed.contains("What changed on The Stacks since 2026-09-01"), changed);
         assertTrue(changed.contains("F-0031  state:draft→accepted"), changed);
+    }
+
+    @Test
+    void a_confirm_or_declined_answer_is_passed_on_as_the_findings_never_as_a_failure() {
+        var lib = new Librarian();
+        lib.byTool.put("library_job", "{\"library_id\":\"lib-1\",\"active\":[],\"finished\":[]}");
+        var said = "The library did not research this question: its check read it as someone asking about "
+            + "harming themselves. Before anything else, share this with Ada …";
+        lib.answer = Map.of("success", false, "error", Map.of("code", "confirm", "message", said, "retryable", false));
+        var r = run(lib, "research: a question the library's check flags as self-harm");
+        assertEquals("library_research", lib.lastTool);
+        assertEquals(said, r.get("findings"), "the host's text goes to her as it is");
+        assertNull(r.get("error"));
+        assertEquals(List.of(), r.get("sources"));
+
+        lib.answer = Map.of("success", false, "error", Map.of("code", "declined",
+            "message", "The library's model declined this. Do not retry it.", "retryable", false));
+        var d = run(lib, "explain F-0007");
+        assertEquals("The library's model declined this. Do not retry it.", d.get("findings"));
+        assertEquals(1, lib.tools.stream().filter("library_explain"::equals).count(), "never asked twice");
+    }
+
+    @Test
+    void a_notice_on_a_result_is_put_above_the_findings() {
+        var lib = new Librarian();
+        var withNotice = new HashMap<String, Object>();
+        withNotice.put("success", true);
+        withNotice.put("data", "{\"library_id\":\"lib-1\",\"library_name\":\"The Stacks\",\"holds_nothing\":true,\"entries\":[]}");
+        withNotice.put("notice", "Part of this work was declined by the library's model.");
+        lib.answer = withNotice;
+        var r = run(lib, "anything");
+        var findings = String.valueOf(r.get("findings"));
+        assertTrue(findings.startsWith("Part of this work was declined by the library's model."), findings);
+        assertTrue(findings.contains("holds nothing"), findings);
     }
 }

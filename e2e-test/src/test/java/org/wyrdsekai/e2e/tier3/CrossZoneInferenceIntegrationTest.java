@@ -14,18 +14,25 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.between.RelaySessionTransport;
+import org.wyrdsekai.between.federation.BilateralAgreement;
+import org.wyrdsekai.between.federation.FederationService;
 import org.wyrdsekai.between.inference.NatsInferenceClient;
 import org.wyrdsekai.between.inference.NatsInferenceProtocol;
 import org.wyrdsekai.common.model.QuotaPolicy;
 import org.wyrdsekai.core.economy.MeteringService;
+import org.wyrdsekai.core.persistence.SchemaInitializer;
 import org.wyrdsekai.core.inference.InferenceBackend;
 import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.e2e.infra.EmbeddedNatsRelay;
 import org.wyrdsekai.server.inference.NatsInferenceServer;
 
+import java.nio.file.Files;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -50,10 +57,23 @@ import static org.awaitility.Awaitility.await;
  * HTTP body, and end-to-end metering attribution through the production
  * {@code InferenceRouter → NatsRemote → NatsInferenceClient → NATS → NatsInferenceServer}
  * chain.</p>
+ *
+ * <p>Since 0.5.0 a provider serves only a zone it holds an ACTIVE agreement with, and only a
+ * request signed by the key pinned on that agreement. Alpha therefore holds an agreement with
+ * beta (beta's node key pinned) and is wired as Main.java wires it; beta signs each request
+ * with that key, as Main.java's requester does.</p>
  */
 class CrossZoneInferenceIntegrationTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String ALPHA = "alpha";
+    /** Beta's zone. The router names its own zone from WYRDSEKAI_ZONE_ID, which is not beta's here. */
+    private static final String BETA = "beta";
+
+    /** Alpha's federation record: an ACTIVE agreement with beta, beta's key pinned. */
+    private static FederationService alphaFederation;
+    /** Beta's node key, which signs beta's requests. */
+    private static NodeIdentity betaIdentity;
 
     private static EmbeddedNatsRelay relay;
     private static WireMockServer wiremock;
@@ -89,6 +109,15 @@ class CrossZoneInferenceIntegrationTest {
             .dynamicPort()
             .usingFilesUnderDirectory(wmRoot.toString()));
         wiremock.start();
+
+        var fedDir = Files.createTempDirectory("crosszone-federation-");
+        fedDir.toFile().deleteOnExit();
+        betaIdentity = NodeIdentity.loadOrGenerate(fedDir.resolve("beta-node-identity.json"));
+        alphaFederation = new FederationService(SchemaInitializer.initialize(fedDir.resolve("alpha.db")));
+        alphaFederation.saveAgreement(new BilateralAgreement(
+            ALPHA, BETA, betaIdentity.publicKeyBase64(),
+            BilateralAgreement.STATUS_ACTIVE, BilateralAgreement.TRUST_RESIDENT,
+            Instant.now(), Instant.now().plus(Duration.ofHours(1))));
     }
 
     @AfterAll
@@ -138,12 +167,12 @@ class CrossZoneInferenceIntegrationTest {
         betaRouter.tell(new InferenceRouter.SetNatsRemoteCaller(
             (targetZone, sourceZone, chatReq, tokenCallback) -> {
                 boolean streaming = tokenCallback != null;
-                var natsReq = new NatsInferenceProtocol.Request(
-                    UUID.randomUUID().toString(), sourceZone, "test-agent",
+                var natsReq = signedByBeta(new NatsInferenceProtocol.Request(
+                    UUID.randomUUID().toString(), BETA, "test-agent",
                     chatReq.model(),
                     chatReq.messages().stream().map(m ->
                         new NatsInferenceProtocol.Message(m.role(), m.content())).toList(),
-                    chatReq.maxTokens(), chatReq.temperature(), streaming);
+                    chatReq.maxTokens(), chatReq.temperature(), streaming));
                 var future = streaming
                     ? betaClient.requestStreaming(targetZone, natsReq, tokenCallback)
                     : betaClient.request(targetZone, natsReq);
@@ -173,9 +202,25 @@ class CrossZoneInferenceIntegrationTest {
 
     private void startAlphaProvider(boolean streaming) {
         alphaServer = new NatsInferenceServer(
-            alphaTransport, "alpha", alphaRouter, testKit.system(), "test-backend",
+            alphaTransport, ALPHA, alphaRouter, testKit.system(), "test-backend",
             wiremock.baseUrl(), streaming);
+        // As Main.java wires the provider against FederationService.
+        alphaServer.setQuotaResolver(sourceZone -> alphaFederation.getAgreement(ALPHA, sourceZone)
+            .filter(BilateralAgreement::isActive)
+            .map(BilateralAgreement::localQuota).orElse(null));
+        alphaServer.setZoneVerifier((sourceZone, data, sig) ->
+            alphaFederation.verifyZoneSignature(ALPHA, sourceZone, data, sig));
         alphaServer.start();
+    }
+
+    /** Beta's request, signed with beta's node key as Main.java's requester signs it. */
+    private static NatsInferenceProtocol.Request signedByBeta(NatsInferenceProtocol.Request r) {
+        long ts = System.currentTimeMillis();
+        var node = betaIdentity.nodeId();
+        var sig = Base64.getEncoder().encodeToString(betaIdentity.sign(
+            NatsInferenceProtocol.householdSigningData(r.streamId(), r.sourceZone(), node, ts)));
+        return new NatsInferenceProtocol.Request(r.streamId(), r.sourceZone(), r.agentId(), r.model(),
+            r.messages(), r.maxTokens(), r.temperature(), r.stream(), node, sig, ts);
     }
 
     private void installBetaRemoteBackend() {
@@ -239,9 +284,9 @@ class CrossZoneInferenceIntegrationTest {
         // Beta issues the request directly via NatsInferenceClient so we can
         // attach a token consumer and see per-chunk delivery.
         var collected = new CopyOnWriteArrayList<String>();
-        var req = NatsInferenceClient.build(
-            "beta", "test-agent", "test-model",
-            null, "hi", 64, 0.0, true);
+        var req = signedByBeta(NatsInferenceClient.build(
+            BETA, "test-agent", "test-model",
+            null, "hi", 64, 0.0, true));
         var future = betaClient.requestStreaming("alpha", req, collected::add);
 
         var completion = future.get(5, TimeUnit.SECONDS);
@@ -335,9 +380,9 @@ class CrossZoneInferenceIntegrationTest {
             new QuotaPolicy(50L, 0, 0, true, true, true, 0, Map.of()));
 
         // maxTokens=200 > quota=50 → provider rejects.
-        var req = NatsInferenceClient.build(
-            "beta", "test-agent", "test-model",
-            null, "hi", 200, 0.0, false);
+        var req = signedByBeta(NatsInferenceClient.build(
+            BETA, "test-agent", "test-model",
+            null, "hi", 200, 0.0, false));
 
         var future = betaClient.request("alpha", req);
         assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS))
@@ -412,9 +457,9 @@ class CrossZoneInferenceIntegrationTest {
 
         startAlphaProvider(/*streaming=*/false);
 
-        var req = NatsInferenceClient.build(
-            "beta", "test-agent", "test-model",
-            null, "hi", 32, 0.0, false);
+        var req = signedByBeta(NatsInferenceClient.build(
+            BETA, "test-agent", "test-model",
+            null, "hi", 32, 0.0, false));
         var future = betaClient.request("alpha", req);
 
         assertThatThrownBy(() -> future.get(10, TimeUnit.SECONDS))
@@ -426,6 +471,22 @@ class CrossZoneInferenceIntegrationTest {
                       + "NOT from the loop-detecting caller")
                     .doesNotContain("Loop detected");
             });
+    }
+
+    @Test void provider_refuses_unsigned_request_and_zone_without_agreement() throws Exception {
+        // 0.5.0: an agreement alone is not enough (the request must carry the pinned key's
+        // signature), and a zone without an ACTIVE agreement is not served at all.
+        startAlphaProvider(/*streaming=*/false);
+
+        var unsigned = NatsInferenceClient.build(
+            BETA, "test-agent", "test-model", null, "hi", 32, 0.0, false);
+        assertThatThrownBy(() -> betaClient.request(ALPHA, unsigned).get(5, TimeUnit.SECONDS))
+            .rootCause().hasMessageContaining("Unverified");
+
+        var stranger = signedByBeta(NatsInferenceClient.build(
+            "gamma", "test-agent", "test-model", null, "hi", 32, 0.0, false));
+        assertThatThrownBy(() -> betaClient.request(ALPHA, stranger).get(5, TimeUnit.SECONDS))
+            .rootCause().hasMessageContaining("NoAgreement");
     }
 
     private void stubNonStreamingResponse(String text, int promptTokens, int completionTokens) {

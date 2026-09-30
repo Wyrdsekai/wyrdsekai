@@ -16,6 +16,7 @@ import org.wyrdsekai.e2e.infra.TestWebSocketClient;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -29,18 +30,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>A <b>TASK</b> tell (TASK_PRESENT head → {@code actionable}) is authored
  *       by the <b>9B drive</b> — the prompt assembles to {@code cap:full} and the
  *       turn reasons/decides/uses tools. The {@code [voice-route]} log reads
- *       {@code authored by 9B(...)}.</li>
+ *       {@code authored via full-lane(...)}.</li>
  *   <li>A <b>SOCIAL / PRESENCE</b> tell (no task) is authored by the <b>4B
  *       voice</b> — the prompt assembles to {@code cap:quick}
  *       ({@link org.wyrdsekai.core.agent.AssembledPrompt#BACKEND_VOICE}) and the
  *       4B owns content + voice end-to-end. The log reads
- *       {@code authored by 4B-VOICE(cap:quick)}.</li>
+ *       {@code authored via voice-lane(cap:quick)}.</li>
  * </ul>
  *
  * <p>There is no queryable routing hook on the reply — the only observable is the
  * {@code [voice-route]} log line emitted once per reactive turn at
  * CompanionActor.java:4952. We capture it with a Logback {@link ListAppender}
- * on the {@code CompanionActor} logger and read the {@code authored by …}
+ * on the {@code CompanionActor} logger and read the {@code authored via …}
  * field, matched to the turn via the logged {@code trigger='…'} preview.</p>
  *
  * <p>The log reflects the routing <i>decision</i> (which tier/assembler), driven
@@ -129,40 +130,40 @@ class VoiceRouteClassifierE2ETest {
     }
 
     @Test
-    void taskTellsAreAuthoredByTheNineBDrive() throws Exception {
+    void taskTellsAreAuthoredOnTheFullLane() throws Exception {
         var outcomes = new ArrayList<String>();
         int correct = 0;
         for (var tell : TASK_TELLS) {
             var model = routeFor(tell);
-            boolean ok = model != null && model.startsWith("9B");
+            boolean ok = model != null && model.startsWith("full-lane");
             if (ok) correct++;
             outcomes.add(String.format("  [TASK]   %-52s → %s %s",
                 "'" + preview(tell) + "'",
                 model == null ? "(no [voice-route] line)" : model,
-                ok ? "✓" : "✗ expected 9B"));
+                ok ? "✓" : "✗ expected full-lane"));
         }
         outcomes.forEach(System.out::println);
         assertTrue(correct >= 2,
-            "Expected ≥2/3 TASK tells authored by the 9B drive; got " + correct + "/3\n"
+            "Expected ≥2/3 TASK tells authored on the full lane; got " + correct + "/3\n"
             + String.join("\n", outcomes));
     }
 
     @Test
-    void socialTellsAreAuthoredByTheFourBVoice() throws Exception {
+    void socialTellsAreAuthoredOnTheVoiceLane() throws Exception {
         var outcomes = new ArrayList<String>();
         int correct = 0;
         for (var tell : SOCIAL_TELLS) {
             var model = routeFor(tell);
-            boolean ok = model != null && model.contains("4B-VOICE");
+            boolean ok = model != null && model.startsWith("voice-lane");
             if (ok) correct++;
             outcomes.add(String.format("  [SOCIAL] %-52s → %s %s",
                 "'" + preview(tell) + "'",
                 model == null ? "(no [voice-route] line)" : model,
-                ok ? "✓" : "✗ expected 4B-VOICE"));
+                ok ? "✓" : "✗ expected voice-lane"));
         }
         outcomes.forEach(System.out::println);
         assertTrue(correct >= 2,
-            "Expected ≥2/3 SOCIAL tells authored by the 4B voice; got " + correct + "/3\n"
+            "Expected ≥2/3 SOCIAL tells authored on the voice lane; got " + correct + "/3\n"
             + String.join("\n", outcomes));
     }
 
@@ -187,7 +188,7 @@ class VoiceRouteClassifierE2ETest {
         List<ILoggingEvent> events = null;
         for (int t = 0; t < 20 && events == null; t++) {
             try { events = new ArrayList<>(voiceRoute.list); }
-            catch (java.util.ConcurrentModificationException cme) { Thread.sleep(50); }
+            catch (ConcurrentModificationException cme) { Thread.sleep(50); }
         }
         if (events == null) events = List.of();
         for (var ev : events) {
@@ -201,11 +202,11 @@ class VoiceRouteClassifierE2ETest {
         return latest;
     }
 
-    /** Extract the {@code authored by X} token (up to the next " |"). */
+    /** Extract the {@code authored via X} token (up to the next " |"). */
     private static String authoredBy(String logLine) {
-        int i = logLine.indexOf("authored by ");
+        int i = logLine.indexOf("authored via ");
         if (i < 0) return null;
-        var rest = logLine.substring(i + "authored by ".length());
+        var rest = logLine.substring(i + "authored via ".length());
         int bar = rest.indexOf(" |");
         return (bar >= 0 ? rest.substring(0, bar) : rest).strip();
     }

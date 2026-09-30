@@ -13,7 +13,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "A glowing ward-sigil — reads the access grants on this room, and etches or erases them for those with the authority.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["ward.grant", "ward.revoke"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

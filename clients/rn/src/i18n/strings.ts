@@ -213,6 +213,90 @@ export interface CommonStrings {
   back: string;
 }
 
+/**
+ * Her emotes and the lines the phone speaks for her (CompanionEngine,
+ * ProactivityJudgment). They were English literals whatever the language.
+ * The same wording as the KMP client's UiStrings narration… entries.
+ * Model-facing prompt text is not here.
+ */
+export interface NarrationStrings {
+  considers: string;
+  thinkingDeeply: string;
+  mentalNote: string;
+  catchesUp: string;
+  thinkLater: string;
+  replayAbout: (topic: string) => string;
+  newPassage: (exitLabel: string) => string;
+  notificationPriority: (priority: string, message: string) => string;
+  heads: (direction: string) => string;
+  equips: (item: string) => string;
+  removes: (item: string) => string;
+  uses: (item: string) => string;
+  usesSkill: (skill: string) => string;
+  workbenchSubmit: (skill: string) => string;
+  thinkingDeeplyAbout: string;
+  sendsMessage: (target: string) => string;
+  commitsTo: (description: string) => string;
+  planning: (goal: string, steps: number) => string;
+  zoneCommand: (command: string) => string;
+  notification: (message: string) => string;
+  watchingFor: (name: string) => string;
+  stopsWatching: (watcherId: string) => string;
+  schedules: (skill: string, interval: string) => string;
+  codexOn: (operation: string, itemId: string) => string;
+  roomIdeaLater: string;
+  // Her unprompted lines and emotes (ProactivityJudgment).
+  noticedSomething: string;
+  quietCheckIn: string;
+  concernedGlance: string;
+  beenAWhile: string;
+  anythingOnYourMind: string;
+  shiftsThoughtfully: string;
+  meaningToFollowUp: string;
+  patternsShifted: string;
+  oracleSensed: (prediction: string) => string;
+  pausesThoughtfully: string;
+  exploringSomething: string;
+  actingOnCommitment: string;
+  /** Direction codes as words in a sentence ("heads north"), not the exit buttons' directionLabels. */
+  directionWords: Record<string, string>;
+  /** Notification priority codes as words, for notificationPriority. */
+  priorityWords: Record<string, string>;
+}
+
+/**
+ * What the phone says when it refuses an unprotected connection
+ * (, W2/W3). Plain words; the person may not know what
+ * a certificate is, only what to do next.
+ */
+export interface SecurityStrings {
+  /** The phone holds no key for its home (paired before 0.5.0). */
+  pairAgain: string;
+  /** The home refused a sealed request (wrong key, clock far off, replay). */
+  requestRefused: string;
+  /** A reply claiming to be from the home could not be verified. */
+  replyUnverified: string;
+  /** The home refused the encrypted tunnel. */
+  tunnelRefused: string;
+  /** The encrypted tunnel broke (a frame did not open). */
+  tunnelInterrupted: string;
+  pinMismatchTitle: string;
+  pinMismatchBody: (host: string) => string;
+  /** Paired before home-network pinning: the phone uses the relay (said once). */
+  lanPairAgain: string;
+  /** A typed http:// or ws:// address on the network. */
+  plainAddressRefused: string;
+  /** A knock to a zone that published no key: not sent. */
+  knockNeedsKey: string;
+  /** A knock on another zone that this phone's (older) relay refused to carry. */
+  knockRelayRefused: string;
+  /** A knock nobody answered: the zone is offline or not reachable through this relay. */
+  knockNoAnswer: string;
+  /** The relay (or the home bus) would not carry a request for this phone's account. */
+  relayRefused: string;
+  ok: string;
+}
+
 export interface LocaleStrings {
   connect: ConnectStrings;
   room: RoomStrings;
@@ -224,6 +308,8 @@ export interface LocaleStrings {
   firstRun: FirstRunStrings;
   birth: BirthStrings;
   common: CommonStrings;
+  security: SecurityStrings;
+  narration: NarrationStrings;
 }
 
 const en: LocaleStrings = {
@@ -425,6 +511,70 @@ const en: LocaleStrings = {
   },
   common: {
     back: 'Back',
+  },
+  security: {
+    pairAgain: 'This phone was paired before its connection to your home was encrypted. Pair it again: on your home machine run "wyrd phone invite", then scan the new invite.',
+    requestRefused: 'Your home refused this phone\'s encrypted request. Check that the phone\'s date and time are right. If they are, pair the phone again (on your home machine: wyrd phone invite).',
+    replyUnverified: 'A reply that claimed to come from your home could not be checked, so the phone ignored it. Try again.',
+    tunnelRefused: 'Your home refused the encrypted connection. Pair this phone again: on your home machine run "wyrd phone invite", then scan the new invite.',
+    tunnelInterrupted: 'The encrypted connection to your home was interrupted. Open the server again to reconnect.',
+    pinMismatchTitle: 'Connection refused',
+    pinMismatchBody: (host) => `${host} showed a certificate that does not match the one this phone was paired with, so the phone did not connect. If your home's certificate was changed on purpose, pair this phone again (on your home machine: wyrd phone invite). If not, someone may be trying to listen in.`,
+    lanPairAgain: 'This phone reaches your home through the relay. To connect directly on your home network, pair it again: on your home machine run "wyrd phone invite", then scan the new invite.',
+    plainAddressRefused: 'That address is not encrypted, so the phone will not send anything to it. Pair with an invite instead: on your home machine run "wyrd phone invite".',
+    knockNeedsKey: 'That zone has not published the key this phone needs to reach it privately, so the request was not sent. Ask its steward for an invite instead.',
+    knockRelayRefused: 'Your relay does not carry knocks to other zones (it may be older than 0.5.0), so your request did not reach that zone. Ask that zone\'s steward for an invite: they run "wyrd phone invite" and send you the link or QR code.',
+    knockNoAnswer: 'That zone did not answer: it may be offline, or not reachable through your relay. Try again later, or ask its steward for an invite.',
+    relayRefused: 'The relay would not carry this request for this phone, so nothing reached your home. This phone may only reach its own home through the relay. If this is your home, pair the phone again (on your home machine: wyrd phone invite).',
+    ok: 'OK',
+  },
+  narration: {
+    considers: 'considers...',
+    thinkingDeeply: 'is thinking deeply...',
+    mentalNote: 'makes a mental note...',
+    catchesUp: 'catches up on earlier conversations...',
+    thinkLater: "*nods thoughtfully* I'll think about that when I can.",
+    replayAbout: (topic) => `About "${topic}" —`,
+    newPassage: (exitLabel) => `A new passage appears: ${exitLabel}`,
+    notificationPriority: (priority, message) => `*notification (${priority})*: ${message}`,
+    heads: (direction) => `heads ${direction}`,
+    equips: (item) => `*equips ${item}*`,
+    removes: (item) => `*removes ${item}*`,
+    uses: (item) => `*uses ${item}*`,
+    usesSkill: (skill) => `*uses skill: ${skill}*`,
+    workbenchSubmit: (skill) => `*submits ${skill} to the workbench for validation*`,
+    thinkingDeeplyAbout: '*thinking deeply about this...*',
+    sendsMessage: (target) => `*sends a message to ${target}*`,
+    commitsTo: (description) => `*commits to: ${description}*`,
+    planning: (goal, steps) => `*planning: ${goal} (${steps} steps)*`,
+    zoneCommand: (command) => `*sends zone command: ${command}*`,
+    notification: (message) => `*notification: ${message}*`,
+    watchingFor: (name) => `*watching for: ${name}*`,
+    stopsWatching: (watcherId) => `*stops watching: ${watcherId}*`,
+    schedules: (skill, interval) => `*schedules ${skill} every ${interval}*`,
+    codexOn: (operation, itemId) => `*${operation} on ${itemId}*`,
+    roomIdeaLater: "I'll remember that room idea for when connected to the household server.",
+    noticedSomething: 'I noticed something worth mentioning...',
+    quietCheckIn: "Is everything alright? It's been quiet.",
+    concernedGlance: '*glances up with a concerned expression*',
+    beenAWhile: "It's been a while — hope you're doing well.",
+    anythingOnYourMind: 'Anything on your mind?',
+    shiftsThoughtfully: '*shifts thoughtfully*',
+    meaningToFollowUp: "I've been meaning to follow up on something...",
+    patternsShifted: 'Something shifted in the patterns...',
+    oracleSensed: (prediction) => `The Oracle sensed something: ${prediction}`,
+    pausesThoughtfully: '*pauses thoughtfully*',
+    exploringSomething: 'Exploring something that caught attention',
+    actingOnCommitment: 'Acting on pending commitment',
+    directionWords: {
+      north: 'north', south: 'south', east: 'east', west: 'west',
+      up: 'up', down: 'down', northeast: 'northeast', northwest: 'northwest',
+      southeast: 'southeast', southwest: 'southwest',
+    },
+    priorityWords: {
+      ambient: 'ambient', low: 'low', normal: 'normal', high: 'high',
+      urgent: 'urgent', critical: 'critical',
+    },
   },
 };
 
@@ -628,6 +778,70 @@ const ja: LocaleStrings = {
   common: {
     back: '\u623b\u308b',
   },
+  security: {
+    pairAgain: 'このスマートフォンは、ホームとの接続が暗号化される前にペアリングされています。もう一度ペアリングしてください。ホームのマシンで「wyrd phone invite」を実行し、新しい招待を読み取ってください。',
+    requestRefused: 'ホームがこのスマートフォンの暗号化されたリクエストを拒否しました。スマートフォンの日付と時刻が正しいか確認してください。正しい場合は、もう一度ペアリングしてください（ホームのマシンで wyrd phone invite）。',
+    replyUnverified: 'ホームからとされる返信を確認できなかったため、無視しました。もう一度お試しください。',
+    tunnelRefused: 'ホームが暗号化された接続を拒否しました。もう一度ペアリングしてください。ホームのマシンで「wyrd phone invite」を実行し、新しい招待を読み取ってください。',
+    tunnelInterrupted: 'ホームとの暗号化された接続が途切れました。サーバーをもう一度開いて再接続してください。',
+    pinMismatchTitle: '接続を拒否しました',
+    pinMismatchBody: (host) => `${host} が示した証明書は、このスマートフォンがペアリングしたときのものと一致しないため、接続しませんでした。ホームの証明書を意図して変更した場合は、もう一度ペアリングしてください（ホームのマシンで wyrd phone invite）。そうでない場合は、誰かが通信を盗み見ようとしている可能性があります。`,
+    lanPairAgain: 'このスマートフォンはリレー経由でホームにつながっています。ホームのネットワークで直接つなぐには、もう一度ペアリングしてください。ホームのマシンで「wyrd phone invite」を実行し、新しい招待を読み取ってください。',
+    plainAddressRefused: 'このアドレスは暗号化されていないため、スマートフォンは何も送信しません。代わりに招待でペアリングしてください。ホームのマシンで「wyrd phone invite」を実行します。',
+    knockNeedsKey: 'このゾーンは、スマートフォンが内容を守ったまま届けるための鍵を公開していないため、リクエストは送信されませんでした。代わりにそのゾーンのスチュワードに招待を依頼してください。',
+    knockRelayRefused: 'お使いのリレーはほかのゾーンへのノックを運ばないため（0.5.0より前のリレーかもしれません）、リクエストはそのゾーンに届いていません。そのゾーンのスチュワードに招待を依頼してください（スチュワードが「wyrd phone invite」を実行し、リンクかQRコードを送ります）。',
+    knockNoAnswer: 'そのゾーンから応答がありませんでした。オフラインか、お使いのリレーからは届かない可能性があります。あとでもう一度試すか、そのゾーンのスチュワードに招待を依頼してください。',
+    relayRefused: 'リレーがこのスマートフォンのリクエストを運ばなかったため、ホームには何も届いていません。このスマートフォンがリレー経由で届けられるのは自分のホームだけです。自分のホームの場合は、もう一度ペアリングしてください（ホームのマシンで wyrd phone invite）。',
+    ok: 'OK',
+  },
+  narration: {
+    considers: '考え込む…',
+    thinkingDeeply: '深く考えている…',
+    mentalNote: '心に留める…',
+    catchesUp: '前の会話に追いつこうとしている…',
+    thinkLater: '*考え深げにうなずく* できるときに考えておくね。',
+    replayAbout: (topic) => `「${topic}」について —`,
+    newPassage: (exitLabel) => `新しい通路が現れた: ${exitLabel}`,
+    notificationPriority: (priority, message) => `*通知 (${priority})*: ${message}`,
+    heads: (direction) => `${direction}へ向かう`,
+    equips: (item) => `*${item}を装備する*`,
+    removes: (item) => `*${item}を外す*`,
+    uses: (item) => `*${item}を使う*`,
+    usesSkill: (skill) => `*スキルを使う: ${skill}*`,
+    workbenchSubmit: (skill) => `*${skill}を検証のためワークベンチに出す*`,
+    thinkingDeeplyAbout: '*このことを深く考えている…*',
+    sendsMessage: (target) => `*${target}にメッセージを送る*`,
+    commitsTo: (description) => `*約束する: ${description}*`,
+    planning: (goal, steps) => `*計画中: ${goal} (${steps}ステップ)*`,
+    zoneCommand: (command) => `*ゾーンコマンドを送る: ${command}*`,
+    notification: (message) => `*通知: ${message}*`,
+    watchingFor: (name) => `*見守っている: ${name}*`,
+    stopsWatching: (watcherId) => `*見守りをやめる: ${watcherId}*`,
+    schedules: (skill, interval) => `*${skill}を${interval}ごとに予定する*`,
+    codexOn: (operation, itemId) => `*${itemId}に${operation}*`,
+    roomIdeaLater: 'その部屋のアイデアは、世帯のサーバーにつながったときのために覚えておくね。',
+    noticedSomething: '話しておきたいことに気づいたよ…',
+    quietCheckIn: '大丈夫？ずっと静かだったね。',
+    concernedGlance: '*心配そうに顔を上げる*',
+    beenAWhile: '久しぶりだね — 元気にしているといいな。',
+    anythingOnYourMind: '何か考えていることはある？',
+    shiftsThoughtfully: '*考え込むように身じろぎする*',
+    meaningToFollowUp: 'やりかけのことを確かめようと思っていたんだ…',
+    patternsShifted: 'パターンに何か変化があった…',
+    oracleSensed: (prediction) => `オラクルが何かを感じ取った: ${prediction}`,
+    pausesThoughtfully: '*考え込んで間を置く*',
+    exploringSomething: '気になったことを探っている',
+    actingOnCommitment: 'やりかけの約束に取りかかっている',
+    directionWords: {
+      north: '北', south: '南', east: '東', west: '西',
+      up: '上', down: '下', northeast: '北東', northwest: '北西',
+      southeast: '南東', southwest: '南西',
+    },
+    priorityWords: {
+      ambient: '控えめ', low: '低', normal: '通常', high: '高',
+      urgent: '緊急', critical: '重大',
+    },
+  },
 };
 
 const es: LocaleStrings = {
@@ -829,6 +1043,70 @@ const es: LocaleStrings = {
   },
   common: {
     back: 'Volver',
+  },
+  security: {
+    pairAgain: 'Este teléfono se vinculó antes de que la conexión con tu hogar estuviera cifrada. Vincúlalo de nuevo: en la máquina de tu hogar ejecuta "wyrd phone invite" y escanea la nueva invitación.',
+    requestRefused: 'Tu hogar rechazó la solicitud cifrada de este teléfono. Comprueba que la fecha y la hora del teléfono sean correctas. Si lo son, vincula el teléfono de nuevo (en la máquina de tu hogar: wyrd phone invite).',
+    replyUnverified: 'Una respuesta que decía venir de tu hogar no se pudo comprobar, así que el teléfono la ignoró. Inténtalo de nuevo.',
+    tunnelRefused: 'Tu hogar rechazó la conexión cifrada. Vincula este teléfono de nuevo: en la máquina de tu hogar ejecuta "wyrd phone invite" y escanea la nueva invitación.',
+    tunnelInterrupted: 'La conexión cifrada con tu hogar se interrumpió. Abre el servidor de nuevo para reconectar.',
+    pinMismatchTitle: 'Conexión rechazada',
+    pinMismatchBody: (host) => `${host} mostró un certificado que no coincide con el que conoció este teléfono al vincularse, así que el teléfono no se conectó. Si el certificado de tu hogar se cambió a propósito, vincula este teléfono de nuevo (en la máquina de tu hogar: wyrd phone invite). Si no, alguien podría estar intentando escuchar.`,
+    lanPairAgain: 'Este teléfono llega a tu hogar a través del relay. Para conectarse directamente en la red de tu hogar, vincúlalo de nuevo: en la máquina de tu hogar ejecuta "wyrd phone invite" y escanea la nueva invitación.',
+    plainAddressRefused: 'Esa dirección no está cifrada, así que el teléfono no le enviará nada. Vincúlalo con una invitación: en la máquina de tu hogar ejecuta "wyrd phone invite".',
+    knockNeedsKey: 'Esa zona no ha publicado la clave que este teléfono necesita para llegar a ella en privado, así que la solicitud no se envió. Pide una invitación a su steward.',
+    knockRelayRefused: 'Tu relay no lleva solicitudes a otras zonas (puede ser anterior a 0.5.0), así que tu solicitud no llegó a esa zona. Pide una invitación al steward de esa zona: ejecuta "wyrd phone invite" y te envía el enlace o el código QR.',
+    knockNoAnswer: 'Esa zona no respondió: puede estar desconectada o no ser alcanzable a través de tu relay. Inténtalo más tarde o pide una invitación a su steward.',
+    relayRefused: 'El relay no quiso llevar esta solicitud de este teléfono, así que nada llegó a tu hogar. Este teléfono solo puede llegar a su propio hogar a través del relay. Si es tu hogar, vincula el teléfono de nuevo (en la máquina de tu hogar: wyrd phone invite).',
+    ok: 'Aceptar',
+  },
+  narration: {
+    considers: 'lo considera...',
+    thinkingDeeply: 'está pensando a fondo...',
+    mentalNote: 'toma nota mentalmente...',
+    catchesUp: 'se pone al día con conversaciones anteriores...',
+    thinkLater: '*asiente pensativamente* Lo pensaré cuando pueda.',
+    replayAbout: (topic) => `Sobre "${topic}" —`,
+    newPassage: (exitLabel) => `Aparece un nuevo pasaje: ${exitLabel}`,
+    notificationPriority: (priority, message) => `*notificación (${priority})*: ${message}`,
+    heads: (direction) => `se dirige hacia ${direction}`,
+    equips: (item) => `*se equipa ${item}*`,
+    removes: (item) => `*se quita ${item}*`,
+    uses: (item) => `*usa ${item}*`,
+    usesSkill: (skill) => `*usa la habilidad: ${skill}*`,
+    workbenchSubmit: (skill) => `*envía ${skill} al banco de trabajo para validarlo*`,
+    thinkingDeeplyAbout: '*pensando a fondo en esto...*',
+    sendsMessage: (target) => `*envía un mensaje a ${target}*`,
+    commitsTo: (description) => `*se compromete a: ${description}*`,
+    planning: (goal, steps) => `*planificando: ${goal} (${steps} pasos)*`,
+    zoneCommand: (command) => `*envía una orden a la zona: ${command}*`,
+    notification: (message) => `*notificación: ${message}*`,
+    watchingFor: (name) => `*vigilando: ${name}*`,
+    stopsWatching: (watcherId) => `*deja de vigilar: ${watcherId}*`,
+    schedules: (skill, interval) => `*programa ${skill} cada ${interval}*`,
+    codexOn: (operation, itemId) => `*${operation} en ${itemId}*`,
+    roomIdeaLater: 'Recordaré esa idea de sala para cuando haya conexión con el servidor del hogar.',
+    noticedSomething: 'Me di cuenta de algo que vale la pena mencionar...',
+    quietCheckIn: '¿Todo bien? Ha estado todo muy tranquilo.',
+    concernedGlance: '*levanta la vista con expresión preocupada*',
+    beenAWhile: 'Ha pasado un tiempo — espero que estés bien.',
+    anythingOnYourMind: '¿Tienes algo en mente?',
+    shiftsThoughtfully: '*se acomoda pensativamente*',
+    meaningToFollowUp: 'Quería retomar algo pendiente...',
+    patternsShifted: 'Algo cambió en los patrones...',
+    oracleSensed: (prediction) => `El Oráculo percibió algo: ${prediction}`,
+    pausesThoughtfully: '*hace una pausa reflexiva*',
+    exploringSomething: 'Explorando algo que le llamó la atención',
+    actingOnCommitment: 'Cumpliendo un compromiso pendiente',
+    directionWords: {
+      north: 'el norte', south: 'el sur', east: 'el este', west: 'el oeste',
+      up: 'arriba', down: 'abajo', northeast: 'el noreste', northwest: 'el noroeste',
+      southeast: 'el sureste', southwest: 'el suroeste',
+    },
+    priorityWords: {
+      ambient: 'ambiental', low: 'baja', normal: 'normal', high: 'alta',
+      urgent: 'urgente', critical: 'crítica',
+    },
   },
 };
 

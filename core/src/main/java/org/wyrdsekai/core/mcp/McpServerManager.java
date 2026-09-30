@@ -2,7 +2,7 @@ package org.wyrdsekai.core.mcp;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.wyrdsekai.core.mcp.protocol.JsonRpcMessage;
+import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.mcp.transport.McpTransportFactory;
 import org.wyrdsekai.core.mcp.transport.McpTransportHandler;
 
@@ -21,12 +21,8 @@ public class McpServerManager {
     private final McpToolIndex toolIndex = new McpToolIndex();
     private final McpKeyStore keyStore;
 
-    /**
-     * Optional grant-based authorization ( MCP_TOOL). When set
-     * {@code invokeTool(..., callerDid)} consults the check; {@code listToolsFor}
-     * filters to tools the caller holds.
-     */
-    private volatile McpGrantCheck grantCheck;
+    /** The one door every call passes (the process-wide gateway when unset). */
+    private volatile McpGatewayService gateway;
 
     public McpServerManager(McpKeyStore keyStore) {
         this.keyStore = keyStore;
@@ -43,9 +39,9 @@ public class McpServerManager {
      */
     public boolean isAuthenticated(String serviceId) { return serviceId != null && authenticated.contains(serviceId); }
 
-    /** Attach a grant-based authorization check ( MCP_TOOL). */
-    public void setGrantCheck(McpGrantCheck check) {
-        this.grantCheck = check;
+    /** The gateway invokeTool routes through; tests set it, the server installs the shared one. */
+    public void setGateway(McpGatewayService gateway) {
+        this.gateway = gateway;
     }
 
     // Connect to an MCP server and discover its tools.
@@ -84,35 +80,59 @@ public class McpServerManager {
         return qualifiedNames;
     }
 
-    // Invoke a tool by qualified name (unauthenticated path — backward compatible).
-    public String invokeTool(String qualifiedName, Map<String, Object> arguments) throws Exception {
-        return invokeTool(qualifiedName, arguments, null);
-    }
-
     /**
-     * Invoke a tool on behalf of a specific caller. When a grant check is
-     * configured and {@code callerDid} is non-null, the caller must hold a
-     * {@code use} grant on {@code home://{callerDid}/mcp-tool/{server}/{tool}}.
+     * Invoke a tool on behalf of a caller (the companion, or the person whose item it
+     * is). The call goes through {@link McpGatewayService}: grants, circuit breaker,
+     * rate limit, spend cap, output quarantine and cost, the same door room scripts
+     * use. No gateway, no call.
      */
     public String invokeTool(String qualifiedName, Map<String, Object> arguments,
                               String callerDid) throws Exception {
         var route = toolIndex.lookup(qualifiedName)
             .orElseThrow(() -> new IllegalArgumentException("Unknown MCP tool: " + qualifiedName));
-
-        var check = grantCheck;
-        if (check != null && callerDid != null
-                && !check.canUse(callerDid, route.serverId(), route.rawToolName())) {
-            throw new SecurityException("MCP tool '" + qualifiedName
-                + "' denied: no grant for " + callerDid);
+        var door = gateway != null ? gateway : McpGatewayService.shared();
+        if (door == null) {
+            throw new IllegalStateException("MCP gateway not available");
         }
+        return door.call(callerDid, zone(), route.serverId(), route.rawToolName(),
+            arguments == null ? Map.of() : arguments);
+    }
 
-        var handler = handlers.get(route.serverId());
+    /**
+     * A person's own yes to a {@code library_research} the librarian asked them about: the
+     * same door as {@link #invokeTool}, the one call that may carry {@code allow}
+     * ({@link McpGatewayService#callWithPersonsYes}). {@code personId} is the person saying yes.
+     */
+    public String invokeWithPersonsYes(String qualifiedName, Map<String, Object> arguments,
+                                       String personId) throws Exception {
+        var route = toolIndex.lookup(qualifiedName)
+            .orElseThrow(() -> new IllegalArgumentException("Unknown MCP tool: " + qualifiedName));
+        var door = gateway != null ? gateway : McpGatewayService.shared();
+        if (door == null) {
+            throw new IllegalStateException("MCP gateway not available");
+        }
+        return door.callWithPersonsYes(personId, zone(), route.serverId(), route.rawToolName(),
+            arguments == null ? Map.of() : arguments);
+    }
+
+    /** Call a tool on a service's live connection. Only the gateway calls this, after its checks. */
+    McpGatewayService.Reply callConnected(String serverId, String rawToolName,
+                                          Map<String, Object> arguments) throws Exception {
+        var handler = handlers.get(serverId);
         if (handler == null || !handler.isAlive()) {
-            throw new IllegalStateException("MCP server '" + route.serverId() + "' not connected");
+            throw new IllegalStateException("MCP server '" + serverId + "' not connected");
         }
+        var result = handler.callTool(rawToolName, arguments);
+        return new McpGatewayService.Reply(result.textContent(), result.reportedCost());
+    }
 
-        var result = handler.callTool(route.rawToolName(), arguments);
-        return result.textContent();
+    private static String zone() {
+        try {
+            var z = WyrdConfig.get().zoneId();
+            return z == null || z.isBlank() ? "local" : z;
+        } catch (RuntimeException e) {
+            return "local";
+        }
     }
 
     // Disconnect a server and remove its tools.

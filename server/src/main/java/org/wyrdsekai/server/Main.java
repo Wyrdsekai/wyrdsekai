@@ -21,6 +21,10 @@ import org.wyrdsekai.core.library.KnowledgePackIndexer;
 import org.wyrdsekai.core.library.LibraryActor;
 import org.wyrdsekai.core.library.LibraryConfig;
 import org.wyrdsekai.core.library.LibraryMigration;
+import org.wyrdsekai.core.library.LibraryConsent;
+import org.wyrdsekai.core.library.LibraryResearchLedger;
+import org.wyrdsekai.core.library.LibraryYesReports;
+import org.wyrdsekai.core.library.NeutralWording;
 import org.wyrdsekai.core.library.LibraryStore;
 import org.wyrdsekai.core.library.OutputSanitizer;
 import org.wyrdsekai.core.library.SecurityPatternManager;
@@ -55,10 +59,8 @@ import org.wyrdsekai.core.mcp.McpGrantCheck;
 import org.wyrdsekai.core.mcp.McpKeyStore;
 import org.wyrdsekai.core.mcp.McpServerManager;
 import org.wyrdsekai.core.mcp.McpGrantAdmin;
-import org.wyrdsekai.core.mcp.transport.McpTransportFactory;
-import org.wyrdsekai.core.mcp.transport.McpTransportHandler;
-import org.wyrdsekai.core.mcp.transport.HttpTransportHandler;
 import org.wyrdsekai.core.inference.InferenceConfig;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.between.layer.NodeCapabilities;
 import org.wyrdsekai.server.hermod.HermodService;
@@ -77,6 +79,7 @@ import org.wyrdsekai.core.agent.LexiconService;
 import org.wyrdsekai.core.agent.WorldDnaHarvester;
 import org.wyrdsekai.core.naming.FederationSubjects;
 import org.wyrdsekai.core.identity.AgentIdentityBootstrap;
+import org.wyrdsekai.core.lifecycle.RecoverySeedService;
 import org.wyrdsekai.core.identity.PersonIdentityBootstrap;
 import org.wyrdsekai.core.coding.ConsentBroker;
 import org.wyrdsekai.core.persistence.AuthService;
@@ -125,6 +128,7 @@ import org.wyrdsekai.core.agent.NotificationService;
 import org.wyrdsekai.core.agent.WatcherService;
 import org.wyrdsekai.core.agent.channels.ChannelStateStore;
 import org.wyrdsekai.core.agent.interiority.ChronicleEntryStore;
+import org.wyrdsekai.core.soul.BondNameStore;
 import org.wyrdsekai.core.soul.ForgeActor;
 import org.wyrdsekai.core.soul.ForgeRoomBridge;
 import org.wyrdsekai.core.soul.ForgeCommand;
@@ -166,11 +170,14 @@ import org.wyrdsekai.between.federation.FederationService;
 import org.wyrdsekai.between.federation.AgreementGrantSync;
 import org.wyrdsekai.between.federation.BilateralAgreement;
 import org.wyrdsekai.between.federation.TransitToken;
+import org.wyrdsekai.between.federation.ZoneSignedMessages;
 import org.wyrdsekai.between.NatsBridge;
 import org.wyrdsekai.between.NatsServerManager;
 import org.wyrdsekai.between.MultiHomedRelayPublisher;
 import org.wyrdsekai.between.NatsZoneDirectory;
 import org.wyrdsekai.between.NodeIdentity;
+import org.wyrdsekai.between.RelayIds;
+import org.wyrdsekai.between.RelayTls;
 import org.wyrdsekai.between.RelaySessionTransport;
 import org.wyrdsekai.between.inference.NatsInferenceClient;
 import org.wyrdsekai.between.inference.NatsInferenceProtocol;
@@ -191,13 +198,15 @@ import org.wyrdsekai.server.http.InferenceRoutes;
 import org.wyrdsekai.server.http.MetricsCollector;
 import org.wyrdsekai.server.http.PairingRoutes;
 import org.wyrdsekai.server.http.HouseholdJoinRoutes;
+import org.wyrdsekai.core.crypto.TunnelKey;
+import org.wyrdsekai.server.http.ApiAuth;
 import org.wyrdsekai.server.http.RateLimiter;
 import org.wyrdsekai.core.household.MaintenanceService;
 import org.wyrdsekai.core.household.ParentalControlService;
-import org.wyrdsekai.core.household.PermissionChecker;
 import org.wyrdsekai.core.household.StewardAuditLog;
 import org.wyrdsekai.server.http.HouseholdRoutes;
 import org.wyrdsekai.server.http.IssueRoutes;
+import org.wyrdsekai.server.http.RecoverySeedRoutes;
 import org.wyrdsekai.server.http.LibraryKnowledgeRoutes;
 import org.wyrdsekai.core.library.LibraryProvider;
 import org.wyrdsekai.core.library.LibraryReaders;
@@ -210,6 +219,7 @@ import org.wyrdsekai.server.http.StudyRoutes;
 import org.wyrdsekai.server.http.SearchRoutes;
 import org.wyrdsekai.server.http.SoulRoutes;
 import org.wyrdsekai.server.http.TlsConfig;
+import org.wyrdsekai.core.crypto.HouseholdBus;
 import org.wyrdsekai.core.item.MailboxService;
 import org.wyrdsekai.core.body.BodyMap;
 import org.wyrdsekai.core.body.ImmuneMemory;
@@ -269,6 +279,7 @@ import org.wyrdsekai.server.inference.NatsInferenceServer;
 import org.wyrdsekai.server.mcp.McpNatsHandler;
 import org.wyrdsekai.server.mcp.TunnelSessionHandler;
 import org.wyrdsekai.server.session.ClientConnectionRegistry;
+import org.wyrdsekai.server.session.PrivateLine;
 import org.wyrdsekai.server.session.VirtualSessionHandler;
 
 import org.wyrdsekai.common.system.SystemPaths;
@@ -396,6 +407,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import java.net.Inet4Address;
+import java.net.URI;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
@@ -629,6 +641,11 @@ public class Main {
             System.out.println("[wyrdsekai] Federation relay configured: " + url);
             return;
         }
+        // An NKey leg (the default since 0.5.0) logs in with the node's key: no user or password to set.
+        if (hasEnabled && hasUrl && RelayTls.useNkey(token)) {
+            System.out.println("[wyrdsekai] Federation relay configured: " + url + " (NKey)");
+            return;
+        }
 
         // Partial — surface exactly what's missing.
         var missing = new ArrayList<String>();
@@ -666,6 +683,13 @@ public class Main {
         var dataDir = Path.of(System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR",
             System.getProperty("user.home") + "/.wyrdsekai"));
         var nodeIdentity = NodeIdentity.loadOrGenerate(dataDir.resolve("node-identity.json"));
+        // The sealed tunnel's home key ( W3): made at boot so every phone
+        // invite can carry its public half, before the relay tunnel ever starts.
+        try {
+            TunnelKey.forThisHome();
+        } catch (Exception tk) {
+            LoggerFactory.getLogger("Main").warn("The home's tunnel key could not be made ({}); phones cannot seal their tunnel", tk.getMessage());
+        }
         // The NKey-derived DID is what the relay knows this node as (it stamps
         // nkey_to_did on the registration and verifies admin/claim signatures
         // against the NKey). Use it for both the relay-DID and owner defaults.
@@ -805,15 +829,26 @@ public class Main {
                 // interfaces (0.0.0.0) so a household peer can actually borrow it.
                 // The 5th NatsServerManager arg drives the generated nats.conf
                 // `listen` address (0.0.0.0 vs 127.0.0.1) + client_advertise.
-                boolean bindAll = WyrdConfig.get().inferenceHouseholdShare()
-                    || "true".equalsIgnoreCase(
-                        System.getenv().getOrDefault("WYRDSEKAI_NATS_BIND_ALL", ""));
+                // The bus answers the network encrypted, every client with a login (
+                // W2); WYRDSEKAI_NATS_BIND_ALL=false keeps it on this machine. NatsServerManager says which.
+                boolean bindAll = WyrdConfig.get().natsBindAll();
+                // The port the node will connect to: it was always 4222 here, whatever the URL said,
+                // so a node configured for another port could not reach its own bus.
+                int natsPort = 4222;
+                try {
+                    var p = URI.create(natsUrlEnv).getPort();
+                    if (p > 0) natsPort = p;
+                } catch (IllegalArgumentException ignored) {
+                    // keep 4222
+                }
                 var mgr = new NatsServerManager(
                     System.getenv().getOrDefault("WYRDSEKAI_NATS_EXECUTABLE", "nats-server"),
-                    4222, 8222, dataDir, bindAll);
+                    natsPort, 8222, dataDir, bindAll);
                 mgr.start();
-                System.out.println("[wyrdsekai] embedded nats-server ready on " + natsUrlEnv
-                    + (bindAll ? " (bound all interfaces — household share on)" : ""));
+                // The bus this node started stops with it; it used to outlive the node (2026-09-28 rehearsal).
+                Runtime.getRuntime().addShutdownHook(new Thread(mgr::stop, "embedded-nats-stop"));
+                System.out.println("[wyrdsekai] " + (mgr.startedHere() ? "embedded nats-server" : "household bus")
+                    + " ready on " + natsUrlEnv + (bindAll ? " (network: TLS and login required)" : " (this machine only)"));
             } catch (Exception e) {
                 System.out.println("[wyrdsekai] embedded nats-server bootstrap failed: "
                     + e.getMessage() + " — pre-connect will retry");
@@ -1073,6 +1108,33 @@ public class Main {
         // the crystal showed "no companions" on a node with a living companion).
         CompanionCodexView.setJdbcUrl(jdbcUrl);
 
+        // What a full backup copies beside world.db, the search index and the node identity:
+        // filesystem state outside world.db that is irreplaceable or expensive to recover. One
+        // list for the schedule below, the steward's backup (MaintenanceService) and
+        // POST /api/backup/snapshot; the route kept its own copy and had drifted to four entries.
+        // agents/ holds FamilyLocker (familiars, imprints, summon keys, forge cursor);
+        // classifiers/ holds per-agent learned event log; souls/ holds the legacy manifest dir
+        // + incoming/ seed drops + .did files. substrate/ holds the Wave 9a-Persist sweep:
+        // RepairLedger, AttendantSession, RepairMode, and per-companion ProtectionFlag JSON
+        // files — load-bearing substrate-truth state +
+        // that must survive zone restore.
+        // adapters/ is intentionally NOT here — large + retrainable, separate retention follow-up.
+        final List<Path> backupExtras = List.of(
+            SystemPaths.dataDir().resolve("agents"),
+            SystemPaths.dataDir().resolve("classifiers"),
+            SystemPaths.dataDir().resolve("souls"),
+            SystemPaths.dataDir().resolve("substrate"),
+            // §F.3 — story (scene/beat/arc JSON) and
+            // biography (per-day per-focal markdown journals) are
+            // load-bearing personhood data: lose these and the agent
+            // loses scene-organized lived experience.
+            SystemPaths.storyDir(),
+            SystemPaths.biographyDir(),
+            // The companions' day-by-day record and the drive trace: append-only files,
+            // copied with what was rotated off them (BackupOrchestrator.copyTrail).
+            SystemPaths.activityLog(),
+            SystemPaths.dataSubdir().resolve("drive-trace.jsonl"));
+
         // Wire BackupOrchestrator for periodic DB snapshots
         BackupOrchestrator backupOrchestrator = null;
         ScheduledExecutorService backupScheduler = null;
@@ -1092,45 +1154,35 @@ public class Main {
                 // cryptographic identity is gone and all signed soul
                 // manifests fail verification.
                 var nodeIdentityPath = SystemPaths.dataDir().resolve("node-identity.json");
-                // Filesystem state outside world.db that is irreplaceable
-                // or expensive to recover. agents/ holds FamilyLocker
-                // (familiars, imprints, summon keys, forge cursor); classifiers/
-                // holds per-agent learned event log; souls/ holds the legacy
-                // manifest dir + incoming/ seed drops + .did files. substrate/
-                // holds the Wave 9a-Persist sweep: RepairLedger, AttendantSession,
-                // RepairMode, and per-companion ProtectionFlag JSON files —
-                // load-bearing substrate-truth state
-                // + that must survive zone restore.
-                // adapters/ is intentionally NOT here — large + retrainable,
-                // separate retention follow-up.
-                final var extraBackupDirs = List.of(
-                    SystemPaths.dataDir().resolve("agents"),
-                    SystemPaths.dataDir().resolve("classifiers"),
-                    SystemPaths.dataDir().resolve("souls"),
-                    SystemPaths.dataDir().resolve("substrate"),
-                    // §F.3 — story (scene/beat/arc JSON) and
-                    // biography (per-day per-focal markdown journals) are
-                    // load-bearing personhood data: lose these and the agent
-                    // loses scene-organized lived experience.
-                    SystemPaths.storyDir(),
-                    SystemPaths.biographyDir());
                 final var orchestrator = backupOrchestrator;
                 backupScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                     var t = new Thread(r, "backup-scheduler");
                     t.setDaemon(true);
                     return t;
                 });
+                // Counted from the newest backup on disk, not from this start: a restart reset
+                // the 24 h timer, so a node restarted more often than that went days without one.
+                final var every = Duration.ofHours(intervalHours);
+                // A full pass's own database snapshot: not the brainstem's copy before a hang
+                // restart, which would put the next full backup a day away again.
+                final var lastBackup = orchestrator.latestSnapshotOf(dbPath)
+                    .map(BackupOrchestrator.BackupManifest::timestamp).orElse(null);
+                final var firstIn = BackupOrchestrator.firstRunDelay(lastBackup, every, Instant.now());
                 backupScheduler.scheduleAtFixedRate(
                     () -> {
                         ActivityGauge.maintenanceStarted();   // an update must not land mid-snapshot
-                        try { orchestrator.snapshotAll(dbPath, searchDir, nodeIdentityPath, extraBackupDirs); }
+                        try { orchestrator.snapshotAll(dbPath, searchDir, nodeIdentityPath, backupExtras); }
+                        // A task that throws is never run again by its executor: one bad pass
+                        // would stop every later backup until the next restart.
+                        catch (RuntimeException e) { log.error("Scheduled backup failed: {}", e.toString()); }
                         finally { ActivityGauge.maintenanceFinished(); }
                     },
-                    intervalHours, intervalHours, TimeUnit.HOURS);
-                log.info("BackupOrchestrator enabled — interval={}h, maxSnapshots={}, dir={} "
-                    + "(DB via VACUUM INTO + search/Study + node-identity + "
-                    + "agents/classifiers/souls/substrate)",
-                    intervalHours, maxSnapshots, backupDir);
+                    firstIn.toMinutes(), every.toMinutes(), TimeUnit.MINUTES);
+                log.info("BackupOrchestrator enabled — interval={}h, next in {} min (newest backup {}), "
+                    + "maxSnapshots={}, dir={} (DB via VACUUM INTO + search/Study + node-identity + "
+                    + "agents/classifiers/souls/substrate/story/biography + activity and drive trails)",
+                    intervalHours, firstIn.toMinutes(), lastBackup == null ? "none" : lastBackup,
+                    maxSnapshots, backupDir);
             }
         } catch (Exception e) {
             log.info("Backup not configured (disabled): {}", e.getMessage());
@@ -1166,12 +1218,20 @@ public class Main {
         var bridgeDataProvider = new BridgeDataProviderImpl(wardService, metadataService, authService);
 
         // Pairing service for phone node onboarding
-        var pairingHouseholdId = config.hasPath("wyrdsekai.between.zone-id")
-            ? config.getString("wyrdsekai.between.zone-id") : "home";
+        // One zone name for the whole node (see the Between zone below).
+        var pairingHouseholdId = WyrdConfig.get().zoneId();
         var pairingHouseholdName = config.hasPath("wyrdsekai.between.zone-name")
             ? config.getString("wyrdsekai.between.zone-name") : "Home Zone";
-        var pairingNatsUrl = config.hasPath("wyrdsekai.between.nats.url")
-            ? config.getString("wyrdsekai.between.nats.url") : "";
+        // The pairing reply's bus address is the household bus as a phone reaches it: the websocket on the
+        // LAN (the bus port + 1), encrypted unless the plain change-over is on. It used to be the node's own
+        // URL (nats://127.0.0.1:4222), which a phone saved and then tried as its relay (2026-09-28 rehearsal).
+        var pairingBusPort = 4222;
+        try {
+            var p = URI.create(config.getString("wyrdsekai.between.nats.url")).getPort();
+            if (p > 0) pairingBusPort = p;
+        } catch (Exception ignored) {
+            // keep 4222
+        }
         // Use LAN IP for pairing URL so phones can reach us (localhost is useless for them).
         // Falls back to config hostname if LAN detection fails.
         var configHostname = config.getString("wyrdsekai.hostname");
@@ -1184,7 +1244,10 @@ public class Main {
                 log.info("Pairing URL uses LAN IP: {} (config hostname was {})", lanHostname, configHostname);
             }
         }
-        var pairingServerUrl = "http://" + lanHostname + ":" + port;
+        // The network reaches this home over HTTPS ( W2); plain :7070 is this machine's.
+        var pairingServerUrl = WyrdConfig.get().httpLanPlaintext() || !TlsConfig.enabled(config)
+            ? "http://" + lanHostname + ":" + port
+            : "https://" + lanHostname + ":" + TlsConfig.port(config);
         // Read relay config for pairing responses and mDNS
         var relayUrl = "";
         var relayToken = "";
@@ -1201,14 +1264,21 @@ public class Main {
             log.debug("Relay config not found: {}", e.getMessage());
         }
 
+        var pairingNatsUrl = (WyrdConfig.get().natsLanPlaintext() ? "ws://" : "wss://") + lanHostname + ":" + (pairingBusPort + 1);
+        // No relay in the pairing reply: a phone gets its relay (the phones' door and its own relay login)
+        // from the invite. The reply used to carry this node's relay URL (the machines' port, useless to a
+        // phone, which saved it over its good relay address) and this node's own relay password.
         var pairingService = new PairingService(jdbcUrl, dialect,
             pairingHouseholdId, pairingHouseholdName,
             "" /* serverDid — populated when AgentIdentity is available */,
-            pairingNatsUrl, pairingServerUrl,
-            relayUrl.isEmpty() ? null : relayUrl,
-            relayToken.isEmpty() ? null : relayToken);
+            pairingNatsUrl, pairingServerUrl, null, null);
         pairingService.initSchema();
         PairingService.register(pairingService);
+        try {
+            pairingService.useHouseholdBus(HouseholdBus.open(HouseholdBus.defaultDataDir()));   // D3: phones' bus logins
+        } catch (Exception e) {
+            log.warn("Paired phones get no household bus login ({}); they use the relay", e.getMessage());
+        }
 
         // Parental controls — per-member time limits, room restrictions,
         // inference quotas, content filters (the Study parental-controls
@@ -1216,6 +1286,13 @@ public class Main {
         // caller's role through authService. The minutes-accrual ticker is
         // started further below, once the ClientConnectionRegistry exists.
         ParentalControlService.init(jdbcUrl, dialect, authService);
+        // Library research runs are counted per person and day in world.db (the library itself
+        // sees one household token), so a restart does not reset the day.
+        LibraryConsent.useLedger(new LibraryResearchLedger(jdbcUrl));
+        // Reports researched after a person's `research yes` are listed in world.db and never
+        // shown to a member under parental controls.
+        LibraryConsent.useYesReports(new LibraryYesReports(jdbcUrl));
+        BondNameStore.install(jdbcUrl);
 
 
         // Maintenance subsystem — maintenance mode (steward-only login while
@@ -1235,20 +1312,13 @@ public class Main {
                 Path.of(config.getString("wyrdsekai.db.path")),
                 SystemPaths.dataDir().resolve("search"),
                 SystemPaths.dataDir().resolve("node-identity.json"),
-                List.of(
-                    SystemPaths.dataDir().resolve("agents"),
-                    SystemPaths.dataDir().resolve("classifiers"),
-                    SystemPaths.dataDir().resolve("souls"),
-                    SystemPaths.dataDir().resolve("substrate"),
-                    SystemPaths.storyDir(),
-                    SystemPaths.biographyDir()));
+                backupExtras);
         } catch (Exception e) {
             log.warn("MaintenanceService init failed — maintenance dial unwired: {}",
                 e.getMessage());
         }
 
-        // Household permission checker and steward audit log (§101)
-        var permissionChecker = new PermissionChecker();
+        // Steward audit log (§101)
         var stewardAuditLog = new StewardAuditLog(jdbcUrl, dialect);
         StewardAuditLog.register(stewardAuditLog);
 
@@ -1352,6 +1422,17 @@ public class Main {
         // a few lines below once localZoneId resolves, so the home_zone
         // column lights up correctly for legacy souls.
         var companionRegistry = new CompanionRegistry(jdbcUrl);
+        // The wording a flagged research question goes to the library in may name nobody here:
+        // the household's people (name and username) and its companions, read when it is checked.
+        LibraryConsent.useHouseholdNames(() -> {
+            var names = new ArrayList<String>();
+            for (var u : authService.listUsers()) {
+                names.add(u.username());
+                names.add(u.displayName());
+            }
+            for (var c : companionRegistry.all()) names.add(c.name());
+            return names;
+        });
 
         // Household mail (§4.24). The store makes it mail rather than a queue — it lived in a
         // map until 2026-09-15, so a restart lost every message. The directory is read live
@@ -1462,7 +1543,9 @@ public class Main {
                 localZoneId, sessionTransportHolder::get,
                 new FederationService(jdbcUrl),
                 name -> new RecipeService(recipesDirForBorrow, null).inspect(name),
-                /* borrowTimeoutSec */ 24L * 3600);
+                /* borrowTimeoutSec */ 24L * 3600,
+                // borrow requests travel signed by this node and name this zone
+                NodeIdentity.loadOrGenerate(dataDirForRecipes.resolve("node-identity.json")));
             // (option c — BYO cloud) decorator: the third
             // fallback. Wraps the cross-zone dispatcher so the chain is
             // local → peer → cloud. Only fires when a steward configured
@@ -1839,13 +1922,9 @@ public class Main {
                 log.warn("Failed to load MCP service config (gateway will have no services): {}", e.getMessage());
             }
         }
-        // Real transport (W-MCP 2026-07-20): resolve the service whose endpoint
-        // this is (to learn its transport type: http/stdio/ws/sse), build the
-        // matching handler via McpTransportFactory, run the MCP initialize→callTool
-        // handshake, and return the tool's text content. Per-call handler (no pooled
-        // connection) — fine for the opt-in service set; can be pooled later.
-        // Before this, the gateway's transport threw unconditionally, so every
-        // external world.mcp() failed and only the in-process Study skill worked.
+        // Real transport (W-MCP 2026-07-20): a handler per call built from the
+        // service's own config (McpGatewayService.handlerTransport); a service with a
+        // live boot-time connection is called on that connection instead (below).
         // The doors as firewall sets: which addresses stand behind each door on the map. The
         // relay from config, the librarian from its MCP endpoint, a zone from its manifest.
         {
@@ -1877,23 +1956,7 @@ public class Main {
                 return hosts;
             });
         }
-        var mcpGateway = new McpGatewayService(mcpRegistry,
-            (endpoint, toolName, params, authHeader) -> {
-                var cfg = mcpRegistry.enabledServices().stream()
-                    .filter(s -> endpoint != null && endpoint.equals(s.endpoint()))
-                    .findFirst()
-                    .orElse(null);
-                McpTransportHandler handler = (cfg != null)
-                    ? McpTransportFactory.create(cfg, authHeader)
-                    : new HttpTransportHandler(endpoint, Map.of(), authHeader);
-                try {
-                    handler.initialize();
-                    var result = handler.callTool(toolName, params != null ? params : Map.of());
-                    return result.textContent();
-                } finally {
-                    try { handler.close(); } catch (Exception ignore) { /* best-effort */ }
-                }
-            });
+        var mcpGateway = new McpGatewayService(mcpRegistry, McpGatewayService.handlerTransport(mcpRegistry));
         mcpGateway.setCostRecorder((agentId, serviceId, toolName, cost, latencyMs) -> {
             countingHouse.tell(new CountingHouseCommand.RecordUsage(
                 new ResourceUsage(agentId, "mcp:" + serviceId + ":" + toolName,
@@ -1955,15 +2018,10 @@ public class Main {
                 + "+ restart.", "normal", "credential-resolver");
         });
 
-        // Wire McpKeyStore for TheSafe credential resolution (§89.1)
-        var mcpKeyStore = new McpKeyStore(safeKey -> {
-            // Read key from environment variables (WYRDSEKAI_MCP_KEY_<SAFE_KEY>)
-            var envKey = "WYRDSEKAI_MCP_KEY_" + safeKey.toUpperCase().replace('-', '_').replace('.', '_');
-            var envValue = System.getenv(envKey);
-            if (envValue != null) return envValue;
-            // Fallback: check system property
-            return System.getProperty("wyrdsekai.mcp.key." + safeKey);
-        });
+        // Wire McpKeyStore for TheSafe credential resolution (§89.1). The Safe slot first
+        // (`wyrd cred set <safe_key>`); until 2026-09-28 only the environment was read.
+        var mcpKeyStore = new McpKeyStore(McpKeyStore.chained(
+            safeKey -> TheSafe.local().readSlot(safeKey), System::getenv, System::getProperty));
         mcpGateway.setKeyStore(mcpKeyStore);
         log.info("McpGatewayService created with cost recording and TheSafe key store");
 
@@ -1982,6 +2040,16 @@ public class Main {
                 log.warn("MCP server '{}' connect failed (skipping): {}", svc.id(), e.getMessage());
             }
         }
+        // One door: every McpServerManager.invokeTool (item mcp.invoke, the librarian's
+        // desk and patron, code-mode mcp.execute) goes through the gateway, which calls a
+        // connected service on its live connection. The librarian the steward linked is a
+        // household service: no per-companion grant, every other check still applies.
+        mcpServerManager.setGateway(mcpGateway);
+        mcpGateway.useConnections(mcpServerManager);
+        mcpGateway.setHouseholdServices(() -> {
+            var librarian = WyrdConfig.get().libraryPatronService();
+            return librarian.isEmpty() ? Set.<String>of() : Set.of(librarian);
+        });
 
         // W1: bridge room scripts' world.mcp() to this
         // gateway — RoomActor builds its RoomScriptEngine without a provider,
@@ -2275,6 +2343,8 @@ public class Main {
             if (inferenceRouter != null) {
                 safetyTrigger.setLlmClassifier(
                     SafetyMonitorService.classifierViaRouter(inferenceRouter, system));
+                // The same facility writes the neutral wording a person's `research yes` sends.
+                LibraryConsent.useRewording(NeutralWording.viaRouter(inferenceRouter, system));
             }
             var safetyAlertRouter = new SafetyAlertRouter();
             SafetyMonitorService.init(safetyTrigger, safetyAlertRouter,
@@ -2717,29 +2787,10 @@ public class Main {
             !system.getWhenTerminated().toCompletableFuture().isDone());
         // Expose NATS and relay URLs in /health for phone auto-discovery
         if (!pairingNatsUrl.isEmpty()) {
-            // Phones speak NATS-over-WebSocket; the ws listener sits on
-            // clientPort+1 (G2, 2026-07-11). Advertise the REAL ws endpoint —
-            // clients used to naively rewrite nats://:4222 → ws://:4222 (the
-            // TCP port) and could never connect over LAN.
-            var phoneWsUrl = pairingNatsUrl
-                .replace("nats://", "ws://")
-                .replace(":4222", ":4223");
-            // Phone-facing advertise (task #30): the embedded NATS default binds
-            // loopback (nats://127.0.0.1:4222), so the naive rewrite advertised
-            // ws://127.0.0.1:4223 — useless to a phone on the LAN, which then
-            // needed manual seeding. Substitute the docker/bridge-aware LAN IP
-            // (same resolveLanIp fix as the pairing/QR URL above).
-            if (isLocalhostNatsUrl(phoneWsUrl)) {
-                var lanIp = resolveLanIp();
-                if (lanIp != null && !lanIp.isBlank()) {
-                    phoneWsUrl = phoneWsUrl
-                        .replace("127.0.0.1", lanIp)
-                        .replace("localhost", lanIp)
-                        .replace("0.0.0.0", lanIp);
-                    log.info("/health natsUrl advertises LAN IP: {}", phoneWsUrl);
-                }
-            }
-            healthRoutes.setNatsUrl(phoneWsUrl);
+            // The phones' bus address, the same one the pairing reply gives: the websocket on the LAN at the
+            // bus port + 1. It was rewritten from the node's own URL by replacing ":4222", so any other bus
+            // port advertised the TCP port (2026-09-28 rehearsal).
+            healthRoutes.setNatsUrl(pairingNatsUrl);
         }
         if (!relayUrl.isEmpty()) {
             healthRoutes.setRelayUrl(relayUrl);
@@ -2772,6 +2823,9 @@ public class Main {
             }
         });
         var voiceWsHandler = new VoiceWebSocket(voiceAdapter);
+        VoiceWebSocket.setAuthenticator(token -> authService.validateSession(token).map(AuthService.User::id)
+            .or(() -> pairingService.validateDeviceToken(token).map(PairingService.PairedDevice::userId))
+            .orElse(null));
 
         // Initialize voice platform services (STT + TTS)
         SpeechToTextService.init();
@@ -2960,6 +3014,13 @@ public class Main {
                 log.info("Tell-back player deliverer wired (session replies for `tell`, all surfaces)");
             }
         }
+        {
+            // The person whose `research yes` report is in is told in their own sessions only.
+            final var wsForLibrary = wsHandler;
+            final var registryForLibrary = clientConnectionRegistry;
+            LibraryConsent.useSessionLine((personId, text) ->
+                PrivateLine.toPerson(registryForLibrary, wsForLibrary, personId, text));
+        }
         // Wire HomeClient so the `home` command can audit arrivals.
         var homeClientShared = new HomeClient(homeRegistry, system);
         HomeClients.set(homeClientShared);
@@ -3118,21 +3179,19 @@ public class Main {
         // MCP tool authorization ( MCP_TOOL). Grants live on the
         // HOUSEHOLD-owned resource home://{steward}/mcp-tool/{service}, so the
         // steward can grant agents (or 'everyone') via the Study Tool Warden.
-        // Default OPEN (strict=false): a household that configures a service is
-        // opting in, and a new companion shouldn't be silently unable to use it.
-        // Onboarding (`wyrd setup`) can turn strict on; when it is, configured
-        // services stay dark until the steward grants them — and the steward is
-        // notified below. Toggle: WYRDSEKAI_MCP_STRICT_GRANTS=true.
-        var strictMcp = Boolean.parseBoolean(
-            System.getenv().getOrDefault("WYRDSEKAI_MCP_STRICT_GRANTS", "false"));
+        // STRICT by default (2026-09-28 security audit): a remote service stays dark
+        // for a companion until the steward grants it, and the steward is notified
+        // below. WYRDSEKAI_MCP_STRICT_GRANTS=false keeps the old open default.
+        var strictMcp = McpGrantCheck.strictSetting(System.getenv("WYRDSEKAI_MCP_STRICT_GRANTS"));
+        if (!strictMcp) {
+            log.warn("WYRDSEKAI_MCP_STRICT_GRANTS=false: every companion may use every configured "
+                + "MCP service without a grant. Remove the setting to require the steward's grant.");
+        }
         var mcpGrantOwnerDid = authService.findSteward().map(u -> u.id()).orElse(null);
         var mcpGrantCheck = McpGrantCheck.stewardOwned(homeClientShared, mcpGrantOwnerDid, strictMcp);
-        var mcpMgr = McpServerManager.get();
-        if (mcpMgr != null) {
-            mcpMgr.setGrantCheck(mcpGrantCheck);
-        }
-        // Same gate on the world.mcp() gateway path (was entirely ungated before
-        // 2026-07-20). Local in-process services (the Study skill) are exempt.
+        // The one gate, on the one door: room scripts, skills, items, the librarian and
+        // code-mode all pass McpGatewayService. In-process services and the household's
+        // librarian need no grant.
         mcpGateway.setGrantCheck(mcpGrantCheck);
         // Steward-facing grant admin behind the Study "Tool Warden" furnishing.
         var mcpGrantAdmin = new McpGrantAdmin(homeClientShared, mcpGrantOwnerDid, mcpRegistry);
@@ -3268,7 +3327,7 @@ public class Main {
                                 } else {
                                     optsB.userInfo(ptRelayUser, ptRelayPass);
                                 }
-                                var ptRelayConn = Nats.connect(optsB.build());
+                                var ptRelayConn = org.wyrdsekai.between.RelayTls.connect(optsB, ptRelayUrl);   // encrypted (RelayTls)
                                 var ptRelayTransport = new NatsPeerTrainingTransport(ptRelayConn);
                                 var ptRelaySvc = new TrainingPeerService(
                                     trainingNodeId,
@@ -3303,6 +3362,31 @@ public class Main {
                 // for peer formation. The HTTP-server-only branch (no Between)
                 // is rare and not yet covered; if you hit it, file a follow-up.
 
+                // Zone binding (security review 2026-09-28): bind this zone's relay registrations to the
+                // zone's name, so each relay grants them only this zone's subjects. Registrations made
+                // before this release have no zone and hold the relay's old wide grant until they bind.
+                if (WyrdConfig.get().relayUrl() != null) {
+                    final var bindZoneId = zoneId;
+                    Thread.ofVirtual().name("relay-bind-zone").start(() -> {
+                        try {
+                            var bindIdentity = NodeIdentity.loadOrGenerate(Path.of(
+                                System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR",
+                                    System.getProperty("user.home") + "/.wyrdsekai")).resolve("node-identity.json"));
+                            for (var r : RelayNkeyAdminMain.bindZones(bindIdentity, bindZoneId, System::getenv, u -> true)) {
+                                if (r.ok()) {
+                                    log.info("Relay {}: {}", r.registrationUrl(), r.detail());
+                                } else {
+                                    log.warn("Relay {}: zone '{}' is not bound ({}). Until it is, that relay keeps "
+                                        + "this registration on its old wide grant, or refuses it", r.registrationUrl(),
+                                        bindZoneId, r.detail());
+                                }
+                            }
+                        } catch (Exception e) {
+                            log.warn("Relay zone binding skipped: {}", e.getMessage());
+                        }
+                    });
+                }
+
                 // Create a direct relay transport for session proxy (shared between WS and VSH).
                 // This bypasses the relay bridge forwarding and avoids feedback loops.
                 RelaySessionTransport sessionTransport = null;
@@ -3316,15 +3400,12 @@ public class Main {
                 var sessionRelayUser = _wcfg.relayUser();
                 var sessionRelayToken = _wcfg.relayToken();
                 if (sessionRelayUrl != null && !sessionRelayUrl.isEmpty()) {
-                    // dual-mode: prefer NKey when WYRDSEKAI_RELAY_USE_NKEY=true.
-                    // Mirrors RelayBridge's decision in BetweenActor — same env var,
-                    // same NodeIdentity. Without this, RelaySessionTransport would
-                    // try password auth on an NKey-only relay and fail (silently for
-                    // session proxy because the bridge stays up via its own connection).
-                    boolean useNkeyForSession = "true".equalsIgnoreCase(
-                        System.getenv().getOrDefault("WYRDSEKAI_RELAY_USE_NKEY", "false"));
+                    // the NKey by default, the leg's relay password only when it
+                    // holds one — the same rule as RelayBridge in BetweenActor (RelayTls.useNkey).
+                    boolean useNkeyForSession = RelayTls.useNkey(sessionRelayToken);
                     NodeIdentity sessionIdentity = null;
-                    if (useNkeyForSession) {
+                    if (useNkeyForSession
+                            || _wcfg.relayLegs().stream().anyMatch(l -> RelayTls.useNkey(l.token()))) {
                         try {
                             var dataDir2 = Path.of(
                                 System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR",
@@ -3338,7 +3419,7 @@ public class Main {
                     }
                     sessionTransport = RelaySessionTransport.connect(
                         sessionRelayUrl, sessionRelayUser, sessionRelayToken,
-                        sessionIdentity, "wyrd-session-" + zoneId);
+                        useNkeyForSession ? sessionIdentity : null, "wyrd-session-" + zoneId);
                     if (sessionTransport != null) {
                         wsHandler.setRelayTransport(sessionTransport);
                         sessionTransportHolder.set(sessionTransport);
@@ -3361,7 +3442,8 @@ public class Main {
                                     var legUser = leg.user() != null ? leg.user() : sessionRelayUser;
                                     var legSuffix = leg.url().replaceAll("[^A-Za-z0-9]", "-");
                                     legTransport = RelaySessionTransport.connect(
-                                        leg.url(), legUser, leg.token(), sessionIdentity,
+                                        leg.url(), legUser, leg.token(),
+                                        RelayTls.useNkey(leg.token()) ? sessionIdentity : null,
                                         "wyrd-session-" + zoneId + "-" + legSuffix);
                                 }
                                 if (legTransport != null) {
@@ -3542,7 +3624,7 @@ public class Main {
                                     boolean streaming = tokenCallback != null;
                                     // Audit F7: sign the household-exemption claim so the
                                     // provider can verify it isn't a self-asserted node id.
-                                    var streamId = UUID.randomUUID().toString();
+                                    var streamId = RelayIds.scopedId(sourceZone);
                                     String infSig = null;
                                     Long infTs = null;
                                     if (localInferIdentity != null && localNodeForInfer != null) {
@@ -3589,10 +3671,11 @@ public class Main {
                             // exceed the bilateral agreement's daily inference token allowance.
                             if (federationService != null) {
                                 final var fs = federationService;
-                                natsServer.setQuotaResolver(sourceZone -> {
-                                    var agreement = fs.getAgreement(zoneId, sourceZone).orElse(null);
-                                    return agreement != null ? agreement.localQuota() : null;
-                                });
+                                natsServer.setQuotaResolver(sourceZone -> fs.getAgreement(zoneId, sourceZone)
+                                    .filter(BilateralAgreement::isActive)
+                                    .map(BilateralAgreement::localQuota).orElse(null));
+                                natsServer.setZoneVerifier((sourceZone, data, sig) ->
+                                    fs.verifyZoneSignature(zoneId, sourceZone, data, sig));
                                 log.info("NATS inference quota enforcement enabled via FederationService");
                             }
                             // Household inference auto-share (provider side, ):
@@ -3644,7 +3727,11 @@ public class Main {
                                 : (subject, h) -> tellTransport.subscribe(subject, h);
                         var tellService = CrossZoneTellService.get();
                         if (tellService != null) {
-                            tellService.setRelayPublisher(relayPublish);
+                            // Tells travel signed and name their zone; only a zone we hold an
+                            // active agreement with, signing with its pinned key, gets through.
+                            final var tellSeal = new ZoneSignedMessages(
+                                federationServiceRef, zoneId, localInferIdentity, "tell");
+                            tellService.setRelayPublisher(tellSeal.publisher(relayPublish));
                             // Deliver cross-zone tells addressed to a local player to their
                             // live session(s) — all surfaces via the registry (#29), same
                             // hook as the single-node wiring above.
@@ -3662,14 +3749,16 @@ public class Main {
                             // isn't initialised or the zoneId is a reserved keyword.
                             Consumer<byte[]> tellHandler = data -> {
                                 try {
-                                    var mapper = new ObjectMapper();
-                                    var node = mapper.readTree(data);
+                                    var opened = tellSeal.open(data);
+                                    if (opened.isEmpty()) return;
+                                    var node = opened.get().message();
                                     tellService.handleIncomingTell(
                                         node.path("fromEntityId").asText(),
                                         node.path("fromEntityName").asText(),
                                         node.path("fromZone").asText(),
                                         node.path("targetName").asText(),
-                                        node.path("text").asText());
+                                        node.path("text").asText(),
+                                        opened.get().zoneId());
                                 } catch (Exception e) {
                                     log.warn("Failed to handle incoming cross-zone tell: {}", e.getMessage());
                                 }
@@ -3703,13 +3792,16 @@ public class Main {
                         //   federation.<zoneId>.familiar_tool  (tool copies)
                         var copyService = CrossZoneCopyService.get();
                         if (copyService != null) {
-                            copyService.setRelayPublisher(relayPublish);
+                            // Signed, and taken only from a zone with an active agreement.
+                            final var copySeal = new ZoneSignedMessages(
+                                federationServiceRef, zoneId, localInferIdentity, "familiar copy");
+                            copyService.setRelayPublisher(copySeal.publisher(relayPublish));
                             relaySubscribe.accept(
                                 "federation." + zoneId + ".familiar_copy",
-                                copyService::receiveFormCopy);
+                                copySeal.handler(copyService::receiveFormCopy));
                             relaySubscribe.accept(
                                 "federation." + zoneId + ".familiar_tool",
-                                copyService::receiveToolCopy);
+                                copySeal.handler(copyService::receiveToolCopy));
                             log.info("Cross-zone copy service wired — publisher + inbound "
                                 + "subscriptions on federation.{}.familiar_copy|tool", zoneId);
                         }
@@ -3723,8 +3815,11 @@ public class Main {
                         // the same relay pub/sub the tell path uses.
                         var peekService = CrossZonePeekService.get();
                         if (peekService != null) {
-                            var peekBridge = new CrossZonePeekBridge(
-                                zoneId, relayPublish, relaySubscribe);
+                            // Signed both ways; a zone without an active agreement gets no snapshot.
+                            final var peekSeal = new ZoneSignedMessages(
+                                federationServiceRef, zoneId, localInferIdentity, "peek");
+                            var peekBridge = new CrossZonePeekBridge(zoneId,
+                                peekSeal.publisher(relayPublish), peekSeal.subscriber(relaySubscribe));
                             peekBridge.startResponder();
                             peekBridge.startCaller();
                             peekService.setCaller(peekBridge);
@@ -4194,8 +4289,12 @@ public class Main {
         final var finalDbPath = Path.of(config.getString("wyrdsekai.db.path"));
 
         var app = Javalin.create(cfg -> {
+            // Only this home's own pages may call the web port from a browser. It allowed any
+            // website until 2026-09-28, so a page one of the household opened could read the API.
+            var corsOrigins = WyrdConfig.get().corsOrigins();
             cfg.bundledPlugins.enableCors(cors -> {
-                cors.addRule(rule -> rule.anyHost());
+                cors.addRule(rule -> rule.allowHost(corsOrigins.get(0),
+                    corsOrigins.subList(1, corsOrigins.size()).toArray(new String[0])));
             });
             TlsConfig.configure(cfg, tlsConfig);
 
@@ -4224,6 +4323,8 @@ public class Main {
             if (limiter != null) {
                 cfg.routes.before(limiter);
             }
+            // Who is calling, and whether the route allows it, before any handler runs (ApiPolicy).
+            cfg.routes.beforeMatched(ApiAuth.filter(authService, pairingService, finalResidentToken));
 
             // Route registrations
             healthRoutes.register(cfg.routes);
@@ -4235,7 +4336,7 @@ public class Main {
             new BodyRoutes(authService).register(cfg.routes);
             new ItemRepairRoutes(authService).register(cfg.routes);
             new ResidencyRoutes(authService, localZoneId).register(cfg.routes);
-            new HouseholdRoutes(permissionChecker, stewardAuditLog, authService).register(cfg.routes);
+            new HouseholdRoutes(stewardAuditLog, authService).register(cfg.routes);
             new SoulRoutes(finalSoulStore, authService, pairingService, bondStore).register(cfg.routes);
             // VoiceProfile CRUD — #414. Backed by VoiceProfileService, which
             // persists through SoulStore (new manifest version per write).
@@ -4273,6 +4374,8 @@ public class Main {
             OperatorToken.ensure(SystemPaths.dataDir());
             ConsentRoutes.register(cfg, authService);
             ForgeRoutes.register(cfg, authService);
+            RecoverySeedRoutes.register(cfg, authService, new RecoverySeedService(finalSoulStore,
+                bondStore, SystemPaths.soulsDir(), SystemPaths.dataDir().resolve("recovery-seed")));
             RepairRoutes.register(cfg, authService, jdbcUrl);
 
             // Lifted out of the if-block so the MCP NATS handler (further down)
@@ -4313,7 +4416,11 @@ public class Main {
                 // on the sending side). Findings served are the roster companions' accepted
                 // ones whose every source may travel.
                 try {
-                    var mcpDoor = new McpEndpoint(system, new McpToolRegistry(false), "/mcp/library");
+                    // Every call must prove who it is (a library reader token or a household
+                    // login session); the patron is that caller, never what the body claims.
+                    var libraryReaders = new LibraryReaders(SystemPaths.dataDir());
+                    var mcpDoor = new McpEndpoint(system, new McpToolRegistry(false), "/mcp/library",
+                        LibraryTools.callers(libraryReaders, authService));
                     mcpDoor.register(cfg.routes);
                     // Findings served = the unarchived companions on the roster, read at call
                     // time; WYRDSEKAI_LIBRARY_SERVE_FINDINGS=false makes the door packs-only.
@@ -4331,7 +4438,7 @@ public class Main {
                     LibraryTools.register(mcpDoor.toolRegistry(), libraryProvider);
                     // The same door as JSON routes at /v1/* — what a peer librarian speaks
                     // (contract 1.5 peers), with bearer tokens from `wyrd library reader add`.
-                    new LibraryDoorRoutes(libraryProvider, new LibraryReaders(SystemPaths.dataDir())).register(cfg.routes);
+                    new LibraryDoorRoutes(libraryProvider, libraryReaders).register(cfg.routes);
                     // Where a subscribed librarian pushes its changes (contract 1.5 webhooks):
                     // a verified recall marks findings now; a landed write-up is told to her.
                     java.util.function.Supplier<java.util.List<java.util.Map.Entry<String, String>>> companionRows = () ->
@@ -4402,6 +4509,7 @@ public class Main {
 
             // Home model: unified Grant + audit endpoints.
             var homeRoutes = new HomeRoutes(homeRegistry, system);
+            homeRoutes.setPersonCheck(PersonIds::isPerson);
             // §97: trust-tier resolver — requester DID → zone → federation
             // trust level — stamps trustTier on incoming cross-zone knocks.
             if (federationServiceRef != null) {
@@ -4667,6 +4775,9 @@ public class Main {
             final int tunnelHttpPort = landingPort;
             final boolean mcpNatsEnabled = !"false".equalsIgnoreCase(
                 System.getenv().getOrDefault("WYRDSEKAI_MCP_NATS_ENABLED", "true"));
+            // Sealed requests ( W3) open with the home's tunnel key; one replay
+            // cache for every leg. The relay legs refuse unsealed requests.
+            final var sealedRequests = mcpNatsEnabled ? McpNatsHandler.sealedRequestsForThisHome() : null;
             if (mcpNatsEnabled
                 && preConnectedNats != null
                 && preConnectedNats.rawConnection() != null) {
@@ -4677,7 +4788,8 @@ public class Main {
                     finalLuceneStore,
                     studyServiceForNatsFinal,
                     inviteService,
-                    accountStore);
+                    accountStore,
+                    sealedRequests, false);
                 mcpNatsLocal.start();
                 // make this zone a CRDT Study peer
                 // on its own NATS (relay forwards between.{zone}.> here), so a
@@ -4757,14 +4869,11 @@ public class Main {
                                     default -> relayLog.debug("Relay NATS event: {}", type);
                                 }
                             });
-                        // dual-mode, same rule as RelayBridge and
-                        // RelaySessionTransport: prefer the node's NKey when
-                        // WYRDSEKAI_RELAY_USE_NKEY=true. This leg was the only one left
-                        // dialling with the household password after an NKey enrolment —
-                        // the deprecated record had to be kept alive just for it (2026-09-10).
+                        // same rule as RelayBridge and RelaySessionTransport
+                        // (RelayTls.useNkey): the node's NKey by default, the household password
+                        // only when this leg holds one and WYRDSEKAI_RELAY_USE_NKEY does not say otherwise.
                         NodeIdentity mcpRelayIdentity = null;
-                        if ("true".equalsIgnoreCase(
-                                System.getenv().getOrDefault("WYRDSEKAI_RELAY_USE_NKEY", "false"))) {
+                        if (RelayTls.useNkey(relayPass)) {
                             try {
                                 var mcpIdDir = Path.of(
                                     System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR",
@@ -4786,7 +4895,7 @@ public class Main {
                             relayLog.info("Relay NATS: password auth (user={}) — DEPRECATED, "
                                 + "enrol with `wyrd relay register-nkey <invite-url>`", relayUser);
                         }
-                        var relayConn = Nats.connect(optsBuilder.build());
+                        var relayConn = org.wyrdsekai.between.RelayTls.connect(optsBuilder, mcpRelayUrl);   // encrypted (RelayTls)
                         // The relay is a door with a keeper, and the way other zones reach
                         // her. Its pulse is the connection state; closed, it costs contact.
                         bodyWatch.probe(new LimbDescriptor("door:relay", BodyKind.DOOR, "relay door",
@@ -4798,21 +4907,17 @@ public class Main {
                         var mcpNatsRelay = new McpNatsHandler(
                             authService, system, relayConn, mcpZoneId,
                             finalLuceneStore, studyServiceForNatsFinal,
-                            inviteService, accountStore);
+                            inviteService, accountStore, sealedRequests, true);
                         handlerRef.set(mcpNatsRelay);
                         mcpNatsRelay.start();
                         LoggerFactory.getLogger("Main").info(
                             "MCP NATS relay handler started on leg {} (phones via this relay can reach zone {}).",
                             mcpRelayUrl, mcpZoneId);
-                        // also peer for Study CRDT
-                        // sync directly on this relay leg (belt-and-suspenders with
-                        // the local-NATS peer; CRDT merge is idempotent so a message
-                        // seen on both connections just no-ops the second time).
-                        if (studyServiceForNatsFinal != null) {
-                            new StudySyncPeer(relayConn, mcpZoneId,
-                                studyServerDeviceId, studyServiceForNatsFinal,
-                                authService, pairingService).start();
-                        }
+                        // Study sync runs on the home network only (audit W4, 2026-09-28):
+                        // its frames are plain JSON the relay can read (the phone's token,
+                        // the Study items). On this leg a device is told so, and nothing
+                        // is merged or sent.
+                        StudySyncPeer.homeNetworkOnly(relayConn, mcpZoneId, studyServerDeviceId).start();
                         // full session tunnel on the same
                         // relay leg: dumb-pipe a phone session into our own /ws.
                         try {
@@ -5085,7 +5190,7 @@ public class Main {
                             inferenceRouter,
                             replyTo -> new InferenceRouter.ChatRequest(
                                 UUID.randomUUID().toString(),
-                                model, messages, maxTokens, temperature, replyTo),
+                                model, messages, maxTokens, temperature, replyTo).withNow(NowLine.NONE),
                             Duration.ofSeconds(90),
                             system.scheduler());
                     try {
@@ -5201,24 +5306,19 @@ public class Main {
                 var t = new Thread(r, "self-update"); t.setDaemon(true); return t;
             });
             selfUpdate.start(selfUpdateScheduler, Duration.ofMinutes(15), updateConfig.checkInterval());
+            // A night's watch owed before a restart is owed after it.
+            SleepWeightWrite.resumeWatches();
             new UpdateRoutes(updateConfig, updatePoller, selfUpdate, selfUpdateRoot, SystemPaths.dataDir())
                 .register(cfg.routes);
 
             // Backup route (manual trigger)
             final var finalNodeIdentityPath =
                 SystemPaths.dataDir().resolve("node-identity.json");
-            // Mirrors the scheduled-backup extra-dirs list above —
-            // see comment there for why these four and why adapters/ isn't.
-            final var finalExtraBackupDirs = List.of(
-                SystemPaths.dataDir().resolve("agents"),
-                SystemPaths.dataDir().resolve("classifiers"),
-                SystemPaths.dataDir().resolve("souls"),
-                SystemPaths.dataDir().resolve("substrate"));
             if (finalBackupOrchestrator != null) {
                 cfg.routes.post("/api/backup/snapshot", ctx -> {
                     var result = finalBackupOrchestrator.snapshotAll(
                         finalDbPath, finalSearchDir, finalNodeIdentityPath,
-                        finalExtraBackupDirs);
+                        backupExtras);   // the one list, beside the backup wiring
                     if (result.isPresent()) {
                         var m = result.get();
                         ctx.json(Map.of(
@@ -5291,7 +5391,15 @@ public class Main {
                         landingHostname, landingTelnetPort, landingHostname, landingPort));
             });
         });
-        app.start(port);
+        // The plain web port answers only this machine unless the household opens it on purpose
+        // (WyrdConfig.httpBind). It had answered the whole network, logins and personal data in the clear.
+        var httpBind = WyrdConfig.get().httpBind();
+        if (!httpBind.equals("127.0.0.1") && !httpBind.equals("localhost") && !httpBind.equals("::1")) {
+            LoggerFactory.getLogger("Main").warn("The plain web port :{} answers {} (WYRDSEKAI_HTTP_BIND or "
+                + "WYRDSEKAI_HTTP_LAN_PLAINTEXT): logins and conversations cross the network unencrypted. The network "
+                + "has HTTPS on :{}; leave both unset to keep :{} on this machine.", port, httpBind, TlsConfig.port(config), port);
+        }
+        app.start(httpBind, port);
         healthRoutes.setReady(true);
 
         log.info("Wyrdsekai server listening on port {} (hostname: {})", port, hostname);
@@ -5848,10 +5956,24 @@ public class Main {
             var natsUrl = betweenConfig.getString("nats.url");
             var natsAutoStart = betweenConfig.getBoolean("nats.auto-start");
             var natsExecutable = betweenConfig.getString("nats.executable");
+            // The bus listens on the port its URL names (it was always the fixed client-port, so a
+            // node whose URL named another port started its bus where it never connected).
             var natsClientPort = betweenConfig.getInt("nats.client-port");
+            try {
+                var urlPort = URI.create(betweenConfig.getString("nats.url")).getPort();
+                if (urlPort > 0) natsClientPort = urlPort;
+            } catch (IllegalArgumentException ignored) {
+                // keep the configured client-port
+            }
             var natsMonitorPort = betweenConfig.getInt("nats.monitor-port");
-            var mdnsEnabled = betweenConfig.getBoolean("discovery.mdns");
-            var zoneId = betweenConfig.getString("zone-id");
+            // WYRDSEKAI_MDNS_ENABLED=false turns the LAN advertisement off; it used to be ignored here.
+            var mdnsEnabled = betweenConfig.getBoolean("discovery.mdns") && WyrdConfig.get().mdnsEnabled();
+            // One zone name for the whole node: the household's own (WYRDSEKAI_ZONE_ID, else the profile's
+            // node.zone). The Between layer used its own setting, "home" unless WYRDSEKAI_ZONE_ID was
+            // exported, so a hub that named itself in the profile spoke on between.home.* while the machines
+            // it joined (given the profile's name at join) spoke on between.<name>.*, and a relay that binds
+            // the registration to the zone's name refused the hub's subscriptions (second-node, 2026-09-28).
+            var zoneId = WyrdConfig.get().zoneId();
             var arteryPort = config.getInt("pekko.remote.artery.canonical.port");
 
             var seedNodes = betweenConfig.hasPath("discovery.seed-nodes")
@@ -6094,6 +6216,9 @@ public class Main {
         // Data-durability (2026-07-09): stamp data-version.json + refuse to open a data dir
         // whose schema is NEWER than this binary (WYRDSEKAI_ALLOW_DOWNGRADE=true overrides).
         DataVersion.stampAndGuard(SystemPaths.dataDir());
+        // The log folder, like the data directory, is the household's: closed to other users.
+        Principals.closeLogFolder(Path.of(System.getenv().getOrDefault("WYRDSEKAI_LOG_DIR", "logs"))
+            .toAbsolutePath());
         return SchemaInitializer.initialize(dbPath);
     }
 
@@ -6347,13 +6472,19 @@ public class Main {
 
         var attestations = buildTopAttestations(did, 5);
 
+        String zk = null;
+        try {
+            zk = TunnelKey.publicForInvite(TunnelKey.forThisHome());
+        } catch (Exception e) {
+            LoggerFactory.getLogger("Main").warn("Zone manifest published without the home's key: {}", e.getMessage());
+        }
         var now = Instant.now().toString();
         return new ZoneManifestV1(
             ZoneManifestV1.SCHEMA_VERSION,
             did, zoneLabel, displayName, icon, tagline, description, tags,
             caps, contact, mcpEndpoint, agreementsCount,
             reputation, attestations,
-            now, now, null);
+            now, now, null, zk);
     }
 
     /**

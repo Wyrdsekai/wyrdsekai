@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.agent.ConversationChannel;
 import org.wyrdsekai.core.agent.EntityRegistry;
+import org.wyrdsekai.core.skill.impl.KeybaseSkillExecutor;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -55,7 +56,7 @@ public class KeybaseChannel implements ConversationChannel {
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                var pb = new ProcessBuilder("keybase", "chat", "send", username, messageText);
+                var pb = KeybaseSkillExecutor.ENV.builder("keybase", "chat", "send", username, messageText);
                 pb.redirectErrorStream(true);
                 var proc = pb.start();
                 var exited = proc.waitFor(SEND_TIMEOUT_SECS, TimeUnit.SECONDS);
@@ -111,7 +112,7 @@ public class KeybaseChannel implements ConversationChannel {
         while (listening.get()) {
             Process proc = null;
             try {
-                var pb = new ProcessBuilder("keybase", "chat", "api-listen");
+                var pb = KeybaseSkillExecutor.ENV.builder("keybase", "chat", "api-listen");
                 pb.redirectErrorStream(false);
                 proc = pb.start();
                 listenerProcess = proc;

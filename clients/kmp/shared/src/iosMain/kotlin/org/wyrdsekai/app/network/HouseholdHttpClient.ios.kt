@@ -12,3 +12,5 @@ import io.ktor.client.engine.darwin.Darwin
  * installs the household CA in iOS Settings → Profiles & Device Mgmt.
  */
 actual fun createHouseholdHttpClient(): HttpClient = HttpClient(Darwin)
+
+actual fun devLoopbackAliases(): Set<String> = emptySet()

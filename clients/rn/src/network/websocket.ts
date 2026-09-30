@@ -4,13 +4,38 @@
 
 import { C2SMessage, serializeC2S, newId } from '../protocol/c2s';
 import { S2CMessage, parseS2CMessage } from '../protocol/s2c';
+import { createRelaySocket, nativeRelaySocketAvailable } from '../engine/between/RelaySocket';
+import { knownHomeCaFor } from '../server/HouseholdTrust';
+
+/** The part of a WebSocket this client uses; also met by the native pinned socket. */
+interface SessionSocket {
+  readonly readyState: number;
+  onopen: ((ev?: unknown) => void) | null;
+  onmessage: ((ev: { data: unknown }) => void) | null;
+  onclose: ((ev?: unknown) => void) | null;
+  onerror: ((ev?: unknown) => void) | null;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+const OPEN = 1;
+
+/**
+ * A home on the home network pinned to its household CA (an invite's
+ * lan_https + home_ca_fp, the same host and port). On iOS RN's WebSocket cannot
+ * be pinned, so such a home's wss:// session goes through the native pinned
+ * socket in text mode.
+ */
+function isPinnedHome(url: string): boolean {
+  return knownHomeCaFor(url) != null;
+}
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 export type MessageHandler = (msg: S2CMessage) => void;
 export type StateHandler = (state: ConnectionState) => void;
 
 export class WyrdWebSocket {
-  private ws: WebSocket | null = null;
+  private ws: SessionSocket | null = null;
   private serverUrl = '';
   private token: string | null = null;
   private locale = 'en';
@@ -76,7 +101,7 @@ export class WyrdWebSocket {
   }
 
   send(msg: C2SMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === OPEN) {
       this.ws.send(serializeC2S(msg));
     }
   }
@@ -100,7 +125,9 @@ export class WyrdWebSocket {
     if (this.currentRoomId) params.push(`room=${this.currentRoomId}`);
     if (params.length > 0) url += `?${params.join('&')}`;
 
-    const ws = new WebSocket(url);
+    const ws: SessionSocket = url.startsWith('wss://') && nativeRelaySocketAvailable() && isPinnedHome(url)
+      ? (createRelaySocket(url, { text: true }) as unknown as SessionSocket)
+      : (new WebSocket(url) as unknown as SessionSocket);
     this.ws = ws;
 
     ws.onopen = () => {
@@ -160,7 +187,7 @@ export class WyrdWebSocket {
   private startPing(): void {
     this.stopPing();
     this.pingTimer = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
+      if (this.ws?.readyState === OPEN) {
         // Send a ping frame — RN WebSocket supports this via empty string
         // The server will respond with pong, keeping the connection alive
         try {

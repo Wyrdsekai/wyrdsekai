@@ -408,9 +408,26 @@ public final class ChronicleService {
             Set<String> soulKeywords,
             ResilienceSession resilience,
             String bondholderDid) {
+        return detectAll(agentDid, agentName, bondholderName, soulKeywords, resilience,
+            bondholderDid, null);
+    }
+
+    /**
+     * As above, with her own settle points for the stuck-drive axis (the deprivation tanks'
+     * set points scaled by her temperament, see {@link DoomLoopDetector#SETTLE_POINTS}); null
+     * reads the base set points.
+     */
+    public List<DoomLoopDetector.Finding> detectAll(
+            String agentDid,
+            String agentName,
+            String bondholderName,
+            Set<String> soulKeywords,
+            ResilienceSession resilience,
+            String bondholderDid,
+            java.util.Map<String, Double> settlePoints) {
         var doc = build(agentDid, agentName, Scale.DAY);
         var doom = DoomLoopDetector.detect(reader.readTicks(agentDid,
-            Instant.now().minus(Duration.ofHours(24))));
+            Instant.now().minus(Duration.ofHours(24))), settlePoints);
         var psych = PsychosisDetector.detect(
             doc.testimony(), doc.synthesis(), bondholderName, soulKeywords);
         var substrate = adaptSubstrateFindings(

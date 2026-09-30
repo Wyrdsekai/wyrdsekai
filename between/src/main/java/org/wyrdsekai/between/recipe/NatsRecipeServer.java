@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.between.RelaySessionTransport;
+import org.wyrdsekai.between.federation.ZoneSignedMessages;
 
+import java.nio.charset.StandardCharsets;
 import java.util.function.Predicate;
 
 /**
@@ -46,6 +48,17 @@ public final class NatsRecipeServer implements AutoCloseable {
         this.executor = executor;
     }
 
+    /**
+     * Checks each borrow request is signed by the zone it names, with the key that zone's active
+     * agreement pinned (2026-09-28: the zone used to be taken from the request, unsigned). Without it,
+     * only a test wiring runs the lender.
+     */
+    private volatile ZoneSignedMessages seal;
+
+    public void setSeal(ZoneSignedMessages seal) {
+        this.seal = seal;
+    }
+
     /** Begin listening for borrow requests addressed to this zone. */
     public void start() {
         if (transport == null || !transport.isConnected()) {
@@ -58,11 +71,27 @@ public final class NatsRecipeServer implements AutoCloseable {
     }
 
     private void onRequest(byte[] data) {
+        String verifiedZone = null;
+        var sealer = seal;
+        if (sealer != null) {
+            var opened = sealer.open(data);
+            if (opened.isEmpty()) {
+                denyUnverified(data);
+                return;
+            }
+            verifiedZone = opened.get().zoneId();
+            data = opened.get().message().toString().getBytes(StandardCharsets.UTF_8);
+        }
         NatsRecipeProtocol.Request req;
         try {
             req = MAPPER.readValue(data, NatsRecipeProtocol.Request.class);
         } catch (Exception e) {
             log.warn("NatsRecipeServer '{}' dropped unparseable borrow request: {}", myZone, e.toString());
+            return;
+        }
+        if (verifiedZone != null && !verifiedZone.equals(req.sourceZone())) {
+            log.warn("NatsRecipeServer '{}' dropped a borrow request naming zone '{}' but signed by '{}'",
+                myZone, req.sourceZone(), verifiedZone);
             return;
         }
 
@@ -88,6 +117,22 @@ public final class NatsRecipeServer implements AutoCloseable {
                 myZone, req.recipeName(), e.toString());
             respond(req, new NatsRecipeProtocol.Response(req.requestId(), myZone,
                 "ERROR", "Lender failed to run recipe", null, e.toString()));
+        }
+    }
+
+    /** Answer a request that failed the signature check, so the borrower is not left waiting. */
+    private void denyUnverified(byte[] data) {
+        try {
+            var root = MAPPER.readTree(data);
+            var body = root.path("payload").path("message");
+            var requestId = (body.isMissingNode() ? root : body).path("requestId").asText("");
+            if (requestId.isBlank()) return;
+            var req = new NatsRecipeProtocol.Request(requestId, null, null, null, null, null);
+            respond(req, new NatsRecipeProtocol.Response(requestId, myZone, "DENIED",
+                "The request is not signed by a zone with an active agreement with '" + myZone + "'.",
+                null, null));
+        } catch (Exception ignored) {
+            // unreadable: nothing to answer
         }
     }
 

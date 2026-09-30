@@ -12,7 +12,10 @@ import org.wyrdsekai.core.test.TestDb;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.sql.DriverManager;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -171,7 +174,145 @@ class MaintenanceServiceTest {
         assertThat(status.latestSnapshotId()).isNotNull();
     }
 
+    @Test
+    void a_restart_counts_the_schedule_from_the_newest_backup_not_from_the_start() {
+        // No backup on disk: soon after this start, not a whole interval later.
+        assertThat(service.firstScheduledRunIn(24, Instant.now())).isEqualTo(Duration.ofMinutes(10));
+        service.scheduledBackupTick();
+        // A restart is a new service over the same state table and backups directory.
+        var restarted = newService();
+        assertThat(restarted.firstScheduledRunIn(24, Instant.now()))
+            .isGreaterThan(Duration.ofHours(23)).isLessThanOrEqualTo(Duration.ofHours(24));
+        // A day and a half on with no backup in between: due, so soon.
+        assertThat(restarted.firstScheduledRunIn(24, Instant.now().plus(Duration.ofHours(36))))
+            .isEqualTo(Duration.ofMinutes(10));
+    }
+
+    @Test
+    void backup_now_without_a_search_index_still_takes_the_trail() throws Exception {
+        // runBackup fell back to world.db alone when the node had no search directory.
+        var trail = dataDir.resolve("agent-activity.jsonl");
+        Files.writeString(trail, "{\"type\":\"speak\"}\n");
+        var svc = new MaintenanceService(jdbcUrl, new SqlDialect.SQLite(), auth,
+            backups, dataDir, worldDb, dataDir.resolve("no-search-here"), null, List.of(trail));
+        svc.initSchema();
+
+        var res = svc.backupNow(stewardId);
+        assertThat(res.get("ok")).isEqualTo(true);
+        assertThat((String) res.get("source")).contains("agent-activity.jsonl");
+        try (var s = Files.list(dataDir.resolve("backups"))) {
+            var copy = s.filter(p -> p.getFileName().toString().startsWith("agent-activity.jsonl."))
+                .findFirst().orElseThrow();
+            assertThat(copy.resolve("agent-activity.jsonl")).exists();
+        }
+    }
+
     // ─── Staged restore: validation + marker lifecycle ───────────────────
+
+    @Test
+    void a_restore_by_id_stages_the_database_not_the_node_identity_taken_with_it() throws Exception {
+        // A full pass writes world.db.<id>.bak and node-identity.<id>.bak under one id; the newer of
+        // the two used to be staged as world.db, and the node could not open its record.
+        var identity = dataDir.resolve("node-identity.json");
+        Files.writeString(identity, "{\"did\":\"did:test:node\"}");
+        var svc = new MaintenanceService(jdbcUrl, new SqlDialect.SQLite(), auth,
+            backups, dataDir, worldDb, null, identity, List.of());
+        svc.initSchema();
+        var res = svc.backupNow(stewardId);
+        assertThat(res.get("ok")).isEqualTo(true);
+        var id = backups.snapshotsOf(worldDb).get(0).backupId();
+        try (var s = Files.list(dataDir.resolve("backups"))) {
+            assertThat(s.map(p -> p.getFileName().toString()).toList())
+                .anyMatch(n -> n.startsWith("node-identity.") && n.contains(id));
+        }
+        var staged = svc.stageRestore(stewardId, id);
+        assertThat(staged.get("ok")).isEqualTo(true);
+        assertThat((String) staged.get("backupFile")).contains(worldDb.getFileName().toString() + ".")
+            .doesNotContain("node-identity");
+    }
+
+    @Test
+    void the_chest_lists_what_a_restore_can_stage_and_a_brainstem_copy_can_be_staged() throws Exception {
+        var identity = dataDir.resolve("node-identity.json");
+        Files.writeString(identity, "{\"did\":\"did:test:node\"}");
+        var svc = new MaintenanceService(jdbcUrl, new SqlDialect.SQLite(), auth,
+            backups, dataDir, worldDb, null, identity, List.of());
+        svc.initSchema();
+        svc.backupNow(stewardId);
+        assertThat(svc.listSnapshots()).as("the node identity is not a database snapshot")
+            .noneMatch(m -> m.location().getFileName().toString().startsWith("node-identity."));
+        var brainstemCopy = dataDir.resolve("backups").resolve("brainstem.world.db.20990101-000000.bak");
+        Files.copy(worldDb, brainstemCopy);
+        var staged = svc.stageRestore(stewardId, "20990101-000000");
+        assertThat(staged.get("ok")).isEqualTo(true);
+        assertThat((String) staged.get("backupFile")).contains("brainstem.world.db.20990101-000000.bak");
+    }
+
+    @Test
+    void a_brainstem_copy_restores_with_the_rows_its_wal_held() throws Exception {
+        // Without sqlite3 (and always on Windows) the brainstem copies world.db and world.db-wal
+        // as a pair. The newest committed rows are only in the WAL; restoring the file alone
+        // went back to the last checkpoint and reported success.
+        var copy = dataDir.resolve("backups").resolve("brainstem.world.db.20990101-000000.bak");
+        var copyWal = copy.resolveSibling(copy.getFileName() + "-wal");
+        try (var conn = DriverManager.getConnection("jdbc:sqlite:" + worldDb);
+             var stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA journal_mode=WAL");
+            stmt.execute("PRAGMA wal_autocheckpoint=0");
+            stmt.execute("UPDATE kv SET v = 'W' WHERE k = 'k'");
+            stmt.execute("CREATE TABLE trail(n INTEGER)");
+            for (int i = 0; i < 50; i++) {
+                stmt.execute("INSERT INTO trail(n) VALUES(" + i + ")");
+            }
+            // Copied while the connection is still open, as from a hung server: nothing checkpointed.
+            Files.copy(worldDb, copy);
+            Files.copy(worldDb.resolveSibling("world.db-wal"), copyWal);
+        }
+        var alone = tmp.resolve("alone.db");
+        Files.copy(copy, alone);
+        assertThat(scalar(alone, "SELECT v FROM kv WHERE k = 'k'"))
+            .as("the copied file alone is from before the WAL's rows").isEqualTo("A");
+        createSqliteDb(worldDb, "B");
+
+        var staged = service.stageRestore(stewardId, "20990101-000000");
+        assertThat(staged.get("ok")).isEqualTo(true);
+        MaintenanceService.applyStagedRestoreIfAny(dataDir, worldDb);
+
+        assertThat(dataDir.resolve(MaintenanceService.STAGED_RESTORE_FAILED_FILE)).doesNotExist();
+        assertThat(dataDir.resolve(MaintenanceService.STAGED_RESTORE_FILE)).doesNotExist();
+        assertThat(dataDir.resolve("world.db-wal")).doesNotExist();
+        assertThat(dataDir.resolve("world.db.restore-tmp")).doesNotExist();
+        assertThat(dataDir.resolve("world.db.restore-tmp-wal")).doesNotExist();
+        assertThat(dataDir.resolve("world.db.restore-tmp-shm")).doesNotExist();
+        assertThat(copyWal).as("the brainstem's pair is left as it was").exists();
+        assertThat(scalar(worldDb, "SELECT v FROM kv WHERE k = 'k'")).isEqualTo("W");
+        assertThat(scalar(worldDb, "SELECT count(*) FROM trail")).isEqualTo("50");
+        assertThat(scalar(worldDb, "PRAGMA integrity_check")).isEqualTo("ok");
+    }
+
+    private static String scalar(Path db, String sql) throws Exception {
+        try (var conn = DriverManager.getConnection("jdbc:sqlite:" + db);
+             var stmt = conn.createStatement();
+             var rs = stmt.executeQuery(sql)) {
+            return rs.next() ? rs.getString(1) : null;
+        }
+    }
+
+    @Test
+    void the_schedule_counts_from_a_full_backup_not_from_the_brainstems_copy() throws Exception {
+        service.scheduledBackupTick();
+        // The brainstem copies world.db before each hang restart, into the same directory.
+        var brainstemCopy = dataDir.resolve("backups").resolve("brainstem.world.db.20990101-000000.bak");
+        Files.writeString(brainstemCopy, "copy");
+        // ...taken 29 h after the full backup, one hour before this restart.
+        Files.setLastModifiedTime(brainstemCopy,
+            FileTime.from(Instant.now().plus(Duration.ofHours(29))));
+        var restarted = newService();
+        var due = restarted.firstScheduledRunIn(24, Instant.now().plus(Duration.ofHours(30)));
+        assertThat(due).as("the full backup is 30 h old; the brainstem copy does not reset the clock")
+            .isEqualTo(Duration.ofMinutes(10));
+    }
+
 
     @Test
     void stage_restore_validates_steward_and_snapshot_id() {

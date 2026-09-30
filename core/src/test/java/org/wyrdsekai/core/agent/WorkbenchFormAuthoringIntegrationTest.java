@@ -622,6 +622,9 @@ class WorkbenchFormAuthoringIntegrationTest {
 
     @Test
     void companion_registers_as_primary_on_spawn() {
+        // The constructor registers after the subscribe @BeforeEach waits on; under full-suite
+        // load the assertion ran first (gate of 2026-09-23). Wait for construction to finish.
+        awaitCompanionReady();
         var scheduler = BunshinScheduler.get();
         assertThat(scheduler.hasPrimary(DID)).isTrue();
         assertThat(scheduler.activeCount(DID)).isZero();

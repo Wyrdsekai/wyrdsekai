@@ -39,6 +39,7 @@ import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.InventoryService;
 import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.WardService;
+import org.wyrdsekai.core.security.LoginRateLimiter;
 import org.wyrdsekai.core.room.ExamineLookup;
 import org.wyrdsekai.core.room.CallService;
 import org.wyrdsekai.core.room.RenameService;
@@ -49,6 +50,8 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.library.LibraryConsent;
+import org.wyrdsekai.core.soul.BondNaming;
 import org.wyrdsekai.core.mail.JournalSurface;
 import org.wyrdsekai.core.mail.MailComposer;
 import org.wyrdsekai.core.mail.MailSurface;
@@ -338,9 +341,14 @@ public class TelnetSession implements Runnable {
         }
     }
 
-    private boolean authenticate(InputStream in, OutputStream out,
-                                  boolean[] gmcpSupported) throws IOException {
+    boolean authenticate(InputStream in, OutputStream out,
+                         boolean[] gmcpSupported) throws IOException {
         var catalog = ScriptMessageCatalog.forLang(locale);
+        // Failed logins count per source address and per account in the limiter every
+        // password login shares, so a new connection does not start the count again.
+        var limiter = LoginRateLimiter.shared();
+        var peer = socket.getInetAddress();
+        var ipKey = "telnet-ip:" + (peer != null ? peer.getHostAddress() : "unknown");
         for (int attempts = 0; attempts < 5; attempts++) {
             TelnetCodec.sendRaw(out, "login> ");
             var line = TelnetCodec.readLine(in, gmcpSupported);
@@ -377,11 +385,20 @@ public class TelnetSession implements Runnable {
                         TelnetCodec.sendLine(out, catalog.get("telnet.usage_connect"));
                         continue;
                     }
+                    var acctKey = "acct:" + parts[1].toLowerCase();
+                    if (limiter.anyLocked(ipKey, acctKey)) {
+                        log.warn("Telnet login throttled for '{}' from {}: too many recent failures", parts[1], ipKey);
+                        TelnetCodec.sendLine(out, catalog.get("telnet.login_locked",
+                            lockMinutes(limiter.lockRemainingMs(ipKey, acctKey))));
+                        return false;
+                    }
                     var session = authService.login(parts[1], parts[2]);
                     if (session.isEmpty()) {
+                        limiter.recordFailureAll(ipKey, acctKey);
                         TelnetCodec.sendLine(out, catalog.get("telnet.invalid_credentials"));
                         continue;
                     }
+                    limiter.recordSuccessAll(ipKey, acctKey);
                     var s = session.get();
                     var user = authService.findUser(s.userId()).orElseThrow();
                     playerId = user.id();
@@ -411,27 +428,30 @@ public class TelnetSession implements Runnable {
                         TelnetCodec.sendLine(out, catalog.get("telnet.usage_create"));
                         continue;
                     }
-                    var isFirst = authService.isFirstUser();
+                    if (!AuthService.passwordLongEnough(parts[2])) {
+                        TelnetCodec.sendLine(out, catalog.get("telnet.password_too_short", AuthService.MIN_PASSWORD_LENGTH));
+                        continue;
+                    }
                     var displayName = parts.length > 3 ? parts[3] : null;
-                    var session = authService.register(parts[1], parts[2], displayName);
-                    if (session.isEmpty()) {
+                    // The claim, the check that no account exists and the insert are one
+                    // transaction: of two first registrations only one becomes steward.
+                    var created = authService.registerFirstSteward(parts[1], parts[2], displayName);
+                    if (created instanceof AuthService.Registration.Closed) {
+                        TelnetCodec.sendLine(out, catalog.get("telnet.household_has_steward"));
+                        continue;
+                    }
+                    if (!(created instanceof AuthService.Registration.Created c)) {
                         TelnetCodec.sendLine(out, catalog.get("telnet.username_taken"));
                         continue;
                     }
-                    var s = session.get();
-                    var user = authService.findUser(s.userId()).orElseThrow();
+                    var user = authService.findUser(c.session().userId()).orElseThrow();
                     playerId = user.id();
                     playerName = user.displayName();
                     playerRole = user.role();
-                    if (isFirst) {
-                        // No more setConfig(OPEN_REGISTRATION, false) — open
-                        // registration is now derived from "no users exist".
-                        // Once this user exists, isFirstUser() returns false
-                        // automatically, closing the door. F4.
-                        TelnetCodec.sendLine(out, catalog.get("telnet.steward_created"));
-                        TelnetCodec.sendLine(out, catalog.get("telnet.steward_invite_hint"));
-                        log.info("First user created via telnet: {} (steward)", user.username());
-                    }
+                    TelnetCodec.sendLine(out, catalog.get("telnet.steward_created"));
+                    showRecoveryKey(out, catalog, c.recoveryKey());
+                    TelnetCodec.sendLine(out, catalog.get("telnet.steward_invite_hint"));
+                    log.info("First user created via telnet: {} (steward)", user.username());
                     TelnetCodec.sendLine(out, catalog.get("telnet.account_created", playerName));
                     return true;
                 }
@@ -449,27 +469,48 @@ public class TelnetSession implements Runnable {
                     var code = String.join(" ", parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]);
                     var username = parts[7];
                     var password = parts[8];
-                    // Peek at invite to get role
-                    var pending = inviteService.listPendingInvites().stream()
-                        .filter(i -> i.code().equals(code.toLowerCase()))
-                        .findFirst();
-                    if (pending.isEmpty()) {
+                    if (!AuthService.passwordLongEnough(password)) {
+                        TelnetCodec.sendLine(out, catalog.get("telnet.password_too_short", AuthService.MIN_PASSWORD_LENGTH));
+                        continue;
+                    }
+                    if (limiter.isLocked(ipKey)) {
+                        TelnetCodec.sendLine(out, catalog.get("telnet.login_locked",
+                            lockMinutes(limiter.lockRemainingMs(ipKey))));
+                        return false;
+                    }
+                    // Claim the invite atomically before creating the account, as HTTP, SSH and
+                    // NATS do: of two redemptions of one code, only the claim that wins creates
+                    // an account.
+                    var claimToken = "claim:" + UUID.randomUUID();
+                    var claimed = inviteService.claimInvite(code.toLowerCase(), claimToken);
+                    if (claimed.isEmpty()) {
+                        limiter.recordFailure(ipKey);
                         TelnetCodec.sendLine(out, catalog.get("telnet.invite_invalid"));
                         continue;
                     }
-                    var inviteRole = pending.get().role();
-                    var session = authService.register(username, password, null, inviteRole);
-                    if (session.isEmpty()) {
+                    AuthService.Registration.Created c;
+                    try {
+                        var created = authService.registerByInvite(claimed.get(), username, password, null);
+                        if (!(created instanceof AuthService.Registration.Created ok)) {
+                            inviteService.releaseClaim(claimToken);
+                            TelnetCodec.sendLine(out, catalog.get(created instanceof AuthService.Registration.Closed
+                                ? "telnet.household_has_steward" : "telnet.username_taken"));
+                            continue;
+                        }
+                        c = ok;
+                        inviteService.rebindClaim(claimToken, c.session().userId());
+                    } catch (RuntimeException e) {
+                        inviteService.releaseClaim(claimToken);
+                        log.warn("telnet invite redeem failed after claim: {}", e.toString());
                         TelnetCodec.sendLine(out, catalog.get("telnet.username_taken"));
                         continue;
                     }
-                    var s = session.get();
-                    inviteService.redeemInvite(code.toLowerCase(), s.userId());
-                    var user = authService.findUser(s.userId()).orElseThrow();
+                    var user = authService.findUser(c.session().userId()).orElseThrow();
                     playerId = user.id();
                     playerName = user.displayName();
                     playerRole = user.role();
                     TelnetCodec.sendLine(out, catalog.get("telnet.invite_accepted", playerName));
+                    showRecoveryKey(out, catalog, c.recoveryKey());
                     return true;
                 }
                 case "quit" -> { return false; }
@@ -478,6 +519,21 @@ public class TelnetSession implements Runnable {
         }
         TelnetCodec.sendLine(out, catalog.get("telnet.too_many_attempts"));
         return false;
+    }
+
+    /** The founding steward's recovery key, shown this once; nothing when there is none. */
+    private static void showRecoveryKey(OutputStream out, ScriptMessageCatalog catalog, String recoveryKey)
+            throws IOException {
+        if (recoveryKey == null) return;
+        TelnetCodec.sendLine(out, "");
+        TelnetCodec.sendLine(out, catalog.get("telnet.recovery_key_header"));
+        TelnetCodec.sendLine(out, "  " + recoveryKey);
+        TelnetCodec.sendLine(out, catalog.get("telnet.recovery_key_hint"));
+        TelnetCodec.sendLine(out, "");
+    }
+
+    private static long lockMinutes(long waitMs) {
+        return Math.max(1, (waitMs + 59_999) / 60_000);
     }
 
     private void handleInput(String input, OutputStream out) {
@@ -689,6 +745,18 @@ public class TelnetSession implements Runnable {
                     TelnetCodec.sendLine(out, line);
                 } catch (IOException ignored) { }
             });
+            // The person's own yes to a question the household library asked them about.
+            case ParsedCommand.ResearchYes r -> {
+                try {
+                    TelnetCodec.sendLine(out, LibraryConsent.researchYes(playerId, locale));
+                } catch (IOException ignored) { }
+            }
+            // The person's bonds with this home's companions, and the naming ritual.
+            case ParsedCommand.Bond b -> {
+                try {
+                    TelnetCodec.sendLine(out, BondNaming.command(playerId, playerName, b.args(), locale));
+                } catch (IOException ignored) { }
+            }
             case ParsedCommand.Demolish d -> {} // steward tool: ssh, web, or `wyrd rooms`
             case ParsedCommand.Nearby n -> {} // map rendering not supported in telnet
             case ParsedCommand.Rooms r -> {} // map rendering not supported in telnet
@@ -1036,6 +1104,11 @@ public class TelnetSession implements Runnable {
                         renderer.sendPrompt(currentRoomName);
                         break;
                     }
+                    if (!AuthService.passwordLongEnough(addArgs.get(1))) {
+                        TelnetCodec.sendLine(out, catalog.get("telnet.password_too_short", AuthService.MIN_PASSWORD_LENGTH));
+                        renderer.sendPrompt(currentRoomName);
+                        break;
+                    }
                     var addDisplay = addArgs.size() > 2 ? addArgs.get(2) : addArgs.get(0);
                     var addSession = authService.registerByAdmin(playerId,
                         addArgs.get(0), addArgs.get(1), addDisplay, "member");
@@ -1319,7 +1392,7 @@ public class TelnetSession implements Runnable {
             try {
                 var result = executor.execute(item.objectId(), resolved.source(),
                     CarriedItemUse.params(playerId, resolved.target(), locale), provider,
-                    CarriedItemUse.capabilitiesFor(item.objectId()));
+                    CarriedItemUse.capabilitiesFor(resolved));
                 var text = ItemScriptResponse.extractText(result, item.objectName());
                 for (var line : text.split("\n")) TelnetCodec.sendLine(out, line);
             } finally {

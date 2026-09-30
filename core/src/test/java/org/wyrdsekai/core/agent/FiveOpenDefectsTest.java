@@ -73,6 +73,21 @@ class FiveOpenDefectsTest {
             "No results found in the library for: x")).isTrue();
     }
 
+    /**
+     * The library card now leads with what the sources say and names the gap last (2026-09-22).
+     * A digest that cites a source is an answer, whatever its last sentence says; one that says
+     * nothing bears on the question, with no citation, is still an absence.
+     */
+    @Test
+    void a_cited_answer_with_a_gap_sentence_is_not_an_absence() {
+        assertThat(CompanionActor.looksLikeAbsenceFinding(
+            "Diffusion models learn to reverse a noising process [S1], and guidance trades "
+                + "diversity for fidelity [S2]. The provided sources do not contain information "
+                + "regarding 2024 and 2025.")).isFalse();
+        assertThat(CompanionActor.looksLikeAbsenceFinding(
+            "Nothing in the sources bears on this question.")).isTrue();
+    }
+
     /** A real answer must never be mistaken for an absence and held. */
     @Test
     void real_findings_are_not_held() {

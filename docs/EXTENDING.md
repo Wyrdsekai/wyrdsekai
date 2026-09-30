@@ -9,7 +9,8 @@ know to use them:
 4. **Room and item scripts** — JavaScript inside the world
 
 All four pass the same gates. Nothing here is a bypass: a new capability is still
-subject to grants, budgets, and the egress gate.
+subject to grants, budgets, and the egress gate (which decides what a started
+program inherits from the node's environment; it does not block the network).
 
 ---
 
@@ -71,11 +72,13 @@ the runtime parses them.
 ## 3. MCP servers
 
 Wyrdsekai both calls MCP servers and exposes itself as one. Four transports
-(stdio, HTTP, SSE, WebSocket), grants per agent-and-resource, a hard daily spend
-cap, a circuit breaker, and structural quarantine on everything inbound.
+(stdio, HTTP, SSE, WebSocket), grants per agent-and-service (required by default),
+a hard daily spend cap, a circuit breaker, and a quarantine that cleans every
+external service's output before a caller sees it. Every call goes through the
+one gateway.
 
-[MCP.md](MCP.md) is the whole story, including why tool output is held until the
-next sleep-Forge cycle instead of becoming memory immediately.
+[MCP.md](MCP.md) is the whole story, including what is quarantined and what is
+not.
 
 ---
 
@@ -130,17 +133,27 @@ unbounded one.
 
 ### The egress gate
 
-`WYRDSEKAI_CODING_EGRESS_GATE` is **on by default**. Every subprocess a coding
-backend spawns has its network egress gated. Turning it off means a coding agent
-running on your machine can reach anything your machine can reach. There are
-legitimate reasons to do that; do it knowingly.
+`WYRDSEKAI_CODING_EGRESS_GATE` is **on by default**. It controls the environment,
+not the network. Every program a coding backend starts, and every CLI skill,
+begins with an empty environment and gets back only `PATH`, `HOME`, locale,
+`TMPDIR`, `TZ`, `TERM`, `OPENAI_HOST`, `GOOSE_PROVIDER` and `GOOSE_MODEL`, plus
+what that backend sets for itself (its own key, when it has one). No credential
+is on that shared list, so one backend never sees another's key, and none sees
+`SSH_AUTH_SOCK` or the node's stored secrets.
+
+Plain outbound network access is **not** blocked: a coding agent can reach the
+web and anything else your machine can reach, without the node's keys. Turning
+the gate off hands the backend the node's whole environment, credentials
+included. There are legitimate reasons to do that; do it knowingly.
 
 ---
 
 ## 5. Room and item scripts
 
-Rooms and objects are JavaScript, executed in a GraalJS sandbox with a
-capability-manifest validator that gates which API tiers a script may touch.
+Rooms and objects are JavaScript, executed in a GraalJS sandbox. An item's
+capability manifest is checked when the item loads and enforced when it runs: a
+`world.*` call or a raw `http` request the manifest does not declare is refused.
+Room hooks run under a statement limit and a CPU-time limit.
 Scripts live in `scripts/rooms/` and `scripts/items/` and reach the world through
 the `world.*` API.
 
@@ -175,8 +188,9 @@ Two rules keep a household's items from breaking each other:
 If you are adding a genuinely new integration rather than configuring an existing
 one:
 
-1. Put it behind the same gates. `McpGatewayService` for tools, the egress gate
-   for subprocesses, The Safe for credentials.
+1. Put it behind the same gates. `McpGatewayService` for tools (call it, or
+   `McpServerManager.invokeTool`, never a transport directly), the egress gate or
+   `SubprocessEnv` for programs it starts, The Safe for credentials.
 2. Make absence the default. An unconfigured integration should not register.
 3. Write the failure path first. A backend that is down should degrade the
    companion's options, not break their turn.

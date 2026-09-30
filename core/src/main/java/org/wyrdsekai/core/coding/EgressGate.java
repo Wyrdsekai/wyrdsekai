@@ -6,6 +6,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigException;
@@ -29,9 +30,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Enforcing by default</b> (operator 2026-07-02). When enabled the gate
  * SCRUBS the subprocess environment: it clears the inherited parent env and
- * re-adds only an explicit minimal allowlist (PATH/HOME/LANG + the
- * OPENAI_HOST/key the backend needs to reach the LOCAL llama-server), then
- * layers the backend's own resolved env on top. Ambient credentials are
+ * re-adds only an explicit minimal allowlist (PATH/HOME/LANG + the OPENAI_HOST
+ * routing to the LOCAL llama-server, no credential), then layers the backend's
+ * own resolved env (its own key, when it has one) on top. Ambient credentials are
  * dropped, so a prompt-injected agent cannot pivot with the steward's keys.
  * Plain outbound HTTP is NOT walled — the gate's value is credential-scrubbing
  * + no key-backed lateral movement, not blocking the web (which agents already
@@ -52,19 +53,29 @@ public final class EgressGate {
     /**
      * Vars re-admitted from the parent env when the gate is enforcing. Keeps a
      * subprocess runnable (PATH to find its binary, HOME for config, locale)
-     * and lets the local-llama-server routing survive (OPENAI_HOST/KEY are also
-     * re-supplied by the backend's own env, but allowlisting them is harmless).
-     * Deliberately EXCLUDES SSH_AUTH_SOCK and every *_KEY / *_TOKEN / *_SECRET.
+     * and lets the local-llama-server routing survive. EXCLUDES SSH_AUTH_SOCK and
+     * every credential: this list is shared by every backend and every CLI skill,
+     * so a key here would reach all of them. A backend's own key travels in its
+     * own env ({@link #own}), never through this list.
      */
     public static final Set<String> DEFAULT_ENV_ALLOWLIST = Set.of(
         "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM",
-        "OPENAI_HOST", "OPENAI_API_KEY", "GOOSE_PROVIDER", "GOOSE_MODEL",
-        // CodeZaiku's equivalents. goose has had OPENAI_API_KEY here since the gate was
-        // written; CodeZaiku never got the same courtesy, so a hosted endpoint could not
-        // be reached at all — the scrub removed the key and nothing put it back. Same
-        // shape, same reasoning: a backend's OWN routing credential is not the ambient
-        // household secret this gate exists to strip.
-        "CODEZAIKU_AUTH_TOKEN", "CODEZAIKU_API_KEY");
+        "OPENAI_HOST", "GOOSE_PROVIDER", "GOOSE_MODEL");
+
+    /**
+     * A backend's own credential, read from the daemon's environment by name for the
+     * operator who exported it there instead of storing it. Only the names that backend
+     * itself reads; the result goes into that backend's env, not the shared allowlist.
+     */
+    public static Map<String, String> own(Function<String, String> env, String... names) {
+        var out = new HashMap<String, String>();
+        for (var name : names) {
+            if (name == null) continue;
+            var v = env.apply(name);
+            if (v != null && !v.isBlank()) out.put(name, v);
+        }
+        return out;
+    }
 
     private final boolean enabled;
     private final Set<String> envAllowlist;

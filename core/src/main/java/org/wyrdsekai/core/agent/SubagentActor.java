@@ -10,6 +10,7 @@ import org.apache.pekko.actor.typed.javadsl.TimerScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.time.Duration;
@@ -163,7 +164,7 @@ public class SubagentActor extends AbstractBehavior<SubagentActor.Command> {
         inferenceRouter.tell(new InferenceRouter.ChatRequest(
             requestId, null, messages,
             request.maxTokens(), 0.3,
-            inferenceAdapter));
+            inferenceAdapter).withNow(NowLine.date()));
 
         return this;
     }

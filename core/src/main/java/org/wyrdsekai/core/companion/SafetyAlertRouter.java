@@ -137,6 +137,11 @@ public class SafetyAlertRouter {
             "\nThese are free, confidential, and available 24/7.";
     }
 
+    /** The crisis lines for exactly this locale, with no English fallback; empty when there are none. */
+    public Optional<CrisisResources> resourcesFor(String locale) {
+        return Optional.ofNullable(locale == null ? null : resourcesByLocale.get(locale));
+    }
+
     /** Crisis resources — default English. */
     public String crisisResources() {
         return crisisResources("en");

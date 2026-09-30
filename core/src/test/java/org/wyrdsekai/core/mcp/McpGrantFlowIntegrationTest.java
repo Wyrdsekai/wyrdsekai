@@ -11,9 +11,6 @@ import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.home.HomeClient;
 import org.wyrdsekai.core.home.HomeRegistryActor;
 import org.wyrdsekai.core.home.HomeStore;
-import org.wyrdsekai.core.mcp.transport.HttpTransportHandler;
-import org.wyrdsekai.core.mcp.transport.McpTransportFactory;
-import org.wyrdsekai.core.mcp.transport.McpTransportHandler;
 import org.wyrdsekai.core.persistence.SchemaInitializer;
 import org.wyrdsekai.core.room.RoomAuthority;
 
@@ -22,6 +19,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -92,23 +90,8 @@ class McpGrantFlowIntegrationTest {
         registry.register(new McpServiceConfig(
             SERVICE, "SearXNG", "http", endpoint, "local", null, null, true));
 
-        // 5. Gateway with the REAL transport (identical to Main) + strict steward grant.
-        gateway = new McpGatewayService(registry,
-            (ep, toolName, params, authHeader) -> {
-                var cfg = registry.enabledServices().stream()
-                    .filter(s -> ep != null && ep.equals(s.endpoint()))
-                    .findFirst().orElse(null);
-                McpTransportHandler handler = (cfg != null)
-                    ? McpTransportFactory.create(cfg, authHeader)
-                    : new HttpTransportHandler(ep, Map.of(), authHeader);
-                try {
-                    handler.initialize();
-                    var r = handler.callTool(toolName, params != null ? params : Map.of());
-                    return r.textContent();
-                } finally {
-                    try { handler.close(); } catch (Exception ignore) { /* best-effort */ }
-                }
-            });
+        // 5. Gateway with the REAL transport (the one Main uses) + strict steward grant.
+        gateway = new McpGatewayService(registry, McpGatewayService.handlerTransport(registry));
         gateway.setGrantCheck(McpGrantCheck.stewardOwned(homeClient, STEWARD, true));
 
         // 6. The steward-facing grant admin (behind the Study Tool Warden).
@@ -156,6 +139,35 @@ class McpGrantFlowIntegrationTest {
         assertThat(grantAdmin.grant(STEWARD, "ma", SERVICE).get("ok")).isEqualTo(true);
         assertThat(callSucceeds("ma")).isTrue();     // granted agent
         assertThat(callSucceeds("bob")).isFalse();   // ungranted agent
+    }
+
+    @Test
+    void the_default_setting_is_strict_and_only_false_opens_it() {
+        assertThat(McpGrantCheck.strictSetting(null)).isTrue();
+        assertThat(McpGrantCheck.strictSetting("")).isTrue();
+        assertThat(McpGrantCheck.strictSetting("true")).isTrue();
+        assertThat(McpGrantCheck.strictSetting("yes please")).isTrue();
+        assertThat(McpGrantCheck.strictSetting(" FALSE ")).isFalse();
+    }
+
+    @Test
+    void a_remote_service_without_a_grant_is_refused_and_the_household_librarian_is_not() {
+        registry.register(new McpServiceConfig(
+            "librarian", "Household librarian", "http", endpoint, "local", null, null, true));
+        gateway.setHouseholdServices(() -> Set.of("librarian"));
+
+        var remote = gateway.execute("ma", "zone-1", SERVICE, "search", Map.of("query", "x"));
+        assertThat(remote.success()).isFalse();
+        assertThat(remote.error()).contains("no MCP-tool grant");
+
+        var librarian = gateway.execute("ma", "zone-1", "librarian", "search", Map.of("query", "x"));
+        assertThat(librarian.success()).as(librarian.error()).isTrue();
+        assertThat(String.valueOf(librarian.data())).contains("results for: x");
+    }
+
+    @Test
+    void the_steward_needs_no_grant_to_her_own_resource() {
+        assertThat(callSucceeds(STEWARD)).isTrue();
     }
 
     @Test

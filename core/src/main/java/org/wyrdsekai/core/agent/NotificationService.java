@@ -122,11 +122,13 @@ public class NotificationService {
      * @param message   the notification message text
      * @param priority  "ambient", "normal", or "critical"
      * @param fromAgentId the agent sending the notification
+     * @return true when a live session received it or it was forwarded to the target's zone;
+     *         false when it was only buffered for later, or reached no one
      */
-    public void notify(String targetDid, String message, String priority, String fromAgentId) {
+    public boolean notify(String targetDid, String message, String priority, String fromAgentId) {
         if (message == null || message.isBlank()) {
             log.warn("Ignoring blank notification from agent '{}'", fromAgentId);
-            return;
+            return false;
         }
 
         // One person, one key. The web presents a DID and the ssh corridor a legacy login
@@ -155,13 +157,13 @@ public class NotificationService {
                     if (forwarded) {
                         log.info("Notification forwarded to traveling {} at zone '{}': {}",
                             targetDid, destZone, truncate(message, 80));
-                        return;
+                        return true;
                     }
                     // Forwarding failed — buffer for delivery on return
                     bufferForPlayer(targetDid, notification);
                     log.info("Notification buffered for traveling {} (delivery failed): {}",
                         targetDid, truncate(message, 80));
-                    return;
+                    return false;
                 }
             }
 
@@ -172,19 +174,21 @@ public class NotificationService {
                 if (forwarded) {
                     log.info("Notification forwarded to visitor {} via home zone '{}': {}",
                         targetDid, homeZone, truncate(message, 80));
-                    return;
+                    return true;
                 }
             }
         }
 
         // In-world delivery via WebSocket
+        boolean delivered = false;
         if (deliveryCallback != null) {
-            var delivered = deliveryCallback.deliver(targetDid, notification);
+            delivered = deliveryCallback.deliver(targetDid, notification);
             if (delivered) {
                 log.info("Notification sent: from='{}' to='{}' priority={} message='{}'",
                     fromAgentId, targetDid, validPriority, truncate(message, 80));
             } else if ("all".equals(targetDid)) {
-                // Broadcast reached nobody — no per-player mailbox to persist to.
+                // Broadcast reached nobody — no per-player mailbox to persist to. The false
+                // return is the caller's cue: CompanionVitals keeps its alarm for the steward.
                 log.warn("Notification broadcast reached no live sessions: from='{}' message='{}'",
                     fromAgentId, truncate(message, 80));
             } else {
@@ -202,6 +206,7 @@ public class NotificationService {
 
         // External delivery is handled by each CompanionActor's own channels.
         // See CompanionActor.fanOutExternal().
+        return delivered;
     }
 
     /**
@@ -210,9 +215,10 @@ public class NotificationService {
      * @param message     the notification message text
      * @param priority    "ambient", "normal", or "critical"
      * @param fromAgentId the agent sending the notification
+     * @return true when at least one live session received it
      */
-    public void notifyAll(String message, String priority, String fromAgentId) {
-        notify("all", message, priority, fromAgentId);
+    public boolean notifyAll(String message, String priority, String fromAgentId) {
+        return notify("all", message, priority, fromAgentId);
     }
 
     /**

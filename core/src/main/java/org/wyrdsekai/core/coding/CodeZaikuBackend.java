@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -503,6 +504,10 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             // no token, so this must never stop a run.
             log.debug("[codezaiku] no auth token available: {}", e.toString());
         }
+        // The operator who exported CodeZaiku's token into the service environment
+        // instead of storing it: CodeZaiku's own names only, into CodeZaiku's env. The
+        // shared egress allowlist carries no credential, so no other backend sees it.
+        if (!env.containsKey("CODEZAIKU_AUTH_TOKEN")) env.putAll(ownCredentials(System::getenv));
         // CodeZaiku's operator knobs: EgressGate scrubs the inherited environment,
         // so an operator's export dies at the subprocess boundary unless carried
         // across here deliberately. Found live (release bake 2026-08-24) with
@@ -516,6 +521,11 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             if (v != null && !v.isBlank()) env.put(knob, v);
         }
         return env;
+    }
+
+    /** CodeZaiku's own credential names, read from {@code env} (the daemon's environment). */
+    static Map<String, String> ownCredentials(Function<String, String> env) {
+        return EgressGate.own(env, "CODEZAIKU_AUTH_TOKEN", "CODEZAIKU_API_KEY");
     }
 
     /** CodeZaiku env knobs an operator may set on the host and expect to reach the

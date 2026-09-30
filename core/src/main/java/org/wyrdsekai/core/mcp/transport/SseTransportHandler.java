@@ -64,7 +64,7 @@ public class SseTransportHandler implements McpTransportHandler {
         var request = JsonRpcMessage.Request.create(nextId.getAndIncrement(), "tools/call",
             Map.of("name", toolName, "arguments", arguments != null ? arguments : Map.of()));
         var response = sendRequest(request);
-        if (response.isError()) throw new IOException("tools/call failed: " + response.error().message());
+        if (response.isError()) throw McpToolException.fromRpcError(toolName, response.error());
         return mapper.convertValue(response.result(), JsonRpcMessage.ToolCallResult.class);
     }
 
@@ -81,6 +81,14 @@ public class SseTransportHandler implements McpTransportHandler {
 
         var httpReq = reqBuilder.POST(HttpRequest.BodyPublishers.ofString(body)).build();
         var httpResp = client.send(httpReq, HttpResponse.BodyHandlers.ofString());
+        var tool = McpToolException.toolOf(request);
+        int status = httpResp.statusCode();
+        if ((status == 422 || status == 429) && tool != null) {
+            // A REST door's refusal ({"error": {"code", "message"}}): the tool answered
+            // (429: an older library's budget_exceeded).
+            var answered = McpToolException.fromHttpBody(tool, status, httpResp.body());
+            if (answered != null) throw answered;
+        }
 
         // Parse SSE response -- extract data lines
         var responseBody = httpResp.body();

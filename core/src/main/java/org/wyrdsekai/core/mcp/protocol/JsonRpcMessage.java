@@ -81,9 +81,22 @@ public final class JsonRpcMessage {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ToolCallResult(
         @JsonProperty("content") List<ContentBlock> content,
-        @JsonProperty("isError") boolean isError
+        @JsonProperty("isError") boolean isError,
+        @JsonProperty("_meta") Map<String, Object> meta
     ) {
         @JsonCreator public ToolCallResult {}
+
+        public ToolCallResult(List<ContentBlock> content, boolean isError) {
+            this(content, isError, null);
+        }
+
+        /** The price the service says this call cost ({@code _meta.cost}), or null when it says none. */
+        public Double reportedCost() {
+            if (meta == null || !(meta.get("cost") instanceof Number n)) return null;
+            double v = n.doubleValue();
+            return Double.isFinite(v) && v >= 0 ? v : null;
+        }
+
         public String textContent() {
             if (content == null || content.isEmpty()) return "";
             return content.stream()

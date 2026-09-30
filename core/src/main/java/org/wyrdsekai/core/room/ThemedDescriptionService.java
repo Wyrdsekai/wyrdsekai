@@ -89,8 +89,10 @@ public final class ThemedDescriptionService {
         // without it a Qwen3.x voice model (V10) spends the whole token budget inside a
         // <think> block and returns empty content. mlx respects the same body shape, so
         // this hint is correct on both Linux (llama-server) and macOS (MLX) voice backends.
+        // Under the single-model profile no voice server runs; the one model writes these.
         this.client = new InferenceClient(
-            cfg.voiceUrl(), null, BAKE_TIMEOUT, new ApiProvider.OpenAI("llama-server"));
+            cfg.singleBrain() ? cfg.inferenceUrl() : cfg.voiceUrl(),
+            null, BAKE_TIMEOUT, new ApiProvider.OpenAI("llama-server"));
         this.model = "default";  // llama-server ignores; MLX maps to the loaded voice model
         var seq = new AtomicInteger();
         this.bakePool = Executors.newSingleThreadExecutor(r -> {

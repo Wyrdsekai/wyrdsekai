@@ -40,14 +40,18 @@ RUN chmod +x /entrypoint.sh /opt/wyrdsekai/bin/* 2>/dev/null || true
 # landed in the container writable layer ($HOME/.wyrdsekai) and were destroyed on
 # recreate, while models downloaded into /data went unfound. WYRDSEKAI_DATA kept as
 # a back-compat alias for the entrypoint's shell logic.
+# Inside a container the plain web port must listen beyond the container's own loopback, or the
+# host cannot reach it at all. Publish it on the host's loopback only (-p 127.0.0.1:7070:7070);
+# phones and other machines use 7443. Every /api call still needs a login.
+ENV WYRDSEKAI_HTTP_BIND=0.0.0.0
 ENV WYRDSEKAI_DATA=/data \
     WYRDSEKAI_DATA_DIR=/data \
     WYRDSEKAI_HOME=/opt/wyrdsekai \
     WYRDSEKAI_LIBRARY_STARTER=true
 
 VOLUME /data
-# 7070 HTTP/WS + /app  7022 ssh  8200 drive  8201 voice  4222 nats
-EXPOSE 7070 7022 8200 8201
+# 7070 HTTP/WS + /app  7443 HTTPS/WSS (household certificate)  7022 ssh  8200 drive  8201 voice
+EXPOSE 7070 7443 7022 8200 8201
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s \
     CMD curl -sf http://127.0.0.1:7070/health || exit 1

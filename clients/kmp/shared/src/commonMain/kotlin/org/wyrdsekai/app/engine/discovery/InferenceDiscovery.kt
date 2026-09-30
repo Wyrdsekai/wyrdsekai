@@ -4,17 +4,16 @@ import io.ktor.client.*
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.wyrdsekai.app.platform.localIpv4Addresses
+import org.wyrdsekai.app.network.createHouseholdHttpClient
 
 /**
  * A discovered Wyrdsekai server on the network.
  *
- * @param url Base URL of the server (e.g., "http://198.51.100.39:7070")
+ * @param url Base URL of the server (e.g., "https://198.51.100.39:7443", the invite's lan_https)
  * @param name Server name or hostname
  * @param label Human-readable label for display
  * @param natsUrl NATS URL from /health (e.g., "nats://198.51.100.39:4222"), null if not present
@@ -46,73 +45,32 @@ data class InferenceCapability(
 typealias DiscoveredInference = DiscoveredServer
 
 /**
- * Discovers Wyrdsekai servers on the local network.
+ * Finds the Wyrdsekai home this phone already knows.
  *
- * SECURITY: Only discovers Wyrdsekai servers (port 7070, /health endpoint).
- * Never probes for raw inference endpoints (Ollama, llama-server, etc.).
- * The phone talks to Wyrdsekai servers only — the server handles inference routing.
- *
- * Discovery strategy:
- * 1. Saved server URL (user explicitly configured)
- * 2. Subnet scan — probe port 7070 on all IPs in the local /24 subnet
- * 3. Return all responsive Wyrdsekai servers
+ * It used to scan every address of the local /24 for http://<ip>:7070/health.
+ * A 0.5.0 home answers plain http on its own machine only (W2), so the scan
+ * found nothing, and anything it did find could only be reached in the clear.
+ * A phone meets its home through an invite (QR or link): that carries the
+ * home's https address and the certificate fingerprint the phone pins. There
+ * is no scan and no trust on first use; [discover] checks only the saved
+ * address, through the pinned household client.
  */
 object InferenceDiscovery {
 
     private const val PROBE_TIMEOUT_MS = 1_500L
-    private const val WYRDSEKAI_PORT = 7070
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * Discover Wyrdsekai servers on the network.
+     * The saved home, when it answers /health over its pinned https address
+     * (or this device's own loopback). Empty otherwise: pairing a new home
+     * takes an invite.
      *
-     * @param savedUrl User-configured server URL (from TokenStore)
-     * @param localSubnet Local subnet prefix (e.g., "192.168.10") — if null, tries to detect
-     * @return All responsive Wyrdsekai servers
+     * @param savedUrl The home address from the invite (TokenStore)
      */
-    suspend fun discover(
-        savedUrl: String? = null,
-        localSubnet: String? = null,
-    ): List<DiscoveredServer> = coroutineScope {
-        val results = mutableListOf<DiscoveredServer>()
-
-        // 1. Saved URL first (user explicitly configured — trusted)
-        if (!savedUrl.isNullOrBlank()) {
-            val server = probeWyrdsekai(savedUrl)
-            if (server != null) {
-                results.add(server.copy(label = "Saved: ${server.name}"))
-            }
-        }
-
-        // 2. Subnet scan — probe port 7070 on local network
-        val subnets = mutableListOf<String>()
-        if (localSubnet != null) {
-            subnets.add(localSubnet)
-        } else {
-            // Common home subnets — try both
-            subnets.addAll(detectLocalSubnets())
-        }
-
-        // Probe all IPs in parallel (254 per subnet, 1.5s timeout each)
-        val probeJobs = subnets.flatMap { subnet ->
-            (1..254).map { host ->
-                async {
-                    val ip = "$subnet.$host"
-                    val url = "http://$ip:$WYRDSEKAI_PORT"
-                    probeWyrdsekai(url)
-                }
-            }
-        }
-
-        // Collect results
-        for (job in probeJobs) {
-            val server = job.await()
-            if (server != null && results.none { it.url == server.url }) {
-                results.add(server)
-            }
-        }
-
-        results
+    suspend fun discover(savedUrl: String? = null): List<DiscoveredServer> {
+        if (savedUrl.isNullOrBlank()) return emptyList()
+        val server = probeWyrdsekai(savedUrl) ?: return emptyList()
+        return listOf(server.copy(label = "Saved: ${server.name}"))
     }
 
     /**
@@ -131,7 +89,8 @@ object InferenceDiscovery {
      */
     internal suspend fun probeWyrdsekai(baseUrl: String): DiscoveredServer? {
         return try {
-            val client = HttpClient {
+            // The household client: the home's invite pin, and never plain http off the device.
+            val client = createHouseholdHttpClient().config {
                 install(HttpTimeout) {
                     requestTimeoutMillis = PROBE_TIMEOUT_MS
                     connectTimeoutMillis = PROBE_TIMEOUT_MS
@@ -183,26 +142,6 @@ object InferenceDiscovery {
             )
         } catch (_: Exception) {
             null
-        }
-    }
-
-    /**
-     * Detect local subnet prefixes from common patterns.
-     * Returns prefixes like "192.168.1", "192.168.10".
-     */
-    private fun detectLocalSubnets(): List<String> {
-        return try {
-            val addresses = localIpv4Addresses()
-
-            addresses.mapNotNull { ip ->
-                val parts = ip.split(".")
-                if (parts.size == 4 && parts[0] == "192") {
-                    "${parts[0]}.${parts[1]}.${parts[2]}"
-                } else null
-            }.distinct()
-        } catch (_: Exception) {
-            // Fallback: common home subnets
-            listOf("192.168.1", "192.168.10")
         }
     }
 

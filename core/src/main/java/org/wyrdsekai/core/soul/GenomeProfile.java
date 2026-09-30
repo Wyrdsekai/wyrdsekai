@@ -131,10 +131,10 @@ public record GenomeProfile(
         double focus = state.getOrDefault("focus", 0.5);
         double rapport = state.getOrDefault("rapport", 0.5);
 
-        if (valence < 0.2) sb.append("feeling heavy and sorrowful, ");
-        else if (valence < 0.35) sb.append("a quiet sadness weighing on you, ");
-        else if (valence > 0.8) sb.append("feeling deeply uplifted, ");
-        else if (valence > 0.65) sb.append("a warm positive feeling, ");
+        if (valence < 0.2) sb.append("very sad, ");
+        else if (valence < 0.35) sb.append("somewhat sad, ");
+        else if (valence > 0.8) sb.append("very glad, ");
+        else if (valence > 0.65) sb.append("glad, ");
 
         if (safety < 0.2) sb.append("on high alert, ");
         else if (safety < 0.35) sb.append("uneasy and guarded, ");

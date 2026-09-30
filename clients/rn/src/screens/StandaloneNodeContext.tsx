@@ -21,7 +21,7 @@ import { AsyncStorageSoulManifestStore } from '../engine/persistence/AsyncStorag
 import { useStandaloneNodeStore } from '../state/standaloneNodeStore';
 import { useInference } from '../inference/InferenceContext';
 import type { BetweenClient } from '../engine/between/BetweenClient';
-import { discoverInference, discoverWyrdsekaiServers, bestEndpoint } from '../engine/discovery/InferenceDiscovery';
+import { discoverInference, bestEndpoint } from '../engine/discovery/InferenceDiscovery';
 import { BOOTSTRAP_DID } from '../engine/soul/BootstrapSoulManifest';
 import { createNamedBootstrap } from '../engine/soul/NamedBootstrapManifest';
 import { EquipmentService } from '../engine/item/EquipmentService';
@@ -75,15 +75,42 @@ try {
 /** Interval for periodic state persistence (ms). */
 const PERSIST_INTERVAL_MS = 30_000;
 
-/** Interval between background household discovery scans (60s). */
-const HOUSEHOLD_DISCOVERY_INTERVAL_MS = 60_000;
+/** How long the home network may take to answer before the phone uses the relay. */
+const HOME_BUS_CONNECT_MS = 6_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
+/** Say `text` in the prose stream once per phone (a flag in secure storage). */
+async function noticeOnce(key: string, text: string, say: (text: string) => void): Promise<void> {
+  const flag = `@wyrd_notice_${key}`;
+  if (await credStorage.getItem(flag)) return;
+  await credStorage.setItem(flag, '1');
+  say(text);
+}
 
 /**
  * Try to connect to household Between network via NATS.
  *
- * On success, wires all Between subsystems into PhoneNode via setBetween():
- * PresenceManager, BetweenHeadlineSyncClient, ItemExchangeManager, PhoneDock,
- * HouseholdEventListener, McpGatewayLite proxy mode.
+ * On success, wires Between into PhoneNode via setBetween() as this phone's
+ * own bus login (`busUser`): Study sync under that name; the home refuses the
+ * rest of the LAN machinery to a phone login, so it is not started.
+ *
+ * Only on the home network: the home bus (the invite's `home_bus`, see
+ * resolveHomeBus) pinned to the household CA from the invite, with this phone's
+ * own home-bus credentials ( W2, D1/D3). Tried briefly
+ * away from home it simply does not answer. Never plain ws://, and not through
+ * the relay: Between there is plain pub/sub that the relay and the zone's other
+ * phones can read (see planBetweenLeg). A phone paired before 0.5.0 is told once
+ * how to pair again for the home network. On the bus the phone uses only what
+ * its login may (Study sync addressed to it — PhoneNode.setBetween `busUser`).
  *
  * Returns the BetweenClient (NatsBetweenAdapter) on success, or null if not
  * configured or unavailable.
@@ -91,140 +118,53 @@ const HOUSEHOLD_DISCOVERY_INTERVAL_MS = 60_000;
 async function connectBetweenIfConfigured(
   storage: AsyncStorageLike,
   node: PhoneNode,
+  say: (text: string) => void,
 ): Promise<BetweenClient | null> {
-  let betweenUrl = await credStorage.getItem('@wyrd_between_url');
-  // a home-zone (relay) phone has no @wyrd_between_url
-  // but its Study still syncs over the SAME relay it logs in through. Fall back to
-  // the relay ws URL + the relay_phone creds so the Between (StudySyncLayer) comes
-  // up on the relay leg. Without this the study-sync layer NEVER connects on the
-  // relay path — the local Study and the home zone can't converge.
-  let betweenCreds: { user?: string; pass?: string } | undefined;
-  // Set only on the relay fallback below — a relay permits the tunnel and
-  // study-sync, not the LAN Between layer. See BetweenConfig.viaRelay.
-  let viaRelay = false;
-  if (!betweenUrl) {
-    const relayUrl = await credStorage.getItem('@wyrd_relay_url');
-    if (relayUrl && /^wss?:\/\//.test(relayUrl)) {
-      betweenUrl = relayUrl;
-      viaRelay = true;
-      betweenCreds = {
-        user: (await credStorage.getItem('@wyrd_nats_user')) ?? undefined,
-        pass: (await credStorage.getItem('@wyrd_nats_pass')) ?? undefined,
-      };
-    }
+  const zoneId = await credStorage.getItem('@wyrd_zone_id');
+  const relayUrl = await credStorage.getItem('@wyrd_relay_url');
+  const onRelay = !!relayUrl && /^wss?:\/\//.test(relayUrl);
+  const { useZoneBankStore } = await import('../state/zoneBankStore');
+  if (!useZoneBankStore.getState().loaded) await useZoneBankStore.getState().loadFromStorage();
+  const { planBetweenLeg } = await import('../server/homeBus');
+  const plan = await planBetweenLeg(zoneId, await credStorage.getItem('@wyrd_between_url'), onRelay);
+  if (plan.notice) {
+    const { securityText } = await import('../security/securityText');
+    await noticeOnce(plan.notice, securityText()[plan.notice], say);
   }
-  if (!betweenUrl) return null;
+  const bus = plan.bus;
+  if (!bus) return null;
 
   const nodeId = (await credStorage.getItem('@wyrd_node_id')) ?? `rn-${Date.now()}`;
   const householdId = (await credStorage.getItem('@wyrd_household_id')) ?? 'default';
   const companionDid = (await credStorage.getItem('@wyrd_companion_did')) ?? `did:wyrd:companion:${nodeId}`;
   const serverUrl = await credStorage.getItem('@wyrd_server_url');
   const deviceToken = await credStorage.getItem('@wyrd_pairing_token');
-  const zoneId = await credStorage.getItem('@wyrd_zone_id');
   const accountUserId = await credStorage.getItem('@wyrd_user_id');
   const sessionToken = await credStorage.getItem('@wyrd_mcp_session_token');
 
   // Dynamic import — avoids bundling nats.ws on native platforms
   const { NatsBetweenAdapter } = await import('../engine/between/NatsBetweenAdapter');
-  const betweenClient = new NatsBetweenAdapter();
-  await betweenClient.connect(betweenUrl, betweenCreds);
-
-  // Wire all Between subsystems into PhoneNode
-  node.setBetween({ client: betweenClient, nodeId, householdId, companionDid, serverUrl, deviceToken, zoneId, accountUserId, sessionToken, viaRelay });
-
-  return betweenClient;
-}
-
-/**
- * Background household auto-discovery for local mode.
- *
- * When the phone is running standalone (no pairing), periodically scans
- * the LAN for a Wyrdsekai server. If found and it reports a natsUrl in
- * /health, connects Between and wires subsystems into PhoneNode.
- *
- * The companion continues to work locally -- Between is additive (enables
- * headlines, sync, delegation).
- *
- * Returns a cleanup function that stops the scan.
- */
-function startBackgroundHouseholdDiscovery(
-  storage: AsyncStorageLike,
-  node: PhoneNode,
-  betweenRef: React.MutableRefObject<BetweenClient | null>,
-): () => void {
-  let stopped = false;
-
-  const run = async () => {
-    while (!stopped) {
-      try {
-        const servers = await discoverWyrdsekaiServers();
-        const serverWithNats = servers.find(s => s.natsUrl);
-        if (serverWithNats && serverWithNats.natsUrl) {
-          // Convert nats:// to ws:// for WebSocket transport
-          const wsNatsUrl = serverWithNats.natsUrl.replace('nats://', 'ws://');
-
-          const nodeId = (await credStorage.getItem('@wyrd_node_id')) ?? `rn-${Date.now()}`;
-          const householdId = (await credStorage.getItem('@wyrd_household_id')) ?? 'default';
-          const companionDid = (await credStorage.getItem('@wyrd_companion_did')) ?? `did:wyrd:companion:${nodeId}`;
-          const deviceToken = await credStorage.getItem('@wyrd_pairing_token');
-          const zoneId = await credStorage.getItem('@wyrd_zone_id');
-          const accountUserId = await credStorage.getItem('@wyrd_user_id');
-          const sessionToken = await credStorage.getItem('@wyrd_mcp_session_token');
-
-          try {
-            const { NatsBetweenAdapter } = await import('../engine/between/NatsBetweenAdapter');
-            const betweenClient = new NatsBetweenAdapter();
-            await betweenClient.connect(wsNatsUrl);
-
-            // Wire Between subsystems into PhoneNode
-            node.setBetween({
-              client: betweenClient,
-              nodeId,
-              householdId,
-              companionDid,
-              serverUrl: serverWithNats.url,
-              deviceToken,
-              zoneId,
-              accountUserId,
-              sessionToken,
-            });
-
-            betweenRef.current = betweenClient;
-
-            // Save for next launch so connectBetweenIfConfigured can use it
-            await credStorage.setItem('@wyrd_between_url', wsNatsUrl);
-            await credStorage.setItem('@wyrd_server_url', serverWithNats.url);
-            if (serverWithNats.relayUrl) {
-              await credStorage.setItem('@wyrd_relay_url', serverWithNats.relayUrl);
-            }
-
-            // Connected -- stop scanning
-            return;
-          } catch {
-            // Between connect failed -- will retry next cycle
-          }
-        }
-      } catch {
-        // Discovery error -- non-fatal, will retry
-      }
-
-      // Wait before next scan
-      await new Promise<void>(resolve => {
-        const timer = setTimeout(resolve, HOUSEHOLD_DISCOVERY_INTERVAL_MS);
-        // Store the timer so we can clean up
-        if (stopped) {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
+  const { pinHomeCa } = await import('../server/HouseholdTrust');
+  await pinHomeCa(bus.url, bus.homeCaFp);
+  const client = new NatsBetweenAdapter();
+  try {
+    await withTimeout(client.connect(bus.url, { user: bus.user, pass: bus.pass }), HOME_BUS_CONNECT_MS);
+  } catch {
+    // The home answered and refused this phone's bus login (the phone was
+    // removed, or its login changed): say once how to pair again. Anything
+    // else (away from home, timeout) stays quiet.
+    if (client.loginRefused) {
+      const { securityText } = await import('../security/securityText');
+      await noticeOnce('lanPairAgain', securityText().lanPairAgain, say);
     }
-  };
-
-  run().catch(() => {});
-
-  return () => {
-    stopped = true;
-  };
+    await client.disconnect().catch(() => {});
+    return null;
+  }
+  node.setBetween({
+    client, nodeId, householdId, companionDid, serverUrl, deviceToken, zoneId, accountUserId, sessionToken,
+    viaRelay: false, busUser: bus.user,
+  });
+  return client;
 }
 
 interface StandaloneNodeServices {
@@ -248,7 +188,6 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
 
   const nodeRef = useRef<PhoneNode | null>(null);
   const betweenRef = useRef<BetweenClient | null>(null);
-  const stopDiscoveryRef = useRef<(() => void) | null>(null);
   const storage = resolvedStorage!;
 
   // Build PhoneNode once
@@ -290,9 +229,12 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
       const sUrl = await credStorage.getItem('@wyrd_inference_url');
       const dToken = await credStorage.getItem('@wyrd_pairing_token');
       const authToken = await credStorage.getItem('@wyrd_auth_token');
+      const mcpSession = await credStorage.getItem('@wyrd_mcp_session_token');
       if (sUrl) node.serverUrl = sUrl;
       if (dToken) node.deviceToken = dToken;
-      if (authToken) (node as any).authToken = authToken;
+      // The signed-in person's session: room visits use it (the person arrives
+      // as themselves); the device token only when no one is signed in.
+      node.sessionToken = mcpSession ?? authToken ?? null;
 
       // Cloud-API path (Welcome "I have an API key"): restore the saved
       // provider+key and apply to inferenceRouter so the companion's first
@@ -329,27 +271,6 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
     // inference at llama-server :8200 while the server REST lives at :7070),
     // then `@wyrd_inference_url` as a single-URL fallback for users whose
     // server proxies `/v1/chat/completions` itself.
-    /**
-     * Derive the relay WSS URL from the user's server URL. Example:
-     *   https://relay-node.example.com         → wss://relay-node.example.com:4443
-     *   https://relay-node.example.com:7070    → wss://relay-node.example.com:4443
-     *   https://relay-node.example.com:8443/x  → wss://relay-node.example.com:4443
-     * The port is fixed at (:4443). The host
-     * is whatever the user typed in "Use my server".
-     */
-    const deriveRelayWss = (serverUrl: string): string => {
-      try {
-        const u = new URL(serverUrl);
-        return `wss://${u.hostname}:4443`;
-      } catch {
-        // Fall back to a raw string strip if URL ctor rejects it.
-        const stripped = serverUrl
-          .replace(/^https?:\/\//, '')
-          .replace(/:[0-9]+.*$/, '')
-          .replace(/\/.*$/, '');
-        return `wss://${stripped}:4443`;
-      }
-    };
 
     const setupServerClient = async (): Promise<void> => {
      // Diagnostic step trace. Failure paths always surface a "setup-error:"
@@ -386,16 +307,30 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
           return;
         }
       } catch { /* transit import optional — fall through to full setup */ }
-      // a wyrdphone:// invite saves the relay's exact
-      // wss URL (which may not be on :4443 — ACME relays ride :443). When
-      // present it wins over the :4443 derivation below, and also stands in
-      // for a missing server URL so an invite alone is enough to connect.
-      // The LAN-discovery path may store a non-websocket relay URL under the
-      // same key (the zone's WYRDSEKAI_RELAY_URL, e.g. tls://host:4222) —
-      // only ws/wss forms are usable here.
+      // the relay comes only from a wyrdphone:// invite:
+      // the relay the invite saved (@wyrd_relay_url + its credentials), else a
+      // relay the bank holds for this zone (also from an invite). It is never
+      // derived from the home's address and never taken from a pairing reply.
+      // An older build's LAN pairing could leave a non-websocket address under
+      // @wyrd_relay_url (the zone leg, e.g. nats://host:4222) — only ws/wss
+      // forms are usable, and the bank's relay replaces such a value.
       const savedRelayUrl = await credStorage.getItem('@wyrd_relay_url');
-      const inviteRelayUrl =
-        savedRelayUrl && /^wss?:\/\//.test(savedRelayUrl) ? savedRelayUrl : null;
+      let inviteRelay: { wsUrl: string; user: string | null; pass: string | null } | null =
+        savedRelayUrl && /^wss?:\/\//.test(savedRelayUrl)
+          ? {
+              wsUrl: savedRelayUrl,
+              user: await credStorage.getItem('@wyrd_nats_user'),
+              pass: await credStorage.getItem('@wyrd_nats_pass'),
+            }
+          : null;
+      if (!inviteRelay) {
+        const cachedZone = await credStorage.getItem('@wyrd_zone_id');
+        const { useZoneBankStore: bankStore } = await import('../state/zoneBankStore');
+        if (!bankStore.getState().loaded) await bankStore.getState().loadFromStorage();
+        const held = cachedZone ? bankStore.getState().relaysForZone(cachedZone)[0] : undefined;
+        if (held) inviteRelay = { wsUrl: held.wsUrl, user: held.natsUser, pass: held.natsPass };
+      }
+      const inviteRelayUrl = inviteRelay?.wsUrl ?? null;
       // Tier-1: when a home-zone (relay) leg IS configured but we can't bring it
       // up, tell the user plainly instead of silently rendering a local Study.
       // Pure-local users (no relay leg) stay silent — falling to the local Study
@@ -421,13 +356,15 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
       // invite — sUrl fell back to the cloud inference endpoint
       // (@wyrd_inference_url, e.g. https://api.anthropic.com). Inference goes
       // DIRECT to the provider via the InferenceRouter (wired in wireCredentials),
-      // so there's nothing to attach here. Standing up the relay/NATS leg would
-      // derive a bogus wss://<provider>:4443 relay (deriveRelayWss(sUrl)), fail
-      // zone-discovery with a TIMEOUT, and route the companion's thinking through
-      // that dead relay instead of the cloud — parking every say on "considers…"
-      // then a canned fallback. Skip the leg entirely in this mode.
+      // so there's nothing to attach here. Skip the leg entirely in this mode.
       if (!explicit && !inviteRelayUrl && (await credStorage.getItem('@wyrd_api_key'))) {
         step('API-key cloud mode — inference is direct to the provider; skipping relay/server leg');
+        return;
+      }
+      // No relay from an invite: the home is reached on the home network only
+      // (the home bus, connectBetweenIfConfigured). Nothing to set up here.
+      if (!inviteRelayUrl) {
+        step('no relay from an invite — the home is reached on the home network only');
         return;
       }
       step(`serverUrl=${sUrl}`);
@@ -449,44 +386,16 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
         // Android HouseholdTrust module to exist.
       }
 
-      // Household-CA TOFU: for `https://` URLs that the system trust store
-      // rejects (self-signed household CA), fetch /ca.crt over plain HTTP
-      // and prompt the user to confirm the fingerprint. Accept→pin into the
-      // native HouseholdTrustStore so subsequent OkHttp calls validate
-      // against it.
-      //
-      // We run this BEFORE constructing the ServerClient so its first probe
-      // already has trust in place. For LAN-only public CA / Let's Encrypt
-      // hosts probeAndTrust returns a "system" record without prompting.
-      //
-      // iOS skip (2026-05-11): native HouseholdTrust isn't built yet — see
-      // task #732. The TOFU dance reads native pins via a module that's
-      // null on iOS. Without #732 the call sequence ends up emitting an
-      // unhandled rejection. Skip for now; rely on system trust store.
+      // System-trust probe for `https://` URLs (a relay with a public
+      // certificate). Pins for self-signed relays and for the home come only
+      // from invites (restoreNativePins at start); there is no prompt to trust
+      // an unknown certificate (, D6).
       if (sUrl.startsWith('https://') && Platform.OS !== 'ios') {
         try {
           const { probeAndTrust } = await import('../server/HouseholdTrust');
-          const { Alert } = await import('react-native');
-          await probeAndTrust(sUrl, {
-            confirm: ({ host, fingerprint }) => new Promise<boolean>((resolve) => {
-              // Short fingerprint preview — full hex hash is long, but the
-              // first 16 chars are enough for visual comparison vs the
-              // relay's printed cert.
-              const fp16 = fingerprint.slice(0, 16);
-              Alert.alert(
-                'Trust this server?',
-                `${host}\nfingerprint: ${fp16}…\n\n` +
-                'Only accept if you printed this fingerprint from the relay yourself (e.g., `wyrd relay show-cert`).',
-                [
-                  { text: 'Reject', style: 'cancel', onPress: () => resolve(false) },
-                  { text: 'Trust', style: 'default', onPress: () => resolve(true) },
-                ],
-                { cancelable: false },
-              );
-            }),
-          });
+          await probeAndTrust(sUrl, {});
         } catch (err) {
-          // probeAndTrust threw: either user-rejected, or CA fetch failed.
+          // probeAndTrust threw: no system trust for this host.
           // Surface but don't crash — fall through; the ServerClient probe
           // will fail and we'll stay in local-only mode.
           const msg = err instanceof Error ? err.message : String(err);
@@ -498,12 +407,11 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
       }
 
       // NATS is THE transport. The phone
-      // connects to the relay over wss://host:4443, probes the zone via
+      // connects to the invite's relay, probes the zone via
       // `wyrd.zone.{zone}.auth.status`, registers/logs in via the same
       // NATS subjects, and uses NATS for all subsequent calls. No HTTP.
-      // An invite-saved relay URL is used verbatim (it carries the real
-      // port); only derived URLs assume :4443.
-      const natsRelayUrl = inviteRelayUrl ?? deriveRelayWss(sUrl);
+      // The invite's relay URL is used verbatim (it carries the real port).
+      const natsRelayUrl = inviteRelayUrl;
       // "home" is reserved (collides with the
       // furnishing concept). WyrdConfig.zoneId() refuses it on
       // the server. Phones learn their zone from the server's auth.* reply
@@ -520,8 +428,8 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
       // fallback: relays now generate their own infrastructure secrets on first
       // run (OSS hardening 2026-07-25), so a baked default could only ever be
       // (a) wrong, or (b) a shipped secret for every relay that kept it.
-      const natsUser = await credStorage.getItem('@wyrd_nats_user');
-      const natsPass = await credStorage.getItem('@wyrd_nats_pass');
+      const natsUser = inviteRelay?.user ?? null;
+      const natsPass = inviteRelay?.pass ?? null;
       if (!natsUser || !natsPass) {
         step('setup-error: no relay credentials — scan or paste your invite again');
         reportHomeZoneUnreachable('relay credentials missing from this device');
@@ -535,11 +443,17 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
       step('importing NatsServerClient');
       const { NatsServerClient } = await import('../server/NatsServerClient');
       step('NatsServerClient imported');
+      // The home's tunnel key from its invite: every request and the tunnel
+      // are sealed to it ( W3).
+      const { useZoneBankStore } = await import('../state/zoneBankStore');
+      if (!useZoneBankStore.getState().loaded) await useZoneBankStore.getState().loadFromStorage();
+      const homeKeyFor = (zone: string) => useZoneBankStore.getState().getZoneTrust(zone)?.zk ?? null;
       const nc = new NatsServerClient({
         relayUrl: natsRelayUrl,
         zoneId: natsZoneId,
         user: natsUser,
         password: natsPass,
+        zk: natsZoneId === '_unknown' ? null : homeKeyFor(natsZoneId),
       });
       // If we don't have a cached zone yet, ask the server (zone-agnostic
       // discovery subject). "home" never wins — it's reserved.
@@ -558,7 +472,7 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
             step(`setup-error: zone discovery returned ${discoveredZone ?? 'null'}`);
             return;
           }
-          nc.setZoneId(discoveredZone);
+          nc.setZoneId(discoveredZone, homeKeyFor(discoveredZone));
           natsZoneId = discoveredZone;
           step(`zone discovered: ${discoveredZone} (not persisted until auth confirms)`);
         } catch (discErr) {
@@ -583,6 +497,14 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
           reportHomeZoneUnreachable(`zone discovery failed: ${describe(discErr)}`);
           return;
         }
+      }
+      if (!nc.hasHomeKey()) {
+        // Paired before 0.5.0: nothing may cross the relay unsealed.
+        step('setup-error: no home key for this zone — pair again');
+        const { securityText } = await import('../security/securityText');
+        store.getState().addProse({ speaker: 'system', text: securityText().pairAgain });
+        await nc.disconnect();
+        return;
       }
       step('calling probe() — auth.status on zone-scoped subject');
       let status: { hasUsers: boolean; openRegistration: boolean } | null = null;
@@ -627,7 +549,13 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
           await credStorage.setItem('@wyrd_mcp_password', creds.password);
         }
         const tok = nc.getToken();
-        if (tok) await credStorage.setItem('@wyrd_mcp_session_token', tok);
+        if (tok) {
+          await credStorage.setItem('@wyrd_mcp_session_token', tok);
+          node.sessionToken = tok;
+        }
+        // This phone's own home-bus credentials for the home network (D3).
+        const { ensureHomeBusCredentials } = await import('../server/homeBus');
+        void ensureHomeBusCredentials(nc, natsZoneId).catch(() => {});
         // Persist the zone we just authenticated against. Skipping discovery
         // on the next cold start avoids the multi-responder race that bit us
         // in task #742 (probe landed on β; α-minted token was rejected).
@@ -667,6 +595,7 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
         });
         if (savedTok) {
           await credStorage.removeItem('@wyrd_mcp_session_token');
+          if (node.sessionToken === savedTok) node.sessionToken = null;
         }
         // Drop the unconnected NATS client so we don't hold a dead handle.
         await nc.disconnect();
@@ -876,28 +805,13 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
           }).catch(() => {});
         }
 
-        // Discover inference endpoints on the local network.
-        // Reads saved URL from secureStorage and probes household host + localhost.
+        // Discover inference endpoints: the saved URL (encrypted, or on this
+        // device) and the device's own ports. Nothing on the home network is
+        // probed over plain http — prompts never cross it in the clear.
         // On success, sets the remote URL on InferenceRouter for fallback inference.
-        credStorage.getItem('@wyrd_inference_url').then(savedUrl => {
-          return credStorage.getItem('@wyrd_between_url').then(betweenUrl => {
-            // Extract host from Between URL (e.g., "ws://198.51.100.10:4222" → "198.51.100.10")
-            let householdHost: string | undefined;
-            if (betweenUrl) {
-              try {
-                const parsed = new URL(betweenUrl);
-                householdHost = parsed.hostname;
-              } catch {
-                // Invalid URL — skip household probes
-              }
-            }
-
-            return discoverInference({
-              householdHost,
-              savedUrl: savedUrl ?? undefined,
-            });
-          });
-        }).then(discovered => {
+        credStorage.getItem('@wyrd_inference_url').then(savedUrl =>
+          discoverInference({ savedUrl: savedUrl ?? undefined }),
+        ).then(discovered => {
           const best = bestEndpoint(discovered);
           if (best) {
             // Follow discovery only if the router actually TOOK the endpoint.
@@ -1041,16 +955,14 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
         })();
 
         // Try to connect to household Between network via NATS (optional).
-        // On success, setBetween() wires all subsystems into PhoneNode.
-        // If not configured, start background discovery to find household servers on LAN.
-        connectBetweenIfConfigured(storage, node).then(client => {
+        // On success, setBetween() wires all subsystems into PhoneNode. There
+        // is no longer a background LAN scan that joins a home's bus
+        // anonymously in the clear: the home refuses that since 0.5.0, and the
+        // phone joins its home only as paired (see connectBetweenIfConfigured).
+        const say = (text: string) => store.getState().addProse({ speaker: 'system', text });
+        connectBetweenIfConfigured(storage, node, say).then(client => {
           if (client) {
             betweenRef.current = client;
-          } else {
-            // No Between URL configured -- start background discovery.
-            // Scans the LAN periodically for a Wyrdsekai server and auto-connects
-            // Between when found. The companion works standalone in the meantime.
-            stopDiscoveryRef.current = startBackgroundHouseholdDiscovery(storage, node, betweenRef);
           }
 
           // --- Soul Sync: pull latest manifest from server ---
@@ -1069,6 +981,9 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
                 return;
               }
             }
+            // The soul manifest and a token never cross the network in the clear.
+            const { isPlaintextToNetwork } = await import('../network/secureAddress');
+            if (isPlaintextToNetwork(serverUrl)) return;
             // Soul-sync attempt: relies on system trust store on iOS (no
             // native pinning yet). Errors are swallowed by the .catch on
             // the outer .then chain — sync is optional anyway.
@@ -1120,9 +1035,6 @@ export const StandaloneNodeProvider: React.FC<{ children: React.ReactNode }> = (
 
     return () => {
       clearInterval(persistTimer);
-      // Stop background household discovery
-      stopDiscoveryRef.current?.();
-      stopDiscoveryRef.current = null;
       // Persist on unmount
       store.getState().persistState(storage).catch(() => {});
       unsub();

@@ -274,6 +274,14 @@ public final class DeepSleepTrainer {
      * during sleep init). Caller passes the captured entries explicitly so
      * the trainer has a corpus to work with. #415 + post-live-fix 2026-04-24.
      */
+    /**
+     * Stop this companion's training if it is running. The executor's cleanup then resumes the
+     * inference it paused, so her voice comes back before she wakes.
+     */
+    public static boolean cancel(String agentId) {
+        return TrainingProcesses.cancel(agentId);
+    }
+
     public Result run(String agentId, String agentName,
                       List<SignificanceBuffer.Entry> preCapturedEntries) {
         var wrapped = new SignificanceBuffer();
@@ -290,6 +298,7 @@ public final class DeepSleepTrainer {
 
     public Result run(String agentId, String agentName,
                       SignificanceBuffer buffer) {
+        TrainingProcesses.begin(agentId);
         // 1. Pre-flight
         if (!"1".equals(System.getenv(FEATURE_FLAG_ENV))) {
             log.info("DeepSleepTrainer: feature flag {} != 1 — skipping "

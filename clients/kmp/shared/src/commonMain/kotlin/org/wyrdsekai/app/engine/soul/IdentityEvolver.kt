@@ -3,6 +3,7 @@ package org.wyrdsekai.app.engine.soul
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.InferenceClient
+import org.wyrdsekai.app.inference.NowLine
 
 /**
  * Wave 3: Identity Evolver — regenerates the resident identity from accumulated fragments.
@@ -81,7 +82,9 @@ object IdentityEvolver {
                     ChatMessage(role = "system", content = systemPrompt),
                     ChatMessage(role = "user", content = userPrompt),
                 ),
-                options = CompletionOptions(maxTokens = 150, temperature = 0.7),
+                // Writes her resident identity: a date there goes stale at the top of
+                // every later prompt and breaks the prompt cache.
+                options = CompletionOptions(maxTokens = 150, temperature = 0.7, now = NowLine.NONE),
             )
             val text = response.content.trim()
             // Reject too-short responses — a real identity needs substance

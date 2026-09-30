@@ -9,7 +9,8 @@
  *   2.   Room context          (critical for current interaction)
  *   2.5  Additional context    (system metrics, trimmable)
  *   2.5b Bond context          (relationship context, trimmable)
- *   3.   Vitality description  (background modulation, trimmable)
+ *   3.   Last heard from you   (elapsed time since the speaker's previous line, trimmable)
+ *   3.1  Vitality description  (background modulation, trimmable)
  *   5.   Memory buffer         (room history, trimmable)
  *   5.5  Recency anchor        (state reinforcement)
  *   6.   Conversation history  (recent messages)
@@ -25,6 +26,7 @@ import { describeVitality } from './VitalityState';
 import type { ClientSoulManifest, ClientSoulFragment } from '../soul/SoulManifest';
 import { retrieveFragments } from '../soul/LocalForge';
 import type { PhonePrediction } from '../oracle/PhoneOracle';
+import { buildTimeContext } from './TimeContext';
 
 const CHARS_PER_TOKEN = 4;
 const USABLE_FRACTION = 0.85;
@@ -182,7 +184,33 @@ export function assemblePrompt(
     }
   }
 
-  // Layer 3: Vitality state (background modulation, trimmable)
+  // Layer 3: Elapsed time since the person speaking now last spoke. RN had no
+  // such layer; KMP's Layer 3 has it. The date and the time are not a layer:
+  // the send point stamps them on the last user message (NowLine).
+  {
+    // "You" is whoever speaks now, so only their earlier lines count, told
+    // apart by entityId (a name can be shared or changed). The trigger itself
+    // never counts: the engine files it in memory before it assembles, and it
+    // would put the gap under a minute. A trigger that is not a person (the
+    // greeting's "system") has no one to match, so any person's line counts.
+    const speaker = triggerEvent && triggerEvent.entityId !== 'system' ? triggerEvent.entityId : null;
+    let lastHeardMs: number | null = null;
+    for (let i = recentSaid.length - 1; i >= 0; i--) {
+      const e = recentSaid[i];
+      if (e === triggerEvent || e.entityId === profile.entityId) continue;
+      if (speaker !== null && e.entityId !== speaker) continue;
+      lastHeardMs = e.timestamp;
+      break;
+    }
+    const timeCtx = buildTimeContext(lastHeardMs);
+    const timeTokens = estimateTokens(timeCtx);
+    if (timeCtx.length > 0 && timeTokens <= remainingBudget) {
+      messages.push({ role: 'system', content: timeCtx });
+      remainingBudget -= timeTokens;
+    }
+  }
+
+  // Layer 3.1: Vitality state (background modulation, trimmable)
   if (vitality) {
     const vitalityContext = describeVitality(vitality);
     const vitalityTokens = estimateTokens(vitalityContext);

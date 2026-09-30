@@ -631,6 +631,18 @@ public final class ActionTriage {
     }
 
     /**
+     * True when the turn's trigger is the product's own-time prompt rather than something
+     * anyone said: an autonomous (non-reactive) turn whose trigger was authored by the system.
+     * Such a prompt has no affect to read. Measured on a household node: the affect classifier
+     * read the own-time prompt as emotional on every own-time turn, which put the turn in
+     * PRESENCE and removed the exploratory tools — the library card among them — from a
+     * companion who had been asked to read.
+     */
+    public static boolean isOwnTimePrompt(boolean reactiveInference, String triggerEntityId) {
+        return !reactiveInference && "system".equals(triggerEntityId);
+    }
+
+    /**
      * First-person admission of having harmed another person ("I said something
      * cruel to my partner", "I hurt them", "I snapped at her"). This is the
      * substrate acknowledge-before-amends frame: a confession of harm is acute
@@ -790,6 +802,40 @@ public final class ActionTriage {
      * direct empathic response — the gate only suppresses the explicit
      * exploratory dispatch, not the underlying memory store.</p>
      */
+    /** Tools that look things up in the world (library, web, oracle). A question about what the
+     *  companion knows of the person asking is answered from memory, so these are withheld for
+     *  that turn; {@code recall} is not among them. */
+    public static final Set<String> WORLD_LOOKUP_TOOL_NAMES = Set.of(
+        "library_search", "library_card", "library_shelves", "query_oracle", "oracle_lens",
+        "web_search", "searching_glass", "read_content");
+
+    private static final Pattern ASKS_ABOUT_THEIR_OWN_RECORD = Pattern.compile(
+        "\\b(what do (you|u) (know|remember|recall) about (me|my)\\b"
+        + "|do (you|u) (remember|recall) (what|that|when|my|me|the)\\b"
+        + "|what did i (tell|say)\\b|what have i told (you|u)\\b"
+        + "|remind me what (i|we)\\b|what('s| is| was) my\\b)",
+        Pattern.CASE_INSENSITIVE);
+
+    /**
+     * True when the person is asking what the companion knows or remembers about them. Asked
+     * "what do you know about my reading interests?" seconds after being told, both the 9B and a
+     * 35B model searched the library (the word "reading") and reported that nothing was on
+     * record (2026-09-20/21).
+     */
+    public static boolean asksAboutTheirOwnRecord(String personsWords) {
+        return personsWords != null && ASKS_ABOUT_THEIR_OWN_RECORD.matcher(personsWords).find();
+    }
+
+    /**
+     * An exploratory tool: one of {@link #EXPLORATORY_TOOL_NAMES}, or any tool of a connected MCP
+     * service ({@code mcp__<service>__<tool>}: the household librarian's search and research, a
+     * calendar, the web). Those ran for the first time in 0.5.0 (before, a call to one did nothing)
+     * and were not withheld on a grief turn the way the built-in library tools are (2026-09-29).
+     */
+    public static boolean isExploratory(String name) {
+        return name != null && (EXPLORATORY_TOOL_NAMES.contains(name) || name.startsWith("mcp__"));
+    }
+
     public static final Set<String> EXPLORATORY_TOOL_NAMES = Set.of(
         // Action names (ActionTriage vocabulary)
         "library_search", "query_oracle", "web_search", "read_content",

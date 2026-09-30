@@ -13,6 +13,8 @@ import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.security.LoginRateLimiter;
 import org.wyrdsekai.core.agent.CrossZoneTellService;
 import org.wyrdsekai.core.agent.EntityRegistry;
+import org.wyrdsekai.core.crypto.SealedRequest;
+import org.wyrdsekai.core.crypto.TunnelKey;
 import org.wyrdsekai.core.home.Residency;
 import org.wyrdsekai.core.home.ResidencyStore;
 import org.wyrdsekai.core.identity.AccountStore;
@@ -24,6 +26,7 @@ import org.wyrdsekai.core.persistence.PairingService;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -50,6 +53,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * request body (validated via {@link AuthService#validateSession}), not as
  * HTTP Authorization headers — the request is one-shot, no headers.
  *
+ * <p>Sealed requests (v2, W3): a request may come
+ * sealed to the home's tunnel key ({@link SealedRequest}); it is opened before
+ * dispatch and its reply sealed. On the relay's bus only sealed requests are
+ * answered, so passwords, tokens, tells and journal entries never cross the
+ * relay readable ({@link #ALLOW_PLAINTEXT_ENV} relaxes that for old apps).
+ *
  * <p>Phase 1 scope: login, tell. do/library/journal land in follow-up
  * commits in this same package.
  */
@@ -64,7 +73,8 @@ public final class McpNatsHandler {
     private final AuthService auth;
     // #12 (2026-07-19 OSS hardening) — brute-force throttle for NATS password
     // login, keyed per targeted account (no reliable source IP over NATS).
-    private final LoginRateLimiter loginLimiter = new LoginRateLimiter();
+    // The per-account count is shared with every other password login (HTTP, MCP, SSH, telnet).
+    private final LoginRateLimiter loginLimiter = LoginRateLimiter.shared();
     private final ActorSystem<?> system;
     private final Connection nats;
     private final String zoneId;
@@ -79,6 +89,17 @@ public final class McpNatsHandler {
     // 2026-05-12: home-server's McpNatsHandler stopped delivering wyrd.zone.alpha.*
     // until wyrdsekai was bounced). Explicit replay closes the gap.
     private final List<String> trackedSubjects = new ArrayList<>();
+
+    /**
+     * Sealed requests (v2, W3): opened with the home's tunnel key; null refuses
+     * every sealed request. One per home, shared by every leg, so the replay cache covers them all.
+     */
+    private final SealedRequest.Home sealedRequests;
+    /** On the relay's bus a plaintext request is refused unless {@link #ALLOW_PLAINTEXT_ENV} is true. */
+    private final boolean relayLeg;
+
+    /** Before 0.5.0 the phone's requests crossed the relay readable; such a request is refused unless this is true. */
+    public static final String ALLOW_PLAINTEXT_ENV = "WYRDSEKAI_RELAY_ALLOW_PLAINTEXT_REQUESTS";
 
     public McpNatsHandler(AuthService auth, ActorSystem<?> system,
                           Connection nats, String zoneId,
@@ -97,6 +118,14 @@ public final class McpNatsHandler {
                           Connection nats, String zoneId,
                           WyrdLuceneStore luceneStore, StudyService studyService,
                           InviteService inviteService, AccountStore accountStore) {
+        this(auth, system, nats, zoneId, luceneStore, studyService, inviteService, accountStore, null, false);
+    }
+
+    public McpNatsHandler(AuthService auth, ActorSystem<?> system,
+                          Connection nats, String zoneId,
+                          WyrdLuceneStore luceneStore, StudyService studyService,
+                          InviteService inviteService, AccountStore accountStore,
+                          SealedRequest.Home sealedRequests, boolean relayLeg) {
         this.auth = auth;
         this.system = system;
         this.nats = nats;
@@ -105,6 +134,24 @@ public final class McpNatsHandler {
         this.studyService = studyService;
         this.inviteService = inviteService;
         this.accountStore = accountStore;
+        this.sealedRequests = sealedRequests;
+        this.relayLeg = relayLeg;
+    }
+
+    /** This home's opener for sealed requests (its tunnel key, the one in every invite), or null if it cannot be read. */
+    public static SealedRequest.Home sealedRequestsForThisHome() {
+        try {
+            return new SealedRequest.Home(TunnelKey.forThisHome());
+        } catch (Exception e) {
+            log.warn("The home's tunnel key could not be read ({}); sealed requests from phones will be refused", e.getMessage());
+            return null;
+        }
+    }
+
+    static boolean allowPlaintext() {
+        var v = System.getenv(ALLOW_PLAINTEXT_ENV);
+        if (v == null) v = System.getProperty("wyrdsekai.relay.allow.plaintext.requests");
+        return v != null && (v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("yes"));
     }
 
     /**
@@ -244,8 +291,16 @@ public final class McpNatsHandler {
 
     // ── Dispatch ──
 
-    private void dispatch(Message msg) {
-        var subject = msg.getSubject();
+    /**
+     * One request as the handlers see it: its subject, its body (opened if it came sealed), where the
+     * reply goes, and the key the reply is sealed with (null for a plaintext request).
+     */
+    private record Request(String subject, byte[] data, String replyTo, byte[] replyKey) {}
+
+    private void dispatch(Message m) {
+        var subject = m.getSubject();
+        var msg = receive(m);
+        if (msg == null) return;
         try {
             if (subject.endsWith(".mcp.login")) {
                 handleLogin(msg);
@@ -286,6 +341,48 @@ public final class McpNatsHandler {
         }
     }
 
+    /**
+     * Opens a sealed request, or lets a plaintext one through where plaintext is allowed. Returns null
+     * when the request was refused (the refusal, if any, has been sent in the clear, with no detail).
+     */
+    private Request receive(Message m) {
+        var subject = m.getSubject();
+        // wyrd.discover.zone is answered by every home on the relay; only the owner of the key speaks up.
+        boolean shared = subject.equals("wyrd.discover.zone");
+        if (SealedRequest.looksSealed(m.getData())) {
+            try {
+                if (sealedRequests == null) throw new GeneralSecurityException("this home has no tunnel key");
+                var opened = sealedRequests.open(subject, m.getData());
+                return new Request(subject, opened.body(), m.getReplyTo(), opened.replyKey());
+            } catch (GeneralSecurityException e) {
+                if (shared) return null;
+                log.warn("Sealed request on {} refused: {}", subject, e.getMessage());
+                replyClear(m.getReplyTo(), SealedRequest.REFUSED);
+                return null;
+            }
+        }
+        // A stranger knocking, or looking a zone up in the public directory, has never been given
+        // this home's key; what they send is their own name and reason, or a public query. These two
+        // may come in the clear. Reading the knocks (knock.list) carries a token and stays sealed.
+        boolean strangersAsk = subject.endsWith(".directory.knock") || subject.endsWith(".directory.search");
+        if (relayLeg && !shared && !strangersAsk) {
+            if (!allowPlaintext()) {
+                log.warn("Unsealed request on {} refused: from an app older than Wyrdsekai 0.5.0. Update the app and "
+                    + "pair it again, or set {}=true during the change-over", subject, ALLOW_PLAINTEXT_ENV);
+                replyClear(m.getReplyTo(), SealedRequest.REQUIRED);
+                return null;
+            }
+            log.warn("Unsealed request on {} over the relay, allowed by {}=true: the relay can read it and its reply",
+                subject, ALLOW_PLAINTEXT_ENV);
+        }
+        return new Request(subject, m.getData(), m.getReplyTo(), null);
+    }
+
+    private void replyClear(String replyTo, String error) {
+        if (replyTo == null) return;
+        nats.publish(replyTo, ("{\"ok\":false,\"error\":\"" + error + "\"}").getBytes(StandardCharsets.UTF_8));
+    }
+
     // ── login ──
 
     /**
@@ -293,10 +390,10 @@ public final class McpNatsHandler {
      * Reply:    { "ok": true,  "token": "...", "userId": "...", "username": "...", "role": "..." }
      *      or:  { "ok": false, "error": "invalid_credentials", "message": "..." }
      */
-    private void handleLogin(Message msg) {
+    private void handleLogin(Request msg) {
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -353,10 +450,10 @@ public final class McpNatsHandler {
      * (out of band), this RPC returns immediately on delivery
      * acknowledgement.
      */
-    private void handleTell(Message msg) {
+    private void handleTell(Request msg) {
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -450,14 +547,14 @@ public final class McpNatsHandler {
      * Mirrors {@code GET /api/library/search}. Auth is enforced (was anonymous
      * over HTTP — tighter on NATS, fine: the phone always has a token).
      */
-    private void handleLibrarySearch(Message msg) {
+    private void handleLibrarySearch(Request msg) {
         if (luceneStore == null) {
             respond(msg, error("service_unavailable", "library not available on this zone"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -501,14 +598,14 @@ public final class McpNatsHandler {
      * {@code GET /api/study/journal?user=...} (list). User DID comes from the
      * token, not the request body — phones can't forge a different user.
      */
-    private void handleStudyJournal(Message msg) {
+    private void handleStudyJournal(Request msg) {
         if (studyService == null) {
             respond(msg, error("service_unavailable", "study not available on this zone"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -581,10 +678,10 @@ public final class McpNatsHandler {
      * whose only leg is the relay. The session is the proof; the registry
      * row is the identity (idempotent per user+name, PairingService).
      */
-    private void handlePairDevice(Message msg) {
+    private void handlePairDevice(Request msg) {
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("bad_request", "unreadable body"));
             return;
@@ -614,12 +711,14 @@ public final class McpNatsHandler {
         reply.put("serverDid", r.serverDid());
         reply.put("natsUrl", r.natsUrl());
         reply.put("serverUrl", r.serverUrl());
+        // The phone's own login for the household bus (W2). Over the relay the reply is sealed.
+        reply.putAll(r.natsCredentialFields());
         respond(msg, reply);
         log.info("pair.device: device identity minted via relay session for {}",
             user.get().username());
     }
 
-    private void handleAuthStatus(Message msg) {
+    private void handleAuthStatus(Request msg) {
         boolean hasUsers = !auth.isFirstUser();
         boolean openReg = auth.isOpenRegistrationAllowed();
         respond(msg, Map.of(
@@ -643,10 +742,10 @@ public final class McpNatsHandler {
      * after that requires invite — phones get a {@code registration_closed}
      * error and should call {@link #handleAuthRedeem} with the invite code).
      */
-    private void handleAuthRegister(Message msg) {
+    private void handleAuthRegister(Request msg) {
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -664,21 +763,22 @@ public final class McpNatsHandler {
                 "This household requires an invitation to join. Use the invite-redeem flow."));
             return;
         }
-        boolean isFirst = auth.isFirstUser();
-        var result = auth.register(username.trim(), password, displayName);
-        if (result.isEmpty()) {
+        // The first steward, its recovery key and the closing of open registration commit
+        // together: of two registrations at the same moment only one becomes steward.
+        var result = auth.registerFirstSteward(username.trim(), password, displayName);
+        if (result instanceof AuthService.Registration.Closed) {
+            respond(msg, error("registration_closed",
+                "This household requires an invitation to join. Use the invite-redeem flow."));
+            return;
+        }
+        if (!(result instanceof AuthService.Registration.Created created)) {
             respond(msg, error("username_taken", "Username already taken"));
             return;
         }
-        var session = result.get();
+        var session = created.session();
         var user = auth.findUser(session.userId()).orElseThrow();
-        String recoveryKey = null;
-        if (isFirst) {
-            recoveryKey = auth.generateRecoveryKey();
-            // Close open registration after first steward — matches HTTP behavior.
-            auth.setConfig("open_registration", "false", user.id());
-            log.info("MCP-NATS register: first steward created — {}", user.username());
-        }
+        String recoveryKey = created.recoveryKey();
+        log.info("MCP-NATS register: first steward created — {}", user.username());
         // grant residency at registration time (parity with HTTP path).
         var residency = ResidencyStore.get();
         if (residency != null) {
@@ -698,7 +798,7 @@ public final class McpNatsHandler {
         reply.put("zoneId", zoneId);
         if (recoveryKey != null) reply.put("recoveryKey", recoveryKey);
         respond(msg, reply);
-        log.info("MCP-NATS register: {} (first={})", user.username(), isFirst);
+        log.info("MCP-NATS register: {} (first steward)", user.username());
     }
 
     // ── auth.redeem ──
@@ -712,14 +812,14 @@ public final class McpNatsHandler {
      * closed-registration households — phones use it when auth.register
      * returns {error: "registration_closed"}.
      */
-    private void handleAuthRedeem(Message msg) {
+    private void handleAuthRedeem(Request msg) {
         if (inviteService == null) {
             respond(msg, error("not_available", "Invite service not available"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -746,22 +846,25 @@ public final class McpNatsHandler {
             respond(msg, error("invalid_invite", "Invalid, expired, or already-used invite code"));
             return;
         }
-        var inviteRole = claimed.get().role();
         // #4-followup (adversarial review) — release the claim on a register()
         // THROW too, not just on empty; otherwise a non-UNIQUE failure orphans the
-        // invite forever (consumed_by=claim token).
+        // invite forever (consumed_by=claim token). The bootstrap invite founds the
+        // household and brings the recovery key.
         AuthService.Session s;
+        String recoveryKey;
         try {
-            var session = auth.register(
+            var created = auth.registerByInvite(claimed.get(),
                 username.trim(), password,
-                displayName != null ? displayName : username.trim(),
-                inviteRole);
-            if (session.isEmpty()) {
+                displayName != null ? displayName : username.trim());
+            if (!(created instanceof AuthService.Registration.Created c)) {
                 inviteService.releaseClaim(claimToken);
-                respond(msg, error("username_taken", "Username already taken"));
+                respond(msg, created instanceof AuthService.Registration.Closed
+                    ? error("registration_closed", "This household already has a steward")
+                    : error("username_taken", "Username already taken"));
                 return;
             }
-            s = session.get();
+            s = c.session();
+            recoveryKey = c.recoveryKey();
             inviteService.rebindClaim(claimToken, s.userId());
         } catch (RuntimeException e) {
             inviteService.releaseClaim(claimToken);
@@ -778,14 +881,15 @@ public final class McpNatsHandler {
                     "invite:" + normalized, null));
             }
         }
-        respond(msg, Map.of(
-            "ok", true,
-            "token", s.token(),
-            "userId", user.id(),
-            "username", user.username(),
-            "role", user.role(),
-            "zoneId", zoneId  // phone caches this — no 'home' fallback needed
-        ));
+        var reply = new LinkedHashMap<String, Object>();
+        reply.put("ok", true);
+        reply.put("token", s.token());
+        reply.put("userId", user.id());
+        reply.put("username", user.username());
+        reply.put("role", user.role());
+        reply.put("zoneId", zoneId);  // phone caches this — no 'home' fallback needed
+        if (recoveryKey != null) reply.put("recoveryKey", recoveryKey);
+        respond(msg, reply);
     }
 
     // ── account.zonebank ── ( §P3: home-zone-anchored device sync)
@@ -800,14 +904,14 @@ public final class McpNatsHandler {
      * DID resolve to the same row as long as the same session backs them. Secrets
      * (zone passwords) never travel through here; only the address book does.
      */
-    private void handleZoneBankGet(Message msg) {
+    private void handleZoneBankGet(Request msg) {
         if (accountStore == null) {
             respond(msg, error("service_unavailable", "account sync not available on this zone"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -841,14 +945,14 @@ public final class McpNatsHandler {
      * supplied {@code updatedAt} is echoed back so the device can record what it
      * persisted.
      */
-    private void handleZoneBankPut(Message msg) {
+    private void handleZoneBankPut(Request msg) {
         if (accountStore == null) {
             respond(msg, error("service_unavailable", "account sync not available on this zone"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -897,12 +1001,12 @@ public final class McpNatsHandler {
      * treated as a recency listing (substring/semantic search lives only in the
      * rendezvous backend, which the directory degrades past gracefully).
      */
-    private void handleDirectorySearch(Message msg) {
+    private void handleDirectorySearch(Request msg) {
         JsonNode body;
         try {
-            body = msg.getData() == null || msg.getData().length == 0
+            body = msg.data() == null || msg.data().length == 0
                 ? Json.mapper().createObjectNode()
-                : Json.mapper().readTree(msg.getData());
+                : Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -949,14 +1053,14 @@ public final class McpNatsHandler {
      * approves out-of-band (mints an invite). Notification to the steward is
      * best-effort if a NotificationService is wired.
      */
-    private void handleDirectoryKnock(Message msg) {
+    private void handleDirectoryKnock(Request msg) {
         if (accountStore == null) {
             respond(msg, error("service_unavailable", "access requests not available on this zone"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -998,14 +1102,14 @@ public final class McpNatsHandler {
      * The steward's inbox — token-gated (only an authenticated member of this
      * zone may read who has knocked). Defaults to pending.
      */
-    private void handleDirectoryKnockList(Message msg) {
+    private void handleDirectoryKnockList(Request msg) {
         if (accountStore == null) {
             respond(msg, error("service_unavailable", "access requests not available on this zone"));
             return;
         }
         JsonNode body;
         try {
-            body = Json.mapper().readTree(msg.getData());
+            body = Json.mapper().readTree(msg.data());
         } catch (Exception e) {
             respond(msg, error("invalid_json", "request body must be JSON"));
             return;
@@ -1066,8 +1170,8 @@ public final class McpNatsHandler {
         );
     }
 
-    private void respond(Message msg, Object payload) {
-        if (msg.getReplyTo() == null) {
+    private void respond(Request msg, Object payload) {
+        if (msg.replyTo() == null) {
             log.debug("McpNatsHandler: message has no reply subject, dropping reply");
             return;
         }
@@ -1078,6 +1182,14 @@ public final class McpNatsHandler {
             bytes = ("{\"ok\":false,\"error\":\"serialization_failed\",\"message\":\""
                 + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
         }
-        nats.publish(msg.getReplyTo(), bytes);
+        if (msg.replyKey() != null) {
+            try {
+                bytes = SealedRequest.sealReply(msg.replyKey(), msg.subject(), bytes);
+            } catch (GeneralSecurityException e) {
+                log.warn("Reply on {} could not be sealed ({}); not sent", msg.subject(), e.getMessage());
+                return;
+            }
+        }
+        nats.publish(msg.replyTo(), bytes);
     }
 }

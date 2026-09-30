@@ -65,11 +65,33 @@ public final class PromptAssembler {
     private static final int CHARS_PER_TOKEN = 4; // conservative estimate
     private static final double USABLE_FRACTION = 0.85; // 85% of context window
 
+    /**
+     * Her state in plain words, framed as private background so it colours her tone without
+     * being recited (#924). The full lane's Layer 3.5 and the conversation lane's felt block
+     * carry the same line.
+     */
+    public static String privateStateLine(VitalityState vitality) {
+        return "[Internal state — PRIVATE BACKGROUND. Let it "
+            + "color your tone and word choice only. Do NOT state, quote, narrate, "
+            + "or introspect on these values; just answer what was asked.] "
+            + vitality.describe();
+    }
+
     /** #32 item 5: prompt-token ceiling that fits the smallest production backend
      *  (llama-voice, --ctx-size 8192) with headroom for response tokens and the
      *  chars/4 estimate error. Router health-fallback can land any full-tier
      *  prompt there, so the assembler never budgets above this. */
     static final int MIN_BACKEND_SAFE_PROMPT_TOKENS = 7500;
+
+    /** Prompt-token ceiling when one model with a 32K window serves every lane: there is no
+     *  8K voice server a full-lane prompt could fall back to. Kept well under the window because
+     *  prefill is that model's slow path (experts in host RAM). */
+    static final int SINGLE_BRAIN_SAFE_PROMPT_TOKENS = 14000;
+
+    /** The ceiling for the smallest window a prompt can land on under the node's serving profile. */
+    static int backendSafePromptTokens(boolean singleBrain) {
+        return singleBrain ? SINGLE_BRAIN_SAFE_PROMPT_TOKENS : MIN_BACKEND_SAFE_PROMPT_TOKENS;
+    }
 
     private PromptAssembler() {}
 
@@ -512,7 +534,7 @@ public final class PromptAssembler {
         int usableTokens = Math.min(
             (int) (profile.contextWindowTokens() * USABLE_FRACTION)
                 - profile.maxResponseTokens(),
-            MIN_BACKEND_SAFE_PROMPT_TOKENS);
+            backendSafePromptTokens(WyrdConfig.get().singleBrain()));
         int systemTokens = estimateTokens(identitySystem(profile));
         int conversationTokens = recentSaid.stream()
             .mapToInt(e -> estimateTokens(formatSaidEvent(e, profile.entityId())))
@@ -696,23 +718,31 @@ public final class PromptAssembler {
 
         // --- Middle zone (lowest LLM attention — background/modulation) ---
 
-        // Layer 3: Time awareness (wall-clock, time-of-day, elapsed since last human speech)
+        // Layer 3: elapsed time (since last human speech). The date and the time
+        // ride the request itself: the router stamps the last user message (NowLine).
         {
-            // Find the most recent human speech before the trigger (for "last heard from you" context)
+            // When the speaker last spoke before this line ("last heard from you"). The trigger is
+            // usually already the last line of the history, and was counted: the gap was always
+            // under a minute and the line never said anything. Her own lines are told apart by id,
+            // not by name. When the trigger is not a person's line, anyone's but hers counts.
             Instant lastHumanBefore = null;
             if (recentSaid != null && !recentSaid.isEmpty()) {
+                var selfId = profile != null ? profile.entityId() : null;
+                var speakerId = triggerEvent != null ? triggerEvent.entityId() : null;
+                boolean bySpeaker = speakerId != null && !"system".equals(speakerId)
+                    && !speakerId.equals(selfId);
                 for (int i = recentSaid.size() - 1; i >= 0; i--) {
                     var said = recentSaid.get(i);
-                    // Human speech = not the agent itself (heuristic: not matching agent profile name)
-                    if (profile == null || !said.entityName().equals(profile.name())) {
-                        lastHumanBefore = said.timestamp();
-                        break;
-                    }
+                    if (said.equals(triggerEvent)) continue;
+                    if (said.entityId() != null && said.entityId().equals(selfId)) continue;
+                    if (bySpeaker && !speakerId.equals(said.entityId())) continue;
+                    lastHumanBefore = said.timestamp();
+                    break;
                 }
             }
             String timeCtx = TimeContext.build(lastHumanBefore, null);
             int timeTokens = estimateTokens(timeCtx);
-            if (timeTokens <= remainingBudget) {
+            if (!timeCtx.isEmpty() && timeTokens <= remainingBudget) {
                 messages.add(new ChatMessage("system", timeCtx));
                 remainingBudget -= timeTokens;
             }
@@ -742,10 +772,7 @@ public final class PromptAssembler {
         // describe() alone, as a bare system line, reads to the model as
         // recitable content.
         if (vitality != null) {
-            String vitalityContext = "[Internal state — PRIVATE BACKGROUND. Let it "
-                + "color your tone and word choice only. Do NOT state, quote, narrate, "
-                + "or introspect on these values; just answer what was asked.] "
-                + vitality.describe();
+            String vitalityContext = privateStateLine(vitality);
             int vitalityTokens = estimateTokens(vitalityContext);
             if (vitalityTokens <= remainingBudget) {
                 messages.add(new ChatMessage("system", vitalityContext));
@@ -833,8 +860,16 @@ public final class PromptAssembler {
                         + "within the context window. Respond based on the turns shown below.]"));
             }
             for (var event : working) {
-                String role = event.entityId().equals(profile.entityId()) ? "assistant" : "user";
+                // The line being answered is a user turn even when it is filed under her id (the
+                // "[Tool completed]" line a tool's result arrives as). As an assistant turn it left
+                // the prompt ending on her own words, and llama-server continued them: the turn
+                // after her own library read came back as her last eight lines, 3,000 characters,
+                // the answer in it twice (household node, 2026-09-23 04:57 and 07:21).
+                String role = event.entityId().equals(profile.entityId()) && !event.equals(triggerEvent)
+                    ? "assistant" : "user";
                 String content = formatSaidEvent(event, profile.entityId());
+                // A line that ran on is read back cut (RunOn): read in full, the next reply copied it.
+                if (!event.equals(triggerEvent)) content = RunOn.cut(content);
                 messages.add(new ChatMessage(role, content));
             }
         }

@@ -3,6 +3,7 @@ package org.wyrdsekai.scripting.sandbox;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,10 +14,13 @@ import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
- * GraalJS sandbox for running room scripts.
- * Resource-limited: CPU time, memory, no filesystem/network access.
+ * GraalJS sandbox for running room scripts: no filesystem, network, threads or native access,
+ * and every evaluation bounded by {@link ResourceLimits} (a statement limit and a CPU-time
+ * watchdog). A hook that runs past its limit is stopped, a WARN names the room and the hook,
+ * and the caller carries on as if the hook had failed.
  */
 public class ScriptSandbox implements Closeable {
 
@@ -24,12 +28,28 @@ public class ScriptSandbox implements Closeable {
 
     private final Engine engine;
     private final String roomId;
+    private final ResourceLimits limits;
+    private final org.graalvm.polyglot.ResourceLimits statementLimit;   // null when unlimited
 
     public ScriptSandbox(String roomId) {
+        this(roomId, ResourceLimits.ROOM_SCRIPT);
+    }
+
+    public ScriptSandbox(String roomId, ResourceLimits limits) {
         this.roomId = roomId;
+        this.limits = limits == null ? ResourceLimits.ROOM_SCRIPT : limits;
         this.engine = Engine.newBuilder("js")
             .option("engine.WarnInterpreterOnly", "false")
             .build();
+        this.statementLimit = this.limits.hasStatementLimit()
+            ? org.graalvm.polyglot.ResourceLimits.newBuilder()
+                .statementLimit(this.limits.statementLimit(), null)
+                .build()
+            : null;
+    }
+
+    public ResourceLimits limits() {
+        return limits;
     }
 
     /**
@@ -40,19 +60,14 @@ public class ScriptSandbox implements Closeable {
      * @return Script result as a Value, or null on error
      */
     public Value execute(String script, WorldApi worldApi) {
-        try (var context = createContext(worldApi)) {
-            return context.eval("js", script);
-        } catch (Exception e) {
-            log.error("Script execution failed in room {}: {}", roomId, e.getMessage());
-            return null;
-        }
+        return run("top level", worldApi, null, context -> context.eval("js", script));
     }
 
     /**
      * Execute a named function from a previously loaded script.
      */
     public Value callFunction(String script, String functionName, WorldApi worldApi, Object... args) {
-        try (var context = createContext(worldApi)) {
+        return run(functionName, worldApi, null, context -> {
             context.eval("js", script);
             var fn = context.getBindings("js").getMember(functionName);
             if (fn == null || !fn.canExecute()) {
@@ -62,10 +77,7 @@ public class ScriptSandbox implements Closeable {
                 return null;
             }
             return fn.execute(args);
-        } catch (Exception e) {
-            log.error("Script function {} failed in room {}: {}", functionName, roomId, e.getMessage());
-            return null;
-        }
+        });
     }
 
     /**
@@ -82,7 +94,7 @@ public class ScriptSandbox implements Closeable {
      */
     public Optional<List<Hint>> callHintsFunction(String script, WorldApi worldApi) {
         // Must parse Values inside the same context — Values are invalidated when context closes
-        try (var context = createContext(worldApi)) {
+        return run("getHints", worldApi, Optional.<List<Hint>>empty(), context -> {
             context.eval("js", script);
             var fn = context.getBindings("js").getMember("getHints");
             if (fn == null || !fn.canExecute()) return Optional.empty();
@@ -100,10 +112,7 @@ public class ScriptSandbox implements Closeable {
                 hints.add(new Hint(label, intent, action, labelKey));
             }
             return Optional.of(hints);
-        } catch (Exception e) {
-            log.error("getHints() failed in room {}: {}", roomId, e.getMessage());
-            return Optional.empty();
-        }
+        });
     }
 
     private static String getMemberString(Value obj, String key, String defaultValue) {
@@ -116,11 +125,37 @@ public class ScriptSandbox implements Closeable {
         return defaultValue;
     }
 
-    private Context createContext(WorldApi worldApi) {
-        return createContext(worldApi, ResourceLimits.UNLIMITED);
+    /**
+     * One bounded evaluation: a fresh context, the statement limit, the CPU watchdog, and a
+     * clear log line when either stops the script. {@code what} names the hook for the log.
+     */
+    private <T> T run(String what, WorldApi worldApi, T onFailure, Function<Context, T> body) {
+        try (var context = createContext(worldApi)) {
+            var watch = limits.hasCpuTimeout()
+                ? ScriptWatchdog.watch(context, limits.cpuTimeoutMs()) : null;
+            try {
+                return body.apply(context);
+            } catch (PolyglotException e) {
+                if (e.isResourceExhausted()) {
+                    log.warn("Room {} script stopped in {}: it ran past its limit of {} statements"
+                        + " (WYRDSEKAI_ROOM_SCRIPT_STATEMENTS)", roomId, what, limits.statementLimit());
+                } else if (e.isCancelled() && watch != null && watch.tripped()) {
+                    log.warn("Room {} script stopped in {}: it used more than {} ms of CPU time"
+                        + " (WYRDSEKAI_ROOM_SCRIPT_CPU_MS)", roomId, what, limits.cpuTimeoutMs());
+                } else {
+                    log.error("Script {} failed in room {}: {}", what, roomId, e.getMessage());
+                }
+                return onFailure;
+            } finally {
+                if (watch != null) watch.close();
+            }
+        } catch (Exception e) {
+            log.error("Script {} failed in room {}: {}", what, roomId, e.getMessage());
+            return onFailure;
+        }
     }
 
-    Context createContext(WorldApi worldApi, ResourceLimits limits) {
+    Context createContext(WorldApi worldApi) {
         var builder = Context.newBuilder("js")
             .engine(engine)
             .allowHostAccess(HostAccess.newBuilder(HostAccess.EXPLICIT)
@@ -134,30 +169,12 @@ public class ScriptSandbox implements Closeable {
             .allowIO(false)
             .allowCreateThread(false)
             .allowNativeAccess(false);
-
-        // Resource limits enforced via timeout thread (below).
-        // GraalJS statement-limit option not reliably available across builds.
-        // The timeout provides the hard safety boundary for runaway scripts.
-
-        var context = builder.build();
-
-        // Bind the world API
-        context.getBindings("js").putMember("world", worldApi);
-
-        // Schedule timeout cancellation for CPU time limit
-        if (limits.hasCpuTimeout()) {
-            final var ctx = context;
-            Thread.ofVirtual().name("script-timeout-" + roomId).start(() -> {
-                try {
-                    Thread.sleep(limits.cpuTimeoutMs());
-                    ctx.close(true); // force cancel
-                    log.warn("Script in room {} cancelled after {}ms timeout", roomId, limits.cpuTimeoutMs());
-                } catch (InterruptedException e) {
-                    // Script finished before timeout — normal
-                }
-            });
+        if (statementLimit != null) {
+            builder.resourceLimits(statementLimit);
         }
 
+        var context = builder.build();
+        context.getBindings("js").putMember("world", worldApi);
         return context;
     }
 
@@ -166,13 +183,11 @@ public class ScriptSandbox implements Closeable {
      * Safe for cross-module use — no GraalJS Value exposed.
      */
     public String executeAsString(String script, WorldApi worldApi) {
-        var result = execute(script, worldApi);
-        if (result == null || result.isNull()) return null;
-        try {
+        return run("top level", worldApi, null, context -> {
+            var result = context.eval("js", script);
+            if (result == null || result.isNull()) return null;
             return result.isString() ? result.asString() : result.toString();
-        } catch (Exception e) {
-            return null;
-        }
+        });
     }
 
     @Override

@@ -11,6 +11,7 @@
  */
 import { create } from 'zustand';
 import { secureStorage as AsyncStorage } from './secureStorage';
+import { saveHomeBusCredentials, saveHomeBusUrl } from '../server/homeBus';
 import type { Backing } from '../engine/mode/PhoneMode';
 
 const KEY_MODE = '@wyrd_app_mode';
@@ -103,16 +104,23 @@ interface AppModeState {
   setLastSoulSync: (time: number, version: number) => void;
   setInferenceUrl: (url: string) => void;
   setHomeName: (name: string) => void;
+  /**
+   * Save what a pairing reply (/api/pair/verify, /api/pair/device, /api/pair/key)
+   * gives this phone. A pairing reply never sets the relay: the relay address and
+   * its credentials come only from an invite (a reply's relay fields, if any, are
+   * ignored). Its `natsUrl` is the home bus as a phone reaches it.
+   */
   setPairingCredentials: (creds: {
     token: string;
     householdId: string;
     householdName: string;
     serverDid: string;
-    natsUrl: string;
+    natsUrl?: string | null;
     serverUrl: string;
-    relayUrl?: string | null;
-    relayToken?: string | null;
-  }) => void;
+    /** This phone's own home-bus credentials (D3), when the pairing reply carries them. */
+    nats_user?: string;
+    nats_pass?: string;
+  }) => Promise<void>;
   setAuth: (token: string, userId: string, role: string) => void;
   clearAuth: () => void;
   /** Choose where heavy work goes when both a household and a cloud API exist. */
@@ -204,24 +212,27 @@ export const useAppModeStore = create<AppModeState>((set) => ({
     AsyncStorage.setItem(KEY_HOME_NAME, trimmed).catch(() => {});
   },
 
-  setPairingCredentials: (creds) => {
+  setPairingCredentials: async (creds) => {
+    // relayUrl / relayToken are left as they are: they come from the invite.
     set({
       pairingToken: creds.token,
       householdId: creds.householdId,
       householdName: creds.householdName,
       serverDid: creds.serverDid,
-      natsUrl: creds.natsUrl,
-      relayUrl: creds.relayUrl ?? null,
-      relayToken: creds.relayToken ?? null,
+      natsUrl: creds.natsUrl ?? null,
     });
-    AsyncStorage.setItem(KEY_PAIRING_TOKEN, creds.token).catch(() => {});
-    AsyncStorage.setItem(KEY_HOUSEHOLD_ID, creds.householdId).catch(() => {});
-    AsyncStorage.setItem(KEY_HOUSEHOLD_NAME, creds.householdName).catch(() => {});
-    AsyncStorage.setItem(KEY_SERVER_DID, creds.serverDid).catch(() => {});
-    AsyncStorage.setItem(KEY_NATS_URL, creds.natsUrl).catch(() => {});
-    AsyncStorage.setItem(KEY_INFERENCE_URL, creds.serverUrl).catch(() => {});
-    if (creds.relayUrl) AsyncStorage.setItem(KEY_RELAY_URL, creds.relayUrl).catch(() => {});
-    if (creds.relayToken) AsyncStorage.setItem(KEY_RELAY_TOKEN, creds.relayToken).catch(() => {});
+    const writes: Array<Promise<void>> = [
+      AsyncStorage.setItem(KEY_PAIRING_TOKEN, creds.token),
+      AsyncStorage.setItem(KEY_HOUSEHOLD_ID, creds.householdId),
+      AsyncStorage.setItem(KEY_HOUSEHOLD_NAME, creds.householdName),
+      AsyncStorage.setItem(KEY_SERVER_DID, creds.serverDid),
+      AsyncStorage.setItem(KEY_INFERENCE_URL, creds.serverUrl),
+      // The phone's own credentials and address for the home bus on the home network (D3).
+      saveHomeBusCredentials(creds.nats_user, creds.nats_pass),
+      saveHomeBusUrl(creds.natsUrl),
+    ];
+    if (creds.natsUrl) writes.push(AsyncStorage.setItem(KEY_NATS_URL, creds.natsUrl));
+    await Promise.all(writes.map((w) => w.catch(() => {})));
   },
 
   setAuth: (token: string, userId: string, role: string) => {

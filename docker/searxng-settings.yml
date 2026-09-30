@@ -14,3 +14,16 @@ server:
 
 ui:
   static_use_hash: true
+
+engines:
+  # Full-text Wikipedia search. SearXNG's own "wikipedia" engine answers only an exact article
+  # title, so "transformer architecture" or "attention mechanisms" found nothing there; the
+  # commercial general engines (brave, duckduckgo, google, startpage) rate-limit or CAPTCHA a home
+  # node's address (2026-09-22). English Wikipedia; the MediaWiki API is keyless and does not.
+  - name: wikipedia full text
+    engine: mediawiki
+    shortcut: wpt
+    base_url: https://en.wikipedia.org/
+    search_type: text
+    categories: [general, science]
+    timeout: 6.0

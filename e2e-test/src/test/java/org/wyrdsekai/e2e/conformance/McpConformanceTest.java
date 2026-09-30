@@ -184,14 +184,16 @@ class McpConformanceTest {
     }
 
     private static void restoreUser() throws Exception {
-        // Use the test-reset hook so we don't recursively depend on rename.
-        http.send(HttpRequest.newBuilder()
+        // Use the test-reset hook so we don't recursively depend on rename. It is an OPERATOR
+        // route: the embedded server's operator token, from loopback.
+        var req = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + "/api/auth/test-reset"))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(
                 "{\"username\":\"" + USER + "\",\"displayName\":\"" + USER + "\","
-                + "\"description\":\"\"}"))
-            .build(), HttpResponse.BodyHandlers.ofString());
+                + "\"description\":\"\"}"));
+        if (server != null) req.header("Authorization", "Bearer " + TestServerBootstrap.operatorToken());
+        http.send(req.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private static String extractJsonString(String json, String field) {

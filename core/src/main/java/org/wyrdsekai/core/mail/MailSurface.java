@@ -92,7 +92,13 @@ public final class MailSurface {
                 out.accept("Subject: " + (subject == null || String.valueOf(subject).isBlank()
                     ? "(none)" : subject));
                 out.accept("");
-                out.accept(String.valueOf(full.getOrDefault("body", "")));
+                // One line per call. A body handed over whole reached the ssh terminal with its
+                // paragraph breaks as bare line feeds, and a raw-mode terminal moves down without
+                // returning to the margin: each paragraph of rose's first letter began where the
+                // one before had ended (2026-09-25). The surface adds the return to every line it
+                // is given, so give it every line.
+                var body = String.valueOf(full.getOrDefault("body", "")).replace("\r\n", "\n");
+                for (var line : body.strip().split("\n", -1)) out.accept(line);
             }
             case "archive" -> {
                 var m = pick(mail, identity, tail);
@@ -165,7 +171,7 @@ public final class MailSurface {
     private static void listInbox(MailboxService mail, String identity, Consumer<String> out) {
         var inbox = mail.inbox(identity, Map.of());
         if (inbox.isEmpty()) {
-            out.accept("No mail.");
+            out.accept("No mail. Write to someone with: mail <who>");
             return;
         }
         int unread = 0;
@@ -182,7 +188,7 @@ public final class MailSurface {
                 subject == null || String.valueOf(subject).isBlank() ? "(no subject)" : subject,
                 WHEN.format(Instant.ofEpochMilli(((Number) m.getOrDefault("ts", 0L)).longValue()))));
         }
-        out.accept("Read one with: mail read <n>");
+        out.accept("Read one with: mail read <n>   Put one away with: mail archive <n>   Write: mail <who>");
     }
 
     private static Map<String, Object> pick(MailboxService mail, String identity, String which) {

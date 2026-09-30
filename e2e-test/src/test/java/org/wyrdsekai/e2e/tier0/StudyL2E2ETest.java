@@ -26,21 +26,33 @@ import static org.junit.jupiter.api.Assertions.*;
  * - Shared shelves (share/unshare/cross-user search via HTTP)
  * - Import/export (export + reimport via HTTP)
  * - Storage monitoring (disk usage via HTTP)
+ *
+ * <p>Since 0.5.0 a Study is reached with its owner's own login: every request here carries
+ * a person's session token and the server takes the owner from it. Naming someone else's
+ * Study in a body or query field is refused (403). Export and import are the home machine's
+ * operator's, from loopback with the operator token.
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class StudyL2E2ETest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
-    private static final String USER_A = "did:key:z6MkUserA";
-    private static final String USER_B = "did:key:z6MkUserB";
     private static final String COMPANION = "companion-ember";
+    private static final String USER_A_NAME = "studya";
+    private static final String USER_A_PASS = "studyapass";
     private static final ObjectMapper mapper = new ObjectMapper();
 
     private static TestServerBootstrap server;
     private static WireMockInferenceServer wireMock;
     private static HttpClient http;
     private static StudyService studyService;
+
+    // Person A is the household's steward, person B a member A invited. USER_A / USER_B are
+    // the identities the server files their things under (from their own logins).
+    private static String tokenA;
+    private static String tokenB;
+    private static String USER_A;
+    private static String USER_B;
 
     @BeforeAll
     static void setUp() throws Exception {
@@ -57,6 +69,12 @@ class StudyL2E2ETest {
 
         // Direct service access for pre-indexing test data
         studyService = new StudyService(server.luceneStore());
+
+        tokenA = TestUsers.registerStewardToken(server.baseUrl(), USER_A_NAME, USER_A_PASS, "Study A");
+        tokenB = TestUsers.inviteAndRedeem(server.baseUrl(), tokenA, "studyb", "studybpass", "Study B")
+            .get("token").asText();
+        USER_A = TestUsers.personId(server.baseUrl(), tokenA);
+        USER_B = TestUsers.personId(server.baseUrl(), tokenB);
     }
 
     @AfterAll
@@ -67,24 +85,40 @@ class StudyL2E2ETest {
 
     // ---- helpers ----
 
+    /** As person A (the default caller of these tests). */
     private HttpResponse<String> get(String path) throws Exception {
+        return get(path, tokenA);
+    }
+
+    private HttpResponse<String> get(String path, String token) throws Exception {
         return http.send(HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + path))
+            .header("Authorization", "Bearer " + token)
             .GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> post(String path, String json) throws Exception {
+        return post(path, json, tokenA);
+    }
+
+    private HttpResponse<String> post(String path, String json, String token) throws Exception {
         return http.send(HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + path))
             .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + token)
             .POST(HttpRequest.BodyPublishers.ofString(json))
             .build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> put(String path, String json) throws Exception {
+        return put(path, json, tokenA);
+    }
+
+    private HttpResponse<String> put(String path, String json, String token) throws Exception {
         return http.send(HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + path))
             .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + token)
             .PUT(HttpRequest.BodyPublishers.ofString(json))
             .build(), HttpResponse.BodyHandlers.ofString());
     }
@@ -115,6 +149,18 @@ class StudyL2E2ETest {
         assertEquals(200, editResp.statusCode());
         var editJson = mapper.readTree(editResp.body());
         assertEquals(2, editJson.get("version").asInt(), "Should be version 2 after edit");
+
+        // 0.5.0: B cannot edit A's item by naming A's Study in the body.
+        var foreign = put("/api/study/item/" + itemId,
+            """
+            {"user":"%s","content":"B rewrites A's notes"}
+            """.formatted(USER_A), tokenB);
+        assertEquals(403, foreign.statusCode(), "naming another person's Study is refused");
+        // Nor without a login at all.
+        var anonymous = http.send(HttpRequest.newBuilder()
+            .uri(URI.create(server.baseUrl() + "/api/study/journal?user=" + USER_A))
+            .GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, anonymous.statusCode(), "a Study needs a login");
     }
 
     @Test @Order(2)
@@ -290,7 +336,7 @@ class StudyL2E2ETest {
 
         // User B cannot search User A's collection
         var deniedResp = get("/api/study/share/search?owner=" + USER_A
-            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle");
+            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle", tokenB);
         assertEquals(200, deniedResp.statusCode());
         assertEquals(0, mapper.readTree(deniedResp.body()).get("count").asInt(),
             "User B should NOT see User A's collection without share");
@@ -305,7 +351,7 @@ class StudyL2E2ETest {
 
         // Now User B can search
         var allowedResp = get("/api/study/share/search?owner=" + USER_A
-            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle");
+            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle", tokenB);
         assertTrue(mapper.readTree(allowedResp.body()).get("count").asInt() > 0,
             "User B SHOULD see shared collection after share");
 
@@ -318,9 +364,14 @@ class StudyL2E2ETest {
 
         // Denied again
         var redeniedResp = get("/api/study/share/search?owner=" + USER_A
-            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle");
+            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle", tokenB);
         assertEquals(0, mapper.readTree(redeniedResp.body()).get("count").asInt(),
             "User B should NOT see collection after unshare");
+
+        // 0.5.0: the requester is whoever is logged in; A cannot search as B.
+        var impersonated = get("/api/study/share/search?owner=" + USER_A
+            + "&collection=shared-recipes&requester=" + USER_B + "&q=semolina+truffle", tokenA);
+        assertEquals(403, impersonated.statusCode(), "searching as someone else is refused");
     }
 
     @Test @Order(21)
@@ -372,11 +423,13 @@ class StudyL2E2ETest {
         studyService.commitDocuments();
         Thread.sleep(200);
 
-        // Export
+        // Export and import are the home machine's operator's (OPERATOR in ApiPolicy): the
+        // operator token from loopback, naming whose collection.
+        var operator = TestServerBootstrap.operatorToken();
         var exportResp = post("/api/study/export",
             """
             {"user":"%s","collection":"export-e2e"}
-            """.formatted(USER_A));
+            """.formatted(USER_A), operator);
         assertEquals(200, exportResp.statusCode());
         var exportJson = mapper.readTree(exportResp.body());
         assertTrue(exportJson.get("exported").asInt() >= 2,
@@ -390,11 +443,16 @@ class StudyL2E2ETest {
         // illegal escape → 500). Map-encoding is platform-safe.
         var importResp = post("/api/study/import",
             mapper.writeValueAsString(Map.of(
-                "user", USER_A, "collection", "reimported-e2e", "path", exportPath)));
+                "user", USER_A, "collection", "reimported-e2e", "path", exportPath)), operator);
         assertEquals(200, importResp.statusCode());
         var importJson = mapper.readTree(importResp.body());
         assertTrue(importJson.get("imported").asInt() >= 2,
             "Should import at least 2 items: " + importResp.body());
+        // A person's own login does not reach the operator's routes.
+        assertEquals(403, post("/api/study/export",
+            """
+            {"user":"%s","collection":"export-e2e"}
+            """.formatted(USER_A)).statusCode());
 
         // Search reimported content
         Thread.sleep(200);
@@ -426,30 +484,35 @@ class StudyL2E2ETest {
     // Validation
     // ==================================================================
 
+    // The owner comes from the login now, so these name no one (naming a stranger is a 403,
+    // checked above); the missing field is what they are about.
+
     @Test @Order(50)
     void consent_missing_params_returns_400() throws Exception {
-        var resp = get("/api/study/consent/search?user=x&companion=y");
+        var resp = get("/api/study/consent/search?companion=y");
         assertEquals(400, resp.statusCode());
     }
 
     @Test @Order(51)
     void share_missing_params_returns_400() throws Exception {
         var resp = post("/api/study/share", """
-            {"owner":"x","collection":"y"}
+            {"collection":"y"}
             """);
         assertEquals(400, resp.statusCode());
     }
 
     @Test @Order(52)
     void disk_usage_missing_user_returns_400() throws Exception {
-        var resp = get("/api/study/disk-usage");
+        // A person asking gets their own (disk_usage_via_http); the machine's operator must
+        // name whose.
+        var resp = get("/api/study/disk-usage", TestServerBootstrap.operatorToken());
         assertEquals(400, resp.statusCode());
     }
 
     @Test @Order(53)
     void edit_missing_content_returns_400() throws Exception {
         var resp = put("/api/study/item/some-id", """
-            {"user":"x"}
+            {}
             """);
         assertEquals(400, resp.statusCode());
     }
@@ -460,15 +523,10 @@ class StudyL2E2ETest {
 
     @Test @Order(60)
     void telnet_private_journal_entry() throws Exception {
-        // Register user
-        post("/api/auth/register",
-            """
-            {"username":"l2user","password":"pass123","displayName":"L2 User"}
-            """);
-
+        // Person A (registered in setUp; open registration closes after the steward).
         try (var tc = TestTelnetClient.connect("localhost", server.telnetPort())) {
             tc.waitForText("Wyrdsekai", TIMEOUT);
-            tc.login("l2user", "pass123");
+            tc.login(USER_A_NAME, USER_A_PASS);
             tc.waitForText("Study", TIMEOUT);
             Thread.sleep(500);
 

@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -78,6 +79,25 @@ class OnePersonOneJournalTest {
 
         JournalSurface.command("s", LOGIN_ID, "read", printed::add);
         assertTrue(printed.get(0).startsWith("Your last 2"), printed.toString());
+    }
+
+    @Test
+    @DisplayName("the phone, which syncs and lists under the login id, gets what was written under the person")
+    void thePhoneGetsWhatWasWrittenUnderThePerson() {
+        study.writeJournalEntry(DID, "the garden came up");
+        study.writePrivateJournalEntry(DID, "and I was glad");
+
+        var delta = study.getDeltaForPeer(LOGIN_ID, Map.of());
+        assertEquals(1, delta.size(), "the shared page goes to the phone; the private one stays home");
+        assertEquals("the garden came up", delta.get(0).content());
+        assertEquals(1, study.recentJournal(LOGIN_ID, 10).size(), "the phone's sealed journal list");
+
+        // What the phone sends lands under the person, where the other doors read and write.
+        var fromPhone = new StudyService.StudyMergeItem("journal:phone:1", LOGIN_ID, "journal", "from the phone",
+            "from the phone", "journal", System.currentTimeMillis(), 1, Map.of("phone-1", 1), "phone-1", false);
+        assertEquals(1, study.mergeFromPeer(LOGIN_ID, List.of(fromPhone)));
+        assertTrue(lucene.listAllStudy(DID, 100).stream().anyMatch(r -> "journal:phone:1".equals(r.id())));
+        assertEquals(2, study.recentJournal(DID, 10).size());
     }
 
     @Test

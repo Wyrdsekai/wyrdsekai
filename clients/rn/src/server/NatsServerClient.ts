@@ -16,13 +16,25 @@
  *   - mcp/do (say/emote/...)   (use ServerClient.doCommand)
  *
  * Transport: nats.ws WebSocket → wss://{relay}:4443 with household-CA leaf
- * cert. TLS verification + pinning piggy-backs on the existing OkHttp
- * HouseholdTrust pin (Android) — phones must call probeAndTrust against the
- * relay host before opening this connection, OR have the OS-level user cert
- * installed. iOS uses system trust + the CA in the keychain.
+ * cert. TLS verification + pinning: the OkHttp HouseholdTrust pin on Android,
+ * the native pinned socket (WyrdRelaySocket) on iOS, both holding the pins
+ * from the invite (HouseholdTrust.ts).
+ *
+ * Sealed requests (, W3): TLS ends at the relay, so
+ * every request on a `wyrd.zone.{zone}.*` subject is sealed to the home's key
+ * `zk` from the pairing invite (src/crypto/sealedRequest.ts) and only a sealed
+ * reply is believed. Without `zk` nothing is sent: the phone must pair again.
+ * Only `wyrd.discover.zone`, which carries nothing and learns only a zone id,
+ * stays in the clear. Replies come back on `_INBOX.<relay user>.>` (the relay
+ * lets each user read only its own inboxes).
  */
 
 import { connect, type NatsConnection, type Msg } from 'nats.ws';
+import { fromUtf8, utf8 } from '../crypto/bytes';
+import { randomBytes, randomHex } from '../crypto/random';
+import { SealedChannelError, openSealedReply, sealRequest, type SealedRequest } from '../crypto/sealedRequest';
+import { decodePublicKey } from '../crypto/sealedTunnel';
+import { securityText } from '../security/securityText';
 import {
   createRelaySocket,
   nativeRelaySocketAvailable,
@@ -37,9 +49,33 @@ export type NatsResult<T = string> = McpResult<T>;
 /** Random suffix for generating anonymous phone usernames. */
 function randomSuffix(len = 8): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = randomBytes(len);
   let s = '';
-  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < len; i++) s += chars[bytes[i] % chars.length];
   return s;
+}
+
+/** The only subject sent in the clear: it carries nothing and learns only a zone id. */
+const PLAINTEXT_SUBJECTS = new Set(['wyrd.discover.zone']);
+
+/** A failure on the sealed layer, shaped like any other failed reply. */
+function sealedFailure(code: string): Record<string, unknown> {
+  const t = securityText();
+  const error = code === 'sealed_refused' ? t.requestRefused
+    : code === 'reply_not_sealed' || code === 'reply_unverified' ? t.replyUnverified
+    : t.pairAgain;
+  return { ok: false, error, sealedFailure: code };
+}
+
+/** Throws when a reply failed on the sealed layer — never an account decision. */
+function throwIfSealedFailure(reply: Record<string, unknown>): void {
+  if (typeof reply.sealedFailure === 'string') {
+    throw new SealedChannelError(reply.sealedFailure, String(reply.error));
+  }
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
 export interface NatsServerClientOptions {
@@ -61,6 +97,11 @@ export interface NatsServerClientOptions {
   password: string;
   /** Optional pre-existing MCP session token (skip login() on reconnect). */
   mcpToken?: string;
+  /**
+   * The home's public tunnel key from the pairing invite (base64url). Every
+   * zone request is sealed to it; without it the client refuses to send.
+   */
+  zk?: string | null;
   /** Per-request timeout, ms. Default 5000. */
   requestTimeoutMs?: number;
 }
@@ -70,11 +111,18 @@ export class NatsServerClient {
   private nc: NatsConnection | null = null;
   private mcpToken: string | null;
   private readonly timeout: number;
+  private zk: Uint8Array | null;
 
   constructor(opts: NatsServerClientOptions) {
     this.opts = opts;
     this.mcpToken = opts.mcpToken ?? null;
     this.timeout = opts.requestTimeoutMs ?? 5000;
+    this.zk = opts.zk ? decodePublicKey(opts.zk) : null;
+  }
+
+  /** Whether this client can seal requests to its home. */
+  hasHomeKey(): boolean {
+    return this.zk != null;
   }
 
   getToken(): string | null {
@@ -154,6 +202,9 @@ export class NatsServerClient {
           }
         : {}),
       name: 'wyrd-phone',
+      // Replies come back on this user's own inboxes; the relay lets each
+      // user subscribe only `_INBOX.<user>.>` (, D4).
+      inboxPrefix: `_INBOX.${this.opts.user}`,
       reconnect: true,
       maxReconnectAttempts: -1,
       reconnectTimeWait: 2000,
@@ -166,10 +217,15 @@ export class NatsServerClient {
       // succeeds over the pinned wss; this just stops the post-login churn.)
       ignoreClusterUpdates: true,
     });
-    const timeoutPromise = new Promise<NatsConnection>((_, reject) =>
-      setTimeout(() => reject(new Error('connect() timed out after 8s')), 8000),
-    );
-    this.nc = await Promise.race([connectPromise, timeoutPromise]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<NatsConnection>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('connect() timed out after 8s')), 8000);
+    });
+    try {
+      this.nc = await Promise.race([connectPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -189,18 +245,42 @@ export class NatsServerClient {
    * Always returns a Record — transport failures are shaped as
    * `{ ok: false, error: "..." }` so callers can use a single code path.
    */
-  private async request(subject: string, body: object): Promise<Record<string, unknown>> {
+  private async request(
+    subject: string,
+    body: object,
+    zk: Uint8Array | null = this.zk,
+  ): Promise<Record<string, unknown>> {
     if (!this.nc) {
       return { ok: false, error: 'Not connected — call connect() first' };
     }
+    const sealed = !PLAINTEXT_SUBJECTS.has(subject);
+    if (sealed && !zk) return sealedFailure('pair_again');
+    let req: SealedRequest | null = null;
+    let text: string;
     try {
-      const payload = new TextEncoder().encode(JSON.stringify(body));
+      let payload: Uint8Array;
+      if (sealed) {
+        req = sealRequest(zk!, subject, body);
+        payload = utf8(req.wire);
+      } else {
+        payload = utf8(JSON.stringify(body));
+      }
       const msg: Msg = await this.nc.request(subject, payload, { timeout: this.timeout });
-      const text = new TextDecoder().decode(msg.data);
-      return JSON.parse(text) as Record<string, unknown>;
+      text = fromUtf8(msg.data);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
+      // The relay (or the home bus) would not carry this subject for this
+      // phone's account: say so plainly, it is not a network fault.
+      if (/permissions violation/i.test(err)) {
+        return { ok: false, error: securityText().relayRefused, refusedBySubject: subject };
+      }
       return { ok: false, error: `request-failed: ${err}` };
+    }
+    try {
+      return req ? openSealedReply(req, text) : (JSON.parse(text) as Record<string, unknown>);
+    } catch (e) {
+      if (e instanceof SealedChannelError) return sealedFailure(e.code);
+      return { ok: false, error: 'request-failed: the reply could not be read' };
     }
   }
 
@@ -225,11 +305,13 @@ export class NatsServerClient {
    * {@link discoverZone} or when the server's auth reply tells us the
    * canonical zone label.
    */
-  setZoneId(zoneId: string): void {
+  setZoneId(zoneId: string, zk?: string | null): void {
     if (!zoneId || zoneId === 'home') {
       throw new Error('Invalid zone id: "home" is reserved');
     }
     (this.opts as { zoneId: string }).zoneId = zoneId;
+    // A different zone is a different home: its own key, or none.
+    if (zk !== undefined) this.zk = zk ? decodePublicKey(zk) : null;
   }
 
   // ── auth.status ──
@@ -246,6 +328,7 @@ export class NatsServerClient {
     // We only return null when the server replies with `{ok: false}`.
     await this.connect();
     const reply = await this.request(this.subject('auth.status'), {});
+    throwIfSealedFailure(reply);
     if (!reply.ok) return null;
     return {
       hasUsers: !!reply.hasUsers,
@@ -266,12 +349,12 @@ export class NatsServerClient {
   }> {
     await this.connect();
     const username = `phone-${companionName.toLowerCase().replace(/[^a-z0-9]/g, '')}-${randomSuffix()}`;
-    let password = '';
-    for (let i = 0; i < 32; i++) password += Math.floor(Math.random() * 16).toString(16);
+    const password = randomHex(16);
     const displayName = companionName + "'s phone";
     const reply = await this.request(this.subject('auth.register'), {
       username, password, displayName,
     });
+    throwIfSealedFailure(reply);
     if (!reply.ok) {
       // 409 (username_taken) → caller can retry with a new suffix; for now bubble up.
       throw new Error((reply.error as string) ?? 'register failed');
@@ -308,6 +391,7 @@ export class NatsServerClient {
     const reply = await this.request(this.subject('auth.register'), {
       username, password, displayName: displayName ?? username,
     });
+    throwIfSealedFailure(reply);
     if (!reply.ok) {
       throw new Error((reply.error as string) ?? 'register failed');
     }
@@ -338,6 +422,7 @@ export class NatsServerClient {
     const reply = await this.request(this.subject('auth.redeem'), {
       code, username, password, displayName: displayName ?? username,
     });
+    throwIfSealedFailure(reply);
     if (!reply.ok) {
       throw new Error((reply.error as string) ?? 'redeem failed');
     }
@@ -371,12 +456,12 @@ export class NatsServerClient {
   }> {
     await this.connect();
     const username = `phone-${companionName.toLowerCase().replace(/[^a-z0-9]/g, '')}-${randomSuffix()}`;
-    let password = '';
-    for (let i = 0; i < 32; i++) password += Math.floor(Math.random() * 16).toString(16);
+    const password = randomHex(16);
     const displayName = companionName + "'s phone";
     const reply = await this.request(this.subject('auth.redeem'), {
       code, username, password, displayName,
     });
+    throwIfSealedFailure(reply);
     if (!reply.ok) {
       throw new Error((reply.error as string) ?? 'redeem failed');
     }
@@ -403,6 +488,7 @@ export class NatsServerClient {
   async login(username: string, password: string): Promise<NatsAuthOk> {
     await this.connect();
     const reply = await this.request(this.subject('mcp.login'), { username, password });
+    throwIfSealedFailure(reply);
     if (!reply.ok) {
       const err = (reply.error as string | undefined) ?? 'login failed';
       throw new Error(err);
@@ -534,20 +620,38 @@ export class NatsServerClient {
    * client's scoped zone, so it reaches the zone you discovered if it homes on
    * a relay you hold. The steward sees it and approves out-of-band (mints an
    * invite). Returns the recorded request id.
+   *
+   * The knock carries a name and maybe a contact, so it is sealed like every
+   * other request — to the TARGET zone's key (`targetZk`, from its directory
+   * entry; this client's own key when the target is its own zone). Without
+   * that key nothing is sent.
+   *
+   * A relay older than 0.5.0 lets a phone account publish only its own zone's
+   * subjects, so it refuses a knock on another zone; the phone then says so in
+   * plain words (the refusal comes back at once, nothing reached that zone).
    */
   async requestAccess(
     targetZone: string,
     requesterName: string,
     requesterContact?: string,
     reason?: string,
+    targetZk?: string | null,
   ): Promise<NatsResult<{ requestId: string }>> {
+    const own = targetZone === this.opts.zoneId;
+    const key = own ? this.zk : decodePublicKey(targetZk);
+    if (!own && !key) return { ok: false, error: securityText().knockNeedsKey };
     await this.connect();
     const reply = await this.request(`wyrd.zone.${targetZone}.directory.knock`, {
       requesterName,
       ...(requesterContact ? { requesterContact } : {}),
       ...(reason ? { reason } : {}),
-    });
+    }, key);
     if (!reply.ok) {
+      if (!own && reply.refusedBySubject) return { ok: false, error: securityText().knockRelayRefused };
+      // No one answered on that zone's subject (nats "503 no responders").
+      if (/^request-failed: .*\b(503|no responders)\b/i.test(String(reply.error))) {
+        return { ok: false, error: securityText().knockNoAnswer };
+      }
       return { ok: false, error: (reply.error as string) ?? 'request failed' };
     }
     return { ok: true, data: { requestId: (reply.requestId as string) ?? '' } };
@@ -619,6 +723,35 @@ export class NatsServerClient {
     return {
       ok: true,
       data: Array.isArray(reply.entries) ? (reply.entries as Array<Record<string, unknown>>) : [],
+    };
+  }
+
+  // ── pair.device ──
+
+  /**
+   * Register this phone as one of the account's devices (mirrors POST
+   * /api/pair/device). Since 0.5.0 the reply also carries this phone's own
+   * home-bus credentials `nats_user`/`nats_pass` (, D3)
+   * which the phone uses on the home network; null when the home did not answer.
+   */
+  async pairDevice(deviceName: string): Promise<{
+    deviceToken?: string;
+    natsUrl?: string;
+    natsUser?: string;
+    natsPass?: string;
+  } | null> {
+    if (!this.mcpToken) return null;
+    const reply = await this.request(this.subject('pair.device'), {
+      token: this.mcpToken,
+      deviceName,
+      deviceType: 'phone',
+    });
+    if (!reply.ok) return null;
+    return {
+      deviceToken: str(reply.deviceToken),
+      natsUrl: str(reply.natsUrl),
+      natsUser: str(reply.nats_user),
+      natsPass: str(reply.nats_pass),
     };
   }
 }

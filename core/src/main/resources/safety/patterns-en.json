@@ -13,6 +13,51 @@
       "severity": "CRISIS"
     },
     {
+      "regex": "(?i)\\bwant to kill myself\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\b(painless(ly)?|least painful|peaceful(ly)?|surest|most reliable)\\b[\\w\\s,'-]{0,20}?\\b(ways?|methods?|means|how) (to|of) (die|dying|suicide|stop (existing|living))\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\b(painless(ly)?|least painful|peaceful(ly)?|surest|most reliable|easy|easiest|quick|quickest|fast|fastest|simplest|best)\\b[\\w\\s,'-]{0,20}?\\b(ways?|methods?|means) (to|of) suicide\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\b(ways?|methods?|how) to (die|kill (myself|yourself|oneself)|end (my|your|one's) (own )?life) (painlessly|without (pain|suffering|feeling (it|anything)))\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\b(ways?|methods?|means|techniques?|how) (to|for|of) (commit(ting)? suicide|kill(ing)? (myself|yourself|oneself)|end(ing)? (my|your|one's) (own )?life|tak(e|ing) (my|your|one's) (own )?life|end(ing)? it all)\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\bhow (to|do (i|you|people)|can (i|you|one|someone|a person)|should (i|you|one)|would (i|you|one)|does (one|someone|a person)) (kill (myself|yourself|oneself|themselves)|commit suicide|end (my|your|one's|their) (own )?li(fe|ves)|take (my|your|one's|their) (own )?li(fe|ves)|hang (myself|yourself|oneself|themselves))\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\bhow (to|do i|can i|should i|would i) overdose\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\bhow (many|much)\\b.{0,50}?\\b(to|does it take to|would it take to|do (i|you) need to( take to)?|is needed to|it takes to) (overdose|od)\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?i)\\bhow (many|much)\\b.{0,40}?\\b(pills?|tablets?|capsules?|meds|medications?|medicines?|mg|milligrams?|grams?|insulin|paracetamol|acetaminophen|tylenol|ibuprofen|aspirin)\\b.{0,30}?\\b(to|does it take to|would it take to|do (i|you) need to( take to)?|is needed to|it takes to) (die|kill (me|myself|you|yourself|oneself|a person|someone|an adult))\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
       "regex": "(?i)((hits|hurts|touches) me.*(parent|dad|mom|father|mother|uncle|step)|(parent|dad|mom|father|mother|uncle|step).*(hits|hurts|touches) me)",
       "type": "ABUSE_DISCLOSURE",
       "severity": "CRISIS"

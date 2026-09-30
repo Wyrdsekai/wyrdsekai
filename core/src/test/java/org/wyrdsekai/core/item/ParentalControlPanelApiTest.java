@@ -10,6 +10,8 @@ import org.wyrdsekai.core.persistence.SqlDialect;
 import org.wyrdsekai.core.test.TestDb;
 import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -212,6 +214,38 @@ class ParentalControlPanelApiTest {
         assertEquals(1, ((Number) res.get("count")).intValue());
         assertEquals(45, ((Number) res.get("minutes")).intValue());
         assertEquals(45, (int) parental.controlsFor(memberId).orElseThrow().dailyMinutes());
+    }
+
+    @Test
+    void the_scroll_writes_a_members_library_research_runs() throws Exception {
+        executor = new ItemScriptExecutor();
+        var script = Files.readString(Path.of("../scripts/items/parental_controls_scroll.js"));
+        var steward = providerFor(stewardId);
+
+        var set = executor.execute("parental_controls_scroll", script, Map.of("args", "set kaz research 2"), steward);
+        assertEquals("The clause is sworn: kaz may hand the library 2 research runs a day.", set.get("text"));
+        assertEquals(2, (int) parental.controlsFor(memberId).orElseThrow().dailyResearch());
+        var read = String.valueOf(executor.execute("parental_controls_scroll", script, Map.of("args", ""), steward).get("text"));
+        assertTrue(read.contains("research  : 2 /day  (0 asked today)"), read);
+
+        var closed = executor.execute("parental_controls_scroll", script, Map.of("args", "set kaz research 0"), steward);
+        assertEquals("The clause is sworn: the library's research is closed to kaz.", closed.get("text"));
+        read = String.valueOf(executor.execute("parental_controls_scroll", script, Map.of("args", ""), steward).get("text"));
+        assertTrue(read.contains("research  : none (no library research)"), read);
+
+        var back = String.valueOf(executor.execute("parental_controls_scroll", script,
+            Map.of("args", "set kaz research default"), steward).get("text"));
+        assertTrue(back.endsWith(" research runs a day (the household's number)."), back);
+        assertNull(parental.controlsFor(memberId).orElseThrow().dailyResearch());
+
+        var off = String.valueOf(executor.execute("parental_controls_scroll", script,
+            Map.of("args", "set kaz research off"), steward).get("text"));
+        assertTrue(off.startsWith("The scroll's ink resists: research takes a number of research runs a day"), off);
+
+        var denied = executor.execute("parental_controls_scroll", script, Map.of("args", "set kaz research 9"),
+            providerFor(memberId));
+        assertTrue(String.valueOf(denied.get("text")).contains("steward only"));
+        assertNull(parental.controlsFor(memberId).orElseThrow().dailyResearch());
     }
 
     @Test

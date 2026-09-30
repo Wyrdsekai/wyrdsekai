@@ -18,8 +18,14 @@
  * SAME zone backend — the login verdict is identical across them, so retrying
  * other relays after a real auth rejection is pointless (and would hammer the
  * account with repeated failures).
+ *
+ * A failure on the sealed layer (the home refused the sealed request, or a
+ * reply could not be verified W3) is neither: it is
+ * not the account's verdict, so the remembered password is kept, and another
+ * relay reaches the same home with the same key, so the attempt stops there.
  */
 import { NatsServerClient } from './NatsServerClient';
+import { SealedChannelError } from '../crypto/sealedRequest';
 import type { HeldRelay, ZoneBankEntry } from '../state/zoneBankStore';
 
 export interface ZoneConnectOk {
@@ -45,7 +51,7 @@ export async function connectToZone(
   zone: ZoneBankEntry,
   relays: HeldRelay[],
   password: string,
-  opts?: { requestTimeoutMs?: number },
+  opts?: { requestTimeoutMs?: number; zk?: string | null },
 ): Promise<ZoneConnectResult> {
   return connectToZoneWith(
     zone, relays,
@@ -66,7 +72,7 @@ export async function connectToZoneWith(
   zone: ZoneBankEntry,
   relays: HeldRelay[],
   authenticate: (client: NatsServerClient) => Promise<ZoneConnectOk['auth']>,
-  opts?: { requestTimeoutMs?: number },
+  opts?: { requestTimeoutMs?: number; zk?: string | null },
 ): Promise<ZoneConnectResult> {
   const attempts: ZoneConnectError['attempts'] = [];
 
@@ -86,6 +92,7 @@ export async function connectToZoneWith(
       user: relay.natsUser,
       password: relay.natsPass,
       requestTimeoutMs: opts?.requestTimeoutMs,
+      zk: opts?.zk,
     });
 
     // 1. Relay reachable?
@@ -102,6 +109,10 @@ export async function connectToZoneWith(
     try {
       reachable = (await client.probe()) != null;
     } catch (e) {
+      if (e instanceof SealedChannelError) {
+        await safeDisconnect(client);
+        return { ok: false, authRejected: false, error: `${zone.displayName}: ${e.message}`, attempts };
+      }
       attempts.push({ relayUrl: relay.wsUrl, stage: 'probe', error: errStr(e) });
       await safeDisconnect(client);
       continue;
@@ -121,7 +132,7 @@ export async function connectToZoneWith(
       await safeDisconnect(client);
       return {
         ok: false,
-        authRejected: true,
+        authRejected: !(e instanceof SealedChannelError),
         error: `${zone.displayName}: ${errStr(e)}`,
         attempts,
       };

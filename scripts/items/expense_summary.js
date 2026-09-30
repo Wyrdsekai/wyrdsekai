@@ -15,14 +15,14 @@ exports.manifest = {
   version: "1.0.0",
   description: "Summarize the last 30 days of bank transactions by category.",
   author: "did:wyrd:system",
-  capabilities: ["plaid.read"],
+  capabilities: ["plaid.list_transactions"],
   embodiment: {
     silent: false,
     emits: ["ambient_shift"],
     descriptor_template: "A neat ledger-sheet unfurls — figures inked in calm columns, totals at the foot."
   },
   rate_limits: {
-    "plaid.read": { per_minute: 5, per_hour: 30, per_day: 100 }
+    "plaid.list_transactions": { per_minute: 5, per_hour: 30, per_day: 100 }
   },
   data_sensitivity: "private",
   // Items-as-tools contract — invoke() reads structured params

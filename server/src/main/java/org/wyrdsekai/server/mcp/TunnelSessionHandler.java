@@ -6,6 +6,10 @@ import io.nats.client.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.util.Json;
+import org.wyrdsekai.core.crypto.SealedTunnel;
+import org.wyrdsekai.core.crypto.TunnelKey;
+import java.security.GeneralSecurityException;
+import java.util.Base64;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -95,11 +99,48 @@ public final class TunnelSessionHandler {
     private final Map<String, List<String>> pending = new ConcurrentHashMap<>();
     private final AtomicReference<Dispatcher> dispatcherRef = new AtomicReference<>();
 
+    /**
+     * Sessions opened as a sealed tunnel (v2, W3): phone and home agree keys
+     * the relay cannot compute, and every frame after that is ChaCha20-Poly1305 (SealedTunnel).
+     */
+    private final Map<String, Sealed> sealed = new ConcurrentHashMap<>();
+
+    private static final class Sealed {
+        final SealedTunnel.Accepted keys;
+        /** The first sealed frame up is what the old plaintext open carried (token or door). */
+        volatile boolean opened;
+        Sealed(SealedTunnel.Accepted keys) { this.keys = keys; }
+    }
+
+    /** Before 0.5.0 a tunnel was plain JSON through the relay; such a tunnel is refused unless this is true. */
+    public static final String ALLOW_PLAINTEXT_ENV = "WYRDSEKAI_TUNNEL_ALLOW_PLAINTEXT";
+
+    private final SealedTunnel.KeyPair zoneKey;
+
     public TunnelSessionHandler(Connection nats, String zoneId, int httpPort) {
+        this(nats, zoneId, httpPort, loadZoneKey());
+    }
+
+    TunnelSessionHandler(Connection nats, String zoneId, int httpPort, SealedTunnel.KeyPair zoneKey) {
         this.nats = nats;
         this.zoneId = zoneId;
         this.httpPort = httpPort;
         this.subjPrefix = "wyrd.tunnel." + zoneId + ".";
+        this.zoneKey = zoneKey;
+    }
+
+    private static SealedTunnel.KeyPair loadZoneKey() {
+        try {
+            return TunnelKey.forThisHome();
+        } catch (Exception e) {
+            throw new IllegalStateException("the home's tunnel key could not be loaded: " + e.getMessage(), e);
+        }
+    }
+
+    static boolean allowPlaintext() {
+        var v = System.getenv(ALLOW_PLAINTEXT_ENV);
+        if (v == null) v = System.getProperty("wyrdsekai.tunnel.allow.plaintext");
+        return v != null && (v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("yes"));
     }
 
     /** Subscribe to the tunnel subjects on the (already-connected) relay leg. */
@@ -126,6 +167,7 @@ public final class TunnelSessionHandler {
             try { entry.getValue().sendClose(WebSocket.NORMAL_CLOSURE, "shutdown"); } catch (Exception ignored) {}
         }
         sessions.clear();
+        sealed.clear();
         keepaliveTasks.values().forEach(f -> f.cancel(false));
         keepaliveTasks.clear();
         keepalives.shutdownNow();
@@ -180,7 +222,7 @@ public final class TunnelSessionHandler {
 
     /** Open a loopback WS to the zone's own session server, authed by the phone's token. */
     private void openSession(String session, String openPayload) {
-        if (sessions.containsKey(session)) return; // idempotent — duplicate open
+        if (sessions.containsKey(session) || sealed.containsKey(session)) return; // idempotent — duplicate open
         if (sessions.size() + pending.size() >= MAX_LIVE_SESSIONS) {
             log.warn("Tunnel: refusing session {} — {} live sessions at cap {}",
                 session, sessions.size() + pending.size(), MAX_LIVE_SESSIONS);
@@ -188,10 +230,43 @@ public final class TunnelSessionHandler {
                 "{\"type\":\"error\",\"seq\":0,\"code\":\"tunnel_busy\",\"message\":\"too many open sessions on this zone\"}");
             return;
         }
+        var downSubject = subjPrefix + session + ".down";
+        // The sealed tunnel: {"v":2,"e":<the phone's ephemeral key>}. The home answers with its own
+        // ephemeral key; the token or door comes in the first sealed frame, never in the clear.
+        var e = TunnelKey.decodeKey(extractField(openPayload, "e"));
+        if ("2".equals(extractField(openPayload, "v")) && e != null && e.length == SealedTunnel.KEY_LEN) {
+            try {
+                var acc = SealedTunnel.accept(zoneKey, e, session);
+                sealed.put(session, new Sealed(acc));
+                pending.putIfAbsent(session, new CopyOnWriteArrayList<>());
+                publishRaw(downSubject, ("{\"v\":2,\"e\":\""
+                    + Base64.getUrlEncoder().withoutPadding().encodeToString(acc.zoneEphemeralPub()) + "\"}")
+                    .getBytes(StandardCharsets.UTF_8));
+                log.info("Tunnel session {} sealed end to end", session);
+            } catch (GeneralSecurityException ex) {
+                log.warn("Tunnel session {}: the phone's key was refused ({})", session, ex.getMessage());
+                publishRaw(downSubject, "{\"type\":\"error\",\"seq\":0,\"code\":\"tunnel_key_refused\",\"message\":\"the connection could not be secured\"}"
+                    .getBytes(StandardCharsets.UTF_8));
+            }
+            return;
+        }
+        if (!allowPlaintext()) {
+            log.warn("Tunnel session {} refused: an unsealed tunnel, from an app older than Wyrdsekai 0.5.0. "
+                + "Update the app and pair it again, or set {}=true during the change-over", session, ALLOW_PLAINTEXT_ENV);
+            publishRaw(downSubject, ("{\"type\":\"error\",\"seq\":0,\"code\":\"tunnel_plaintext_refused\","
+                + "\"message\":\"This home now requires an encrypted connection. Update the Wyrdsekai app and pair it again.\"}")
+                .getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        log.warn("Tunnel session {} is NOT end-to-end encrypted: an older app, allowed by {}=true", session, ALLOW_PLAINTEXT_ENV);
         // Register a buffer so uplink frames arriving during the connect race
         // are held (and so unsolicited up-frames with no prior open are ignored).
         pending.putIfAbsent(session, new CopyOnWriteArrayList<>());
-        var downSubject = subjPrefix + session + ".down";
+        openFromPayload(session, downSubject, openPayload);
+    }
+
+    /** What an open asks for (a door, a token, a guest), however it arrived: in the clear or sealed. */
+    private void openFromPayload(String session, String downSubject, String openPayload) {
         // The tunnel is the universal door — and not only for presence.
         // `door` selects WHICH loopback endpoint carries this session; the
         // whitelist is deliberate (never a caller-supplied path). Absent or
@@ -261,9 +336,27 @@ public final class TunnelSessionHandler {
         }
     }
 
-    /** Forward a phone C2S frame verbatim into the loopback WS. */
+    /** Forward a phone C2S frame into the loopback WS; a sealed session's frames are opened first. */
     private void forwardUp(String session, byte[] data) {
-        var frame = new String(data, StandardCharsets.UTF_8);
+        var s = sealed.get(session);
+        String frame;
+        if (s != null) {
+            try {
+                frame = new String(s.keys.up().open(data, (subjPrefix + session + ".up").getBytes(StandardCharsets.UTF_8)),
+                    StandardCharsets.UTF_8);
+            } catch (GeneralSecurityException ex) {
+                log.warn("Tunnel session {}: a sealed frame did not open ({}); closing the session", session, ex.getMessage());
+                closeSession(session);
+                return;
+            }
+            if (!s.opened) {
+                s.opened = true;
+                openFromPayload(session, subjPrefix + session + ".down", frame);
+                return;
+            }
+        } else {
+            frame = new String(data, StandardCharsets.UTF_8);
+        }
         var ws = sessions.get(session);
         if (ws == null) {
             // Loopback not connected yet — buffer in order (bounded) so the
@@ -303,6 +396,7 @@ public final class TunnelSessionHandler {
     private void closeSession(String session) {
         cancelKeepalive(session);
         pending.remove(session);
+        sealed.remove(session);
         var ws = sessions.remove(session);
         if (ws != null) {
             try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "client closed"); } catch (Exception ignored) {}
@@ -310,13 +404,37 @@ public final class TunnelSessionHandler {
         }
     }
 
+    /** A frame for the phone; sealed when the session is, in the order it is sealed. */
     private void publishDown(String downSubject, String json) {
+        var s = sealed.get(sessionOf(downSubject));
+        if (s == null) {
+            publishRaw(downSubject, json.getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        synchronized (s) {
+            try {
+                publishRaw(downSubject, s.keys.down().seal(json.getBytes(StandardCharsets.UTF_8),
+                    downSubject.getBytes(StandardCharsets.UTF_8)));
+            } catch (GeneralSecurityException e) {
+                log.warn("Tunnel down-seal error on {}: {}", downSubject, e.getMessage());
+            }
+        }
+    }
+
+    private void publishRaw(String downSubject, byte[] payload) {
         try {
-            nats.publish(downSubject, json.getBytes(StandardCharsets.UTF_8));
+            nats.publish(downSubject, payload);
             nats.flush(Duration.ofSeconds(2));
         } catch (Exception e) {
             log.debug("Tunnel down-publish error on {}: {}", downSubject, e.getMessage());
         }
+    }
+
+    private String sessionOf(String downSubject) {
+        if (!downSubject.startsWith(subjPrefix)) return "";
+        var rest = downSubject.substring(subjPrefix.length());
+        var dot = rest.lastIndexOf('.');
+        return dot > 0 ? rest.substring(0, dot) : rest;
     }
 
     static String extractField(String payload, String field) {
@@ -365,12 +483,14 @@ public final class TunnelSessionHandler {
                     "{\"type\":\"error\",\"seq\":0,\"code\":\"tunnel_closed\",\"message\":\""
                         + safe + "\"}");
             }
+            sealed.remove(session);
             return null;
         }
 
         @Override public void onError(WebSocket ws, Throwable error) {
             cancelKeepalive(session);
             sessions.remove(session);
+            sealed.remove(session);
             log.warn("Tunnel session {} loopback error: {}", session, error.getMessage());
         }
     }

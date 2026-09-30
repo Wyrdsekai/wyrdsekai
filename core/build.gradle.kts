@@ -104,6 +104,10 @@ dependencies {
     // Nostr keypair + event-signing code doesn't silently break if sigstore
     // ever drops the dependency. Also used by HKDF for DID→Nostr key derive.
     implementation("org.bouncycastle:bcprov-jdk18on:1.80")
+    // X.509 certificate building for the household CA and its leaf (HouseholdTls). Already on the
+    // runtime classpath through sigstore; declared so the household's TLS does not hang on it.
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
+    implementation("org.bouncycastle:bcutil-jdk18on:1.80")   // pins bcpkix's [1.80,1.81) range offline
 
     // Test
     testImplementation("org.apache.pekko:pekko-actor-testkit-typed${pekkoScalaSuffix}:${pekkoVersion}")

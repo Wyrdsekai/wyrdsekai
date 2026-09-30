@@ -139,6 +139,36 @@ public final class TellScopeGate {
     }
 
     /**
+     * Decide whether a tell that arrived from another zone may be delivered here (audit 2026-09-28).
+     * The sender's zone is the one whose pinned key signed the message ({@code verifiedZoneId}), never
+     * the {@code fromZone} the message names: before, naming this zone made a tell pass as intra-zone.
+     * A cross-zone tell needs an active agreement between this zone and the verified one.
+     *
+     * @param claimedFromZone  the zone the message says it comes from
+     * @param verifiedZoneId   the zone whose key signed it, or null when it was not verified
+     * @param localZoneId      this zone
+     * @param contracts        {@code hasTellScope(localZoneId, verifiedZoneId, target)}: does this zone hold
+     *                         an active agreement with the sender's zone
+     */
+    public static Decision checkInbound(String claimedFromZone, String verifiedZoneId, String localZoneId,
+                                        String targetEntityId, ContractLookup contracts) {
+        if (verifiedZoneId == null || verifiedZoneId.isBlank()) {
+            return new Decision.Deny("unsigned cross-zone tell");
+        }
+        if (!verifiedZoneId.equals(claimedFromZone)) {
+            return new Decision.Deny("tell names zone '" + claimedFromZone + "' but was signed by '"
+                + verifiedZoneId + "'");
+        }
+        if (verifiedZoneId.equals(localZoneId)) {
+            return new Decision.Deny("a cross-zone tell cannot come from this zone");
+        }
+        if (contracts != null && contracts.hasTellScope(localZoneId, verifiedZoneId, targetEntityId)) {
+            return new Decision.AllowContract(verifiedZoneId);
+        }
+        return new Decision.Deny("no agreement with zone '" + verifiedZoneId + "'");
+    }
+
+    /**
      * Convenience predicate for callers that don't need the reason string.
      * Equivalent to {@code check(...) instanceof Decision.Allow*}.
      */

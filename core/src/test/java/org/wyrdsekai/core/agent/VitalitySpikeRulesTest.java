@@ -51,6 +51,35 @@ class VitalitySpikeRulesTest {
     }
 
     @Nested
+    class ReadAgainstHerRestingPoint {
+        // 2026-09-25: loneliness settles at 0.80 for anyone alone half a day (FeltAxisPeak
+        // set points), so the flat 0.7 line held the affiliation floor up for the whole of
+        // every absence. With her genome the rule reads excursion above where she rests.
+        @Test
+        void settledLonelinessHoldsNothingUp() {
+            var d1 = VitalitySpikeRules.apply(withLoneliness(0.80), DriveState.initial(),
+                org.wyrdsekai.core.soul.GenomeProfile.NEUTRAL);
+            assertThat(d1.affiliation()).isEqualTo(0.0);
+        }
+
+        @Test
+        void anExcursionAboveHerRestingPointStillSpikes() {
+            var d1 = VitalitySpikeRules.apply(withLoneliness(0.95), DriveState.initial(),
+                org.wyrdsekai.core.soul.GenomeProfile.NEUTRAL);
+            assertThat(d1.affiliation()).isCloseTo(0.3, within(1e-6));
+            var d2 = VitalitySpikeRules.apply(withSaudade(0.95), DriveState.initial(),
+                org.wyrdsekai.core.soul.GenomeProfile.NEUTRAL);
+            assertThat(d2.affiliation()).isCloseTo(0.3, within(1e-6));
+        }
+
+        @Test
+        void withoutAGenomeTheFlatSpecLineStillApplies() {
+            var d1 = VitalitySpikeRules.apply(withLoneliness(0.80), DriveState.initial(), null);
+            assertThat(d1.affiliation()).isCloseTo(0.3, within(1e-6));
+        }
+    }
+
+    @Nested
     class Loneliness {
         @Test
         void highLonelinessSpikesAffiliationOnly() {

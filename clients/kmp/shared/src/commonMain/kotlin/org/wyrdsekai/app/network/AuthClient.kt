@@ -23,6 +23,8 @@ data class AuthResponse(
 
 @Serializable
 data class UserInfo(
+    // The home answers /api/auth/me with "userId" (AuthRoutes.MeResponse), as it does on login.
+    @kotlinx.serialization.SerialName("userId")
     val user_id: String,
     val username: String,
     val display_name: String?,
@@ -48,9 +50,9 @@ internal fun normalizeHttpUrl(url: String): String {
     else "http://$trimmed"
 }
 
-class AuthClient(baseUrl: String) {
+class AuthClient(baseUrl: String, engine: HttpClient = createHouseholdHttpClient()) {
     private val normalizedUrl = normalizeHttpUrl(baseUrl)
-    private val http = HttpClient {
+    private val http = engine.config {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
         }
@@ -98,7 +100,7 @@ class AuthClient(baseUrl: String) {
     suspend fun me(token: String): Result<UserInfo> =
         runCatching {
             http.get("$normalizedUrl/api/auth/me") {
-                parameter("token", token)
+                header("Authorization", "Bearer $token")
             }.body()
         }
 

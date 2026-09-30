@@ -586,7 +586,7 @@ export function parseActions(text: string): ParseResult {
     }
   }
 
-  return { prose: stripRawActionJson(prose), actions };
+  return { prose: stripNowLineEcho(stripRawActionJson(prose)), actions };
 }
 
 /**
@@ -596,8 +596,32 @@ export function parseActions(text: string): ParseResult {
 export function extractProse(text: string): string {
   if (!text) return '';
   const idx = text.indexOf('```json');
-  if (idx <= 0) return stripRawActionJson(text.trim());
-  return stripRawActionJson(text.substring(0, idx).trim());
+  if (idx <= 0) return stripNowLineEcho(stripRawActionJson(text.trim()));
+  return stripNowLineEcho(stripRawActionJson(text.substring(0, idx).trim()));
+}
+
+/**
+ * The date line a request carries (NowLine: `[Now: …]`, a replay's `[Asked: …]`)
+ * repeated at the start of a line of her reply. The server's pattern
+ * (core ActionParser.NOW_LINE_ECHO): anchored to a line start, the closing
+ * bracket optional, the way small models drop it. It runs after
+ * stripRawActionJson, as on the server: a date line that shares its line with
+ * raw action JSON is only the date line once the JSON is gone. Run first, it
+ * missed that line and it was said in the room.
+ */
+const NOW_LINE_ECHO = /^[ \t]*\[(?:Now|Asked):[^\]\n]*\]?[ \t]*(?:\n|$)/gm;
+
+/**
+ * Her reply without a repeated date line. Every request she speaks from opens
+ * its last user message with `[Now: …]`, and the phone had no strip, so a
+ * model that copied the line had it said in the room as her words. Her own
+ * words ("Now: the kettle") are not a date line and stay. The text comes back
+ * as it is when there is nothing to strip.
+ */
+export function stripNowLineEcho(text: string): string {
+  if (!text || (!text.includes('[Now:') && !text.includes('[Asked:'))) return text;
+  const cleaned = text.replace(NOW_LINE_ECHO, '');
+  return cleaned === text ? text : cleaned.trim();
 }
 
 /**

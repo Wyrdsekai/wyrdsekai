@@ -167,7 +167,7 @@ public final class RenameService {
         if (agentId == null) return null;
         var companionRef = ZoneGuardian.getCompanionRef(null, agentId);
         if (companionRef == null) return null;
-        boolean isSteward = authService != null && authService.findUser(playerId)
+        boolean isSteward = authService != null && authService.findUserForPerson(playerId)
             .map(u -> "steward".equals(u.role())).orElse(false);
         companionRef.tell(new CompanionActor.RenameRequest(
             playerId, currentName != null ? currentName : playerId,

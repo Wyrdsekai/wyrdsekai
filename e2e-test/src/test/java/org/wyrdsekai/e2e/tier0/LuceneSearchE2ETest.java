@@ -134,13 +134,15 @@ class LuceneSearchE2ETest {
     @Test
     void searchEndpointReturnsResults() throws Exception {
         // GET /api/search?q=nexus should return results from the server's WyrdLuceneStore.
-        // Foundation rooms are already indexed on seed.
+        // Foundation rooms are already indexed on seed. Any login may search (0.5.0); here the
+        // home machine's operator, from loopback.
         var http = HttpClient.newHttpClient();
         var mapper = new ObjectMapper();
 
         // Search for rooms containing "nexus"
         var req = HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + "/api/search?q=shimmering+hub"))
+            .header("Authorization", "Bearer " + TestServerBootstrap.operatorToken())
             .GET().build();
         var resp = http.send(req, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, resp.statusCode(), "Search endpoint should return 200");
@@ -158,6 +160,7 @@ class LuceneSearchE2ETest {
         // Verify missing q parameter returns 400
         var badReq = HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + "/api/search"))
+            .header("Authorization", "Bearer " + TestServerBootstrap.operatorToken())
             .GET().build();
         var badResp = http.send(badReq, HttpResponse.BodyHandlers.ofString());
         assertEquals(400, badResp.statusCode(), "Missing q should return 400");

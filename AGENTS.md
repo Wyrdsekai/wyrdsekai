@@ -85,7 +85,7 @@ Current production models (as of OSS-release):
 | Drive (skills) | `wyrdsekai-3.5-9b-drive-v6-q4km.gguf` | `:8200` | Tool routing, plan execution, ReAct loop |
 | Voice (register) | `wyrdsekai-3.5-4b-v10-q4km.gguf` + V8 steering vectors | `:8201` | Voice polish, register hold, post-processing |
 
-V8 steering vectors active: `anti_defiance:0.15`, `es_register_hold:0.20`, `refusal_stability:0.20`, `factual_recall_anchor:0.15`, `inline_creative:0.15`.
+V8 steering vectors active by default (`bin/wyrd`, `docker-compose.yml`, `wyrd.ps1`): `anti_defiance:0.15`, `es_register_hold:0.20`, `refusal_stability:0.20`, `first_person_presence:0.15`.
 
 When testing inference-dependent code, use `WYRDSEKAI_E2E_BACKEND=llama-server` with these models on these ports.
 
@@ -98,7 +98,7 @@ When testing inference-dependent code, use `WYRDSEKAI_E2E_BACKEND=llama-server` 
 | `core/.../agent/CompanionActor.java` | Companion lifecycle — drives, soul, repair, protection, ReAct loop |
 | `core/.../agent/PromptAssembler.java` | Builds LLM prompts from room state with 8-layer sandwich pattern |
 | `core/.../soul/` | RepairMode, RepairLedger, AttendantSession, ProtectionFlag, RelationalFloorView, ResilienceTruthMonitor |
-| `core/.../release/MoralDefaultsVerifier.java` | Boot-time class-file hashing + tamper detection |
+| `core/.../release/MoralDefaultsVerifier.java` | Boot-time check that the named moral defaults match the list the release attested to; tamper banner on mismatch |
 | `core/.../persistence/SchemaInitializer.java` | SQLite + PostgreSQL schema bootstrap |
 | `common/.../protocol/CommandParser.java` | Parses user input into typed commands |
 | `server/src/main/resources/application.conf` | All Pekko + app configuration |
@@ -120,7 +120,7 @@ the companions living in it. Tread carefully in:
 |---|---|
 | Protection flags / welfare floor | `core/…/soul/ProtectionManifest.java` |
 | Repair mode + handoff thresholds | `core/…/soul/RepairModeTracker.java` |
-| Recovery seed / continuity | `core/…/lifecycle/`, `RecoverySeedTest` |
+| Recovery seed / continuity | `core/…/lifecycle/RecoverySeedService.java`, `server/…/http/RecoverySeedRoutes.java`, `bin/wyrd` `do_seed`; tests `RecoverySeedServiceTest`, `RecoverySeedRoutesTest`, `scripts/tests/seed_cli_test.sh` |
 | Bondholder floor | `IntrospectBondholderFloorActionTest` and its callers |
 | Wants, drives, cadence | `core/…/agent/` |
 

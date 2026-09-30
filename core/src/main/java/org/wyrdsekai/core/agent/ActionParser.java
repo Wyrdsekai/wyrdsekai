@@ -3037,6 +3037,13 @@ public final class ActionParser {
      * {@code DriveState.prefix}) and small models parrot it back verbatim
      * as the first line of a reply (second-node re-verify 2026-07-11 #29).
      */
+    /** The date line a request carries (NowLine: "[Now: …]", a replay's "[Asked: …]") repeated at
+     *  the start of a line of her reply. Anchored to a line start; the closing bracket may be
+     *  missing, the way small models drop it. Not seen on the served models (0 of 72), but a
+     *  bracketed line at the head of the user turn is the shape they have copied before. */
+    private static final Pattern NOW_LINE_ECHO =
+        Pattern.compile("(?m)^[ \\t]*\\[(?:Now|Asked):[^\\]\\n]*\\]?[ \\t]*(?:\\n|$)");
+
     private static final Pattern DRIVES_PREFIX =
         Pattern.compile("(?m)^[ \\t]*\\[drives\\b[^\\]\\n]*\\]?[ \\t]*");
 
@@ -3066,7 +3073,7 @@ public final class ActionParser {
      */
     private static final Pattern INSTRUCTION_SENTENCE = Pattern.compile(
         "(?i)\\[(?:Share the substance|Retry the tool|Present these findings"
-        + "|Tool usage:|Never repeat this bracketed)[^\\]\\n]*\\]?[ \\t]*\\n?");
+        + "|Tool usage:|Never repeat this bracketed|Already read aloud)[^\\]\\n]*\\]?[ \\t]*\\n?");
 
     /**
      * #34 item 1 (second-node final-verify 032eca34): two literal scaffold shapes reached
@@ -3094,6 +3101,9 @@ public final class ActionParser {
     static String stripSystemPromptFragments(String text) {
         if (text == null || text.isEmpty()) return text;
         var cleaned = text;
+        if (cleaned.indexOf("[Now:") >= 0 || cleaned.indexOf("[Asked:") >= 0) {
+            cleaned = NOW_LINE_ECHO.matcher(cleaned).replaceAll("");
+        }
         if (cleaned.indexOf("[drives") >= 0) {
             cleaned = DRIVES_PREFIX.matcher(cleaned).replaceAll("");
         }

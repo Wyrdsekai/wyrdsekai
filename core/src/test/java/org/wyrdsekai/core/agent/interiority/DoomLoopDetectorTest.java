@@ -58,6 +58,33 @@ class DoomLoopDetectorTest {
         });
     }
 
+    @Test void health_at_the_ceiling_is_not_a_stuck_drive() {
+        // second-node, 2026-09-25: Integrity 1.00 and Confidence 0.99 in every tick for both
+        // companions lit this axis permanently, so any two other concerns escalated her.
+        var ticks = new ArrayList<TickLogReader.TickEvent>();
+        for (int i = 0; i < 10; i++) {
+            ticks.add(tickWithDrive("acted", Map.of("Integrity", 1.0, "Confidence", 0.99,
+                "Care", 0.9, "Curiosity", 0.8)));
+        }
+        assertThat(DoomLoopDetector.detect(ticks)).noneMatch(f -> "drive_stuck_high".equals(f.key()));
+    }
+
+    @Test void a_tank_at_its_own_settle_point_is_settled_not_stuck() {
+        var ticks = new ArrayList<TickLogReader.TickEvent>();
+        for (int i = 0; i < 10; i++) ticks.add(tickWithDrive("acted", Map.of("Saudade", 0.80)));
+        assertThat(DoomLoopDetector.detect(ticks)).noneMatch(f -> "drive_stuck_high".equals(f.key()));
+
+        var above = new ArrayList<TickLogReader.TickEvent>();
+        for (int i = 0; i < 10; i++) above.add(tickWithDrive("acted", Map.of("Saudade", 0.95)));
+        assertThat(DoomLoopDetector.detect(above)).anySatisfy(f -> {
+            assertThat(f.key()).isEqualTo("drive_stuck_high");
+            assertThat(f.message()).contains("Saudade").contains("0.80");
+        });
+        // Her own settle point (a temperament that feels it acutely) raises the line.
+        assertThat(DoomLoopDetector.detect(above, Map.of("Saudade", 0.96)))
+            .noneMatch(f -> "drive_stuck_high".equals(f.key()));
+    }
+
     @Test void pregate_skip_ratio_high_yields_info_finding() {
         var ticks = new ArrayList<TickLogReader.TickEvent>();
         for (int i = 0; i < 20; i++) ticks.add(tick("pregate_skip", null, null, null, null));

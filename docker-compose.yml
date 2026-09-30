@@ -29,13 +29,14 @@ services:
       dockerfile: docker/Dockerfile
     container_name: wyrdsekai
     ports:
-      - "${WYRDSEKAI_PORT:-7070}:7070"
+      - "127.0.0.1:${WYRDSEKAI_PORT:-7070}:7070"   # plain: this machine only; the network uses 7443
       - "${WYRDSEKAI_TELNET_PORT:-7071}:7071"
       - "${WYRDSEKAI_TLS_PORT:-7443}:7443"
     volumes:
       - ${WYRDSEKAI_DATA:-./data}:/data
     environment:
       - WYRDSEKAI_PORT=7070
+      - WYRDSEKAI_HTTP_BIND=0.0.0.0
       - WYRDSEKAI_TELNET_PORT=7071
       - WYRDSEKAI_DATA_DIR=/data
       - WYRDSEKAI_HOSTNAME=${WYRDSEKAI_HOSTNAME:-localhost}
@@ -53,8 +54,8 @@ services:
       - WYRDSEKAI_SGLANG_URL=${WYRDSEKAI_SGLANG_URL:-http://sglang:8000}
       - WYRDSEKAI_OLLAMA_ENABLED=${WYRDSEKAI_OLLAMA_ENABLED:-false}
       - WYRDSEKAI_OLLAMA_URL=${WYRDSEKAI_OLLAMA_URL:-http://ollama:11434}
-      # TLS
-      - WYRDSEKAI_TLS_ENABLED=${WYRDSEKAI_TLS_ENABLED:-false}
+      # HTTPS + WSS on 7443 with the household certificate ( W2)
+      - WYRDSEKAI_TLS_ENABLED=${WYRDSEKAI_TLS_ENABLED:-true}
       # Rate limiting
       - WYRDSEKAI_RATE_LIMIT_ENABLED=${WYRDSEKAI_RATE_LIMIT_ENABLED:-true}
       # Search (Searxng)
@@ -77,9 +78,11 @@ services:
     container_name: wyrdsekai-nats
     restart: unless-stopped
     profiles: ["nats", "cluster"]
+    # This container's bus has no login and no TLS (docker/nats.conf): published on this host only.
+    # WYRDSEKAI_NATS_PUBLISH=0.0.0.0 opens it to the network for a multi-host mesh, unencrypted.
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${WYRDSEKAI_NATS_PUBLISH:-127.0.0.1}:4222:4222"
+      - "127.0.0.1:8222:8222"
     command: ["-c", "/etc/nats/nats.conf"]
     volumes:
       - ./docker/nats.conf:/etc/nats/nats.conf:ro
@@ -212,6 +215,121 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+
+  # Serving profile `single-sparse`: ONE large sparse model serves every lane (drive, voice,
+  # conversation) on the drive port. Started instead of llama-server + llama-voice, never
+  # beside them (same host port). Attention, the shared expert and the KV cache sit on the GPU;
+  # LLAMA_CPU_MOE keeps the routed experts of the first N layers (or all of them) in system RAM —
+  # the launcher's residency planner sets it from the card and the RAM it finds.
+  #
+  # Adapters, in the order the server numbers them: 0 the floor (/adapters/brain/species.gguf, else
+  # /adapters/brain/honesty.gguf), then brain/styled.gguf (the register dial), brain/work.gguf (working
+  # turns), then one night adapter per being (/adapters/brainwrite/<being>/current.gguf). Everything
+  # after the floor loads at 0 and is raised per request by the product. Nothing loads without a floor,
+  # so the ids never shift.
+  #
+  # Usage:
+  #   WYRDSEKAI_SERVING_PROFILE=single-sparse wyrd start
+  #   (or) docker compose --profile brain up -d llama-brain
+  llama-brain:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: wyrdsekai-llama-brain
+    restart: unless-stopped
+    oom_score_adj: 500
+    mem_limit: ${LLAMA_BRAIN_MEM_LIMIT:-0}
+    profiles: ["brain"]
+    ulimits:
+      memlock: -1
+    ports:
+      - "${LLAMA_PORT:-8200}:8200"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+      - ${WYRDSEKAI_DATA:-./data}/adapters:/adapters:ro
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
+    command:
+      - |
+        set -e
+        # Two slots on ONE shared context pool (--kv-unified): a one-token typed question is answered
+        # (~1.3 s) while the other slot writes a long reply, instead of queueing behind it. --ctx-size is
+        # the whole pool and either slot may use all of it; without --kv-unified llama.cpp would split it
+        # between the slots. Measured 2026-09-22: ~3% slower generation, ~60 MB more memory.
+        ARGS="--model /models/$${LLAMA_BRAIN_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf} --port 8200 --ctx-size $${LLAMA_BRAIN_CTX:-32768} --n-gpu-layers $${LLAMA_GPU_LAYERS:-99} --parallel $${LLAMA_BRAIN_PARALLEL:-2} --kv-unified --cache-ram $${LLAMA_CACHE_RAM:-1024} --batch-size 2048 --ubatch-size 2048 --host 0.0.0.0 --jinja --reasoning off --reasoning-budget 0 --flash-attn on --metrics"
+        case "$${LLAMA_CPU_MOE:-all}" in
+          0|none) : ;;
+          all|on) ARGS="$$ARGS --cpu-moe"; echo "[brain] MoE residency: all experts -> system RAM" ;;
+          *) ARGS="$$ARGS --n-cpu-moe $${LLAMA_CPU_MOE}"; echo "[brain] MoE residency: first $${LLAMA_CPU_MOE} layers' experts -> system RAM" ;;
+        esac
+        if [ "$${LLAMA_BRAIN_MLOCK:-1}" = "1" ]; then ARGS="$$ARGS --mlock"; fi
+        # Adapter 0 is the floor: the species floor (brain/species.gguf) when the node has it, else
+        # the honesty adapter. Its scale on working turns is the product's WYRDSEKAI_REGISTER_FLOOR_WORK
+        # (0 for the species floor, 1 for the honesty adapter unless set).
+        GENERIC=""
+        if [ -f /adapters/brain/species.gguf ]; then GENERIC=/adapters/brain/species.gguf
+        elif [ -f /adapters/brain/honesty.gguf ]; then GENERIC=/adapters/brain/honesty.gguf; fi
+        if [ -n "$$GENERIC" ]; then
+          ARGS="$$ARGS --lora-scaled $$GENERIC:1.0"
+          echo "[brain] adapter 0: $${GENERIC#/adapters/} (the floor)"
+          N=1
+          # The styled species adapter: raised per turn by her state (the register dial); loads at 0.
+          if [ -f /adapters/brain/styled.gguf ]; then
+            ARGS="$$ARGS --lora-scaled /adapters/brain/styled.gguf:0.0"
+            echo "[brain] adapter $$N: brain/styled.gguf (the register dial)"
+            N=$$((N+1))
+          fi
+          # The working-turn adapter: raised on the turns that call tools, zeroed when she speaks; loads at 0.
+          if [ -f /adapters/brain/work.gguf ]; then
+            ARGS="$$ARGS --lora-scaled /adapters/brain/work.gguf:0.0"
+            echo "[brain] adapter $$N: brain/work.gguf (working turns)"
+            N=$$((N+1))
+          fi
+          # One night adapter per being, each from her own directory and each under its own id
+          # (in name order). All load at 0: a conversation turn raises the speaker's own.
+          for NIGHT in /adapters/brainwrite/*/current.gguf; do
+            [ -f "$$NIGHT" ] || continue
+            ARGS="$$ARGS --lora-scaled $$NIGHT:0.0"
+            echo "[brain] adapter $$N: $${NIGHT#/adapters/} (that being's conversation turns)"
+            N=$$((N+1))
+          done
+        else
+          echo "[brain] WARNING: neither /adapters/brain/species.gguf nor /adapters/brain/honesty.gguf is present — serving the base model with no adapter" >&2
+        fi
+        set -- $$ARGS
+        if [ -n "$${LLAMA_CHAT_TEMPLATE_KWARGS:-}" ]; then
+          set -- "$$@" --chat-template-kwargs "$${LLAMA_CHAT_TEMPLATE_KWARGS}"
+        fi
+        if [ -n "$${LLAMA_BRAIN_EXTRA_ARGS:-}" ]; then
+          set -- "$$@" $${LLAMA_BRAIN_EXTRA_ARGS}
+          echo "[brain] extra args: $${LLAMA_BRAIN_EXTRA_ARGS}"
+        fi
+        echo "[brain] exec: /app/llama-server $$*"
+        exec /app/llama-server "$$@"
+    environment:
+      - LLAMA_BRAIN_MODEL=${LLAMA_BRAIN_MODEL:-}
+      - LLAMA_BRAIN_CTX=${LLAMA_BRAIN_CTX:-}
+      - LLAMA_BRAIN_PARALLEL=${LLAMA_BRAIN_PARALLEL:-}
+      - LLAMA_BRAIN_MLOCK=${LLAMA_BRAIN_MLOCK:-}
+      - LLAMA_BRAIN_EXTRA_ARGS=${LLAMA_BRAIN_EXTRA_ARGS:-}
+      - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-}
+      - LLAMA_CACHE_RAM=${LLAMA_CACHE_RAM:-}
+      - LLAMA_CPU_MOE=${LLAMA_CPU_MOE:-}
+      - LLAMA_CHAT_TEMPLATE_KWARGS=${LLAMA_CHAT_TEMPLATE_KWARGS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   # Dual-inference VOICE service — 4B model for personality/voice turns.
   # Runs alongside `llama-server` which carries 9B skills. CompanionActor

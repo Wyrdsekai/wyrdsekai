@@ -36,6 +36,8 @@ public final class NatsBridge implements AutoCloseable {
     private Connection connection;
     private final ConcurrentHashMap<String, Consumer<BetweenEnvelope>> handlers = new ConcurrentHashMap<>();
     private volatile Dispatcher sharedDispatcher;
+    /** Checks every inbound envelope before a handler sees it; installed by BetweenActor at start. */
+    private volatile EnvelopeGuard guard;
 
     public NatsBridge(String natsUrl, String nodeId, String zoneId, NodeIdentity identity) {
         this(natsUrl, nodeId, zoneId, identity, null, null);
@@ -78,6 +80,9 @@ public final class NatsBridge implements AutoCloseable {
         // Apply user/password auth if provided (used for relay connections)
         if (authUser != null && !authUser.isEmpty()) {
             builder.userInfo(authUser, authPassword != null ? authPassword : "");
+        } else {
+            // A household bus: the node's login and the household's TLS ( W2).
+            HouseholdBusClient.secure(builder, natsUrl);
         }
 
         var options = builder
@@ -108,6 +113,20 @@ public final class NatsBridge implements AutoCloseable {
 
         connection = Nats.connect(options);
         log.info("NATS bridge established — node {} in zone {}", nodeId, zoneId);
+    }
+
+    /** Install the envelope check every subscription runs before its handler (BetweenActor, at start). */
+    public void setGuard(EnvelopeGuard guard) {
+        this.guard = guard;
+    }
+
+    public EnvelopeGuard guard() {
+        return guard;
+    }
+
+    private boolean admitted(String subject, String channel, BetweenEnvelope envelope) {
+        var g = guard;
+        return g == null || g.admit(subject, channel, envelope);
     }
 
     /** Get the raw NATS connection (for low-level subscriptions). */
@@ -205,6 +224,7 @@ public final class NatsBridge implements AutoCloseable {
                 try {
                     var envelope = BetweenEnvelope.fromBytes(msg.getData());
                     if (nodeId.equals(envelope.src())) return;
+                    if (!admitted(msg.getSubject(), "shared", envelope)) return;
                     matchedHandler.accept(envelope);
                 } catch (Exception e) {
                     log.error("Error processing NATS message on {}: {}", msg.getSubject(), e.getMessage());
@@ -312,6 +332,10 @@ public final class NatsBridge implements AutoCloseable {
                 var msg = connection.request(subject, envelope.toBytes(), timeout);
                 if (msg == null) throw new IOException("Request timed out");
                 var replyEnvelope = BetweenEnvelope.fromBytes(msg.getData());
+                var g = guard;
+                if (g != null && !g.admitReply(subject, replyEnvelope)) {
+                    throw new IOException("Reply failed envelope verification");
+                }
                 return replyEnvelope.payload();
             } catch (Exception e) {
                 throw new CompletionException(e);
@@ -337,6 +361,7 @@ public final class NatsBridge implements AutoCloseable {
             try {
                 var envelope = BetweenEnvelope.fromBytes(msg.getData());
                 if (nodeId.equals(envelope.src())) return; // ignore own messages
+                if (!admitted(msg.getSubject(), "request:" + pattern, envelope)) return;
                 handler.accept(envelope.payload(), msg.getReplyTo());
             } catch (Exception e) {
                 log.error("Error processing NATS request on {}: {}", msg.getSubject(), e.getMessage());
@@ -365,6 +390,7 @@ public final class NatsBridge implements AutoCloseable {
             try {
                 var envelope = BetweenEnvelope.fromBytes(msg.getData());
                 if (nodeId.equals(envelope.src())) return; // ignore own messages
+                if (!admitted(msg.getSubject(), "request:" + pattern, envelope)) return;
                 handler.accept(envelope, msg.getReplyTo());
             } catch (Exception e) {
                 log.error("Error processing NATS request on {}: {}", msg.getSubject(), e.getMessage());

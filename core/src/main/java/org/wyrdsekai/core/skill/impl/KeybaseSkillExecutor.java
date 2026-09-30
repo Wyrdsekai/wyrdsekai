@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.skill.impl;
 
 import org.wyrdsekai.common.i18n.I18n;
+import org.wyrdsekai.core.security.SubprocessEnv;
 import org.wyrdsekai.core.skill.*;
 
 import java.io.IOException;
@@ -17,6 +18,11 @@ import java.util.concurrent.TimeUnit;
  * Relies on system keybase login — no additional auth required.
  */
 public class KeybaseSkillExecutor implements SkillExecutor {
+
+    /** keybase finds its running service through these; nothing else of the daemon's reaches it. */
+    public static final SubprocessEnv ENV = SubprocessEnv.of(
+        "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+        "KEYBASE_RUN_MODE", "KEYBASE_SOCKET_FILE");
 
     private static final int MAX_OUTPUT_BYTES = 64 * 1024;
 
@@ -165,7 +171,7 @@ public class KeybaseSkillExecutor implements SkillExecutor {
                 0, SkillTier.NATIVE, skillId);
 
         try {
-            ProcessBuilder pb = new ProcessBuilder(keybaseBinary, "fs", "write", path);
+            ProcessBuilder pb = ENV.builder(keybaseBinary, "fs", "write", path);
             pb.redirectErrorStream(false);
             Process proc = pb.start();
             proc.getOutputStream().write(content.getBytes(StandardCharsets.UTF_8));
@@ -207,7 +213,7 @@ public class KeybaseSkillExecutor implements SkillExecutor {
     private SkillResult runCommand(List<String> cmd, long start, long timeoutMs,
                                     String skillId, ResultMapper mapper) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(cmd);
+            ProcessBuilder pb = ENV.builder(cmd);
             pb.redirectErrorStream(false);
             Process proc = pb.start();
             boolean finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS);

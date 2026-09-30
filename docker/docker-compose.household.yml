@@ -12,9 +12,10 @@ services:
     image: nats:2-alpine
     container_name: wyrdsekai-household-nats
     restart: unless-stopped
+    # A development bus with no login and no TLS: published on this host only.
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
     command: ["-js", "-m", "8222"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]

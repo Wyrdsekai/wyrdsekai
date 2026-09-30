@@ -1,5 +1,10 @@
 package org.wyrdsekai.app.hermod
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import org.wyrdsekai.app.network.HomeLink
+import org.wyrdsekai.app.network.homeBaseUrl
 import org.wyrdsekai.app.network.PairingClient
 import org.wyrdsekai.app.platform.secureRandomBytes
 import org.wyrdsekai.app.state.TokenStore
@@ -16,6 +21,14 @@ import org.wyrdsekai.app.state.TokenStore
  * the capability plane.
  */
 object ConsentMint {
+
+    private val _paired = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * Fires when a pairing door saved a login for the home's bus, so a running
+     * node joins the bus now instead of at the next start.
+     */
+    val paired: SharedFlow<Unit> = _paired.asSharedFlow()
 
     /** One random label per mint: two phones on one account never collide. */
     fun freshLabel(): String = "phone-" + secureRandomBytes(3)
@@ -34,20 +47,37 @@ object ConsentMint {
             ?: store.loadToken()
         if (session.isNullOrBlank()) return false
         val label = freshLabel()
-        val creds = store.loadServerUrl()?.takeIf { it.isNotBlank() }
+        val creds = store.homeBaseUrl()
             ?.let { PairingClient.pairSelf(it, session, label) }
             ?: RemoteMint.installed()?.pairDevice(session, label, "phone")
         if (creds != null) save(store, creds)
         return creds != null
     }
 
-    /** Persist minted credentials — identical to what the ceremony saves. */
+    /**
+     * Persist minted credentials — the one place every pairing door (the
+     * code ceremony, the session over HTTPS, the session over the relay)
+     * saves what the home answered.
+     *
+     * The reply's `natsUrl` is the home's BUS as a phone reaches it on the
+     * home network (wss://host:<bus port + 1>). It is kept as the bus address
+     * only, never as the relay's: the relay comes from the invite alone, and
+     * the reply carries none. A plain or loopback address is not kept at all
+     * (an older home answered nats://127.0.0.1:4222, its own loopback).
+     */
     fun save(store: TokenStore, c: PairingClient.PairingCredentials) {
         store.savePairingToken(c.token)
         store.saveHouseholdId(c.householdId)
         store.saveHouseholdName(c.householdName)
         store.saveServerDid(c.serverDid)
-        store.saveNatsUrl(c.natsUrl)
-        store.saveServerUrl(c.serverUrl)
+        HomeLink.usableHomeBus(c.natsUrl)?.let { store.saveHomeBusUrl(it) }
+        val serverHost = HomeLink.hostOf(c.serverUrl)
+        if (serverHost != null && !HomeLink.isDeviceLoopback(serverHost)) store.saveServerUrl(c.serverUrl)
+        // This phone's own account on the home's bus (D3).
+        if (!c.natsUser.isNullOrBlank() && !c.natsPass.isNullOrBlank()) {
+            store.saveHomeNatsUser(c.natsUser)
+            store.saveHomeNatsPassword(c.natsPass)
+            _paired.tryEmit(Unit)
+        }
     }
 }

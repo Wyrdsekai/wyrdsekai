@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * runtime capability set bound to a single
@@ -207,6 +208,9 @@ public final class ItemCapabilitySet {
     private final List<String> externalDomains;
     private final List<String> mcpServers;
     private final List<String> safeSlots;
+    /** Transition only: an UNRESTRICTED set that reports calls this set does not grant. */
+    private final ItemCapabilitySet reportAgainst;
+    private final Consumer<String> onUndeclared;
 
     private ItemCapabilitySet(Set<String> declared, BiConsumer<String, Boolean> auditHook) {
         this(declared, auditHook, List.of(), List.of(), List.of());
@@ -216,11 +220,33 @@ public final class ItemCapabilitySet {
                                 List<String> externalDomains,
                                 List<String> mcpServers,
                                 List<String> safeSlots) {
+        this(declared, auditHook, externalDomains, mcpServers, safeSlots, null, null);
+    }
+
+    private ItemCapabilitySet(Set<String> declared, BiConsumer<String, Boolean> auditHook,
+                                List<String> externalDomains,
+                                List<String> mcpServers,
+                                List<String> safeSlots,
+                                ItemCapabilitySet reportAgainst,
+                                Consumer<String> onUndeclared) {
         this.declared = declared;
         this.auditHook = auditHook;
         this.externalDomains = externalDomains == null ? List.of() : List.copyOf(externalDomains);
         this.mcpServers = mcpServers == null ? List.of() : List.copyOf(mcpServers);
         this.safeSlots = safeSlots == null ? List.of() : List.copyOf(safeSlots);
+        this.reportAgainst = reportAgainst;
+        this.onUndeclared = onUndeclared;
+    }
+
+    /**
+     * Transition only ({@code WYRDSEKAI_ITEMS_ALLOW_UNDECLARED}): the old behaviour, UNRESTRICTED,
+     * except that every call {@code manifest} does not grant is handed to {@code onUndeclared}
+     * so the household can see which items to fix before turning the setting off.
+     */
+    public static ItemCapabilitySet unrestrictedReporting(ItemCapabilitySet manifest,
+                                                          Consumer<String> onUndeclared) {
+        return new ItemCapabilitySet(null, null, List.of(), List.of(), List.of(),
+            manifest, onUndeclared);
     }
 
     public static ItemCapabilitySet of(Iterable<String> capabilities) {
@@ -252,12 +278,54 @@ public final class ItemCapabilitySet {
     }
 
     /**
+     * This set, never wider than {@code ceiling}: a declared capability survives only when the
+     * ceiling allows it too. The allowlists (domains, MCP servers, Safe slots) stay this set's own.
+     * An unrestricted ceiling leaves this set as it is; an unrestricted set takes the ceiling.
+     */
+    public ItemCapabilitySet within(ItemCapabilitySet ceiling) {
+        if (ceiling == null || ceiling.isUnrestricted()) return this;
+        if (isUnrestricted()) return ceiling;
+        var kept = new LinkedHashSet<String>();
+        for (var c : declared) {
+            if (ceiling.has(c)) kept.add(c);
+        }
+        return new ItemCapabilitySet(Collections.unmodifiableSet(kept), auditHook,
+            externalDomains, mcpServers, safeSlots);
+    }
+
+    /**
+     * May a request go to {@code host}? Always for an unrestricted set; otherwise only when the
+     * host matches an {@code external_domains} entry ({@code *} matches within a name, so
+     * {@code *.example.com} covers {@code api.example.com}).
+     */
+    public boolean allowsDomain(String host) {
+        if (isUnrestricted()) return true;
+        if (host == null || host.isBlank() || externalDomains.isEmpty()) return false;
+        for (var pattern : externalDomains) {
+            if (pattern == null || pattern.isBlank()) continue;
+            var sb = new StringBuilder("^");
+            for (int i = 0; i < pattern.length(); i++) {
+                var c = pattern.charAt(i);
+                if (c == '*') sb.append("[a-zA-Z0-9_.-]*");
+                else if ("\\.+?()[]{}|^$".indexOf(c) >= 0) sb.append('\\').append(c);
+                else sb.append(c);
+            }
+            sb.append('$');
+            if (host.matches(sb.toString())) return true;
+        }
+        return false;
+    }
+
+    /**
      * Gate entry point — every {@code @HostAccess.Export} method that maps
      * to a Tier 2+ capability calls this first. Throws on denial; otherwise
      * records a gated call for the audit hook (if registered).
      */
     public void require(String capability) {
-        if (declared == null) return; // UNRESTRICTED — JVM-baked
+        if (declared == null) {   // UNRESTRICTED — JVM-baked
+            if (reportAgainst != null && !reportAgainst.has(capability)) onUndeclared.accept(capability);
+            return;
+        }
         gatedCalls.incrementAndGet();
         if (IMPLICIT.contains(capability) || matchesAnyDeclared(capability)) {
             if (auditHook != null) auditHook.accept(capability, true);

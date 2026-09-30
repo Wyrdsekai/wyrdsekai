@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.agent;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.wyrdsekai.common.event.WorldEvent;
@@ -59,6 +60,27 @@ class NoveltyTrackerTest {
         assertThat(NoveltyTracker.signatureFor(said1)).isNotEqualTo(NoveltyTracker.signatureFor(said3));
         // Same topic from a new speaker → different signature (registers as novel).
         assertThat(NoveltyTracker.signatureFor(said1)).isNotEqualTo(NoveltyTracker.signatureFor(said4));
+    }
+
+    @Test
+    void herOwnActsAreNotPerceptions_someoneElsesAre() {
+        var now = Instant.now();
+        var self = "companion-mia";
+        var own = List.<WorldEvent>of(
+            new WorldEvent.Said("room", now, self, "mia", "the fountain keeps running"),
+            new WorldEvent.Emoted("room", now, self, "mia", "*blinks, recalibrating*"),
+            new WorldEvent.EntityEntered("room", now, self, "mia", "agent", "north"),
+            new WorldEvent.EntityLeft("room", now, self, "mia", "south"),
+            new WorldEvent.Told("room", now, self, "mia", "companion-rose", "are you there"));
+        for (var e : own) {
+            assertThat(NoveltyTracker.perceptionSignature(e, self))
+                .as("her own " + e.getClass().getSimpleName()).isNull();
+        }
+        var theirs = new WorldEvent.Said("room", now, "companion-rose", "rose", "the fountain keeps running");
+        assertThat(NoveltyTracker.perceptionSignature(theirs, self))
+            .isEqualTo(NoveltyTracker.signatureFor(theirs));
+        var theirEmote = new WorldEvent.Emoted("room", now, "companion-rose", "rose", "*stretches*");
+        assertThat(NoveltyTracker.perceptionSignature(theirEmote, self)).isEqualTo("Emoted");
     }
 
     // ── Production signatures (2026-06-02 open-loop fix — own outputs satisfy drives) ──

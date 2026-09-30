@@ -166,6 +166,10 @@ class TwoThingsWatchingEachOtherTest {
         env.put("BRAINSTEM_RESTART_CMD", restartScript.toString());
         env.put("BRAINSTEM_FAKE_UNIT", "active");
         env.put("BRAINSTEM_FAKE_HEALTH", "down");
+        // "Where the supervisor cannot say": on a box that is also a node the real unit exists and
+        // systemctl answers with its last activation, so the case must ask about a unit that is not
+        // there (home-server became a node on 2026-09-26 and this began restarting four times).
+        env.put("BRAINSTEM_UNIT", "wyrdsekai-no-such-unit-for-this-test");
         // No fake uptime: the unit is not known to systemd here, so the watcher's own
         // active_since is the only clock, as on launchd. It says the unit has been up an hour.
         Files.writeString(state.resolve("unit"), "active");

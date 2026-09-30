@@ -15,6 +15,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -245,7 +247,7 @@ public class ItemWorldApi {
         this.oracle = new OracleApi(provider);
         this.llm = new LlmApi(provider, c);
         this.agent = new AgentApi(provider, c);
-        this.inventory = new InventoryApi(provider);
+        this.inventory = new InventoryApi(provider, c);
         this.catalog = new CatalogApi(provider);
         this.compose = new ComposeApi(provider);
         this.zone = new ZoneApi(provider);
@@ -256,7 +258,7 @@ public class ItemWorldApi {
         this.federation = new FederationApi(provider, c);
         this.trunk = new TrunkApi(provider);
         this.bonds = new BondsApi(provider, c);
-        this.companions = new CompanionsApi(provider);
+        this.companions = new CompanionsApi(provider, c);
         this.presence = new PresenceApi(provider, c);
         this.notifications = new NotificationsApi(provider, c);
         this.mcp = new McpApi(provider, c);
@@ -975,11 +977,23 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public String fetch(String url) {
-            return provider.webFetch(url, 4000);
+            return fetch(url, 4000);
         }
 
+        /**
+         * Tier 1 reader fetch. No domain allowlist, but an item may not point it at this machine or
+         * the LAN (items built into the server may reach the LAN), nor at the cloud metadata address.
+         */
         @HostAccess.Export
         public String fetch(String url, int maxChars) {
+            try {
+                ScriptHttpClient.checkDestination(url, null, !caps.isUnrestricted());
+            } catch (SecurityException e) {
+                return "[error] " + e.getMessage();
+            } catch (RuntimeException notHttpOrUnresolved) {
+                // Not an http(s) URL, or a name that does not resolve: the fetch cannot reach
+                // this machine or the LAN with it either, so it answers as it always did.
+            }
             return provider.webFetch(url, Math.min(maxChars, 16000));
         }
 
@@ -991,11 +1005,7 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public Map<String, Object> fetch_raw(String url, Map<String, Object> opts) {
-            caps.require("web.fetch_raw");
-            if (!isAllowed(url)) {
-                return domainDenied(url);
-            }
-            return provider.webFetchRaw(url, opts == null ? Map.of() : opts);
+            return send("web.fetch_raw", url, opts, o -> provider.webFetchRaw(url, o));
         }
 
         /** §4.7 — POST. Tier 5 (external side-effect). Steward consent required. */
@@ -1006,11 +1016,7 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public Map<String, Object> post(String url, Object body, Map<String, Object> opts) {
-            caps.require("web.post");
-            if (!isAllowed(url)) {
-                return domainDenied(url);
-            }
-            return provider.webPost(url, body, opts == null ? Map.of() : opts);
+            return send("web.post", url, opts, o -> provider.webPost(url, body, o));
         }
 
         /** §4.7 — PUT. Tier 5. */
@@ -1021,11 +1027,7 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public Map<String, Object> put(String url, Object body, Map<String, Object> opts) {
-            caps.require("web.put");
-            if (!isAllowed(url)) {
-                return domainDenied(url);
-            }
-            return provider.webPut(url, body, opts == null ? Map.of() : opts);
+            return send("web.put", url, opts, o -> provider.webPut(url, body, o));
         }
 
         /** §4.7 — DELETE. Tier 5. */
@@ -1036,11 +1038,7 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public Map<String, Object> delete(String url, Map<String, Object> opts) {
-            caps.require("web.delete");
-            if (!isAllowed(url)) {
-                return domainDenied(url);
-            }
-            return provider.webDelete(url, opts == null ? Map.of() : opts);
+            return send("web.delete", url, opts, o -> provider.webDelete(url, o));
         }
 
         /** §4.7 — introspection: which domains the script can hit. */
@@ -1049,36 +1047,60 @@ public class ItemWorldApi {
             return caps.externalDomains();
         }
 
+        /**
+         * The one path out for the raw web verbs: the capability, the domain allowlist, Safe
+         * references in the headers swapped for their secrets, and the secrets scrubbed from the
+         * answer (see {@link SafeRefs}).
+         */
+        @SuppressWarnings("unchecked")
+        private Map<String, Object> send(String capability, String url, Map<String, Object> opts,
+                                         Function<Map<String, Object>, Map<String, Object>> call) {
+            caps.require(capability);
+            if (!isAllowed(url)) {
+                return domainDenied(url);
+            }
+            try {
+                ScriptHttpClient.checkDestination(url, caps, !caps.isUnrestricted());
+            } catch (SecurityException e) {
+                var out = new LinkedHashMap<String, Object>();
+                out.put("status", 0);
+                out.put("error", "address_blocked");
+                out.put("message", e.getMessage());
+                return out;
+            } catch (RuntimeException notHttpOrUnresolved) {
+                // Not an http(s) URL, or a name that does not resolve: the request cannot reach
+                // this machine or the LAN with it either; the provider answers as it always did.
+            }
+            var used = new HashSet<String>();
+            var sendOpts = new LinkedHashMap<String, Object>();
+            if (opts != null) sendOpts.putAll(opts);
+            if (sendOpts.get("headers") instanceof Map<?, ?> headers) {
+                try {
+                    sendOpts.put("headers", SafeRefs.resolveHeaders(
+                        headers, caps, provider::safeSecretForRequest, used));
+                } catch (SafeRefs.MissingCredential e) {
+                    var out = new LinkedHashMap<String, Object>();
+                    out.put("status", 0);
+                    out.put("error", "credential_missing");
+                    out.put("slot", e.slot());
+                    out.put("message", e.getMessage());
+                    return out;
+                }
+            }
+            var result = call.apply(sendOpts);
+            return used.isEmpty() ? result : (Map<String, Object>) SafeRefs.redactDeep(result, used);
+        }
+
         // ─── allowlist helpers ──────────────────────────────────────
         private boolean isAllowed(String url) {
             if (caps.isUnrestricted()) return true;
-            var domains = caps.externalDomains();
-            if (domains.isEmpty()) return false;
             String host;
             try {
                 host = URI.create(url).getHost();
             } catch (Exception e) {
                 return false;
             }
-            if (host == null) return false;
-            for (var d : domains) {
-                if (matches(host, d)) return true;
-            }
-            return false;
-        }
-
-        private static boolean matches(String host, String pattern) {
-            if (pattern == null || pattern.isBlank()) return false;
-            // Wildcard form: '*' matches a single label boundary or arbitrary chars within.
-            var sb = new StringBuilder("^");
-            for (int i = 0; i < pattern.length(); i++) {
-                var c = pattern.charAt(i);
-                if (c == '*') sb.append("[a-zA-Z0-9_.-]*");
-                else if ("\\.+?()[]{}|^$".indexOf(c) >= 0) sb.append('\\').append(c);
-                else sb.append(c);
-            }
-            sb.append("$");
-            return host.matches(sb.toString());
+            return caps.allowsDomain(host);
         }
 
         private static Map<String, Object> domainDenied(String url) {
@@ -1216,6 +1238,17 @@ public class ItemWorldApi {
         @HostAccess.Export
         public String analyze(String text, String prompt) {
             caps.require("llm.analyze");
+            return provider.llmAnalyze(text, prompt);
+        }
+
+        /** {@code opts.now: "none"} for a rewrite of the text (polish, translate): the model is
+         *  not told what day it is, so the date cannot end up in what comes back. */
+        @HostAccess.Export
+        public String analyze(String text, String prompt, Map<String, Object> opts) {
+            caps.require("llm.analyze");
+            if (opts != null && "none".equals(String.valueOf(opts.get("now")))) {
+                return provider.llmRewrite(text, prompt);
+            }
             return provider.llmAnalyze(text, prompt);
         }
 
@@ -2039,9 +2072,15 @@ public class ItemWorldApi {
 
     public static class InventoryApi {
         private final ItemWorldApiProvider provider;
+        private final ItemCapabilitySet caps;
 
         InventoryApi(ItemWorldApiProvider provider) {
+            this(provider, ItemCapabilitySet.UNRESTRICTED);
+        }
+
+        InventoryApi(ItemWorldApiProvider provider, ItemCapabilitySet caps) {
             this.provider = provider;
+            this.caps = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
         }
 
         @HostAccess.Export
@@ -2049,9 +2088,10 @@ public class ItemWorldApi {
             return provider.inventoryList();
         }
 
+        /** Use another item; it runs with no more than this item's capabilities. */
         @HostAccess.Export
         public Map<String, Object> use(String itemId, Map<String, Object> params) {
-            return provider.inventoryUse(itemId, params, 0);
+            return provider.inventoryUse(itemId, params, 0, caps);
         }
     }
 
@@ -2474,6 +2514,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public Map<String, Object> transfer(String targetUsername) {
+            caps.require("bond.transfer");
             return provider.bondsTransfer(targetUsername);
         }
     }
@@ -2482,7 +2523,12 @@ public class ItemWorldApi {
 
     public static class CompanionsApi {
         private final ItemWorldApiProvider provider;
-        CompanionsApi(ItemWorldApiProvider provider) { this.provider = provider; }
+        private final ItemCapabilitySet caps;
+        CompanionsApi(ItemWorldApiProvider provider) { this(provider, ItemCapabilitySet.UNRESTRICTED); }
+        CompanionsApi(ItemWorldApiProvider provider, ItemCapabilitySet caps) {
+            this.provider = provider;
+            this.caps = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
+        }
 
         /** Companions bound to this zone. See {@link ItemWorldApiProvider#companionsList()}. */
         @HostAccess.Export
@@ -2496,6 +2542,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public Map<String, Object> birth(String name) {
+            caps.require("companions.birth");
             return provider.companionsBirth(name);
         }
     }
@@ -2599,12 +2646,14 @@ public class ItemWorldApi {
         /** Grant {@code subject} ("everyone" for all) use of {@code service}. */
         @HostAccess.Export
         public Map<String, Object> grant(String subject, String service) {
+            caps.require("mcp.grant");
             return provider.mcpGrantIssue(subject, service);
         }
 
         /** Revoke {@code subject}'s use of {@code service}. */
         @HostAccess.Export
         public Map<String, Object> revoke(String subject, String service) {
+            caps.require("mcp.revoke");
             return provider.mcpGrantRevoke(subject, service);
         }
 
@@ -4180,14 +4229,18 @@ public class ItemWorldApi {
             return provider.safeHas(slot);
         }
 
-        /** §4.18 — read a slot. Tier 5 with safe_slots allowlist. */
+        /**
+         * §4.18 — a reference to a slot, never its value: "can use, cannot read". Put the
+         * reference in a request header and the HTTP layer sends the secret in its place
+         * ({@link SafeRefs}). Tier 5 with safe_slots allowlist; null for a slot not allowed.
+         */
         @HostAccess.Export
         public String get(String slot) {
             caps.require("safe.get");
             if (!isSlotAllowed(slot)) {
                 return null;
             }
-            return provider.safeGet(slot);
+            return SafeRefs.ref(slot);
         }
 
         /** §4.18 — write a slot. Tier 5 with safe_slots allowlist. */

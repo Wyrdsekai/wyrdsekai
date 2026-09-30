@@ -323,4 +323,52 @@ class ActionTriageTest {
             null // drives — existing tests don't exercise drive-aware paths
         );
     }
+
+    // --- The own-time prompt is the product's, not a person's ---
+
+    @Test
+    void ownTimePrompt_isAnAutonomousTurnWithASystemTrigger() {
+        assertThat(ActionTriage.isOwnTimePrompt(false, "system")).isTrue();
+    }
+
+    @Test
+    void ownTimePrompt_isNotSomethingAPersonSaid() {
+        assertThat(ActionTriage.isOwnTimePrompt(true, "system")).as("a reactive turn is an answer to someone").isFalse();
+        assertThat(ActionTriage.isOwnTimePrompt(false, "did:wyrd:someone")).isFalse();
+        assertThat(ActionTriage.isOwnTimePrompt(false, null)).isFalse();
+    }
+
+    // --- a question about the person's own record is answered from memory ---
+
+    @Test
+    void askingWhatIsKnownAboutThemIsAnOwnRecordQuestion() {
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("what do you know about my reading interests?")).isTrue();
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("do u remember what i told u about my sister?")).isTrue();
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("whats my favourite tea again")).isFalse();   // no apostrophe form: left to the model
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("what's my favourite tea again")).isTrue();
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("what did I say about the release?")).isTrue();
+    }
+
+    @Test
+    void aLookupRequestIsNot() {
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("find me a book about mythology in the library")).isFalse();
+        assertThat(ActionTriage.asksAboutTheirOwnRecord("what do you know about lighthouses?")).isFalse();
+        assertThat(ActionTriage.asksAboutTheirOwnRecord(null)).isFalse();
+    }
+
+    @Test
+    void recallIsNeverWithheldForAnOwnRecordQuestion() {
+        assertThat(ActionTriage.WORLD_LOOKUP_TOOL_NAMES).doesNotContain("recall", "remember");
+        assertThat(ActionTriage.WORLD_LOOKUP_TOOL_NAMES).contains("library_card", "web_search");
+    }
+
+    @Test
+    void aConnectedServicesToolIsExploratoryLikeTheBuiltInLibrary() {
+        // Withheld on a grief turn like library_search: she is with the person, not researching.
+        assertThat(ActionTriage.isExploratory("mcp__researchzosho__library_search")).isTrue();
+        assertThat(ActionTriage.isExploratory("mcp__calendar__list_events")).isTrue();
+        assertThat(ActionTriage.isExploratory("library_search")).isTrue();
+        assertThat(ActionTriage.isExploratory("tell_agent")).isFalse();
+        assertThat(ActionTriage.isExploratory(null)).isFalse();
+    }
 }

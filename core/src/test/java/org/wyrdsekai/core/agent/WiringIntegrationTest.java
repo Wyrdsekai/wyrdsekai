@@ -2,6 +2,7 @@ package org.wyrdsekai.core.agent;
 
 import com.typesafe.config.ConfigFactory;
 import org.apache.pekko.actor.testkit.typed.javadsl.ActorTestKit;
+import org.apache.pekko.actor.testkit.typed.javadsl.FishingOutcomes;
 import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.persistence.testkit.javadsl.EventSourcedBehaviorTestKit;
@@ -210,10 +211,15 @@ class WiringIntegrationTest {
             ```
             """, 20, 15));
 
-        // Should speak the prose (including the yawn)
-        var say = roomProbe.expectMessageClass(
-            RoomCommand.SayInRoom.class, Duration.ofSeconds(5));
-        assertThat(say.text()).containsIgnoringCase("yawn");
+        // The yawn itself is a stage direction the room shows (an emote); what she wrote is
+        // still said. Both must arrive, in either order.
+        var seen = roomProbe.fishForMessage(Duration.ofSeconds(5), m -> {
+            if (m instanceof RoomCommand.SayInRoom say && say.text().toLowerCase().contains("yawn")) {
+                return FishingOutcomes.complete();
+            }
+            return FishingOutcomes.continueAndIgnore();
+        });
+        assertThat(seen).isNotEmpty();
     }
 
     // -----------------------------------------------------------------------

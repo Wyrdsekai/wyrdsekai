@@ -6,7 +6,10 @@ import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import org.wyrdsekai.app.engine.discovery.PhoneInvite
 import org.wyrdsekai.app.engine.discovery.SavedHouseholdConfig
+import org.wyrdsekai.app.i18n.currentUiStrings
 import org.wyrdsekai.app.network.AuthClient
+import org.wyrdsekai.app.network.HomeLink
+import org.wyrdsekai.app.network.InviteSecurity
 import org.wyrdsekai.app.network.WyrdWebSocket
 import org.wyrdsekai.app.network.addInviteToBank
 import org.wyrdsekai.app.network.parseWsHostPort
@@ -60,12 +63,19 @@ class ConnectionViewModel(
         val savedUrl = tokenStore.loadServerUrl()
         val savedUsername = tokenStore.loadUsername()
         val savedLocale = tokenStore.loadLocale() ?: "en"
+        val homeUrl = savedUrl?.let { resolveHomeUrl(it) }
 
-        if (savedToken != null && savedUrl != null && savedUsername != null) {
-            _serverUrl.value = savedUrl
+        if (savedToken != null && homeUrl != null && savedUsername != null) {
+            _serverUrl.value = homeUrl
             _username.value = savedUsername
             _token.value = savedToken
-            webSocket.connect(savedUrl, savedToken, savedLocale)
+            webSocket.connect(homeUrl, savedToken, savedLocale)
+        } else if (savedToken != null && savedUrl != null && homeUrl == null) {
+            // Paired before the home's network was encrypted: its address is plain
+            // http, which the phone no longer uses off the device.
+            _serverUrl.value = savedUrl
+            savedUsername?.let { _username.value = it }
+            _error.value = currentUiStrings().secNeedsInvite
         } else {
             // Pre-fill fields from saved values even if token is missing
             savedUrl?.let { _serverUrl.value = it }
@@ -107,7 +117,9 @@ class ConnectionViewModel(
         }
         val config = SavedHouseholdConfig.fromPhoneInvite(
             invite, Clock.System.now().toEpochMilliseconds())
+        InviteSecurity.remember(invite, tokenStore)
         scope.launch {
+            InviteSecurity.pinHome(invite.lanHttps, invite.homeCaFp, invite.homeBus)
             // the invite IS the trust decision: pin
             // the relay's certificate from the fp/ca_fp the steward carried,
             // BEFORE the sink fires, so the first relay connect already
@@ -140,10 +152,13 @@ class ConnectionViewModel(
         // forward as MCP creds, so the local-relay boot logs in as the real
         // account over the relay (vs. the old behaviour where the invite
         // short-circuited login into a relay-attach-only / auto-register path).
+        // An invite for the home network alone logs in at its https address.
         extractInvite(_serverUrl.value)?.let { invite ->
             _serverUrl.value = invite  // strip any pre-filled prefix before the relay path parses it
-            loginOverRelay()
-            return
+            if (!adoptHomeNetworkInvite(invite)) {
+                loginOverRelay()
+                return
+            }
         }
         // A bare relay wss:// URL is not HTTP-loggable — fail with guidance
         // instead of a raw network error (the historical dead-end: fetch
@@ -153,10 +168,16 @@ class ConnectionViewModel(
                 "On your node, run: wyrd phone invite, then paste the wyrdphone:// link here."
             return
         }
+        val url = resolveHomeUrl(_serverUrl.value) ?: run {
+            _error.value = currentUiStrings().secNeedsInvite
+            return
+        }
+        _serverUrl.value = url
         scope.launch {
             _isLoading.value = true
             _error.value = null
-            val client = AuthClient(_serverUrl.value)
+            InviteSecurity.pinHome(tokenStore.loadLanHttps(), tokenStore.loadHomeCaFp(), tokenStore.loadHomeBusUrl())
+            val client = AuthClient(url)
             val result = client.login(_username.value, _password.value)
             client.close()
 
@@ -200,13 +221,15 @@ class ConnectionViewModel(
             return
         }
         _error.value = null
-        val relay = invite.relays.first()
         // Tier-1 phone guard: refuse a zone-less invite (see applyPhoneInvite) — it
         // would silently drop the user into a dead local Study.
         if (invite.zoneId.isNullOrBlank()) {
             _error.value = "This invite has no home zone — ask the zone owner for a fresh invite."
             return
         }
+        val relay = invite.relays.first()
+        InviteSecurity.remember(invite, tokenStore)
+        scope.launch { InviteSecurity.pinHome(invite.lanHttps, invite.homeCaFp, invite.homeBus) }
         // Persist the relay leg (URL + transport creds + zone) so the cold-start
         // boot reconnects without the invite, and set the AppProps the local
         // boot reads on this same launch.
@@ -249,7 +272,7 @@ class ConnectionViewModel(
     fun register() {
         extractInvite(_serverUrl.value)?.let { invite ->
             _serverUrl.value = invite
-            if (applyPhoneInvite(invite)) return
+            if (!adoptHomeNetworkInvite(invite) && applyPhoneInvite(invite)) return
         }
         // Same guard as login(): no HTTP against a relay wss URL.
         if (isRelayWsUrl(_serverUrl.value)) {
@@ -257,10 +280,16 @@ class ConnectionViewModel(
                 "On your node, run: wyrd phone invite, then paste the wyrdphone:// link here."
             return
         }
+        val url = resolveHomeUrl(_serverUrl.value) ?: run {
+            _error.value = currentUiStrings().secNeedsInvite
+            return
+        }
+        _serverUrl.value = url
         scope.launch {
             _isLoading.value = true
             _error.value = null
-            val client = AuthClient(_serverUrl.value)
+            InviteSecurity.pinHome(tokenStore.loadLanHttps(), tokenStore.loadHomeCaFp(), tokenStore.loadHomeBusUrl())
+            val client = AuthClient(url)
             val result = client.register(_username.value, _password.value, _username.value)
             client.close()
 
@@ -279,7 +308,37 @@ class ConnectionViewModel(
     }
 
     fun connectAnonymous() {
-        webSocket.connect(_serverUrl.value, null, currentLocale())
+        val url = resolveHomeUrl(_serverUrl.value) ?: run {
+            _error.value = currentUiStrings().secNeedsInvite
+            return
+        }
+        webSocket.connect(url, null, currentLocale())
+    }
+
+    /**
+     * An invite for the home network alone (no relay, W2): keep its key, CA
+     * fingerprint and https address, and log in there. False for any other invite.
+     */
+    private fun adoptHomeNetworkInvite(url: String): Boolean {
+        val invite = runCatching { PhoneInvite.parse(url) }.getOrNull() ?: return false
+        if (invite.relays.isNotEmpty() || invite.lanHttps == null) return false
+        InviteSecurity.remember(invite, tokenStore)
+        invite.zoneId?.let { tokenStore.saveZoneId(it) }
+        _serverUrl.value = invite.lanHttps
+        return true
+    }
+
+    /**
+     * Where to reach the home over HTTP: [url] when it is encrypted or on this
+     * device; the invite's https address when [url] is the same home in plain
+     * http (paired before home TLS); otherwise null, and nothing is sent.
+     */
+    private fun resolveHomeUrl(url: String): String? {
+        if (!HomeLink.isPlaintextOffDevice(url)) return url
+        val lan = tokenStore.loadLanHttps()
+        val fp = tokenStore.loadHomeCaFp()
+        if (lan != null && fp != null && HomeLink.hostOf(lan) == HomeLink.hostOf(url)) return lan
+        return null
     }
 
     fun connectToLocalNode() {

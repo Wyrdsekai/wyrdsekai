@@ -71,7 +71,7 @@ describe('InferenceRouter remote backend', () => {
 
     expect(router.getActiveBackend()).toBe('none');
 
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
     expect(router.getActiveBackend()).toBe('remote');
   });
 
@@ -79,7 +79,7 @@ describe('InferenceRouter remote backend', () => {
     const llama = new MockLlamaService();
     llama.setLoaded(true);
     const router = new InferenceRouter(llama);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
 
     expect(router.getActiveBackend()).toBe('local');
   });
@@ -87,7 +87,7 @@ describe('InferenceRouter remote backend', () => {
   it('remote takes priority over server', () => {
     const llama = new MockLlamaService();
     const router = new InferenceRouter(llama);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
     router.setServerUrl('https://cloud.example.com');
 
     expect(router.getActiveBackend()).toBe('remote');
@@ -96,16 +96,41 @@ describe('InferenceRouter remote backend', () => {
   it('falls back to remote when local is unavailable', async () => {
     const llama = new MockLlamaService();
     const router = new InferenceRouter(llama);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
 
     globalThis.fetch = mockFetch('remote response');
 
     const result = await router.complete('voice', testMessages);
     expect(result.content).toBe('remote response');
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'http://198.51.100.100:8080/v1/chat/completions',
+      'https://198.51.100.100:8080/v1/chat/completions',
       expect.any(Object),
     );
+  });
+
+  it('never sends a prompt over plain http to another machine: that backend is skipped', async () => {
+    const llama = new MockLlamaService();
+    const router = new InferenceRouter(llama);
+    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setServerUrl('https://cloud.example.com');
+    globalThis.fetch = mockFetch('from the cloud');
+
+    const result = await router.complete('voice', testMessages);
+    expect(result.content).toBe('from the cloud');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect((globalThis.fetch as jest.Mock).mock.calls[0][0]).toBe('https://cloud.example.com/v1/chat/completions');
+
+    router.setServerUrl(null);
+    await expect(router.complete('voice', testMessages)).rejects.toThrow(/not encrypted/);
+    await expect(router.completeAt('http://198.51.100.20:11434', testMessages)).rejects.toThrow(/not encrypted/);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("the device's own inference server (loopback) is still used", async () => {
+    const router = new InferenceRouter(new MockLlamaService());
+    router.setRemoteUrl('http://localhost:8080');
+    globalThis.fetch = mockFetch('on the device');
+    expect((await router.complete('voice', testMessages)).content).toBe('on the device');
   });
 
   it('falls back to remote when local fails', async () => {
@@ -113,7 +138,7 @@ describe('InferenceRouter remote backend', () => {
     llama.setLoaded(true);
     llama.setShouldFail(true);
     const router = new InferenceRouter(llama);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
 
     globalThis.fetch = mockFetch('remote fallback');
 
@@ -126,7 +151,7 @@ describe('InferenceRouter remote backend', () => {
     llama.setLoaded(true);
     llama.setShouldFail(true);
     const router = new InferenceRouter(llama);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
     router.setServerUrl('https://cloud.example.com');
 
     // Remote fails, server succeeds
@@ -155,7 +180,7 @@ describe('InferenceRouter remote backend', () => {
     llama.setLoaded(true);
     llama.setShouldFail(true);
     const router = new InferenceRouter(llama);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
     router.setServerUrl('https://cloud.example.com');
 
     globalThis.fetch = mockFetchFailing();
@@ -176,8 +201,8 @@ describe('InferenceRouter remote backend', () => {
 
     expect(router.getRemoteUrl()).toBeNull();
 
-    router.setRemoteUrl('http://198.51.100.100:8080');
-    expect(router.getRemoteUrl()).toBe('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
+    expect(router.getRemoteUrl()).toBe('https://198.51.100.100:8080');
 
     router.setRemoteUrl(null);
     expect(router.getRemoteUrl()).toBeNull();
@@ -188,7 +213,7 @@ describe('InferenceRouter remote backend', () => {
     const router = new InferenceRouter(llama);
 
     expect(router.canInfer()).toBe(false);
-    router.setRemoteUrl('http://198.51.100.100:8080');
+    router.setRemoteUrl('https://198.51.100.100:8080');
     expect(router.canInfer()).toBe(true);
     expect(router.canInferLocally()).toBe(false);
   });

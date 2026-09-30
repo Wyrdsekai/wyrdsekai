@@ -105,6 +105,8 @@ public final class BrainstemLink {
             case "restart-failed" -> "The brainstem tried to restart me and could not: " + reason + ".";
             case "recovered" -> "I am answering again, " + reason + ".";
             case "crashed" -> "I crashed; " + reason + ".";
+            case "card-shared" -> "I made room on the card: " + reason + ". I was slower for a while.";
+            case "card-reclaimed" -> "The card came back to me: " + reason + ".";
             case "stopped" -> null;   // an intentional stop is marked by quiesce, not here
             default -> null;
         };

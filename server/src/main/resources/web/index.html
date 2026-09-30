@@ -145,6 +145,7 @@ const I18N = {
     expired: "Session expired — sign in again.",
     logged_out: "Signed out everywhere. Sign in to return.",
     net_error: "network error: ", failed: c => `failed (${c})`,
+    recovery: k => `Your recovery key. It is shown this once:\n\n${k}\n\nWrite it down and keep it somewhere safe. If the steward password is lost: wyrd recover <recovery-key> <new-password>`,
     exits: "exits: ", here: "here: ", see: "you see: ", carrying: "carrying: ",
     you: "you", someone: "someone", somewhere: "somewhere",
   },
@@ -159,6 +160,7 @@ const I18N = {
     expired: "Sesión caducada — inicia sesión de nuevo.",
     logged_out: "Sesión cerrada en todas partes. Inicia sesión para volver.",
     net_error: "error de red: ", failed: c => `falló (${c})`,
+    recovery: k => `Tu clave de recuperación. Se muestra solo esta vez:\n\n${k}\n\nAnótala y guárdala en un lugar seguro. Si se pierde la contraseña del administrador: wyrd recover <clave> <nueva-contraseña>`,
     exits: "salidas: ", here: "aquí: ", see: "ves: ", carrying: "llevas: ",
     you: "tú", someone: "alguien", somewhere: "algún lugar",
   },
@@ -173,6 +175,7 @@ const I18N = {
     expired: "セッションが切れました — 再度サインインしてください。",
     logged_out: "すべての接続からサインアウトしました。戻るにはサインインしてください。",
     net_error: "ネットワークエラー: ", failed: c => `失敗 (${c})`,
+    recovery: k => `あなたの復旧キーです。表示はこの一度だけです:\n\n${k}\n\n書き留めて安全な場所に保管してください。スチュワードのパスワードを失ったとき: wyrd recover <復旧キー> <新しいパスワード>`,
     exits: "出口: ", here: "ここにいる: ", see: "見えるもの: ", carrying: "所持品: ",
     you: "あなた", someone: "誰か", somewhere: "どこか",
   },
@@ -430,6 +433,9 @@ function dispatch(raw) {
     send({ type: "command", id, command: "journal", args: [] }); return; }
   if (verb === "journal") {
     send({ type: "command", id, command: "journal", args: [rest] }); return; }
+  // The person's own yes to a question the household library asked them about: a command, not speech.
+  if (lower.replace(/\s+/g, " ") === "research yes") {
+    send({ type: "command", id, command: "research", args: ["yes"] }); return; }
   if (["mail","inbox"].includes(lower)) {
     send({ type: "command", id, command: "mail", args: [] }); return; }
   if (verb === "mail" || verb === "inbox") {
@@ -529,6 +535,8 @@ $("authForm").addEventListener("submit", async ev => {
       headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { msg.textContent = data.error || T.failed(res.status); return; }
+    // The household's first account comes with its recovery key, shown this once.
+    if (data.recoveryKey) window.alert(T.recovery(data.recoveryKey));
     token = data.token;
     myName = (data.displayName || data.username || user || "").trim();
     sessionStorage.setItem("wyrd.token", token);

@@ -16,8 +16,8 @@ exports.manifest = {
     description: "Research a topic across arXiv + Wikipedia and journal a structured summary.",
     author: "did:wyrdsekai:foundation",
     capabilities: [
-        "arxiv.read",
-        "wikipedia.read",
+        "arxiv.search",
+        "wikipedia.summary",
         "journal.write",
         "embed.similarity"
     ],

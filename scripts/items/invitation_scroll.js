@@ -16,7 +16,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Rolled parchment holding the household's pending invitations — the steward may mint new codes or burn old ones.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["invite.create", "invite.revoke"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

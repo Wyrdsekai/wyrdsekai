@@ -9,8 +9,6 @@ import org.wyrdsekai.common.event.WorldEvent;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.agent.CapabilityContextBuilder;
 import org.wyrdsekai.core.agent.VitalityState;
-import org.wyrdsekai.core.household.HouseholdMember;
-import org.wyrdsekai.core.household.PermissionChecker;
 import org.wyrdsekai.core.household.StewardAuditLog;
 import org.wyrdsekai.core.oracle.OracleBridge;
 import org.wyrdsekai.core.oracle.OracleEventBridge;
@@ -57,7 +55,7 @@ class AgentIntelligenceE2ETest {
     private static Javalin householdApp;
     private static int householdPort;
     private static String stewardToken;
-    private static PermissionChecker householdPermissions;
+    private static AuthService householdAuth;
 
     private static final HttpClient HTTP = HttpClient.newBuilder()
         .version(HttpClient.Version.HTTP_1_1)
@@ -69,7 +67,6 @@ class AgentIntelligenceE2ETest {
     @BeforeAll
     static void setUp() throws Exception {
         // --- Standalone Javalin for household API tests ---
-        householdPermissions = new PermissionChecker();
         var auditLog = new StewardAuditLog();
 
         householdPort = PortAllocator.allocate();
@@ -104,13 +101,13 @@ class AgentIntelligenceE2ETest {
         assertTrue(session.isPresent(), "Login should succeed");
         stewardToken = session.get().token();
 
-        // Register the auth user's ID as a steward in the permission checker
+        // The first account is the steward; the routes read the accounts table.
         var userOpt = authService.validateSession(stewardToken);
         assertTrue(userOpt.isPresent(), "Session should be valid");
-        householdPermissions.register(
-            HouseholdMember.steward(userOpt.get().id(), "TestSteward"));
+        assertEquals("steward", userOpt.get().role());
+        householdAuth = authService;
 
-        var householdRoutes = new HouseholdRoutes(householdPermissions, auditLog, authService);
+        var householdRoutes = new HouseholdRoutes(auditLog, authService);
         householdApp = Javalin.create(cfg -> householdRoutes.register(cfg.routes));
         householdApp.start(householdPort);
     }
@@ -251,7 +248,7 @@ class AgentIntelligenceE2ETest {
 
         boolean foundSteward = false;
         for (var member : members) {
-            if ("STEWARD".equals(member.path("role").asText())) {
+            if ("steward".equals(member.path("role").asText())) {
                 foundSteward = true;
                 break;
             }
@@ -260,35 +257,29 @@ class AgentIntelligenceE2ETest {
     }
 
     @Test @Order(21)
-    void household_add_member() throws Exception {
-        var body = """
-            {"did":"did:key:new-member","name":"New Member","role":"MEMBER","permissions":["room:enter","budget:view"]}
-            """;
+    void household_promote_member() throws Exception {
+        var member = householdAuth.register("new-member", "testpass", "New Member", "member").orElseThrow();
         var req = HttpRequest.newBuilder()
-            .uri(URI.create("http://localhost:" + householdPort + "/api/household/members"))
+            .uri(URI.create("http://localhost:" + householdPort + "/api/household/members/"
+                + member.userId() + "/promote"))
             .header("Authorization", "Bearer " + stewardToken)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .POST(HttpRequest.BodyPublishers.noBody())
             .build();
 
         var resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-        assertEquals(201, resp.statusCode(), "Steward should add member: " + resp.body());
+        assertEquals(200, resp.statusCode(), "Steward should promote a member: " + resp.body());
 
-        var created = Json.mapper().readTree(resp.body());
-        assertEquals("did:key:new-member", created.path("did").asText());
-        assertEquals("New Member", created.path("name").asText());
-        assertEquals("MEMBER", created.path("role").asText());
+        var promoted = Json.mapper().readTree(resp.body());
+        assertEquals("new-member", promoted.path("username").asText());
+        assertEquals("New Member", promoted.path("name").asText());
+        assertEquals("steward", promoted.path("role").asText());
     }
 
     @Test @Order(22)
     void household_permission_denied() throws Exception {
-        var body = """
-            {"did":"did:key:unauthorized","name":"Unauthorized","role":"MEMBER","permissions":[]}
-            """;
         var req = HttpRequest.newBuilder()
-            .uri(URI.create("http://localhost:" + householdPort + "/api/household/members"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .uri(URI.create("http://localhost:" + householdPort + "/api/household/members/someone/promote"))
+            .POST(HttpRequest.BodyPublishers.noBody())
             .build();
 
         var resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());

@@ -104,7 +104,7 @@ public class SshAdapter {
     private InviteService inviteService; // nullable
     // #12 (2026-07-19 OSS hardening) — brute-force throttle for SSH password auth,
     // keyed per source IP and per targeted account.
-    private final LoginRateLimiter loginLimiter = new LoginRateLimiter();
+    private final LoginRateLimiter loginLimiter = LoginRateLimiter.shared();
     /** Human phrasing of a remaining lockout, for the operator-facing log. */
     private static String lockoutMessage(long waitMs) {
         long waitMin = Math.max(1, (waitMs + 59_999) / 60_000);
@@ -192,7 +192,7 @@ public class SshAdapter {
             sshd.setPasswordAuthenticator((username, password, session) -> {
                 // #12 (2026-07-19) — brute-force throttle, per source IP + per
                 // targeted account. A locked key is denied without touching bcrypt.
-                var ipKey = "ip:" + clientIp(session);
+                var ipKey = "ssh-ip:" + clientIp(session);
                 var acctKey = "acct:" + (username == null ? "" : username.toLowerCase());
                 if (loginLimiter.anyLocked(ipKey, acctKey)) {
                     log.warn("SSH auth throttled for '{}' from {} — too many recent failures",

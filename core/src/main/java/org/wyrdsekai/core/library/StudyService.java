@@ -328,7 +328,13 @@ public final class StudyService {
      * List recent journal entries (shared only) — the companion-visible view.
      */
     public List<WyrdLuceneStore.SearchResult> recentJournal(String userDid, int limit) {
-        return luceneStore.listJournal(userDid, limit);
+        var keys = ownerKeys(userDid);
+        if (keys.size() == 1) return luceneStore.listJournal(userDid, limit);
+        // Written under the person, asked for under the login id (the phone's sealed journal list).
+        var combined = new ArrayList<WyrdLuceneStore.SearchResult>();
+        for (var key : keys) combined.addAll(luceneStore.listJournal(key, limit));
+        combined.sort(Comparator.comparing((WyrdLuceneStore.SearchResult r) -> timestampOf(r)).reversed());
+        return combined.size() > limit ? combined.subList(0, limit) : combined;
     }
 
     /**
@@ -1056,28 +1062,36 @@ public final class StudyService {
      * own clock is NOT dominated by (nor equal to) the peer's — i.e. the peer is
      * missing them or has an older/concurrent copy. Mirrors the clients'
      * {@code StudySyncLayer.sendDelta} filter (dominates || concurrent).
+     *
+     * <p>Private journal entries are never sent (audit W4, 2026-09-28). The delta goes out on a
+     * shared NATS subject as plain JSON, and it used to carry them decrypted: anyone who could
+     * read that subject (the relay operator, another household device) read them. There is no
+     * key on the phones to seal them to, so they stay on this node, encrypted at rest; the
+     * owner reads them at home (the journal in their Study, their own read paths). An entry
+     * written privately on a phone still arrives here and is sealed on arrival.</p>
      */
     public List<StudyMergeItem> getDeltaForPeer(String userDid, Map<String, Integer> peerSummary) {
         var out = new ArrayList<StudyMergeItem>();
         var summary = peerSummary != null ? peerSummary : Map.<String, Integer>of();
-        for (var r : luceneStore.listAllStudy(userDid, 100_000)) {
-            var meta = r.metadata();
-            var clock = clockFromMeta(meta);
-            var rel = VectorClock.compare(clock, summary);
-            if (rel == VectorClock.Relation.DOMINATES || rel == VectorClock.Relation.CONCURRENT) {
-                // 0.5a — the sync channel is authenticated per-owner (the
-                // study-sync peer refuses cross-user sessions), so the OWNER's
-                // device receives private entries decrypted; at-rest stays
-                // ciphertext on this node. Phone-local at-rest protection is
-                // the device OS's (EncryptedSharedPrefs / Keychain) job.
-                var content = "journal_private".equals(str(meta, "item_type", ""))
-                    ? PrivateJournalCipher.decryptIfNeeded(userDid, r.content())
-                    : r.content();
-                out.add(toMergeItem(r.id(), userDid, content, meta, clock));
+        // A phone syncs under the login id; what the person wrote elsewhere is filed under the person
+        // (StudyOwnerGuard), and never reached the phone (2026-09-28 rehearsal).
+        var seen = new HashSet<String>();
+        for (var key : ownerKeys(userDid)) {
+            for (var r : luceneStore.listAllStudy(key, 100_000)) {
+                if (!seen.add(r.id())) continue;
+                var meta = r.metadata();
+                if (PRIVATE_JOURNAL.equals(str(meta, "item_type", ""))) continue;
+                var clock = clockFromMeta(meta);
+                var rel = VectorClock.compare(clock, summary);
+                if (rel == VectorClock.Relation.DOMINATES || rel == VectorClock.Relation.CONCURRENT) {
+                    out.add(toMergeItem(r.id(), userDid, r.content(), meta, clock));
+                }
             }
         }
         return out;
     }
+
+    private static final String PRIVATE_JOURNAL = "journal_private";
 
     /**
      * Merge items from a peer using vector-clock CRDT rules — the exact mirror of
@@ -1121,13 +1135,15 @@ public final class StudyService {
 
     /** Upsert a peer item verbatim — its own clock/version/tombstone, no server tick. */
     private void applyRemote(String userDid, StudyMergeItem remote) {
+        // Filed under the person, like every other write, not under the login id the phone presents.
+        var owner = ownerKeys(userDid).get(0);
         // 0.5a — a private entry arriving from a device in plaintext is sealed
         // before it touches the index; already-sealed content passes through.
         var content = "journal_private".equals(remote.itemType())
-            ? PrivateJournalCipher.encrypt(userDid, remote.content())
+            ? PrivateJournalCipher.encrypt(owner, remote.content())
             : remote.content();
         luceneStore.insertStudyItem(
-            remote.id(), userDid, remote.itemType(), remote.title(),
+            remote.id(), owner, remote.itemType(), remote.title(),
             content, remote.collection(), remote.timestamp(),
             Math.max(1, remote.version()), null,
             clockToJson(remote.vectorClock() != null ? remote.vectorClock() : new HashMap<>()),

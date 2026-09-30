@@ -11,7 +11,7 @@ import { useZoneBankStore } from './state/zoneBankStore';
 import { initSecureStorage, secureStorage } from './state/secureStorage';
 import { useInference } from './inference/InferenceContext';
 import type { RemoteAuthType } from './inference/InferenceRouter';
-import { installPinMismatchListener } from './server/HouseholdTrust';
+import { installPinMismatchListener, restoreNativePins } from './server/HouseholdTrust';
 import { RootStackParamList } from './navigation/types';
 import { FirstRunScreen } from './screens/FirstRunScreen';
 import { WelcomeScreen } from './screens/WelcomeScreen';
@@ -130,7 +130,13 @@ function WelcomeScreenWrapper(props: NativeStackScreenProps<RootStackParamList, 
     if (/^wss?:\/\//i.test(input)) {
       return 'That looks like a relay address. Relays need an invite — on your node, run: wyrd phone invite';
     }
-    // Plain server URL: direct-WS account login on the Connect screen.
+    // Plain server URL: direct-WS account login on the Connect screen — only
+    // over an encrypted address ( W2): http:// on the
+    // network is refused unless an invite gave this host's https address.
+    const { secureHomeAddress } = await import('./network/secureAddress');
+    const address = secureHomeAddress(input);
+    if (!address.ok) return address.error;
+    input = address.url;
     useSessionStore.getState().setServerUrl(input);
     await setRemoteMode();
     props.navigation.replace('Connect');
@@ -235,22 +241,23 @@ export default function App() {
 
   // Load persisted preferences (locale, theme) and app mode on start.
   // initSecureStorage MUST run before any store reads its credentials —
-  // it wipes the legacy plaintext AsyncStorage entries and warms the
-  // encrypted MMKV bootstrap.
+  // it moves the legacy plaintext AsyncStorage entries into the encrypted
+  // store (and erases them) and opens it with its Keychain-held key.
   useEffect(() => {
     (async () => {
       await initSecureStorage();
       usePreferencesStore.getState().loadFromStorage();
-      await useAppModeStore.getState().loadFromStorage();
       // held relays + zone bank (the address book that
-      // routing consults). Load alongside app mode so the Servers surface has
-      // it on first render.
+      // routing consults) and each zone's per-device trust. Loaded before app
+      // mode, whose `loaded` flag lets the screens render: every screen then
+      // sees the bank, and the native pin stores (memory only) are refilled
+      // from secure storage before anything can connect.
       await useZoneBankStore.getState().loadFromStorage();
+      await restoreNativePins().catch(() => {});
+      await useAppModeStore.getState().loadFromStorage();
     })();
-    // Pin-mismatch recovery: native TLS layer emits an event when an
-    // existing pin doesn't validate against the chain (cert rotation).
-    // The listener pops an Alert and on accept clears the pin so the
-    // next request re-runs TOFU.
+    // Pin mismatch: the native TLS layer refused a host whose certificate
+    // does not match its pin; the listener tells the person to pair again.
     const detach = installPinMismatchListener();
     return () => { detach(); };
   }, []);

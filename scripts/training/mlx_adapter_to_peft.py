@@ -152,6 +152,11 @@ def rename_key(k: str) -> str:
     out = out.replace(".lora_a.", ".lora_A.").replace(".lora_b.", ".lora_B.")
     out = out.replace(".lora_a.weight", ".lora_A.weight")
     out = out.replace(".lora_b.weight", ".lora_B.weight")
+    # mlx-lm wraps the text model of some families (qwen3_5, qwen3_5_moe) as
+    # `language_model.`; the HF causal-LM class and llama.cpp's converter name
+    # the same tensors `model.layers.N...`.
+    if out.startswith("language_model."):
+        out = out[len("language_model."):]
     # PEFT prefixes the entire base model graph with base_model.model.
     if not out.startswith("base_model.model."):
         out = "base_model.model." + out

@@ -84,6 +84,9 @@ public final class SkillProposer {
         - closes_gaps must list at least one of the gap descriptions you saw.
         - embodiment is REQUIRED. If a skill genuinely has no body trace,
           declare silent with a real reason — do not omit the field.
+        - description and descriptor_template are read by people: plain words, real
+          things, one everyday figure of speech at most; no abstract nouns standing in
+          for feelings (weight, space, shape, thread, presence), no "it's not X, it's Y".
         """;
 
     /** Compose the user prompt with gap + tracker + existing-skills context. */

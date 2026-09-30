@@ -4,6 +4,7 @@ import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.library.StudyService;
 
 import java.util.ArrayList;
@@ -50,13 +51,17 @@ public final class FamiliarJournalRoutes {
     // ── Handlers ──────────────────────────────────────────────────────────
 
     private void handleList(Context ctx) {
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = callerOwn(ctx, ctx.queryParam("user"));
+        if (userDid == null) return;
         var limit = parseLimit(ctx.queryParam("limit"), 20, 200);
         var tag = ctx.queryParam("tag");
+        // The tag used to be any prefix the caller liked, and entries were matched with
+        // startsWith: walking the alphabet returned the newest private entries decrypted.
+        if (tag != null && !tag.isBlank()
+                && FAMILIAR_TAGS.stream().noneMatch(t -> t.equals(tag) || t.startsWith(tag + "."))) {
+            ctx.status(400).json(Map.of("error", "unknown_tag", "tags", FAMILIAR_TAGS));
+            return;
+        }
 
         // Strategy: full-text search either for the explicit tag or for the
         // union of familiar-system tags. Lucene query string search works.
@@ -73,10 +78,11 @@ public final class FamiliarJournalRoutes {
     }
 
     private void handleSearch(Context ctx) {
-        var userDid = ctx.queryParam("user");
+        var userDid = callerOwn(ctx, ctx.queryParam("user"));
+        if (userDid == null) return;
         var q = ctx.queryParam("q");
-        if (userDid == null || userDid.isBlank() || q == null || q.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user and q parameters required"));
+        if (q == null || q.isBlank()) {
+            ctx.status(400).json(Map.of("error", "q parameter required"));
             return;
         }
         var limit = parseLimit(ctx.queryParam("limit"), 20, 200);
@@ -94,6 +100,25 @@ public final class FamiliarJournalRoutes {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
+
+    /**
+     * The journal read is the owner's decrypting path, so only the owner reaches it: a
+     * person's own login (session or linked device). Until 2026-09-28 the owner came from
+     * the request and no login was asked for.
+     */
+    private static String callerOwn(Context ctx, String requested) {
+        if (!(ApiAuth.principal(ctx) instanceof ApiAuth.Person caller)) {
+            ctx.status(401).json(Map.of("error", "person_required",
+                "message", "A journal is read with its owner's own login (wyrd login)."));
+            return null;
+        }
+        var id = caller.user().id();
+        if (requested != null && !requested.isBlank() && !PersonIds.samePerson(requested, id)) {
+            ctx.status(403).json(Map.of("error", "not_yours", "message", "You can only read your own journal."));
+            return null;
+        }
+        return PersonIds.canonical(id);
+    }
 
     private static int parseLimit(String raw, int def, int max) {
         if (raw == null) return def;

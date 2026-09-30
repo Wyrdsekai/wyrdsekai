@@ -142,6 +142,7 @@ class CompanionActorDepartureReturnWiringTest {
             .as("a ritual without a named bondholder is incoherent — "
                 + "speak the gap rather than running with empty DID")
             .contains("isBlank()")
-            .contains("speak(");
+            // The sentence is one the product wrote, so it goes out through speakProduct.
+            .containsPattern("speak(Product)?\\(");
     }
 }

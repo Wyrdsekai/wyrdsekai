@@ -50,7 +50,8 @@ class TheQuestionTravelsWithTheTurnTest {
     @Test
     void the_dispatch_site_reads_the_pin_first() throws Exception {
         assertThat(src())
-            .contains("var trigger = pinnedTurnRequest() != null ? pinnedTurnRequest()");
+            .contains("var served = requestThisTurnServes();")
+            .contains("var trigger = served != null ? served");
     }
 
     /** Her own time is hers: autonomy turns must not inherit the question as operand. */

@@ -33,6 +33,14 @@ relay-policy.json file is the runtime source of truth, env only SEEDS):
   WOT_PROMOTE_THRESHOLD=1.0        Tier-weighted WoT vouch score that, with a
                                    verified IdentityOutbox, auto-promotes FLOOR→VOUCHED
                                    (HOUSEHOLD/owner voucher=1.0, VOUCHED=0.6, FLOOR=0).
+
+Zone binding (security review 2026-09-28; README "Zone binding"):
+  RELAY_LEGACY_GRANT=true          Registrations with no zone name (pre-0.5.0) keep
+                                   the old wide grant; false gives them no NATS user.
+  RELAY_SHARED_PHONE_ACCOUNT=false true keeps the shared relay_phone user.
+  RELAY_LEGACY_INBOX=false         true lets bound users subscribe _INBOX.> again.
+  RELAY_ALLOW_PLAIN_TOKEN_PROOF=false  true accepts a bare token at /phone-invite.
+  RELAY_RESPONSE_WINDOW=10m        allow_responses expiry for responders.
 """
 
 import base64
@@ -40,6 +48,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -260,6 +269,199 @@ SSH_JUMP_KEY_PUB = DATA_DIR / "ssh" / "jump_ed25519_key.pub"
 SSH_HOST_KEY_PUB = DATA_DIR / "ssh" / "tunnel_host_ed25519_key.pub"
 _VALID_SSH_MODES = ("off", "grant", "open")
 _VALID_SSH_TOPOLOGIES = ("port", "jump")
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
+
+
+# --- Zone binding (security review 2026-09-28) ---
+# Every registration is bound to ONE zone label, and its NATS account may use
+# only that zone's subjects. A label another registration holds is refused.
+# Registrations made before this release carry no label; they keep the old wide
+# grant (with a WARN) until their node re-registers with its label, unless the
+# operator sets RELAY_LEGACY_GRANT=false, which takes the wide grant away.
+RELAY_LEGACY_GRANT = _env_flag("RELAY_LEGACY_GRANT", True)
+# The shared `relay_phone` account (handed out before per-household phone
+# accounts existed) can read every household's tunnel traffic and replies. Off
+# by default; RELAY_SHARED_PHONE_ACCOUNT=true keeps it for old phone invites.
+RELAY_SHARED_PHONE_ACCOUNT = _env_flag("RELAY_SHARED_PHONE_ACCOUNT", False)
+# The shared peer-training account (cross-zone adapter exchange, opt-in on nodes). Off: it is one
+# credential for every household on the relay, and relay.conf shipped it with the placeholder
+# password "__GENERATED_ON_FIRST_RUN__" that nothing ever replaced, so anyone could sign in as it and
+# read every reply inbox (security review 2026-09-28).
+RELAY_PEER_TRAINER = _env_flag("RELAY_PEER_TRAINER", False)
+# Reply inboxes: each user may subscribe only `_INBOX.<its user>.>`.
+# RELAY_LEGACY_INBOX=true gives every bound user `_INBOX.>` again (old apps).
+RELAY_LEGACY_INBOX = _env_flag("RELAY_LEGACY_INBOX", False)
+# Password-mode phone invites and leaves prove the household token with an
+# HMAC over a timestamped challenge. RELAY_ALLOW_PLAIN_TOKEN_PROOF=true also
+# accepts the bare token in the request (older `wyrd phone invite`).
+RELAY_ALLOW_PLAIN_TOKEN_PROOF = _env_flag("RELAY_ALLOW_PLAIN_TOKEN_PROOF", False)
+# How long a responder may take to answer one request on the relay.
+RESPONSE_WINDOW = os.environ.get("RELAY_RESPONSE_WINDOW", "10m").strip()
+if not re.match(r"^[0-9]{1,6}(ms|s|m|h)$", RESPONSE_WINDOW):
+    RESPONSE_WINDOW = "10m"
+PROOF_MAX_SKEW_SECONDS = 300
+
+ZONE_MEMBERS_FILE = DATA_DIR / "zone-members.json"   # {zone: [key, ...]} vouched by a holder
+
+# Zone labels and household tags are written into relay.conf and into NATS
+# subjects, so only plain tokens are accepted (no quotes, dots, wildcards).
+_SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_NKEY_RE = re.compile(r"^U[A-Z2-7]{55}$")
+_PW_HOUSEHOLD_RE = re.compile(r"^hh-[A-Za-z0-9_-]{1,64}$")
+_PW_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+# Labels that are a fixed word in the federation.* subject tree: a zone with
+# one of these names would be granted another namespace's traffic.
+RESERVED_ZONE_LABELS = frozenset({"unspecified", "local", "inference", "recipe",
+                                  "zonegrant", "household"})
+
+
+def valid_zone_label(zone) -> bool:
+    return (isinstance(zone, str) and bool(_SAFE_TOKEN_RE.match(zone))
+            and zone.lower() not in RESERVED_ZONE_LABELS)
+
+
+def valid_nkey(pubkey) -> bool:
+    return isinstance(pubkey, str) and bool(_NKEY_RE.match(pubkey))
+
+
+def is_bound(entry: dict) -> bool:
+    """A registration is bound when it carries a valid zone label."""
+    return valid_zone_label(entry.get("zone_id"))
+
+
+def _household_tag_of(key, entry: dict):
+    """The household tag naming this registration's phone account, or None.
+    Password registrations are keyed by their hh- id, which doubles as the tag."""
+    tag = entry.get("household_tag")
+    if not tag or tag == "unspecified":
+        if isinstance(key, str) and key.startswith("hh-"):
+            tag = key
+        else:
+            return None
+    return tag if _SAFE_TOKEN_RE.match(str(tag)) else None
+
+
+def _server_household_tag(pubkey: str) -> str:
+    """Relay-assigned household tag for an NKey registration. Tags name the
+    household's phone account, so the relay assigns them: a tag chosen by the
+    registrant could name another household's phone account."""
+    return "nk-" + hashlib.sha256(pubkey.encode("ascii")).hexdigest()[:12]
+
+
+def load_zone_members() -> dict:
+    if ZONE_MEMBERS_FILE.exists():
+        try:
+            return json.loads(ZONE_MEMBERS_FILE.read_text())
+        except ValueError:
+            return {}
+    return {}
+
+
+def save_zone_members(members: dict) -> None:
+    tmp = ZONE_MEMBERS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(members, indent=2, sort_keys=True))
+    os.replace(tmp, ZONE_MEMBERS_FILE)
+
+
+def zone_holders(regs: dict, zone: str, exclude: str = None) -> list:
+    """Keys of the active registrations bound to `zone` (case-insensitive)."""
+    z = zone.lower()
+    return [k for k, v in regs.items()
+            if k != exclude and v.get("active", True) and is_bound(v)
+            and v["zone_id"].lower() == z]
+
+
+def zone_claim_error(regs: dict, key: str, zone: str):
+    """None when `key` may bind `zone`, else an error dict (HTTP-style status).
+    A zone is free, already this key's, or vouched for this key by a holder."""
+    if not valid_zone_label(zone):
+        return {"error": f"invalid zone label {zone!r}: letters, digits, '-' and '_' "
+                         f"only (at most 64), and not one of "
+                         f"{', '.join(sorted(RESERVED_ZONE_LABELS))}",
+                "_status": 400}
+    own = regs.get(key) if key else None
+    if own is not None and is_bound(own) and own["zone_id"].lower() == zone.lower():
+        return None     # already this registration's zone
+    holders = zone_holders(regs, zone, exclude=key)
+    if not holders:
+        return None
+    vouched = load_zone_members().get(zone.lower(), [])
+    if key in vouched:
+        return None
+    return {"error": f"zone '{zone}' is already held by another registration on this "
+                     f"relay. If it is another node of your household, run "
+                     f"`wyrd relay zone-add {key}` on that node; otherwise choose "
+                     f"another zone name (WYRDSEKAI_ZONE_ID).",
+            "zone_id": zone, "_status": 409}
+
+
+def _proof_ok(entry_key: str, entry: dict, challenge: bytes, body: dict):
+    """Check a registrant's proof over `challenge`. NKey registrations sign it
+    with their seed (`signature`, base64); password registrations send
+    `mac` = base64(HMAC-SHA256(token, challenge)). Returns None or an error."""
+    if entry.get("kind") == "nkey":
+        sig = body.get("signature")
+        if not sig:
+            return "signature required"
+        return _verify_nkey_sig(entry_key, challenge, sig)
+    token = entry.get("token")
+    if not token:
+        return "this registration has no credential to prove"
+    mac = body.get("mac")
+    if mac:
+        want = base64.b64encode(hmac.new(token.encode(), challenge, hashlib.sha256).digest()).decode()
+        return None if hmac.compare_digest(want, str(mac)) else "proof does not match"
+    return "mac required"
+
+
+def _fresh_ts(ts, now: int = None):
+    """(ts_int, None) when ts is within the skew window, else (None, error)."""
+    now = int(time.time()) if now is None else now
+    try:
+        ts_int = int(ts)
+    except (ValueError, TypeError):
+        return None, "ts must be an integer (epoch seconds)"
+    if abs(now - ts_int) > PROOF_MAX_SKEW_SECONDS:
+        return None, f"timestamp skew too large ({abs(now - ts_int)}s) — clock drift?"
+    return ts_int, None
+
+
+def _nats_tls_fingerprint() -> str:
+    """SHA-256 of the certificate NATS serves on the zone port (the first
+    certificate of chain.crt, else leaf.crt), lowercase hex. Returned by the
+    register calls so the joining node pins the zone link from first contact."""
+    for name in ("chain.crt", "leaf.crt"):
+        path = CERT_DIR / name
+        if not path.is_file():
+            continue
+        pem = path.read_text()
+        m = re.search(r"-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----", pem, re.S)
+        if m:
+            der = base64.b64decode("".join(m.group(1).split()))
+            return hashlib.sha256(der).hexdigest()
+    return ""
+
+
+def _trust_material() -> dict:
+    """The relay's TLS identity for a register reply: the zone-port certificate
+    and the relay CA, both as lowercase hex SHA-256."""
+    out = {}
+    try:
+        out["nats_tls_fp"] = _nats_tls_fingerprint()
+    except (OSError, ValueError):
+        pass
+    try:
+        out["ca_fp"] = _ca_pem_and_fingerprint()[1].replace(":", "").lower()
+    except (OSError, ValueError):
+        pass
+    return out
+
 
 lock = Lock()
 rate_limits: dict[str, float] = {}  # IP -> last registration timestamp
@@ -720,6 +922,94 @@ def backfill_tiers() -> int:
     return filled
 
 
+def migrate_zone_bindings() -> dict:
+    """Boot migration for zone binding (security review 2026-09-28). Idempotent.
+
+    - A stored zone label that is not a plain, unreserved label is dropped
+      (the registration becomes unbound). Labels are written into relay.conf,
+      so this also removes anything that could inject configuration.
+    - Registrations that already carry a label stay bound to it. When several
+      carry the same label they all stay bound (each was granted that zone
+      before this release) and each is vouched for the others; the operator
+      sees a WARN to check they are one household.
+    - Household tags name phone accounts. Password registrations use their hh-
+      id; an NKey registration keeps a valid tag no other registration uses,
+      otherwise the relay assigns `nk-<hash of the pubkey>`.
+    - Registrations still without a label keep the legacy wide grant (unless
+      RELAY_LEGACY_GRANT=false) and are listed in a WARN until their node
+      re-registers with its label.
+
+    Returns a summary dict (also printed).
+    """
+    summary = {"bound": 0, "legacy": [], "shared_labels": {}, "retagged": [],
+               "dropped_labels": []}
+    with lock:
+        regs = load_registrations()
+        changed = False
+        seen_tags = {}
+        # Oldest first, so an older registration keeps a contested tag.
+        order = sorted(regs.items(), key=lambda kv: str(kv[1].get("registered_at") or ""))
+        for key, entry in order:
+            if entry.get("kind") not in ("nkey", None) and "token" not in entry:
+                continue    # SSH-tunnel-only records hold no NATS account
+            z = entry.get("zone_id")
+            if z not in (None, "unspecified") and not valid_zone_label(z):
+                summary["dropped_labels"].append((str(key)[:12], str(z)[:40]))
+                entry["zone_id"] = "unspecified"
+                changed = True
+            if entry.get("kind") == "nkey":
+                tag = entry.get("household_tag")
+                if (not tag or tag == "unspecified" or not _SAFE_TOKEN_RE.match(str(tag))
+                        or str(tag).startswith("hh-") or tag in seen_tags):
+                    entry["household_tag"] = _server_household_tag(key)
+                    summary["retagged"].append(str(key)[:12])
+                    changed = True
+            elif "token" in entry and entry.get("household_tag") != key:
+                entry["household_tag"] = key
+                changed = True
+            seen_tags[entry.get("household_tag")] = key
+            if is_bound(entry):
+                summary["bound"] += 1
+                summary["shared_labels"].setdefault(entry["zone_id"].lower(), []).append(key)
+            elif entry.get("active", True):
+                summary["legacy"].append((str(key)[:12], entry.get("last_seen")))
+        if changed:
+            save_registrations(regs)
+        members = load_zone_members()
+        # A label held by more than one registration that no holder vouched for (zone-add):
+        # granted before this release, kept, vouched now, and shown to the operator.
+        shared = {z: ks for z, ks in summary["shared_labels"].items()
+                  if len([k for k in ks if k not in members.get(z, [])]) > 1}
+        summary["shared_labels"] = shared
+        if shared:
+            for z, ks in shared.items():
+                vouched = members.setdefault(z, [])
+                for k in ks:
+                    if k not in vouched:
+                        vouched.append(k)
+            save_zone_members(members)
+    print(f"[zones] {summary['bound']} registration(s) bound to their zone.")
+    for key, label in summary["dropped_labels"]:
+        print(f"[zones] WARN: {key}… had an unusable zone label {label!r}; it is now unbound.")
+    for z, ks in shared.items():
+        print(f"[zones] WARN: zone '{z}' is held by {len(ks)} registrations "
+              f"({', '.join(str(k)[:12] + '…' for k in ks)}). Check they are one household; "
+              "remove the others with `relay.sh remove`.")
+    if summary["retagged"]:
+        print(f"[zones] assigned relay household tags to {len(summary['retagged'])} NKey "
+              "registration(s); their phones need a fresh `wyrd phone invite`.")
+    if summary["legacy"]:
+        grant = ("keep the old wide grant" if RELAY_LEGACY_GRANT
+                 else "have NO relay account (RELAY_LEGACY_GRANT=false)")
+        print(f"[zones] WARN: {len(summary['legacy'])} registration(s) have no zone label and "
+              f"{grant}. While any keeps the wide grant it can read every household's relay "
+              "traffic. They bind themselves when their node runs this release; "
+              "set RELAY_LEGACY_GRANT=false once they have.")
+        for key, last_seen in summary["legacy"]:
+            print(f"[zones]   unbound: {key}… last seen {last_seen or 'never'}")
+    return summary
+
+
 def mint_invite(ttl_seconds: int, self_serve: bool = False) -> dict:
     """Generate a single-use invite token. v2 carries the household CA in
     the payload itself — joining nodes install the CA from the invite and
@@ -919,55 +1209,57 @@ def _phone_password_for(household_tag: str) -> str:
                      _hashlib.sha256).hexdigest()[:43]
 
 
-def _phone_perms_for(zone_id) -> dict:
+def _phone_perms_for(zone_id, phone_user: str = None) -> dict:
     """Subject permissions for a per-household phone account. Scoped to the
-    household's own zone when the registration knows its label; falls back to
-    the legacy-broad set when zone_id is unset/'unspecified' (those zones keep
-    the old exposure until they re-register with a label)."""
-    if zone_id and zone_id != "unspecified":
+    household's own zone when the registration is bound to one; registrations
+    made before zone binding keep the legacy-broad tunnel/MCP set (with a WARN
+    at boot) until they re-register with their label.
+
+    A phone needs only its zone's MCP request subjects (`wyrd.zone.{zone}.>`,
+    sealed requests), the tunnel (`wyrd.tunnel.{zone}.{session}.*`, the sealed
+    tunnel), zone discovery, a knock on another household's door
+    (`wyrd.zone.*.directory.knock`, the one request a stranger may make; the
+    home rate-limits it and answers on this phone's inbox), and its own reply
+    inbox. Study sync and inference
+    no longer ride the relay for phones (security review 2026-09-28), so a
+    phone credential reads no household's Study deltas or inference streams.
+    """
+    if valid_zone_label(zone_id):
+        # Audit F1 (partial): a phone tunnels its session as
+        # `wyrd.tunnel.{zone}.{session}.{open,up,close}` and reads `.down`.
+        # PUBLISH is scoped to the three C2S verbs (NOT `>`), so a household
+        # phone can't spoof server-side `.down` frames into a sibling's
+        # session. SUBSCRIBE is scoped to `.down` ONLY (NOT `>`), so a phone
+        # cannot read a sibling's `.open`. Residual: cross-session `.up`
+        # injection / `.down` reads WITHIN a household (the sealed tunnel is
+        # what keeps those frames private).
+        inbox = "_INBOX.>" if (RELAY_LEGACY_INBOX or not phone_user) else f"_INBOX.{phone_user}.>"
         return {
-            # Audit F1 (partial): a phone tunnels its session as
-            # `wyrd.tunnel.{zone}.{session}.{open,up,close}` and reads `.down`.
-            # PUBLISH is scoped to the three C2S verbs (NOT `>`), so a household
-            # phone can't spoof server-side `.down` frames into a sibling's
-            # session. SUBSCRIBE is scoped to `.down` ONLY (NOT `>`): the login
-            # session token rides the `.open` payload, so a broad `wyrd.tunnel.>`
-            # subscribe let one household phone HARVEST siblings' session tokens
-            # (→ full account impersonation). Reading `.down` only removes that.
-            # Residual: cross-session `.up` injection / `.down` reads WITHIN a
-            # household still need per-session (dynamic) credentials — the session
-            # id is client-chosen and static ACLs can't bind "sessions you own".
-            # Mode 4 (own local node, home GPU behind it) borrows inference the
-            # same way any GPU-less node does — over federation, not the tunnel.
-            # docs/public/MODELS.md already promises this ("the phone borrows the
-            # 9B ... the NatsRemote backend"); without the grant it worked on the
-            # LAN and silently failed everywhere else.
-            #
-            # PUBLISH is the request to THIS zone only, never `federation.>` —
-            # a phone may ask its own household for capacity, not any zone it can
-            # name. SUBSCRIBE is stream chunks: streamId is client-generated and
-            # unguessable, and binding it per-session would need dynamic creds
-            # (same residual as the tunnel `.up` note above).
-            "publish": [f"wyrd.zone.{zone_id}.>", "wyrd.discover.>",
+            "publish": [f"wyrd.zone.{zone_id}.>", "wyrd.discover.zone",
+                        "wyrd.zone.*.directory.knock",
                         f"wyrd.tunnel.{zone_id}.*.open",
                         f"wyrd.tunnel.{zone_id}.*.up",
-                        f"wyrd.tunnel.{zone_id}.*.close",
-                        f"between.{zone_id}.*.*.study.state",
-                        f"between.{zone_id}.*.*.study.sync",
-                        f"federation.inference.{zone_id}.complete", "_INBOX.>"],
-            "subscribe": [f"wyrd.tunnel.{zone_id}.*.down",
-                          f"between.{zone_id}.*.*.study.state",
-                          f"between.{zone_id}.*.*.study.sync",
-                          "federation.inference.stream.*", "_INBOX.>"],
+                        f"wyrd.tunnel.{zone_id}.*.close"],
+            "subscribe": [f"wyrd.tunnel.{zone_id}.*.down", inbox],
         }
     return {
-        "publish": ["wyrd.zone.>", "wyrd.discover.>", "wyrd.tunnel.>",
-                    "between.*.*.*.study.state", "between.*.*.*.study.sync",
-                    "federation.inference.*.complete", "_INBOX.>"],
-        "subscribe": ["wyrd.tunnel.>", "between.*.*.*.study.state",
-                      "between.*.*.*.study.sync",
-                      "federation.inference.stream.*", "_INBOX.>"],
+        "publish": ["wyrd.zone.>", "wyrd.discover.>", "wyrd.tunnel.>", "_INBOX.>"],
+        "subscribe": ["wyrd.tunnel.>", "_INBOX.>"],
     }
+
+
+def rehydrate_conf_at_boot() -> int:
+    """Rebuild relay.conf's authorization block from the ledger at every start, with or without
+    registrations. A relay with none used to leave relay.conf as it was, so the infrastructure
+    accounts were never made authoritative there: relay.wyrdsekai.org kept the template's
+    peer_trainer on its placeholder password and the shared relay_phone after its 0.5.0 update
+    (2026-09-28). Returns the number of active registrations."""
+    boot_regs = load_registrations()
+    active_count = sum(1 for v in boot_regs.values() if v.get("active", True))
+    print(f"[boot] Rebuilding relay.conf from {active_count} active registration(s)…")
+    update_nats_config(boot_regs)
+    print("[boot] relay.conf rebuilt + NATS reload signaled.")
+    return active_count
 
 
 def _verify_nkey_sig(pubkey: str, challenge: bytes, signature_b64: str) -> str | None:
@@ -1006,7 +1298,7 @@ def _verify_nkey_sig(pubkey: str, challenge: bytes, signature_b64: str) -> str |
 
 def mint_phone_invite(pubkey: str = None, ts=None, signature_b64: str = None,
                       household_id: str = None, token: str = None,
-                      max_skew_seconds: int = 300) -> dict:
+                      max_skew_seconds: int = 300, mac: str = None) -> dict:
     """mint a phone connection invite for a
     registered household.
 
@@ -1017,9 +1309,10 @@ def mint_phone_invite(pubkey: str = None, ts=None, signature_b64: str = None,
          an already-registered, active pubkey (the domain prefix prevents
          cross-protocol replay of /re-register-nkey signatures). ts within
          ±max_skew_seconds (anti-replay).
-      2. Token: the household's relay credential (`household_id` + the
-         256-bit `token` only that zone holds) — covers password-mode
-         registrations from `wyrd relay join` / `wyrd relay register`.
+      2. Token: a password-mode household proves its relay token without
+         sending it: `mac` = base64(HMAC-SHA256(token,
+         "phone-invite:{ts}:{household_id}")), ts within ±max_skew_seconds.
+         The bare `token` is accepted only with RELAY_ALLOW_PLAIN_TOKEN_PROOF.
 
     The payload's `relays` is an ORDERED LIST (phone failover,
 ) even though one relay can only vouch for
@@ -1047,19 +1340,35 @@ def mint_phone_invite(pubkey: str = None, ts=None, signature_b64: str = None,
         if sig_err:
             return {"error": sig_err, "_status": 401}
         existing = regs[pubkey]
-    elif household_id and token:
+        reg_key = pubkey
+    elif household_id and (mac or token):
         # Token path (password-mode registration).
         entry = regs.get(household_id)
         if not entry or "token" not in entry:
             return {"error": "unknown household — register this zone first "
                              "(wyrd relay join <host> <code>)", "_status": 404}
-        if not hmac.compare_digest(str(entry.get("token", "")), str(token)):
-            return {"error": "invalid household token", "_status": 401}
+        if mac:
+            ts_int, ts_err = _fresh_ts(ts, now)
+            if ts_err:
+                return {"error": ts_err, "_status": 401}
+            err = _proof_ok(household_id, entry,
+                            f"phone-invite:{ts_int}:{household_id}".encode(), {"mac": mac})
+            if err:
+                return {"error": "invalid household proof", "_status": 401}
+        elif not RELAY_ALLOW_PLAIN_TOKEN_PROOF:
+            return {"error": "send a signed proof (mac) instead of the household token: "
+                             "update Wyrdsekai on this node", "_status": 401}
+        else:
+            print(f"[phone-invite] WARN: {household_id} proved its registration with the bare "
+                  "token (RELAY_ALLOW_PLAIN_TOKEN_PROOF=true)")
+            if not hmac.compare_digest(str(entry.get("token", "")), str(token)):
+                return {"error": "invalid household token", "_status": 401}
         existing = dict(entry)
         existing.setdefault("household_tag", household_id)
+        reg_key = household_id
     else:
         return {"error": "registration proof required: either "
-                         "{pubkey, ts, signature} or {household_id, token}",
+                         "{pubkey, ts, signature} or {household_id, ts, mac}",
                 "_status": 404}
 
     if not existing.get("active", True):
@@ -1086,11 +1395,14 @@ def mint_phone_invite(pubkey: str = None, ts=None, signature_b64: str = None,
     # Per-household phone credential (hardening): scoped to this household's
     # own tunnel/study subjects. The shared relay_phone remains only as a
     # deprecated fallback for registrations that predate household tags.
-    _tag = existing.get("household_tag")
-    if _tag and _tag != "unspecified":
+    _tag = _household_tag_of(reg_key, existing)
+    if _tag:
         _inv_user, _inv_pass = _phone_user_for(_tag), _phone_password_for(_tag)
-    else:
+    elif RELAY_SHARED_PHONE_ACCOUNT:
         _inv_user, _inv_pass = "relay_phone", _phone_password()
+    else:
+        return {"error": "this registration has no household tag yet; restart the relay "
+                         "sidecar (it assigns one) or join again", "_status": 409}
     relay_entries = [
         {
             "ws_url": f"wss://{h}:{RELAY_PUBLIC_PORT}",
@@ -1098,6 +1410,8 @@ def mint_phone_invite(pubkey: str = None, ts=None, signature_b64: str = None,
             "nats_password": _inv_pass,
             "ca_fp": ca_fp,
             "fp": leaf_fp,
+            # D4: the phone's reply inbox; the relay grants it nothing wider.
+            "inbox_prefix": f"_INBOX.{_inv_user}",
         }
         for h in hosts
     ]
@@ -1163,8 +1477,14 @@ def verify_invite(token: str) -> dict:
     return payload
 
 
-def register_household(ip: str) -> dict:
-    """Register a new household. Returns token or error."""
+def register_household(ip: str, zone_id: str = None) -> dict:
+    """Register a new password-mode household bound to `zone_id` (required:
+    the relay grants a registration only its own zone's subjects, and refuses
+    a zone label another registration holds). Returns token or error."""
+    if not zone_id:
+        return {"error": "zone_id required: this relay binds every registration to its "
+                         "zone. Update Wyrdsekai on this node and join again.",
+                "_status": 400}
     with lock:
         # Rate limit — skipped when RATE_LIMIT_SECONDS=0
         now = time.time()
@@ -1190,8 +1510,14 @@ def register_household(ip: str) -> dict:
         household_id = f"hh-{secrets.token_hex(6)}"
         token = generate_token()
 
+        claim_err = zone_claim_error(regs, household_id, zone_id)
+        if claim_err:
+            return claim_err
+
         regs[household_id] = {
             "token": token,
+            "household_tag": household_id,
+            "zone_id": zone_id,
             "registered_at": datetime.utcnow().isoformat(),
             "registered_ip": ip,
             "active": True,
@@ -1210,15 +1536,19 @@ def register_household(ip: str) -> dict:
         return {
             "household_id": household_id,
             "token": token,
+            "zone_id": zone_id,
             "relay_url": f"nats://0.0.0.0:{NATS_PORT}",  # host substituted by caller; port is authoritative
             "nats_user": household_id,
-            "nats_password": token
+            "nats_password": token,
+            "inbox_prefix": f"_INBOX.{household_id}",
+            **_trust_material(),
         }
 
 
 def register_nkey(ip: str, pubkey: str, household_tag: str = None,
                   zone_id: str = None, node_name: str = None,
-                  entrant_tier: str = None, identity_outbox: dict = None) -> dict:
+                  entrant_tier: str = None, identity_outbox: dict = None,
+                  ts=None, signature: str = None) -> dict:
     """/register-nkey.
 
     Idempotent: registering the same pubkey twice updates the metadata in place
@@ -1235,13 +1565,21 @@ def register_nkey(ip: str, pubkey: str, household_tag: str = None,
     it is verified here and, on success, stored with identity_verified=true so
     a commons FLOOR record becomes eligible for promotion (§3).
 
+    Zone binding (security review 2026-09-28): `zone_id` is REQUIRED and the
+    registrant proves it holds the NKey seed by signing
+    `register-nkey:{ts}:{pubkey}:{zone_id}` (`signature`, base64). A zone label
+    another registration holds is refused (409). `household_tag` from the
+    registrant is ignored: the relay assigns the tag, because the tag names the
+    household's phone account.
+
     Returns {pubkey, household_id, subject_permissions, relay_url, tier,
     identity_verified} on success or {error: ...} on rejection. Caller is
     responsible for invite_token / mode-gate check (already done at the HTTP
     layer).
     """
-    if not pubkey or not pubkey.startswith("U") or len(pubkey) != 56:
-        return {"error": "Invalid NKey pubkey (must be 56-char NATS user-key, starting with 'U')"}
+    pre = precheck_register_nkey(pubkey, zone_id, ts, signature)
+    if pre:
+        return pre
 
     # Verify a presented IdentityOutbox up front (§2.2). A PRESENT-but-INVALID
     # record is a hard reject — silently storing an unverified channel list
@@ -1299,9 +1637,11 @@ def register_nkey(ip: str, pubkey: str, household_tag: str = None,
                         "suggestion": "Deploy your own relay: https://github.com/wyrdsekai/wyrdsekai/tree/main/deploy/relay"
                     }
 
+        claim_err = zone_claim_error(regs, pubkey, zone_id)
+        if claim_err:
+            return claim_err
+
         # Idempotent: if the pubkey is already registered, refresh metadata + last_seen.
-        # If household_tag is provided and different from existing, update it (operator
-        # may be re-tagging). If absent, keep existing.
         existing = regs.get(pubkey, {})
         # Tier (§3): a NEW record enters at the caller-decided entrant_tier
         # (HOUSEHOLD default if unspecified). A re-register PRESERVES whatever
@@ -1321,8 +1661,8 @@ def register_nkey(ip: str, pubkey: str, household_tag: str = None,
             # from the pubkey (un-spoofable; same Ed25519 key the node's own
             # NodeIdentity→DidKey computes). Refreshed on every (re-)register.
             "did": nkey_to_did(pubkey) or existing.get("did"),
-            "household_tag": household_tag or existing.get("household_tag", "unspecified"),
-            "zone_id": zone_id or existing.get("zone_id", "unspecified"),
+            "household_tag": _household_tag_of(pubkey, existing) or _server_household_tag(pubkey),
+            "zone_id": zone_id,
             "node_name": node_name or existing.get("node_name", "unknown"),
             # trust tier (gates the reaper window + is
             # the hook for per-tier quota). §2.2 — verified IdentityOutbox flag.
@@ -1358,9 +1698,34 @@ def register_nkey(ip: str, pubkey: str, household_tag: str = None,
             "tier": regs[pubkey]["tier"],
             "identity_verified": regs[pubkey]["identity_verified"],
             "subject_permissions": _subject_permissions_for(
-                regs[pubkey]["household_tag"], regs[pubkey]["zone_id"]),
+                regs[pubkey]["household_tag"], regs[pubkey]["zone_id"], pubkey),
             "relay_url": f"nats://0.0.0.0:{NATS_PORT}",  # host substituted by caller; port is authoritative
+            "inbox_prefix": f"_INBOX.{pubkey}",
+            **_trust_material(),
         }
+
+
+def precheck_register_nkey(pubkey, zone_id, ts, signature):
+    """Checks a /register-nkey request can succeed BEFORE its invite is spent:
+    a well-formed NKey, a zone label that is free (or this key's), and the
+    signature over `register-nkey:{ts}:{pubkey}:{zone_id}`. None when fine."""
+    if not valid_nkey(pubkey):
+        return {"error": "Invalid NKey pubkey (must be 56-char NATS user-key, starting with 'U')",
+                "_status": 400}
+    if not zone_id:
+        return {"error": "zone_id required: this relay binds every registration to its "
+                         "zone. Update Wyrdsekai on this node and join again.",
+                "_status": 400}
+    ts_int, ts_err = _fresh_ts(ts)
+    if ts_err or not signature:
+        return {"error": "ts and signature required: sign "
+                         "register-nkey:{ts}:{pubkey}:{zone_id} with the node's NKey"
+                         + (f" ({ts_err})" if ts_err and ts is not None else ""),
+                "_status": 401}
+    sig_err = _verify_nkey_sig(pubkey, f"register-nkey:{ts_int}:{pubkey}:{zone_id}".encode(), signature)
+    if sig_err:
+        return {"error": sig_err, "_status": 401}
+    return zone_claim_error(load_registrations(), pubkey, zone_id)
 
 
 def gate_register_nkey(body: dict, *, verify_invite_fn=None) -> dict:
@@ -1534,8 +1899,10 @@ def re_register_existing_nkey(ip: str, pubkey: str, ts: int, signature_b64: str,
             "household_id": existing.get("household_tag", "unspecified"),
             "zone_id": existing.get("zone_id", "unspecified"),
             "subject_permissions": _subject_permissions_for(
-                existing.get("household_tag"), existing.get("zone_id")),
+                existing.get("household_tag"), existing.get("zone_id"), pubkey),
             "relay_url": f"nats://0.0.0.0:{NATS_PORT}",
+            "zone_bound": is_bound(existing),
+            **_trust_material(),
         }
 
 
@@ -1602,6 +1969,123 @@ def deregister_nkey(pubkey: str, ts: int, signature_b64: str,
 
         print(f"[deregister] {pubkey[:12]}… removed from regs + NATS config")
         return {"status": "deregistered", "pubkey": pubkey, "_status": 200}
+
+
+def deregister_password(household_id: str, ts, mac: str) -> dict:
+    """`/deregister` for a password-mode registration (`wyrd relay leave`).
+    The household proves its token without sending it:
+    mac = base64(HMAC-SHA256(token, "deregister:{ts}:{household_id}")).
+    Idempotent like the NKey path."""
+    if not household_id or not _PW_HOUSEHOLD_RE.match(str(household_id)):
+        return {"error": "invalid household_id", "_status": 400}
+    ts_int, ts_err = _fresh_ts(ts)
+    if ts_err:
+        return {"error": ts_err, "_status": 401}
+    with lock:
+        regs = load_registrations()
+        entry = regs.get(household_id)
+        if entry is None:
+            return {"status": "already_absent", "household_id": household_id, "_status": 200}
+        err = _proof_ok(household_id, entry, f"deregister:{ts_int}:{household_id}".encode(),
+                        {"mac": mac})
+        if err:
+            return {"error": err, "_status": 401}
+        del regs[household_id]
+        save_registrations(regs)
+        try:
+            update_nats_config(regs)
+        except Exception as e:
+            return {"status": "deregistered", "household_id": household_id,
+                    "warn": f"deregistered, but NATS config rewrite warned: {e}", "_status": 200}
+    print(f"[deregister] {household_id} removed from regs + NATS config")
+    return {"status": "deregistered", "household_id": household_id, "_status": 200}
+
+
+def _registration_key(body: dict):
+    """The registration a signed request speaks for: `pubkey` (NKey mode) or
+    `household_id` (password mode)."""
+    return body.get("pubkey") or body.get("household_id")
+
+
+def bind_zone(body: dict) -> dict:
+    """`/bind-zone` — bind an existing registration to its zone label.
+
+    Registrations made before zone binding carry no label and hold the legacy
+    wide grant; an updated node calls this at start (and `wyrd relay bind-zone`
+    does by hand) so the relay can scope it. Proof over
+    `bind-zone:{ts}:{key}:{zone_id}`: an NKey signature (`pubkey`, `signature`)
+    or a token HMAC (`household_id`, `mac`). Moving an already-bound
+    registration to another free label is allowed; a held label is refused.
+    """
+    key = _registration_key(body)
+    zone = body.get("zone_id")
+    if not key:
+        return {"error": "pubkey or household_id required", "_status": 400}
+    ts_int, ts_err = _fresh_ts(body.get("ts"))
+    if ts_err:
+        return {"error": ts_err, "_status": 401}
+    with lock:
+        regs = load_registrations()
+        entry = regs.get(key)
+        if entry is None:
+            return {"error": "unknown registration — join the relay again", "_status": 404}
+        if not entry.get("active", True):
+            return {"error": "registration deactivated by operator", "_status": 403}
+        err = _proof_ok(key, entry, f"bind-zone:{ts_int}:{key}:{zone}".encode(), body)
+        if err:
+            return {"error": err, "_status": 401}
+        claim_err = zone_claim_error(regs, key, zone)
+        if claim_err:
+            return claim_err
+        changed = entry.get("zone_id") != zone
+        entry["zone_id"] = zone
+        if entry.get("kind") == "nkey" and not _household_tag_of(key, entry):
+            entry["household_tag"] = _server_household_tag(key)
+        entry["last_seen"] = datetime.utcnow().isoformat()
+        regs[key] = entry
+        save_registrations(regs)
+        if changed:
+            try:
+                update_nats_config(regs)
+            except Exception as e:
+                return {"error": f"bound, but NATS config rewrite failed: {e}", "_status": 500}
+    if changed:
+        print(f"[bind-zone] {str(key)[:12]}… bound to zone '{zone}'")
+    return {"status": "bound", "zone_id": zone, "changed": changed,
+            "inbox_prefix": f"_INBOX.{key}", **_trust_material(), "_status": 200}
+
+
+def add_zone_member(body: dict) -> dict:
+    """`/zone-member` — a registration bound to a zone vouches for another
+    registration (another node of the same household) so it may bind the same
+    zone. Proof over `zone-member:{ts}:{key}:{zone_id}:{member}` by the holder."""
+    key = _registration_key(body)
+    zone = body.get("zone_id")
+    member = body.get("member")
+    if not key or not zone or not member:
+        return {"error": "pubkey/household_id, zone_id and member required", "_status": 400}
+    if not (valid_nkey(member) or _PW_HOUSEHOLD_RE.match(str(member))):
+        return {"error": "member must be an NKey (U…) or a household id (hh-…)", "_status": 400}
+    ts_int, ts_err = _fresh_ts(body.get("ts"))
+    if ts_err:
+        return {"error": ts_err, "_status": 401}
+    with lock:
+        regs = load_registrations()
+        entry = regs.get(key)
+        if entry is None or not entry.get("active", True):
+            return {"error": "unknown registration", "_status": 404}
+        err = _proof_ok(key, entry, f"zone-member:{ts_int}:{key}:{zone}:{member}".encode(), body)
+        if err:
+            return {"error": err, "_status": 401}
+        if not is_bound(entry) or entry["zone_id"].lower() != str(zone).lower():
+            return {"error": f"this registration does not hold zone '{zone}'", "_status": 403}
+        members = load_zone_members()
+        vouched = members.setdefault(zone.lower(), [])
+        if member not in vouched:
+            vouched.append(member)
+            save_zone_members(members)
+    print(f"[zone-member] {str(key)[:12]}… vouched {str(member)[:12]}… for zone '{zone}'")
+    return {"status": "vouched", "zone_id": zone, "member": member, "_status": 200}
 
 
 def mint_peer_invite(remote_host_hint: str = None, ttl_seconds: int = None) -> dict:
@@ -1717,75 +2201,70 @@ def accept_peer_invite(remote_token: str, remote_url: str, remote_pubkey: str = 
     }
 
 
-def _subject_permissions_for(household_tag: str, zone_id: str) -> dict:
-    """namespace isolation: scope each pubkey to its own
-    zone's between subjects + its zone's federation gate + _INBOX.
+def _subject_permissions_for(household_tag: str, zone_id: str, user: str = None) -> dict:
+    """namespace isolation: scope each registration to its
+    own zone's subjects. `user` is the NATS user name of the registration (the
+    NKey pubkey, or the hh- id of a password registration); its reply inbox is
+    `_INBOX.<user>.>` and nothing wider (SHARED_DECISIONS D4).
 
-    Actual subject schema (verified live 2026-04-28): wyrdsekai publishes on
-    `between.{zone_id}.{nodeId}.>` — NOT `between.{household_tag}.>` as the
-    Phase 2 first-pass assumed. Same household across zones (e.g. home-server in alpha
-    + test-node in beta) get separate prefixes; cross-household isolation is
-    achieved by zone-id naming convention.
+    Subject schema: a zone publishes `between.{zone}.{nodeId}.>` and addresses
+    another zone on `federation.{zone}.*` (legacy) or
+`federation.{fingerprint}.{label}.*` (canonical, )
+    cross-zone inference/recipe/zone-grant requests go to
+    `federation.{inference,recipe,zonegrant}.{zone}.*` and their answers come
+    back on `federation.inference.stream.{zone}.{id}` /
+    `federation.{recipe,zonegrant}.result.{zone}.{id}` (the requester names
+    its stream/request id `{zone}.{id}`).
 
-    Each pubkey gets BOTH directions (publish + subscribe) on its own zone's
-    between subjects + the federation.{zone_id}.> gate (where it sources/sinks
-    cross-zone tells) + _INBOX.> (NATS request/reply requires this).
+    PUBLISH: its own `between.{zone}.>`, any zone's federation mailbox
+    (`federation.>` — it addresses the peer), its own MCP surface and tunnel,
+    zone discovery; replies go out through `allow_responses` (one reply per
+    request received) instead of a blanket `_INBOX.>`.
+    SUBSCRIBE: only what is addressed to its own zone, plus other zones'
+    capability announcements and discovery requests, plus its own inbox.
 
-    `unspecified` falls back to permissive (between.> + federation.>) so nodes
-    that didn't supply tags during registration still work.
+    A registration with no zone label (made before zone binding) keeps the
+    legacy-broad grant — see RELAY_LEGACY_GRANT.
     """
-    if zone_id and zone_id != "unspecified":
-        between_subj = f"between.{zone_id}.>"
-        # Audit F6 (pre-OSS): SUBSCRIBE used to be a blanket `between.>`, letting
-        # any household node read every other zone's between traffic — presence,
-        # cluster heartbeats, room snapshots, study-sync deltas. The zone's
-        # RelayBridge only ever needs its OWN zone (`between.{zone}.>`, forwarded
-        # in both directions) plus REMOTE zones' capability announcements
-        # (`between.*.*.*.capability.announce` — subscribeRemoteZone in
-        # RelayBridge.java). Everything else cross-zone rides `federation.>`.
-        between_sub = [between_subj, "between.*.*.*.capability.announce"]
-    else:
-        between_subj = "between.>"
-        between_sub = ["between.>"]
-    # Federation gate: cross-zone delivery uses `federation.{destZone}.gate.>`,
-    # so a node needs publish on ANY zone's federation gate (it addresses the
-    # peer's mailbox). Tightening to "only zones I have an active agreement
-    # with" would need agreement-aware permissions — a future hardening.
-    # For now, mirror the legacy permissive federation.> on both sides.
-    #
-    # Subscribe is broader: a node sees its own between traffic + remote
-    # zones' capability announcements (which arrive on between.{remoteZone}.>),
-    # and federation gate replies on federation.{ownZone}.>.
-    # `wyrd.zone.>` carries the MCP NATS surface
-    # (login/tell/library/journal) and follow-ons. Each zone's Java server
-    # opens a relay-side NATS connection with these creds and subscribes
-    # `wyrd.zone.{zoneId}.*` to receive phone-side request/reply messages.
-    # Without it the relay-side McpNatsHandler silently can't subscribe and
-    # phones get "no responders" on wyrd.zone.{zone}.mcp.login.
-    # `wyrd.discover.>` is a global zone-discovery namespace — phones publish
-    # `wyrd.discover.zone` to learn the zone label before scoping subsequent
-    # wyrd.zone.{label}.* subjects.
-    # `wyrd.tunnel.>` carries the dumb session pipe: the phone
-    # opens `wyrd.tunnel.{zone}.{session}.{open,up,close}` and reads `.down`; the
-    # zone tunnels those raw C2S/S2C frames into its own /ws. The relay only
-    # shuffles bytes on these subjects — it never parses them.
-    #
-    # Audit F4 (2026-07-25): `wyrd.zone.>` and `wyrd.tunnel.>` used to be blanket
-    # on BOTH directions for every household node. That let any registered
-    # household impersonate another zone's MCP surface (publishing replies on
-    # `wyrd.zone.{other}.mcp.*` — the phone request/reply channel carrying
-    # login), and read/inject other households' tunnel sessions. A zone server
-    # only ever needs its OWN label: WyrdConfig.zoneId() is what McpNatsHandler
-    # subscribes and what TunnelSessionHandler prefixes. Zones registered
-    # without a label keep the legacy broad grant until they re-register.
-    if zone_id and zone_id != "unspecified":
-        zone_subj = [f"wyrd.zone.{zone_id}.>", f"wyrd.tunnel.{zone_id}.>"]
-    else:
-        zone_subj = ["wyrd.zone.>", "wyrd.tunnel.>"]
+    if valid_zone_label(zone_id):
+        z = zone_id
+        inbox = "_INBOX.>" if (RELAY_LEGACY_INBOX or not user) else f"_INBOX.{user}.>"
+        return {
+            "publish": [f"between.{z}.>", "federation.>",
+                        f"wyrd.zone.{z}.>", f"wyrd.tunnel.{z}.>", "wyrd.discover.>"],
+            "subscribe": [f"between.{z}.>", "between.*.*.*.capability.announce",
+                          f"federation.{z}.>",
+                          f"federation.*.{z}.gate.>", f"federation.*.{z}.tell",
+                          f"federation.inference.{z}.complete",
+                          f"federation.inference.stream.{z}.>",
+                          f"federation.recipe.{z}.run",
+                          f"federation.recipe.result.{z}.>",
+                          f"federation.zonegrant.{z}.request",
+                          f"federation.zonegrant.result.{z}.>",
+                          f"wyrd.zone.{z}.>", f"wyrd.tunnel.{z}.>",
+                          "wyrd.discover.>", inbox],
+            "allow_responses": {"max": 1, "expires": RESPONSE_WINDOW},
+        }
+    # Legacy (unbound) grant — unchanged from before zone binding.
     return {
-        "publish":   [between_subj, "federation.>", *zone_subj, "wyrd.discover.>", "_INBOX.>"],
-        "subscribe": between_sub + ["federation.>", *zone_subj, "wyrd.discover.>", "_INBOX.>"],
+        "publish":   ["between.>", "federation.>", "wyrd.zone.>", "wyrd.tunnel.>",
+                      "wyrd.discover.>", "_INBOX.>"],
+        "subscribe": ["between.>", "federation.>", "wyrd.zone.>", "wyrd.tunnel.>",
+                      "wyrd.discover.>", "_INBOX.>"],
     }
+
+
+def _perm_block(perms: dict) -> str:
+    """The `permissions { ... }` body of one relay.conf user entry."""
+    pub = ", ".join(f'"{s}"' for s in perms["publish"])
+    sub = ", ".join(f'"{s}"' for s in perms["subscribe"])
+    out = (f"permissions: {{\n"
+           f"            publish:   {{ allow: [{pub}] }}\n"
+           f"            subscribe: {{ allow: [{sub}] }}\n")
+    ar = perms.get("allow_responses")
+    if ar:
+        out += f'            allow_responses: {{ max: {int(ar["max"])}, expires: "{ar["expires"]}" }}\n'
+    return out + "          }"
 
 
 def _sanitize_ssh_pubkey(raw: str):
@@ -2094,11 +2573,13 @@ def update_nats_config(regs: dict):
     # relay.sh, randomized per-deploy). Hardcoding the canonical default here
     # would silently revert a randomized password on the first conf regen.
     _sidecar_pw = os.environ.get("NATS_PASSWORD", "") or _relay_secret("sidecar")
+    # D4: the sidecar answers relay.* requests (publish to the asker's inbox is
+    # its job) and subscribes only its own inbox (`_INBOX.relay_sidecar.>`).
     _DEFAULTS = {
         "relay_sidecar": '''{ user: "relay_sidecar", password: "%s",
           permissions: {
             publish:   { allow: ["relay.>", "_INBOX.>"] }
-            subscribe: { allow: ["relay.>", "_INBOX.>"] }
+            subscribe: { allow: ["relay.>", "_INBOX.relay_sidecar.>"] }
           }
         }''' % _sidecar_pw,
         # phones connect with this account
@@ -2120,27 +2601,51 @@ def update_nats_config(regs: dict):
         # which would let a phone read every zone's cluster/presence traffic. Each
         # study message is userDid-scoped (peers ignore other users'), so this
         # narrow grant is safe; per-zone tightening is a future hardening.
-        # DEPRECATED: kept only so invites minted before per-household phone
-        # accounts keep connecting. NO study grants here — study sync requires
-        # the per-household account (a shared credential would let any phone
-        # read/write any user's Study). Old invites: re-mint to get study sync.
+        # DEPRECATED and OFF by default (security review 2026-09-28): one shared
+        # credential that reads every household's tunnel traffic and replies.
+        # RELAY_SHARED_PHONE_ACCOUNT=true keeps it for phones paired before
+        # per-household phone accounts; `wyrd phone invite` re-pairs them.
         "relay_phone": '''{ user: "relay_phone", password: "%s",
           permissions: {
             publish:   { allow: ["wyrd.zone.>", "wyrd.discover.>", "wyrd.tunnel.>", "_INBOX.>"] }
             subscribe: { allow: ["wyrd.tunnel.>", "_INBOX.>"] }
           }
         }''' % _phone_password(),
+        # Peer training (opt-in, RELAY_PEER_TRAINER): a generated password (relay-secrets.json,
+        # "peer_trainer"), its own reply inbox only, and answers through allow_responses.
+        "peer_trainer": '''{ user: "peer_trainer", password: "%s",
+          permissions: {
+            publish:   { allow: ["wyrdsekai.training.peer.>"] }
+            subscribe: { allow: ["wyrdsekai.training.peer.>", "_INBOX.peer_trainer.>"] }
+            allow_responses: true
+          }
+        }''' % _relay_secret("peer_trainer"),
         # bootstrap account for join nodes.
-        # Used by `wyrd relay register-nkey` CLI to migrate off HTTPS:443
-        # (eliminates the Caddy/operator-website port collision). Locked
-        # down to only the register subjects + reply inbox.
+        # Locked down to the register subjects + its own reply inbox (D4).
         "relay_join": '''{ user: "relay_join", password: "%s",
           permissions: {
-            publish:   { allow: ["relay.register", "relay.re-register", "relay.peer.list", "relay.status", "_INBOX.>"] }
-            subscribe: { allow: ["_INBOX.>"] }
+            publish:   { allow: ["relay.register", "relay.re-register", "relay.peer.list", "relay.status"] }
+            subscribe: { allow: ["_INBOX.relay_join.>"] }
           }
         }''' % _join_password(),
     }
+    if not RELAY_SHARED_PHONE_ACCOUNT:
+        del _DEFAULTS["relay_phone"]
+        preserved_users = [u for u in preserved_users
+                           if not re.search(r'user:\s*"relay_phone"', u)]
+        preserved_names.discard("relay_phone")
+    else:
+        print("[relay] WARN: RELAY_SHARED_PHONE_ACCOUNT=true — the shared relay_phone account "
+              "can read every household's tunnel frames and replies. Re-pair those phones "
+              "(`wyrd phone invite`) and turn it off.")
+    if not RELAY_PEER_TRAINER:
+        del _DEFAULTS["peer_trainer"]
+        preserved_users = [u for u in preserved_users
+                           if not re.search(r'user:\s*"peer_trainer"', u)]
+        preserved_names.discard("peer_trainer")
+    else:
+        print("[relay] WARN: RELAY_PEER_TRAINER=true — the shared peer_trainer account can read "
+              "every household's peer-training traffic (wyrdsekai.training.peer.>).")
     # The infrastructure accounts in _DEFAULTS are AUTHORITATIVE: their
     # permission set comes from here, never from whatever relay.conf is sitting
     # in the data volume. A relay.conf seeded before an internal design note has a
@@ -2150,7 +2655,7 @@ def update_nats_config(regs: dict):
     # stayed dead even after the source fix. Re-emitting is safe because the
     # PASSWORD comes from the same env seam (_phone_password()/NATS_PASSWORD) the
     # phone invite reads, so it can't diverge from what clients hold. Non-default
-    # accounts (peer_trainer, registered hh-* households) are untouched.
+    # accounts (registered hh-* households) are untouched.
     for name, block in _DEFAULTS.items():
         if name in preserved_names:
             # Drop the volume's (possibly stale) copy so the authoritative
@@ -2161,6 +2666,13 @@ def update_nats_config(regs: dict):
             ]
         preserved_users.append(block)
         preserved_names.add(name)
+    # Any other kept account still carrying the template's placeholder password has a public
+    # credential (peer_trainer did, on every relay, until 0.5.0): drop it.
+    for u in [u for u in preserved_users if "__GENERATED_ON_FIRST_RUN__" in u]:
+        m = re.search(r'user:\s*"([^"]+)"', u)
+        print(f"[relay] WARN: removed account {m.group(1) if m else '?'}: its password was the "
+              "template placeholder")
+    preserved_users = [u for u in preserved_users if "__GENERATED_ON_FIRST_RUN__" not in u]
 
     # Build household user entries with scoped permissions.
     #
@@ -2177,16 +2689,19 @@ def update_nats_config(regs: dict):
     household_blocks = []
     _phone_users_emitted: set = set()
     for hid, info in active.items():
+        bound = is_bound(info)
+        if not bound and ("token" in info or info.get("kind") == "nkey") and not RELAY_LEGACY_GRANT:
+            # RELAY_LEGACY_GRANT=false: a registration with no zone label gets
+            # no account at all until its node re-registers with its label.
+            continue
         if info.get("kind") == "nkey":
             # NKey-mode entry. `hid` IS the pubkey here (we keyed regs.json by it).
-            perms = _subject_permissions_for(info.get("household_tag"), info.get("zone_id"))
-            pub_list = ", ".join(f'"{s}"' for s in perms["publish"])
-            sub_list = ", ".join(f'"{s}"' for s in perms["subscribe"])
+            if not valid_nkey(hid):
+                print(f"[relay] WARN: skipping registration with a malformed NKey {hid[:12]!r}")
+                continue
+            perms = _subject_permissions_for(info.get("household_tag"), info.get("zone_id"), hid)
             block = f'''{{ nkey: "{hid}",
-          permissions: {{
-            publish:   {{ allow: [{pub_list}] }}
-            subscribe: {{ allow: [{sub_list}] }}
-          }}
+          {_perm_block(perms)}
         }}'''
         elif "token" not in info:
             # SSH-tunnel-only registrations (kind=="zone")
@@ -2216,14 +2731,12 @@ def update_nats_config(regs: dict):
             # blanket between.>/federation.> PUBLISH — cross-zone request forgery
             # through the relay. Scope them exactly like the NKey path; the helper
             # itself falls back to broad only when the zone label is unknown.
-            _pw_perms = _subject_permissions_for(info.get("household_tag"), info.get("zone_id"))
-            _pw_pub = ", ".join(f'"{sub}"' for sub in _pw_perms["publish"])
-            _pw_sub = ", ".join(f'"{sub}"' for sub in _pw_perms["subscribe"])
+            if not _PW_HOUSEHOLD_RE.match(str(hid)) or not _PW_TOKEN_RE.match(str(info["token"])):
+                print(f"[relay] WARN: skipping password registration with a malformed id {str(hid)[:16]!r}")
+                continue
+            _pw_perms = _subject_permissions_for(info.get("household_tag"), info.get("zone_id"), hid)
             block = f'''{{ user: "{hid}", password: "{info["token"]}",
-          permissions: {{
-            publish:   {{ allow: [{_pw_pub}] }}
-            subscribe: {{ allow: [{_pw_sub}] }}
-          }}
+          {_perm_block(_pw_perms)}
         }}'''
         household_blocks.append(block)
 
@@ -2233,20 +2746,14 @@ def update_nats_config(regs: dict):
         # relay_phone for all NEW invites (see mint_phone_invite).
         # Password-mode registrations are KEYED by the household id (hh-…) and
         # may carry no household_tag field — the key IS the tag there.
-        tag = info.get("household_tag") \
-            or (hid if isinstance(hid, str) and hid.startswith("hh-") else None)
-        if tag and tag != "unspecified":
+        tag = _household_tag_of(hid, info)
+        if tag:
             pu = _phone_user_for(tag)
             if pu not in _phone_users_emitted:
                 _phone_users_emitted.add(pu)
-                _ph = _phone_perms_for(info.get("zone_id"))
-                _ph_pub = ", ".join(f'"{sub}"' for sub in _ph["publish"])
-                _ph_sub = ", ".join(f'"{sub}"' for sub in _ph["subscribe"])
+                _ph = _phone_perms_for(info.get("zone_id"), pu)
                 household_blocks.append(f'''{{ user: "{pu}", password: "{_phone_password_for(tag)}",
-          permissions: {{
-            publish:   {{ allow: [{_ph_pub}] }}
-            subscribe: {{ allow: [{_ph_sub}] }}
-          }}
+          {_perm_block(_ph)}
         }}''')
 
     all_users = preserved_users + household_blocks
@@ -2493,11 +3000,15 @@ def held_scope(did: str, relay_did: str | None, now: int | None = None) -> str |
     return g.get("scope")
 
 
-def mint_owner_claim_token(ttl_seconds: int) -> dict:
+def mint_owner_claim_token(ttl_seconds: int, replace: bool = False) -> dict:
     """b — mint a one-time, TTL'd, fingerprint-pinned
     owner-claim token. Mirrors mint_invite's HMAC-signed envelope but binds
     OWNERSHIP, not membership: redeeming it (via /claim-owner) records the
-    redeemer's DID as owner_did. Single-use (nonce-tracked at redeem)."""
+    redeemer's DID as owner_did. Single-use (nonce-tracked at redeem).
+
+    Only a token minted with ``replace`` may take a relay that already has an owner. Before,
+    every deploy and update minted and printed a token that replaced the owner, so anyone who
+    saw that output within the token's life could take the relay (2026-09-28)."""
     ttl = max(60, min(int(ttl_seconds), INVITE_MAX_TTL))
     fingerprint = _leaf_fingerprint()
     payload = {
@@ -2506,6 +3017,8 @@ def mint_owner_claim_token(ttl_seconds: int) -> dict:
         "exp": int(time.time()) + ttl,
         "n": _b64url(secrets.token_bytes(16)),
     }
+    if replace:
+        payload["replace"] = True
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     sig = hmac.new(_load_or_init_invite_key(), payload_bytes, hashlib.sha256).digest()
     token = _b64url(payload_bytes) + "." + _b64url(sig)
@@ -2574,6 +3087,18 @@ def claim_owner(token: str, did: str, ts, signature_b64: str,
     sig_err = _verify_did_sig(did, challenge, signature_b64)
     if sig_err:
         return {"error": sig_err, "_status": 401}
+    # A relay that has an owner is taken only with a replacement token. Read before the token is
+    # consumed; the HMAC check below still rejects a payload that was changed to say "replace".
+    current = owner_did()
+    if current and current != did:
+        try:
+            wants_replace = bool(json.loads(_b64url_decode(token.split(".", 1)[0])).get("replace"))
+        except Exception:
+            wants_replace = False
+        if not wants_replace:
+            return {"error": "this relay already has an owner; its operator can mint a replacement "
+                             "token with `relay.sh claim-mint --replace-owner`",
+                    "owner_did": current, "_status": 409}
     # Token check (consumes the nonce on success — single-use).
     try:
         _verify_owner_claim_token(token)
@@ -3282,6 +3807,16 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                     self.json_response(400, {"error": "Invalid JSON body"})
                     return
 
+            # Zone binding: check the label before the invite is spent.
+            if not body.get("zone_id"):
+                self.json_response(400, {
+                    "error": "zone_id required: this relay binds every registration to its "
+                             "zone. Update Wyrdsekai on this node and join again."})
+                return
+            _pre = zone_claim_error(load_registrations(), None, body.get("zone_id"))
+            if _pre:
+                self.json_response(_pre.pop("_status", 409), _pre)
+                return
             # Invite-token path (canonical, F2.1) takes precedence.
             invite_token = body.get("invite_token")
             if invite_token:
@@ -3318,7 +3853,7 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                         return
 
             ip = self._effective_ip()
-            result = register_household(ip)
+            result = register_household(ip, zone_id=body.get("zone_id"))
             # deprecation: surface the migration prompt
             # in the response so any client that hits /register sees it. Also
             # logged once per registration for relay-side observability.
@@ -3331,7 +3866,8 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                 )
                 print(f"[deprecation] /register hit by {ip} — "
                       "client should migrate to /register-nkey")
-            code = 200 if "token" in result else 429 if "Rate limited" in result.get("error", "") else 503
+            code = 200 if "token" in result else result.pop("_status", None) \
+                or (429 if "Rate limited" in result.get("error", "") else 503)
             self.json_response(code, result)
 
         elif self.path == "/register-nkey":
@@ -3366,6 +3902,11 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                             "error": f"Rate limited (commons mode). Try again in {wait}s.",
                         })
                         return
+            pre = precheck_register_nkey(pubkey, body.get("zone_id"), body.get("ts"),
+                                         body.get("signature"))
+            if pre:
+                self.json_response(pre.pop("_status", 400), pre)
+                return
             gate = gate_register_nkey(body)
             if "error" in gate:
                 self.json_response(gate.get("_status", 401), gate)
@@ -3384,11 +3925,31 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                 node_name=body.get("node_name"),
                 entrant_tier=gate["entrant_tier"],
                 identity_outbox=gate.get("identity_outbox"),
+                ts=body.get("ts"),
+                signature=body.get("signature"),
             )
             if "error" in result:
-                code = result.get("_status") or (503 if "capacity" in result.get("error", "").lower() else 400)
+                code = result.pop("_status", None) or (503 if "capacity" in result.get("error", "").lower() else 400)
             else:
                 code = 200
+            self.json_response(code, result)
+
+        elif self.path in ("/bind-zone", "/zone-member"):
+            # Zone binding (security review 2026-09-28): an existing registration
+            # binds itself to its zone label, or a zone holder vouches for another
+            # node of its household. Both are signed by the registration.
+            client_ip = self._effective_ip()
+            if not _join_rate_ok(client_ip, bucket=_phone_invite_attempts, limit=30):
+                self.json_response(429, {"error": "Too many requests — wait a minute"})
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                body = json.loads(self.rfile.read(length)) if length > 0 else {}
+            except json.JSONDecodeError:
+                self.json_response(400, {"error": "Invalid JSON body"})
+                return
+            result = bind_zone(body) if self.path == "/bind-zone" else add_zone_member(body)
+            code = result.pop("_status", 200)
             self.json_response(code, result)
 
         elif self.path == "/re-register-nkey":
@@ -3429,11 +3990,19 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                 except json.JSONDecodeError:
                     self.json_response(400, {"error": "Invalid JSON body"})
                     return
-            result = deregister_nkey(
-                pubkey=body.get("pubkey"),
-                ts=body.get("ts"),
-                signature_b64=body.get("signature"),
-            )
+            if body.get("household_id") and not body.get("pubkey"):
+                # Password-mode leave: HMAC proof of the household token.
+                result = deregister_password(
+                    household_id=body.get("household_id"),
+                    ts=body.get("ts"),
+                    mac=body.get("mac"),
+                )
+            else:
+                result = deregister_nkey(
+                    pubkey=body.get("pubkey"),
+                    ts=body.get("ts"),
+                    signature_b64=body.get("signature"),
+                )
             code = result.pop("_status", 200)
             self.json_response(code, result)
 
@@ -3533,10 +4102,12 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                 signature_b64=body.get("signature"),
                 household_id=body.get("household_id"),
                 token=body.get("token"),
+                mac=body.get("mac"),
             )
             code = result.pop("_status", 200) if "error" in result else 200
             if "error" not in result:
-                print(f"[phone-invite] minted for {body.get('pubkey', '?')[:12]}… by {client_ip}")
+                print(f"[phone-invite] minted for "
+                      f"{(body.get('pubkey') or body.get('household_id') or '?')[:12]}… by {client_ip}")
             self.json_response(code, result)
 
         elif self.path == "/peer-invite":
@@ -3687,8 +4258,14 @@ class RegistrationHandler(BaseHTTPRequestHandler):
                 self.json_response(400, {"error": "Invalid JSON body"})
                 return
             ttl = int(body.get("ttl", INVITE_MAX_TTL))
+            replace = bool(body.get("replace", False))
+            current = owner_did()
+            if current and not replace:
+                # No token while the relay has an owner: deploy and update used to mint one anyway.
+                self.json_response(409, {"error": "owned", "owner_did": current})
+                return
             try:
-                self.json_response(200, mint_owner_claim_token(ttl))
+                self.json_response(200, mint_owner_claim_token(ttl, replace=replace))
             except FileNotFoundError as e:
                 self.json_response(503, {"error": str(e)})
 
@@ -3754,6 +4331,9 @@ def _nats_handle_register(body, _msg):
     if not pubkey:
         return {"error": "pubkey required (NATS NKey, 56 chars starting U)",
                 "_status": 400}
+    pre = precheck_register_nkey(pubkey, body.get("zone_id"), body.get("ts"), body.get("signature"))
+    if pre:
+        return pre
     # same MODE gate as the HTTP surface.
     gate = gate_register_nkey(body)
     if "error" in gate:
@@ -3772,6 +4352,8 @@ def _nats_handle_register(body, _msg):
         node_name=body.get("node_name"),
         entrant_tier=gate["entrant_tier"],
         identity_outbox=gate.get("identity_outbox"),
+        ts=body.get("ts"),
+        signature=body.get("signature"),
     )
 
 
@@ -4010,6 +4592,8 @@ def _start_nats_subscriber():
                 if NATS_USER:
                     connect_kwargs["user"] = NATS_USER
                     connect_kwargs["password"] = NATS_PASSWORD
+                    # D4: the relay grants each user only `_INBOX.<user>.>`.
+                    connect_kwargs["inbox_prefix"] = f"_INBOX.{NATS_USER}"
                 nc = await nats.connect(NATS_URL, **connect_kwargs)
                 print(f"[nats] connected to {NATS_URL}, subscribing to relay.*")
                 # nats-py 2.14+ requires the cb to be an `async def`, not a
@@ -4059,15 +4643,15 @@ if __name__ == "__main__":
     # file — which may have been reverted (e.g. compose redeploy). The ledger
     # is the source of truth; relay.conf is derived.
     # F2.2 / federation auto-restore — "reinstall then minor config" goal.
+    # Zone binding (security review 2026-09-28): scope stored registrations
+    # before the auth block is rebuilt from them.
     try:
-        boot_regs = load_registrations()
-        active_count = sum(1 for v in boot_regs.values() if v.get("active", True))
-        if active_count > 0:
-            print(f"[boot] Rehydrating relay.conf from {active_count} active registrations…")
-            update_nats_config(boot_regs)
-            print(f"[boot] relay.conf rebuilt + NATS reload signaled.")
-        else:
-            print(f"[boot] No active registrations in ledger — relay.conf left as-is.")
+        migrate_zone_bindings()
+    except Exception as e:
+        print(f"[boot] WARN: zone-binding migration failed: {e}")
+
+    try:
+        rehydrate_conf_at_boot()
     except FileNotFoundError as e:
         print(f"[boot] Skipping rehydrate: {e}")
     except Exception as e:

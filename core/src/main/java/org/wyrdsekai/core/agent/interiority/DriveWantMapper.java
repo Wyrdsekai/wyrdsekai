@@ -16,13 +16,13 @@ import java.util.stream.Collectors;
  * autonomously choose, and a felt weight derived from how strongly the
  * underlying drive is pulling.
  *
- * <p>This is the FALLBACK FLOOR, not the primary Orient. The live OODA pass is
+ * <p>This is the FLOOR, not the primary Orient. The live OODA pass is
  * generative-first ({@code CompanionActor.orientCandidates} → {@code
  * maybeProposeWants}): the agent names its own wants via inference, and those
- * proposals are the candidates. This rule mapper is used only before the first
- * proposal lands or when no backend is available — so the agent always has
- * *something* to choose from, even with no inference call. It always produces
- * candidates when drives are over threshold.
+ * come first in the candidate set. This rule mapper's candidates stand behind them,
+ * and are the whole set when she named nothing or no backend is available — so the
+ * agent always has *something* to choose from, even with no inference call. It
+ * always produces candidates when drives are over threshold.
  *
  * <p>Output filters by {@link ActionPolicy.AutonomyTier} — only AMBIENT or
  * VISIBLE candidates are surfaced. CONSENT / FORBIDDEN actions need a steward
@@ -64,9 +64,9 @@ public final class DriveWantMapper {
         new WantTemplate("Disgust",         "examine the thing that bothers me — name it concretely", "examine"),
         new WantTemplate("AutonomyPressure", "stake out a small choice that's mine to make", "set_goal"),
         new WantTemplate("Significance",    "save something I made today as an artifact", "save_artifact"),
-        new WantTemplate("Standing",        "make my presence felt — speak up where I have something to add", "tell_agent"),
-        new WantTemplate("Harmony",         "smooth a frayed connection — a kind word, an apology", "tell_agent"),
-        new WantTemplate("Obligation",      "discharge a small obligation I've been carrying", "note"),
+        new WantTemplate("Standing",        "speak up where I have something to add", "tell_agent"),
+        new WantTemplate("Harmony",         "repair a strained connection — a kind word, an apology", "tell_agent"),
+        new WantTemplate("Obligation",      "do one small thing I promised", "note"),
         // The social + remaining-Panksepp drives (2026-06-04 agency audit, Layer 2).
         // These drives are now surfaced by collectDriveLevels() but had no fallback
         // want-seed — so before the generative Orient warms up, the agent still had
@@ -76,11 +76,11 @@ public final class DriveWantMapper {
         new WantTemplate("Affiliation",     "be near someone — reach toward a present companion", "tell_agent"),
         new WantTemplate("Care",            "check in on someone I care about", "tell_agent"),
         new WantTemplate("Play",            "do something for the delight of it — lighten the moment", "emote"),
-        new WantTemplate("Creativity",      "make something — give a form to an idea I'm carrying", "write_text"),
+        new WantTemplate("Creativity",      "make something from an idea I have", "write_text"),
         new WantTemplate("Vigilance",       "look around — make sure everything here is as it should be", "examine"),
-        new WantTemplate("Grief",           "sit with a loss — write to who or what is gone", "write_journal"),
+        new WantTemplate("Grief",           "write to who or what is gone, about a loss", "write_journal"),
         new WantTemplate("Surprise",        "follow up on what caught me off guard — look closer", "examine"),
-        new WantTemplate("Startle",         "steady myself after that jolt — take a breath, reflect", "reflect")
+        new WantTemplate("Startle",         "pause after that surprise and reflect", "reflect")
     );
 
     /** Every drive key this mapper looks up — guarded against the producer (collectDriveLevels). */
@@ -96,9 +96,19 @@ public final class DriveWantMapper {
     }
 
     public static List<CandidateWant> orient(AmbientObservation ambient, double threshold) {
+        if (ambient == null) return new ArrayList<>();
+        return orient(ambient.driveLevels(), ambient.energy(), threshold);
+    }
+
+    /**
+     * As above, from the drive PULLS rather than the raw levels: the caller passes
+     * {@link DrivePull#levels} so a settling axis at its own resting point seeds nothing.
+     * Measured as levels, loneliness at its 0.80 rest seeded "find my bondholder or write to
+     * them" on every tick of every day alone (2026-09-25).
+     */
+    public static List<CandidateWant> orient(Map<String, Double> drives, double energy, double threshold) {
         var out = new ArrayList<CandidateWant>();
-        if (ambient == null || ambient.driveLevels() == null) return out;
-        var drives = ambient.driveLevels();
+        if (drives == null) return out;
 
         for (var t : WANT_TEMPLATES) {
             addIf(out, drives, t.drive(), threshold, t.wantText(), t.verb());
@@ -106,7 +116,7 @@ public final class DriveWantMapper {
 
         // Low energy + nothing pressing → rest is a real candidate (not the
         // only option; the deciding step will pick).
-        if (ambient.energy() < 0.3) {
+        if (energy < 0.3) {
             out.add(CandidateWant.rest());
         }
 

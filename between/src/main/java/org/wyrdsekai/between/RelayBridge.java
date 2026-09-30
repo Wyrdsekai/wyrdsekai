@@ -205,7 +205,7 @@ public final class RelayBridge implements AutoCloseable {
             relayBuilder.userInfo(authUser, authPassword != null ? authPassword : "");
         }
 
-        relayConnection = Nats.connect(relayBuilder.build());
+        relayConnection = RelayTls.connect(relayBuilder, relayUrl);   // encrypted, relay pinned (RelayTls)
 
         // Same-server short-circuit: relay connection is enough; everything
         // else (federation gate, between.zone.> forwarding, remote-zone
@@ -219,11 +219,11 @@ public final class RelayBridge implements AutoCloseable {
         // 2. Connect a second client to local NATS for bridge forwarding.
         //    We need our own connection so we see ALL local messages (the main
         //    NatsBridge filters out messages from our own nodeId).
-        var localBuilder = new Options.Builder()
+        var localBuilder = HouseholdBusClient.secure(new Options.Builder()
             .server(localNatsUrl)
             .connectionName("wyrd-relay-fwd-" + shortId)
             .maxReconnects(-1)
-            .reconnectWait(Duration.ofSeconds(2))
+            .reconnectWait(Duration.ofSeconds(2)), localNatsUrl)
             .build();
 
         localListenerConnection = Nats.connect(localBuilder);
@@ -305,6 +305,11 @@ public final class RelayBridge implements AutoCloseable {
         // original subject, and the src-dedup rule applies unchanged.
         var legacyGatePattern = "federation.*.gate.>";
         var canonicalGatePattern = "federation.*.*.gate.>";
+        // On the relay, only gate traffic addressed to THIS zone: the relay grants a zone-bound
+        // registration nothing wider (security review 2026-09-28), and another zone's proposals
+        // are not ours to read. Outbound forwarding (local bus → relay) keeps the wildcards.
+        var ownLegacyGate = inboundGatePatterns(zoneId)[0];
+        var ownCanonicalGate = inboundGatePatterns(zoneId)[1];
 
         BiConsumer<String, Connection> subscribeRelayToLocal =
             (pattern, ignored) -> relayConnection.createDispatcher(msg -> {
@@ -342,9 +347,9 @@ public final class RelayBridge implements AutoCloseable {
                 }
             }).subscribe(pattern);
 
-        // 5. Relay -> Local: inbound gate messages (proposals, accepts, etc.)
-        subscribeRelayToLocal.accept(legacyGatePattern, relayConnection);
-        subscribeRelayToLocal.accept(canonicalGatePattern, relayConnection);
+        // 5. Relay -> Local: inbound gate messages (proposals, accepts, etc.) for this zone.
+        subscribeRelayToLocal.accept(ownLegacyGate, relayConnection);
+        subscribeRelayToLocal.accept(ownCanonicalGate, relayConnection);
 
         // 6. Local -> Relay: outbound gate messages from this node only.
         // (privacy rail R1): withheld on a PUBLIC
@@ -358,6 +363,11 @@ public final class RelayBridge implements AutoCloseable {
             log.info("Relay bridge: federation gate EGRESS withheld on public leg {} "
                 + "(privacy rail) — inbound gate still accepted", relayUrl);
         }
+    }
+
+    /** The relay-side gate subscriptions for {@code zoneId}: legacy and canonical. */
+    static String[] inboundGatePatterns(String zoneId) {
+        return new String[]{"federation." + zoneId + ".gate.>", "federation.*." + zoneId + ".gate.>"};
     }
 
     /**

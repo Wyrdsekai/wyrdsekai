@@ -20,7 +20,7 @@
  * fails (e.g., in a test environment without react-native), the adapter
  * falls back to trying nats.ws first, then NativeNatsClient.
  */
-import type { BetweenClient, BetweenMessageHandler } from './BetweenClient';
+import type { BetweenClient, BetweenMessageHandler, BetweenSubscribeError } from './BetweenClient';
 import { NativeNatsClient } from './NativeNatsClient';
 
 type NatsClientType = import('../../web/NatsClient').NatsClient;
@@ -47,12 +47,27 @@ export class NatsBetweenAdapter implements BetweenClient {
   private natsClient: NatsClientType | null = null;
   private nativeClient: NativeNatsClient | null = null;
   private _connected = false;
+  private refusedLogin = false;
 
   /** Visible for testing — override platform detection. */
   _forcePlatform: 'native' | 'web' | null = null;
 
+  /** Live: false as soon as the underlying connection drops (true again after a reconnect). */
   get isConnected(): boolean {
-    return this._connected;
+    if (!this._connected) return false;
+    if (this.nativeClient) return this.nativeClient.isConnected;
+    if (this.natsClient) return this.natsClient.state === 'connected';
+    return false;
+  }
+
+  /** The native client's server errors (-ERR), when on the native path. */
+  onServerError(listener: Parameters<NativeNatsClient['onError']>[0]): () => void {
+    return this.nativeClient?.onError(listener) ?? (() => {});
+  }
+
+  /** True when the server refused this login (native path), also after a failed connect(). */
+  get loginRefused(): boolean {
+    return this.nativeClient?.refused ?? this.refusedLogin;
   }
 
   async connect(url: string, creds?: { user?: string; pass?: string }): Promise<void> {
@@ -70,14 +85,16 @@ export class NatsBetweenAdapter implements BetweenClient {
    * Used on iOS/Android where nats.ws has binary frame issues.
    */
   private async connectNative(url: string, creds?: { user?: string; pass?: string }): Promise<void> {
+    const client = new NativeNatsClient();
     try {
-      const client = new NativeNatsClient();
       this.nativeClient = client;
+      this.refusedLogin = false;
       await client.connect(url, creds);
       this._connected = true;
     } catch (e) {
       this._connected = false;
       this.nativeClient = null;
+      this.refusedLogin = client.refused;
       throw new Error(
         `NATS native connection failed: ${
           e instanceof Error ? e.message : String(e)
@@ -132,9 +149,13 @@ export class NatsBetweenAdapter implements BetweenClient {
     throw new Error('Not connected');
   }
 
-  subscribe(subject: string, handler: BetweenMessageHandler): () => void {
+  subscribe(
+    subject: string,
+    handler: BetweenMessageHandler,
+    onError?: (err: BetweenSubscribeError) => void,
+  ): () => void {
     if (this.nativeClient) {
-      return this.nativeClient.subscribe(subject, handler);
+      return this.nativeClient.subscribe(subject, handler, onError);
     }
     if (this.natsClient) {
       return this.natsClient.subscribe(subject, handler);

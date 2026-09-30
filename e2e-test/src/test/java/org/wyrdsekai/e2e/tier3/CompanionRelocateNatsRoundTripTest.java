@@ -1,5 +1,6 @@
 package org.wyrdsekai.e2e.tier3;
 
+import org.wyrdsekai.e2e.infra.SignedSoul;
 import com.typesafe.config.ConfigFactory;
 import org.apache.pekko.actor.testkit.typed.javadsl.ActorTestKit;
 import org.apache.pekko.actor.typed.ActorRef;
@@ -15,7 +16,6 @@ import org.wyrdsekai.between.federation.FederationActor;
 import org.wyrdsekai.between.federation.FederationService;
 import org.wyrdsekai.between.federation.TransitToken;
 import org.wyrdsekai.common.util.Json;
-import org.wyrdsekai.core.agent.AgentProfile;
 import org.wyrdsekai.core.agent.CompanionTransitState;
 import org.wyrdsekai.core.agent.DriveState;
 import org.wyrdsekai.core.agent.VitalityState;
@@ -112,6 +112,9 @@ class CompanionRelocateNatsRoundTripTest {
         initFederationSchema(betaJdbc);
         var alphaService = new FederationService(alphaJdbc);
         var betaService = new FederationService(betaJdbc);
+        // A real did:key with a signed soul manifest: the target refuses a companion without one.
+        var soul = SignedSoul.create("Wyrd", "wyrd-001");
+        alphaService.setSoulStore(soul.store());
 
         // Pre-establish the bilateral agreement on both sides — bypasses the
         // propose/accept dance so we can focus on the relocate path.
@@ -155,15 +158,13 @@ class CompanionRelocateNatsRoundTripTest {
             }));
 
         // Build a realistic CompanionTransitState payload.
-        var profile = new AgentProfile("Wyrd", "wyrd-001", "agent",
-            "Companion", "You are Wyrd.",
-            4096, 256, 0.7, "did:key:z6MkRelocateE2E");
+        var profile = soul.profile();
         var state = CompanionTransitState.capture(profile,
             VitalityState.initial(),
             new DriveState(0.1, 0.7, 0.2, 0.3, 0.5, 0.0, 0.0, 0.4),
             "settled", "PRESENT_WITH_USER",
             List.of("did:key:z6MkAlice"),
-            "study-alice", "en", "manifest-hash-1");
+            "study-alice", "en", soul.manifest().contentHash());
         var stateJson = Json.mapper()
             .writeValueAsString(state);
 
@@ -194,12 +195,12 @@ class CompanionRelocateNatsRoundTripTest {
         // Both sides persisted the token.
         await().atMost(Duration.ofSeconds(3))
             .untilAsserted(() -> {
-                assertThat(alphaService.validateTransitToken(token.tokenId()))
+                assertThat(alphaService.listActiveTransitTokens(betaZone))
                     .as("source persisted token at publish")
-                    .isPresent();
-                assertThat(betaService.validateTransitToken(token.tokenId()))
+                    .anySatisfy(t -> assertThat(t.tokenId()).isEqualTo(token.tokenId()));
+                assertThat(betaService.listActiveTransitTokens(betaZone))
                     .as("target persisted token on inbound accept")
-                    .isPresent();
+                    .anySatisfy(t -> assertThat(t.tokenId()).isEqualTo(token.tokenId()));
             });
 
         alphaBridge.close();

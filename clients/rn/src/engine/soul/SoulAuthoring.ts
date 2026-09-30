@@ -9,6 +9,7 @@
  * The result is a ClientSoulManifest ready to be saved as the active manifest.
  */
 
+import { isPlaintextToNetwork } from '../../network/plainAddress';
 import type {
   ClientSoulManifest,
   ClientSoulFragment,
@@ -16,6 +17,7 @@ import type {
 import { createCompanionProfile } from '../agent/AgentProfile';
 import { initialVitality } from '../agent/VitalityState';
 import { forge } from './LocalForge';
+import { NowLine } from '../../inference/NowLine';
 
 // ---------------------------------------------------------------------------
 // Authoring question type
@@ -96,14 +98,18 @@ Respond in JSON:
 
   try {
     const base = inferenceBaseUrl.trim().replace(/\/$/, '');
+    // Her answers never cross the network in the clear.
+    if (isPlaintextToNetwork(base)) return fallbackSeed(companionName, answers);
     const res = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [
+        // NONE: this authors her resident identity, and a date there goes
+        // stale inside every later prompt.
+        messages: NowLine.NONE.stamp([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
-        ],
+        ]),
         max_tokens: 800,
         temperature: 0.7,
         stop: ['</s>', '<|endoftext|>', '<|im_end|>'],

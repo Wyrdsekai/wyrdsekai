@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -113,6 +114,38 @@ public final class ConversationTurnStore {
             log.warn("recentBondholderTurns failed (companion={}, bondholder={}): {}",
                 companionDid, bondholderDid, e.getMessage());
         }
+        return out;
+    }
+
+    /**
+     * Both sides of one pair's exchange since {@code sinceMs}, newest {@code maxRows},
+     * returned oldest first. Read by the conversation lane to give a reply the thread it
+     * belongs to.
+     */
+    public List<Turn> pairTurnsSince(String companionDid, String bondholderDid,
+                                     long sinceMs, int maxRows) {
+        var out = new ArrayList<Turn>();
+        try (Connection conn = DriverManager.getConnection(jdbcUrl);
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT id, turn_role, content, ts_ms, room_id "
+                     + "FROM conversation_turns "
+                     + "WHERE companion_did = ? AND bondholder_did = ? AND ts_ms >= ? "
+                     + "ORDER BY ts_ms DESC LIMIT ?")) {
+            ps.setString(1, companionDid);
+            ps.setString(2, bondholderDid);
+            ps.setLong(3, sinceMs);
+            ps.setInt(4, Math.max(1, maxRows));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new Turn(rs.getLong(1), rs.getString(2),
+                        rs.getString(3), rs.getLong(4), rs.getString(5)));
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("pairTurnsSince failed (companion={}, bondholder={}): {}",
+                companionDid, bondholderDid, e.getMessage());
+        }
+        Collections.reverse(out);
         return out;
     }
 

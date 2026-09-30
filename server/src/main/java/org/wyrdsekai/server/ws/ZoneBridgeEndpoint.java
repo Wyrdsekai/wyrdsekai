@@ -8,6 +8,8 @@ import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.agent.AgentEvent;
 import org.wyrdsekai.core.agent.AgentEventStream;
 
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,6 +57,15 @@ public class ZoneBridgeEndpoint implements Consumer<WsConfig> {
         // Zone bridge connections are persistent control channels — set a long idle timeout.
         // Jetty 12 default is 30s, which causes zone services to disconnect and reconnect constantly.
         ws.onConnect(ctx -> {
+            // With no zone secret set, only services on this machine may register (they used to be
+            // taken from anywhere that could reach the port). Set WYRDSEKAI_ZONE_SECRET to accept a
+            // service from another machine.
+            if ((zoneSecret == null || zoneSecret.isBlank()) && !isLoopback(ctx.session.getRemoteSocketAddress())) {
+                log.warn("Zone service from {} refused: no zone secret is set, so only this machine may register",
+                    ctx.session.getRemoteSocketAddress());
+                ctx.closeSession(1008, "zone secret required from another machine");
+                return;
+            }
             ctx.session.setIdleTimeout(Duration.ofMinutes(30));
             log.info("Zone service connected: {} (idle timeout: 30m)", ctx.session.getRemoteSocketAddress());
         });
@@ -93,6 +104,10 @@ public class ZoneBridgeEndpoint implements Consumer<WsConfig> {
         ws.onError(ctx -> {
             log.error("Zone bridge error for {}", ctx.session.getRemoteSocketAddress(), ctx.error());
         });
+    }
+
+    static boolean isLoopback(SocketAddress remote) {
+        return remote instanceof InetSocketAddress in && in.getAddress() != null && in.getAddress().isLoopbackAddress();
     }
 
     private void handleMessage(WsContext ctx, ZoneBridgeMessage msg) {

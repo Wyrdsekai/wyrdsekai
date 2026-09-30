@@ -3,10 +3,10 @@ package org.wyrdsekai.between.zonegrant;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.between.RelayIds;
 import org.wyrdsekai.between.RelaySessionTransport;
 
 import java.util.Base64;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -61,7 +61,7 @@ public final class NatsZoneGrantClient {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("NATS relay transport not connected"));
         }
-        var requestId = UUID.randomUUID().toString();
+        var requestId = RelayIds.scopedId(zoneId);
         var req = new NatsZoneGrantProtocol.Request(requestId, zoneId, myNodeId,
             Base64.getEncoder().encodeToString(myX25519Spki));
 

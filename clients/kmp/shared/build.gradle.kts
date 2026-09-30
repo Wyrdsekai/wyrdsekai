@@ -42,6 +42,18 @@ val downloadOnnxRuntimeIos = tasks.register("downloadOnnxRuntimeIos") {
 }
 
 kotlin {
+    // jvmSharedMain: code both JVM targets (Android, desktop) share — the sealed
+    // tunnel / sealed request primitives ( W3).
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi::class)
+    applyDefaultHierarchyTemplate {
+        common {
+            group("jvmShared") {
+                withAndroidTarget()
+                withJvm()
+            }
+        }
+    }
+
     androidTarget()
     jvm("desktop")
 
@@ -99,6 +111,18 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+        }
+
+        val jvmSharedMain by getting {
+            dependencies {
+                // X25519 + ChaCha20-Poly1305 for the sealed tunnel and sealed
+                // requests. Android's own providers lack X25519 below API 33
+                // (minSdk is 28), so both JVM targets use BouncyCastle's
+                // lightweight API — the same code the desktop tests check
+                // against the interop vectors. The LTS build, the one jnats
+                // already brings to Android (two BC jars clash in the APK).
+                implementation(libs.bouncycastle.lts)
+            }
         }
 
         androidMain.dependencies {
@@ -167,6 +191,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    // JVM unit tests run the network code against android.jar stubs;
+    // android.util.Log answers 0 instead of throwing.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     // llama.cpp JNI — only builds if llama.cpp source is present

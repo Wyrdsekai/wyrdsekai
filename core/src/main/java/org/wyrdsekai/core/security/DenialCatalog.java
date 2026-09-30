@@ -52,8 +52,8 @@ public final class DenialCatalog {
     public static Denial tierGated(
             String actionType, String actionDescription,
             int agentTier, int requiredTier) {
-        var reason = "I haven't earned the ability to " + actionDescription
-            + " yet (tier " + agentTier + ", needs " + requiredTier + ").";
+        var reason = "To " + actionDescription + " isn't mine to do on my own yet"
+            + " (tier " + agentTier + ", needs " + requiredTier + ").";
         var remediation = "This action unlocks at tier " + requiredTier
             + ". Bond depth and steward trust raise tier over time.";
         var template = Denial.RequestTemplate.forAccess(

@@ -258,7 +258,26 @@ class PromptAssemblerTest {
         // Should not add a system message for blank memory
         var systemMsgs = messages.stream()
             .filter(m -> m.role().equals("system")).toList();
-        assertThat(systemMsgs).hasSize(4); // system prompt + core rules + room context + time context
+        // system prompt + core rules + room context; no elapsed time to say (the
+        // date and the time ride the request itself, NowLine)
+        assertThat(systemMsgs).hasSize(3);
+    }
+
+    /**
+     * "Last heard from you" is measured from the speaker's own previous line, not from the trigger
+     * itself (already the last line of the history, so the gap was always under a minute and the
+     * line never said anything) and not from someone else's (2026-09-23).
+     */
+    @Test void last_heard_is_the_speakers_own_previous_line() {
+        var now = Instant.now();
+        var earlier = new WorldEvent.Said("nexus", now.minusSeconds(600), "player-1", "Alice", "back soon");
+        var mine = new WorldEvent.Said("nexus", now.minusSeconds(590), "wyrd-companion", "Wyrd", "I'll be here.");
+        var bob = new WorldEvent.Said("nexus", now.minusSeconds(120), "player-2", "Bob", "hi all");
+        var trigger = new WorldEvent.Said("nexus", now, "player-1", "Alice", "I'm back");
+        var messages = PromptAssembler.assemble(
+            PROFILE, NEXUS, List.of(earlier, mine, bob, trigger), trigger, null, List.of(), null, null, null, null);
+        assertThat(messages.stream().map(ChatMessage::content).toList())
+            .anySatisfy(c -> assertThat(c).contains("Last heard from you: 10 minutes ago."));
     }
 
     // --- Output constraints (Layer 8) ---
@@ -787,5 +806,19 @@ class PromptAssemblerTest {
         assertThat(voiceTokens)
             .as("voice (%s) must be < 1/2 of full (%s)", voiceTokens, fullTokens)
             .isLessThan(fullTokens / 2);
+    }
+
+    // --- the prompt ceiling follows the serving profile ---
+
+    @Test
+    void theTwoModelStackKeepsTheVoiceSafeCeiling() {
+        assertThat(PromptAssembler.backendSafePromptTokens(false)).isEqualTo(PromptAssembler.MIN_BACKEND_SAFE_PROMPT_TOKENS);
+        assertThat(PromptAssembler.backendSafePromptTokens(false)).isEqualTo(7500);
+    }
+
+    @Test
+    void oneResidentModelGetsItsOwnCeiling() {
+        assertThat(PromptAssembler.backendSafePromptTokens(true)).isEqualTo(PromptAssembler.SINGLE_BRAIN_SAFE_PROMPT_TOKENS);
+        assertThat(PromptAssembler.backendSafePromptTokens(true)).isGreaterThan(PromptAssembler.backendSafePromptTokens(false));
     }
 }

@@ -69,6 +69,21 @@ public final class FeltAxisPeak {
         return best;
     }
 
+    /**
+     * Where each axis rests for this companion, keyed the way {@code collectDriveLevels()} names
+     * drives ("Loneliness", "AutonomyPressure" …), for the consumers that measure pull against
+     * those levels ({@link org.wyrdsekai.core.agent.interiority.DrivePull}) and the stuck-drive
+     * detector.
+     */
+    public static Map<String, Double> settlePointsByDriveKey(VitalityState v, GenomeProfile genome) {
+        var out = new LinkedHashMap<String, Double>();
+        for (var e : setPoints(v, genome).entrySet()) {
+            var k = e.getKey();
+            out.put(Character.toUpperCase(k.charAt(0)) + k.substring(1), e.getValue());
+        }
+        return out;
+    }
+
     /** Where each axis rests for this companion. */
     static Map<String, Double> setPoints(VitalityState v, GenomeProfile genome) {
         var m = new LinkedHashMap<String, Double>();

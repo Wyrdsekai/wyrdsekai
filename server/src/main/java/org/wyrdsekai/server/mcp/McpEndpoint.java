@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * MCP (Model Context Protocol) endpoint (§79).
@@ -28,8 +29,16 @@ public class McpEndpoint {
     private static final Logger log = LoggerFactory.getLogger(McpEndpoint.class);
     private static final ObjectMapper mapper = new ObjectMapper();
 
+    /** Names who a request proves it is, or empty when it proves no one. */
+    @FunctionalInterface
+    public interface CallerResolver {
+        Optional<McpToolRegistry.Caller> resolve(Context ctx);
+    }
+
     private final ActorSystem<?> system;
     private final McpToolRegistry toolRegistry;
+    /** Null: the door asks no one who they are. Set: a request that proves no one is refused. */
+    private final CallerResolver callers;
 
     public McpEndpoint(ActorSystem<?> system) {
         this(system, new McpToolRegistry(), "/mcp");
@@ -37,9 +46,16 @@ public class McpEndpoint {
 
     /** A door serving a specific registry at a specific path (e.g. the library at /mcp/library). */
     public McpEndpoint(ActorSystem<?> system, McpToolRegistry registry, String path) {
+        this(system, registry, path, null);
+    }
+
+    /** A door that serves only callers {@code callers} can name. */
+    public McpEndpoint(ActorSystem<?> system, McpToolRegistry registry, String path,
+                       CallerResolver callers) {
         this.system = system;
         this.toolRegistry = registry;
         this.path = path == null || path.isBlank() ? "/mcp" : path;
+        this.callers = callers;
     }
 
     private final String path;
@@ -57,6 +73,20 @@ public class McpEndpoint {
     public String path() { return path; }
 
     private void handleMcp(Context ctx) {
+        McpToolRegistry.Caller caller = null;
+        if (callers != null) {
+            try {
+                caller = callers.resolve(ctx).orElse(null);
+            } catch (RuntimeException e) {
+                log.warn("MCP caller check failed on {}: {}", path, e.toString());
+            }
+            if (caller == null) {
+                ctx.status(401).header("WWW-Authenticate", "Bearer")
+                    .json(errorResponse(null, -32001, "This door needs a household login session or a "
+                        + "library reader token (Authorization: Bearer ...)."));
+                return;
+            }
+        }
         try {
             var body = mapper.readTree(ctx.body());
             var jsonrpc = body.path("jsonrpc").asText("");
@@ -69,7 +99,7 @@ public class McpEndpoint {
             var id = body.has("id") ? body.get("id") : null;
             var params = body.has("params") ? body.get("params") : mapper.createObjectNode();
 
-            var result = dispatch(method, params);
+            var result = dispatch(method, params, caller);
             if (id != null) {
                 ctx.json(successResponse(id, result));
             } else {
@@ -82,11 +112,11 @@ public class McpEndpoint {
         }
     }
 
-    private JsonNode dispatch(String method, JsonNode params) {
+    private JsonNode dispatch(String method, JsonNode params, McpToolRegistry.Caller caller) {
         return switch (method) {
             case "initialize" -> handleInitialize(params);
             case "tools/list" -> handleToolsList();
-            case "tools/call" -> handleToolsCall(params);
+            case "tools/call" -> handleToolsCall(params, caller);
             case "ping" -> mapper.createObjectNode();
             default -> errorData(-32601, "Method not found: " + method);
         };
@@ -115,10 +145,10 @@ public class McpEndpoint {
         return result;
     }
 
-    private JsonNode handleToolsCall(JsonNode params) {
+    private JsonNode handleToolsCall(JsonNode params, McpToolRegistry.Caller caller) {
         var toolName = params.path("name").asText("");
         var toolArgs = params.has("arguments") ? params.get("arguments") : mapper.createObjectNode();
-        return toolRegistry.call(toolName, toolArgs);
+        return toolRegistry.call(toolName, toolArgs, caller);
     }
 
     private void handleServerCard(Context ctx) {

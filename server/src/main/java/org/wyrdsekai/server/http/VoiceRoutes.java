@@ -6,6 +6,7 @@ import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.soul.VoiceProfile;
 import org.wyrdsekai.core.soul.VoiceProfileService;
 
@@ -30,9 +31,9 @@ import java.util.Objects;
  * </pre>
  *
  * <p><b>Author tracking:</b> every write takes an {@code actor} query param or
- * {@code X-Wyrd-Actor} header identifying who made the change. Recorded in the
- * profile's history alongside the reason. M2a tightens this to session-derived
- * DIDs via AuthService; for now it's caller-asserted.
+ * {@code X-Wyrd-Actor} header identifying who made the change, recorded in the
+ * profile's history alongside the reason. For a logged-in steward the actor is the
+ * session's person; writes need the steward (ApiPolicy).
  *
  * <p>The heavy lifting lives in {@link VoiceProfileService}: these handlers
  * just parse + delegate + format. Errors map to standard HTTP statuses —
@@ -193,8 +194,15 @@ public final class VoiceRoutes {
 
     // ─── Helpers ───────────────────────────────────────────────────
 
-    /** Extract the acting DID from ?actor= or X-Wyrd-Actor. Writes 400 + returns null if missing. */
+    /**
+     * Who made the change, for the profile's history. A logged-in steward is recorded as
+     * themselves (the actor used to be whatever the caller asserted); the machine's operator
+     * names the actor with ?actor= or X-Wyrd-Actor. Writes are steward-only (ApiPolicy).
+     */
     private String requireActor(Context ctx) {
+        if (ApiAuth.principal(ctx) instanceof ApiAuth.Person caller) {
+            return PersonIds.canonical(caller.user().id());
+        }
         var a = ctx.queryParam("actor");
         if (a == null || a.isBlank()) a = ctx.header("X-Wyrd-Actor");
         if (a == null || a.isBlank()) {

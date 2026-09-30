@@ -1,5 +1,6 @@
 package org.wyrdsekai.app.ui.screens
 
+import org.wyrdsekai.app.crypto.decodeZoneKey
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,7 +54,13 @@ fun FindZoneScreen(
     val vm = remember {
         FindZoneViewModel(
             discover = { query, limit -> DiscoverZones.discover(client, bank, query, limit) },
-            requestAccessFn = { zoneLabel, name -> client.requestAccess(zoneLabel, name) != null },
+            // Sealed to the zone's key when the bank holds one; a knock to a
+            // stranger zone carries only the name and goes in the clear.
+            requestAccessFn = { zoneLabel, name ->
+                val key = decodeZoneKey(bank.getZone(zoneLabel)?.zk)
+                if (key != null) client.requestAccess(zoneLabel, name, targetZoneKey = key)
+                else client.requestAccess(zoneLabel, name)
+            },
             requesterName = requesterName,
         )
     }

@@ -14,6 +14,7 @@ import org.wyrdsekai.between.inference.NatsInferenceProtocol;
 import org.wyrdsekai.common.model.QuotaPolicy;
 import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.io.BufferedReader;
@@ -84,6 +85,17 @@ public final class NatsInferenceServer {
     }
 
     private volatile QuotaResolver quotaResolver;
+
+    /**
+     * Verifies that a cross-zone request is signed by the key pinned for its {@code sourceZone} on an
+     * active agreement (the request's {@code sig} over {@link NatsInferenceProtocol#householdSigningData}).
+     */
+    @FunctionalInterface
+    public interface ZoneVerifier {
+        boolean verify(String sourceZone, byte[] signingData, String sigBase64);
+    }
+
+    private volatile ZoneVerifier zoneVerifier;
     // Household inference auto-share: when sharing is on
     // a request from a household member is served with an unlimited quota, overriding
     // any bilateral agreement. Non-household callers are unaffected.
@@ -166,11 +178,17 @@ public final class NatsInferenceServer {
     }
 
     /**
-     * Install a quota resolver. Called from Main.java after FederationService is
-     * available. Without a resolver, enforcement is disabled (v0 behavior).
+     * Install a quota resolver. Called from Main.java after FederationService is available. It returns
+     * the quota of an ACTIVE agreement with the source zone, or null when there is none. Without a
+     * resolver no other zone is served.
      */
     public void setQuotaResolver(QuotaResolver resolver) {
         this.quotaResolver = resolver;
+    }
+
+    /** Install the check that a cross-zone request is signed by its zone's pinned key. */
+    public void setZoneVerifier(ZoneVerifier verifier) {
+        this.zoneVerifier = verifier;
     }
 
     /**
@@ -360,10 +378,25 @@ public final class NatsInferenceServer {
                     + "— signature did not verify; falling back to quota", req.sourceNode(), req.streamId());
             }
         }
+        // "Neither side gets anything until both have said yes" (audit 2026-09-28: a zone with no
+        // agreement used to be served with no limit). Only a zone we hold an ACTIVE agreement with,
+        // whose request is signed by the key pinned for it, is served — and then within its quota.
+        var zone = req.sourceZone();
+        if (zone == null || zone.isBlank()) return "NoAgreement: the request names no zone";
+        if (zone.equals(localZoneId)) {
+            return "NotShared: household inference sharing is off on this machine, or the request "
+                + "is not signed by an enrolled household machine";
+        }
         var resolver = this.quotaResolver;
-        if (resolver == null || req.sourceZone() == null) return null;
-        var quota = resolver.resolve(req.sourceZone());
-        if (quota == null) return null;
+        var quota = resolver == null ? null : resolver.resolve(zone);
+        if (quota == null) return "NoAgreement: no active federation agreement with zone '" + zone + "'";
+        var zv = this.zoneVerifier;
+        if (zv == null || req.sig() == null || req.authTs() == null
+                || Math.abs(System.currentTimeMillis() - req.authTs()) > HOUSEHOLD_AUTH_MAX_SKEW_MS
+                || !zv.verify(zone, NatsInferenceProtocol.householdSigningData(
+                    req.streamId(), zone, req.sourceNode(), req.authTs()), req.sig())) {
+            return "Unverified: the request is not signed by the key zone '" + zone + "' agreed with";
+        }
         long reqTokens = req.maxTokens() != null && req.maxTokens() > 0
             ? req.maxTokens() : DEFAULT_REQUEST_TOKEN_ESTIMATE;
         long usedToday = incomingTokensToday(req.sourceZone());
@@ -517,7 +550,7 @@ public final class NatsInferenceServer {
                 req.temperature() != null ? req.temperature() : 0.7,
                 replyTo, localBackendName,
                 null, null, null, null, null, null, null,
-                /* localOnly = */ true),  // LOOP PREVENTION: never bounce to NatsRemote
+                /* localOnly = */ true).withNow(NowLine.NONE),  // LOOP PREVENTION: never bounce to NatsRemote
             Duration.ofSeconds(90),
             system.scheduler()
         ).whenComplete((resp, err) -> {

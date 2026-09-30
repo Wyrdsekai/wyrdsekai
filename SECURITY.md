@@ -33,18 +33,28 @@ This policy covers:
 - The wire protocol (WebSocket, Telnet, SSH, Between/NATS)
 - Authentication and authorization (AuthService, WardService)
 - Agent safety systems (ModerationService, SanctionEnforcer)
-- Cryptographic implementation (Ed25519, AES-256-GCM)
-- The mesh update protocol (package verification, signing)
+- Cryptographic implementation (Ed25519, X25519, ChaCha20-Poly1305, AES-256-GCM)
+- The relay and the encrypted links through it
 
 ## Known Security Architecture
 
-- **Ed25519** for all signatures (node identity, Between messages, release manifests)
-- **AES-256-GCM** for soul encryption (TheSafe)
+- **Ed25519** signs each home's identity and the messages homes send each other.
+- **Releases** are signed with Sigstore. `wyrd verify-release` checks a download
+  against the project's release workflow and refuses anything else.
+- **X25519 + ChaCha20-Poly1305** seal a phone's connection and requests end to end
+  to its home, so the relay passes them on without being able to read them.
+- **AES-256-GCM** encrypts the credential safe and the vault's backups. A
+  companion's soul record is stored unencrypted on the home's own disk.
 - **Crypto is JDK-native except password hashing**, which uses a
   well-reviewed bcrypt library rather than a hand-rolled KDF
-- **OWASP Top 10 Agentic** — addressed in safety checklist (SPEC files)
+- **Every /api route needs a login** unless it carries its own proof (a password,
+  a pairing code, a signed webhook). Each person reaches only their own Study and
+  journal.
 - **Agent consent model** — companions must be granted access per-collection
 - **Private journal** — never visible to companion agents
+- **Each person's words** — what one person tells a companion privately is not
+  read into another person's conversation (see SECURITY_MODEL.md, "Each person's
+  words and data", for what is and is not covered)
 
 ## Supported Versions
 

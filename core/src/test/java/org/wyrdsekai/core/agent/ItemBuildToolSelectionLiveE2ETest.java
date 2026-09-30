@@ -147,7 +147,7 @@ class ItemBuildToolSelectionLiveE2ETest {
         appender = new ListAppender<>();
         appender.start();
         actorLogger.addAppender(appender);
-        actorLogger.setLevel(Level.INFO);
+        actorLogger.setLevel(Level.DEBUG);  // "Tool call raw content" is DEBUG (it carries the person's words)
 
         // ── Real router → prod 9B on :8200 ──
         var backend = new InferenceBackend.LlamaServer(
@@ -180,7 +180,7 @@ class ItemBuildToolSelectionLiveE2ETest {
                         chat.temperature(), wrap, chat.preferredBackend(), chat.grammar(),
                         chat.format(), chat.tools(), chat.toolChoice(), chat.topP(),
                         chat.presencePenalty(), chat.repetitionPenalty(), chat.localOnly(),
-                        chat.registerMix()));
+                        chat.registerMix()).withNow(chat.now()));
                 } else {
                     realRouter.tell(msg);
                 }

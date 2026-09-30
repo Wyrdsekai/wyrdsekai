@@ -69,4 +69,32 @@ class WebSearchServiceParseTest {
         assertTrue(WebSearchService.parseSearxngJson(tree("[]"), 10).isEmpty());
         assertTrue(WebSearchService.parseSearxngJson(tree("{\"unexpected\":1}"), 10).isEmpty());
     }
+
+    @Test
+    void readsTheWikipediaAnswerThatComesAsAnInfobox() throws Exception {
+        // SearXNG's Wikipedia engine answers an exact article as an infobox, not a result: live on
+        // a household node (2026-09-22) "Attention (machine learning)" came back as results: 0,
+        // infoboxes: 1, and was read as nothing.
+        var root = tree("""
+            {"results":[],"infoboxes":[
+              {"infobox":"Attention (machine learning)","id":"https://en.wikipedia.org/wiki/Attention_(machine_learning)",
+               "content":"In machine learning, attention is a method that determines the importance of each component.",
+               "urls":[{"title":"Wikipedia","url":"https://en.wikipedia.org/wiki/Attention_(machine_learning)"}]},
+              {"infobox":"Empty","content":""}
+            ]}""");
+        var r = WebSearchService.parseSearxngJson(root, 10);
+        assertEquals(1, r.size(), "an infobox with no text is not an answer");
+        assertEquals("Attention (machine learning)", r.get(0).title());
+        assertEquals("https://en.wikipedia.org/wiki/Attention_(machine_learning)", r.get(0).url());
+        assertTrue(r.get(0).snippet().startsWith("In machine learning, attention"));
+    }
+
+    @Test
+    void anInfoboxComesFirstAndTheResultsAfterItUpToTheLimit() throws Exception {
+        var root = tree("""
+            {"infoboxes":[{"infobox":"Transformer","id":"https://en.wikipedia.org/wiki/Transformer_(deep_learning)","content":"A transformer is an architecture."}],
+             "results":[{"title":"A","url":"https://a","content":"a"},{"title":"B","url":"https://b","content":"b"}]}""");
+        var r = WebSearchService.parseSearxngJson(root, 2);
+        assertEquals(List.of("Transformer", "A"), r.stream().map(WebSearchService.SearchResult::title).toList());
+    }
 }

@@ -6,9 +6,13 @@ import io.javalin.http.Context;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.util.Json;
+import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.crypto.HouseholdBus;
+import org.wyrdsekai.core.crypto.HouseholdTls;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.PairingService;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
@@ -89,8 +93,17 @@ public final class PairingRoutes {
         @JsonProperty("natsUrl") String natsUrl,
         @JsonProperty("serverUrl") String serverUrl,
         @JsonProperty("relayUrl") String relayUrl,
-        @JsonProperty("relayToken") String relayToken
-    ) {}
+        @JsonProperty("relayToken") String relayToken,
+        // D3: this device's own login for the home bus (wss://<host>:4223 on the LAN).
+        @JsonProperty("nats_user") String natsUser,
+        @JsonProperty("nats_pass") String natsPass
+    ) {
+        static PairResultResponse of(PairingService.PairingResult r) {
+            return new PairResultResponse(r.token(), r.householdId(), r.householdName(),
+                r.serverDid(), r.natsUrl(), r.serverUrl(), r.relayUrl(), r.relayToken(),
+                r.natsUser(), r.natsPass());
+        }
+    }
 
     record DeviceResponse(
         @JsonProperty("id") String id,
@@ -104,7 +117,10 @@ public final class PairingRoutes {
 
     record PendingCodeResponse(
         @JsonProperty("code") String code,
-        @JsonProperty("expiresAt") long expiresAt
+        @JsonProperty("expiresAt") long expiresAt,
+        // D1: what the pairing device pins, and where it reaches this home on the LAN.
+        @JsonProperty("home_ca_fp") String homeCaFp,
+        @JsonProperty("lan_https") String lanHttps
     ) {}
 
     record ErrorResponse(String error) {}
@@ -154,11 +170,7 @@ public final class PairingRoutes {
             return;
         }
 
-        var r = result.get();
-        ctx.json(new PairResultResponse(
-            r.token(), r.householdId(), r.householdName(),
-            r.serverDid(), r.natsUrl(), r.serverUrl(),
-            r.relayUrl(), r.relayToken()));
+        ctx.json(PairResultResponse.of(result.get()));
     }
 
     /**
@@ -184,10 +196,7 @@ public final class PairingRoutes {
             user.get().id(), req.deviceName(), req.deviceType());
         log.info("Device identity minted via session for {}: {}",
             user.get().username(), req.deviceName());
-        ctx.status(201).json(new PairResultResponse(
-            r.token(), r.householdId(), r.householdName(),
-            r.serverDid(), r.natsUrl(), r.serverUrl(),
-            r.relayUrl(), r.relayToken()));
+        ctx.status(201).json(PairResultResponse.of(r));
     }
 
     /**
@@ -254,7 +263,9 @@ public final class PairingRoutes {
         }
 
         var c = challenge.get();
-        ctx.json(new PendingCodeResponse(c.code(), c.expiresAt().getEpochSecond()));
+        var tls = homeTlsFields();
+        ctx.json(new PendingCodeResponse(c.code(), c.expiresAt().getEpochSecond(),
+            tls.get("home_ca_fp"), tls.get("lan_https")));
     }
 
     // --- Household Key endpoints ---
@@ -286,7 +297,7 @@ public final class PairingRoutes {
 
         var result = pairingService.pairWithKey(req.key(), req.deviceName(), req.deviceType(), null);
         if (result.isPresent()) {
-            ctx.status(200).json(result.get());
+            ctx.status(200).json(PairResultResponse.of(result.get()));
         } else {
             ctx.status(403).json(Map.of("error", "Invalid or revoked household key"));
         }
@@ -298,7 +309,7 @@ public final class PairingRoutes {
      */
     private void handleGenerateHouseholdKey(Context ctx) {
         var key = pairingService.generateHouseholdKey();
-        ctx.status(201).json(Map.of("key", key));
+        ctx.status(201).json(householdKeyBody(key, null));
     }
 
     /**
@@ -308,13 +319,36 @@ public final class PairingRoutes {
     private void handleGetHouseholdKey(Context ctx) {
         var key = pairingService.getActiveHouseholdKey();
         if (key.isPresent()) {
-            ctx.json(Map.of("key", key.get().key(), "createdAt", key.get().createdAt().getEpochSecond()));
+            ctx.json(householdKeyBody(key.get().key(), key.get().createdAt().getEpochSecond()));
         } else {
             ctx.status(404).json(Map.of("error", "No active household key. Generate one with POST /api/pair/household-key/generate"));
         }
     }
 
     // --- Helpers ---
+
+    /** D1 for this home: {@code home_ca_fp} and {@code lan_https}. */
+    static Map<String, String> homeTlsFields() {
+        return HouseholdTls.inviteFields(HouseholdBus.defaultDataDir(),
+            WyrdConfig.get().tlsEnabled(), WyrdConfig.get().tlsPort());
+    }
+
+    /**
+     * The household key, and the join key a machine pastes into {@code wyrd join}: the key and this
+     * home's CA fingerprint in one string, {@code <key>.<home_ca_fp>}, so the joining machine can check
+     * it is talking to this home before it sends the key.
+     */
+    static Map<String, Object> householdKeyBody(String key, Long createdAt) {
+        var body = new LinkedHashMap<String, Object>();
+        body.put("key", key);
+        if (createdAt != null) body.put("createdAt", createdAt);
+        var fp = homeTlsFields().get("home_ca_fp");
+        if (fp != null) {
+            body.put("home_ca_fp", fp);
+            body.put("join_key", key + "." + fp);
+        }
+        return body;
+    }
 
     /**
      * Extract device token from Authorization: Bearer header.

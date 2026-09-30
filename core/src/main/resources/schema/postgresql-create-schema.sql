@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS users(
   username    VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(255),
+  description TEXT DEFAULT '',
   role        VARCHAR(64) NOT NULL DEFAULT 'member',
   created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 );
@@ -164,7 +165,8 @@ CREATE TABLE IF NOT EXISTS transit_tokens(
   target_zone_id VARCHAR(255) NOT NULL,
   trust_level    VARCHAR(64) NOT NULL DEFAULT 'tourist',
   issued_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
-  expires_at     BIGINT NOT NULL
+  expires_at     BIGINT NOT NULL,
+  used_at        BIGINT           -- single use: set when the token is redeemed
 );
 
 -- Moderation reports
@@ -663,7 +665,9 @@ CREATE TABLE IF NOT EXISTS memory_entities(
   entity_role   VARCHAR(64),
   entity_value  TEXT NOT NULL,
   timestamp     BIGINT NOT NULL,
-  created_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+  created_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+  teller_did    VARCHAR(255),
+  visibility    VARCHAR(16) NOT NULL DEFAULT 'unknown'
 );
 
 CREATE INDEX IF NOT EXISTS idx_entities_did_type_ts
@@ -672,6 +676,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_did_value
   ON memory_entities(did, entity_value);
 
 -- Graph edges (Day 4-5).
+-- teller_did / visibility on both tables (migration 12): see the SQLite schema and MemoryOrigin.
 CREATE TABLE IF NOT EXISTS memory_edges(
   id          BIGSERIAL PRIMARY KEY,
   did         VARCHAR(255) NOT NULL,
@@ -680,7 +685,9 @@ CREATE TABLE IF NOT EXISTS memory_edges(
   object      TEXT NOT NULL,
   memory_id   VARCHAR(128) NOT NULL,
   confidence  DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-  created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+  created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+  teller_did  VARCHAR(255),
+  visibility  VARCHAR(16) NOT NULL DEFAULT 'unknown'
 );
 
 CREATE INDEX IF NOT EXISTS idx_edges_did_subject ON memory_edges(did, subject);

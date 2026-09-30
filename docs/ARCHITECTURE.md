@@ -106,7 +106,7 @@ through — browser, phone, SSH, telnet, and the relay tunnel all converge here.
 **On connect**, it assigns a session id and authenticates in strict precedence
 order from query parameters: `?transit_token=` (a federated visitor, who starts
 in `docks`), then `?token=` (a normal session), then `?device_token=` (a paired
-device), then `?device_id=` (DID auto-login), then anonymous if allowed. Then
+device), then anonymous if allowed (off by default). Then
 parental-time and maintenance gates run, and one `ClientSessionActor` is spawned
 per connection. Session bootstrap relies on Pekko's single-sender ordering
 guarantee so the room subscription lands before the enter event.
@@ -419,7 +419,9 @@ does.
 A household node normally sits behind NAT. A **relay** gives it an inbound door
 without putting a third party in a position of trust. The relay itself is
 deliberately dumb: a NATS server (`deploy/relay/relay.conf`), Caddy terminating
-all public TLS, and a small Python registration sidecar. It routes bytes on
+TLS on the public HTTPS and WebSocket port (phones, registration), and a small
+Python registration sidecar. The zone leg (port 4222) is TLS terminated by
+nats-server itself, with the relay's own certificate. It routes bytes on
 subjects, does not parse payloads, and has no view of world state.
 
 **Who dials whom.** Nobody dials the home node. The zone dials *out* to the relay
@@ -429,28 +431,43 @@ and holds that connection. The phone or CLI dials *in*. They meet on the bus.
 
 | Subject | Direction | Payload |
 |---|---|---|
-| `wyrd.tunnel.{zone}.{session}.open` | client → zone | `{"token": "..."}` |
-| `wyrd.tunnel.{zone}.{session}.up` | client → zone | verbatim C2S JSON |
-| `wyrd.tunnel.{zone}.{session}.down` | zone → client | verbatim S2C JSON |
+| `wyrd.tunnel.{zone}.{session}.open` | client → zone | `{"v":2,"e":"<the client's one-time public key>"}` |
+| `wyrd.tunnel.{zone}.{session}.up` | client → zone | sealed C2S JSON; the first frame is `{"token": "..."}` |
+| `wyrd.tunnel.{zone}.{session}.down` | zone → client | first `{"v":2,"e":"<the zone's one-time public key>"}`, then sealed S2C JSON |
 | `wyrd.tunnel.{zone}.{session}.close` | either | — |
 
-On the zone side, `server/.../mcp/TunnelSessionHandler.java` receives `.open`,
-opens a **loopback WebSocket to its own `/ws`** at `127.0.0.1`, and pumps bytes
-both ways without interpreting frames. So a phone gets exactly the session a
+Since 0.5.0 the frames are sealed end to end (`core/.../crypto/SealedTunnel.java`,
+the phone apps do the same): X25519 with the home's key `zk` from the pairing
+invite and a one-time key from each side, HKDF-SHA256, then ChaCha20-Poly1305
+per frame with a counter per direction and the subject as associated data. The
+relay routes frames it cannot read. On the zone side,
+`server/.../mcp/TunnelSessionHandler.java` receives `.open`, answers with its own
+key, opens a **loopback WebSocket to its own `/ws`** at `127.0.0.1`, and pumps
+frames both ways, opening each one going in and sealing each one coming out. So a phone gets exactly the session a
 browser would — same auth, same rooms, same companions. Session ids are
 validated for shape, live sessions are capped, and uplink frames arriving before
 the loopback handshake completes are queued rather than dropped.
 
-**Auth is two layers.** Transport auth to the relay is NATS credentials
-(NKey-signed for zones; password mode retained during migration). Session auth
-to the zone is a separate request/reply login over NATS returning the token the
-loopback `/ws` then uses.
+**Auth is two layers.** Transport auth to the relay is NATS credentials (the
+zone's NKey by default; a relay password only when joined with
+`--password-mode`). Each registration is bound to one zone name, and its NATS
+permissions cover only that zone's subjects and its own reply inbox
+(`_INBOX.{user}`). Session auth to the zone is a separate request/reply login
+over NATS returning the token the loopback `/ws` then uses.
 
 **TLS uses no web PKI.** The relay carries a household CA generated once at
 setup. Devices pin the CA's SHA-256, delivered in the invite material
-(`wyrdphone://…` for phones, `wyrdjoin://…` for nodes). Client trust managers
-accept a chain if *any* certificate in it matches a pinned household CA, with
-hostname verification still applied on top. Invite minting is guarded: an invite
+(`wyrdphone://…` for phones, `wyrdjoin://…` for nodes); the register reply also
+names the certificate the zone leg serves, so a node pins that link from first
+contact. The phone apps and the CLI validate the served chain up to the pinned
+CA (each signature, validity dates, CA constraints) and check that the served
+certificate names the host dialled. A node's own link to its relay
+(`RelayTls`) accepts the served certificate when it is the pinned one, or when
+the pinned CA signed it. Either way, a chain that merely carries the CA
+certificate beside another certificate is refused: the CA certificate is
+public. A node with no pin for a relay trusts the first certificate it sees,
+keeps it (`relay-tls-pins` in the data folder), and refuses a different one
+later. Invite minting is guarded: an invite
 without a zone id would drop the phone into local mode with no error, so the CLI
 refuses to emit one.
 
@@ -461,11 +478,11 @@ refuses to emit one.
 | Surface | Where | State |
 |---|---|---|
 | React Native app | `clients/rn/` | Android, iOS, and web. The most complete client; the only one with a web platform. |
-| Kotlin Multiplatform app | `clients/kmp/` | Android, iOS, desktop/JVM. Full-parity target including iOS for this release. |
-| Terminal client | `cli/` | `wyrd connect [host] [port]` |
+| Kotlin Multiplatform app | `clients/kmp/` | Android and desktop/JVM. Its iOS target is not shipped (the iOS app is the React Native client) and refuses to connect to a home rather than connect unencrypted. |
+| Terminal client | `cli/` | `wyrd connect [host] [port] [--ca-fp <fingerprint>]`: another machine over `wss://` on `:7443`, pinned to its household CA |
 | SSH | `server/ssh/` | `WyrdShellCommand` — implements commands directly rather than through the WebSocket path |
 | Telnet | `server/telnet/` | Classic MUD door |
-| Browser | Javalin on `:7070`, plus `wyrd web` on `:7071` | |
+| Browser | Javalin on `:7443` (HTTPS, household certificate) and `:7070` (this machine only), plus `wyrd web` on `:7071` | |
 
 The two mobile clients are hand-written in different languages, and they drifted
 apart one bug at a time. The fix is an **executable parity contract**:
@@ -483,7 +500,7 @@ decoder so they double as decoder conformance; and scope is live-session only,
 since offline paths drive the local node's APIs and may legitimately differ.
 
 Known non-green cells, named rather than hidden: KMP desktop lacks
-invite-fingerprint cert pre-seeding and trust-on-first-use pinning; RN LAN
+invite-fingerprint certificate pinning; RN LAN
 discovery probes addresses rather than using mDNS; and the bundled time-series
 forecaster fails to load on every platform because the committed model
 references an uncommitted sidecar, so the phone-side oracle silently falls back
@@ -508,10 +525,16 @@ built-ins — then the shipped base directory, then a template fallback, which i
 how per-player rooms like `study-<userId>` inherit `study.js`.
 
 The sandbox uses `HostAccess.EXPLICIT` with map and list access, and disables IO,
-thread creation, and native access. Resource limits *are* enforced: a virtual
-thread force-closes the context after a CPU timeout. `SandboxLevel` grades
-access as `ROOM_SCRIPT`, `SKILL_BASIC`, `SKILL_DATA`, `SKILL_SERVER`,
-`SKILL_FULL`.
+thread creation, and native access. Every room hook call is bounded
+(`ResourceLimits.ROOM_SCRIPT`): a GraalJS statement limit of 1,000,000
+(`WYRDSEKAI_ROOM_SCRIPT_STATEMENTS`) and 5 seconds of CPU time on the calling
+thread (`WYRDSEKAI_ROOM_SCRIPT_CPU_MS`). `ScriptWatchdog` measures the thread's
+CPU time, so a hook blocked on a host call is not charged for the wait, and
+cancels the evaluation with `Context.close(true)` when it is over. A stopped hook
+logs a WARN naming the room and the hook, and the room actor carries on. Item
+scripts have 25,000 statements and 120 seconds of wall-clock time.
+`SandboxLevel` grades access as `ROOM_SCRIPT`, `SKILL_BASIC`, `SKILL_DATA`,
+`SKILL_SERVER`, `SKILL_FULL`.
 
 Scripts receive a `world` binding. `WorldApi` exposes roughly 110 exported
 methods across room state, mutation, emission, timers, inference, MCP, library
@@ -570,9 +593,9 @@ the JVM side; it only names the door.
 
 **Principals and hooks (Linux).** `Principals` creates one Linux user per
 companion (`wyrd-being-<slug>`, uid 62000–62999, group `wyrdsekai-beings`) and
-starts her tools through `wyrdsekai-being`, a wrapper that drops to that user
+starts the companion's tools through `wyrdsekai-being`, a wrapper that drops to that user
 inside a cgroup under the service. The data directory is traversable but not
-readable by the group; a being's workspace and home are hers. `ToolHooks` runs
+readable by the group; a being's workspace and home are its own. `ToolHooks` runs
 one `bpftrace` program over `openat`, `execve` and `connect` for that uid range
 and decides per event from `HookRules` (cut paths, recorded paths, cut
 programs): a cut kills the tool's cgroup and writes a mark. Everything else is

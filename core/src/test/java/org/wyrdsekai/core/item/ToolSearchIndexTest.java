@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.item;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.wyrdsekai.core.inference.InferenceClient.ToolDefinition;
@@ -136,6 +137,23 @@ class ToolSearchIndexTest {
      * at debug level and nobody noticed for months. The contract asserted here is only that we
      * can tell which mode we're in; {@code search()} logs a one-shot WARN in the degraded one.
      */
+    /** A tool registered after the warm-up is not ranked on a vector it does not have yet. */
+    @Test
+    void aToolWithoutAVectorKeepsTheIndexLexical() {
+        index.register(tool("library_card", "Search knowledge"));
+        index.register(tool("create_room_from_template", "Create rooms from template"));
+        index.embedAll();
+        Assumptions.assumeTrue(index.hasVectorSearch(),
+            "needs the bundled embedding model");
+        assertTrue(index.vectorsReady());
+        index.register(tool("craft_from_template", "Create new items and craft tools from standard template library"));
+        assertFalse(index.vectorsReady(), "one tool has no vector yet: the lexical ranker answers");
+        index.embedAll();
+        assertTrue(index.vectorsReady());
+        assertEquals("craft_from_template",
+            index.search("craft a new item from template").getFirst().function().name());
+    }
+
     @Test
     void degradedModeIsObservable() {
         index.register(tool("library_card", "Search knowledge"));

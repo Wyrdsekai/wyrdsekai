@@ -1,5 +1,6 @@
 package org.wyrdsekai.app.ui.screens
 
+import org.wyrdsekai.app.network.homeBaseUrl
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -817,7 +818,7 @@ private fun NodeSettingsDialog(
                                     if (ConsentMint.mintWithSession(hermodStore)) {
                                         hermodIdentified = true
                                     } else {
-                                        val server = hermodStore.loadServerUrl()
+                                        val server = hermodStore.homeBaseUrl()
                                         if (server.isNullOrBlank()) {
                                             hermodError =
                                                 "No zone configured — connect to a server first."
@@ -860,7 +861,7 @@ private fun NodeSettingsDialog(
                     Button(
                         onClick = {
                             scope.launch {
-                                val server = hermodStore.loadServerUrl()
+                                val server = hermodStore.homeBaseUrl()
                                 val creds = server?.let {
                                     PairingClient.verifyCode(
                                         it, hermodChallengeId!!, hermodCode)

@@ -4,6 +4,7 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
+import org.wyrdsekai.app.network.createHouseholdHttpClient
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,7 +23,7 @@ object SoulSeedImporter {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val http = HttpClient {
+    private val http = createHouseholdHttpClient().config {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
         }
@@ -75,7 +76,7 @@ object SoulSeedImporter {
     /**
      * Fetch the list of available souls from a household server.
      *
-     * Calls `GET {serverUrl}/api/soul/list?token={token}`.
+     * Calls `GET {serverUrl}/api/soul/list` with the token as a Bearer header.
      * Returns an empty list on any error (network, parse, auth).
      */
     suspend fun fetchHouseholdSouls(
@@ -84,7 +85,7 @@ object SoulSeedImporter {
     ): List<SoulListEntry> {
         return try {
             http.get("${normalizeUrl(serverUrl)}/api/soul/list") {
-                if (token != null) parameter("token", token)
+                if (token != null) header("Authorization", "Bearer $token")
             }.body()
         } catch (_: Exception) {
             emptyList()
@@ -94,7 +95,7 @@ object SoulSeedImporter {
     /**
      * Import a specific soul manifest from a household server by DID.
      *
-     * Calls `GET {serverUrl}/api/soul/{did}?token={token}`.
+     * Calls `GET {serverUrl}/api/soul/{did}` with the token as a Bearer header.
      * Returns null on any error (network, parse, auth, 404).
      */
     suspend fun importFromHousehold(
@@ -104,7 +105,7 @@ object SoulSeedImporter {
     ): ClientSoulManifest? {
         return try {
             http.get("${normalizeUrl(serverUrl)}/api/soul/${did}") {
-                if (token != null) parameter("token", token)
+                if (token != null) header("Authorization", "Bearer $token")
             }.body()
         } catch (_: Exception) {
             null

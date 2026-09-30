@@ -12,6 +12,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { MODEL_CATALOG } from '../inference/ModelManager';
 import { ModelInfo } from '../inference/types';
+import { NowLine } from '../inference/NowLine';
 import { useInference } from '../inference/InferenceContext';
 import { useInferenceStore } from '../state/inferenceStore';
 import { useThemeColors } from '../theme/useTheme';
@@ -118,7 +119,8 @@ export function ModelDownloadScreen({ navigation }: Props) {
           { role: 'system', content: 'You are a helpful assistant. Respond briefly. /no_think' },
           { role: 'user', content: 'Hello! Say one sentence about yourself.' },
         ],
-        { maxTokens: 128, temperature: 0.7 },
+        // A model smoke test, not her: nothing about today.
+        { maxTokens: 128, temperature: 0.7, now: NowLine.NONE },
       );
       // Strip Qwen3 <think>...</think> tags if present
       const clean = response.content

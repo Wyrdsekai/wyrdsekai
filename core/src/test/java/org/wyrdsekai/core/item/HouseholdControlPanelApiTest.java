@@ -128,6 +128,19 @@ class HouseholdControlPanelApiTest {
     }
 
     @Test
+    void household_set_role_keeps_the_last_steward() {
+        var self = providerFor(stewardId).householdSetRole("operator", "member");
+        assertEquals(false, self.get("ok"));
+        assertEquals("the household must keep at least one steward", self.get("error"));
+        assertEquals("steward", auth.findUserByUsername("operator").orElseThrow().role());
+
+        assertEquals(true, providerFor(stewardId).householdSetRole("kaz", "steward").get("ok"));
+        assertEquals(true, providerFor(memberId).householdSetRole("operator", "member").get("ok"));
+        var last = providerFor(memberId).householdSetRole("kaz", "guest");
+        assertEquals("the household must keep at least one steward", last.get("error"));
+    }
+
+    @Test
     void household_set_role_validates_inputs() {
         var badRole = providerFor(stewardId).householdSetRole("kaz", "overlord");
         assertEquals(false, badRole.get("ok"));

@@ -6,18 +6,16 @@ import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * API key management for MCP services (§89.1).
- * Integrates with The Safe for secure key storage.
  *
  * Keys are:
- * - Stored encrypted in The Safe's threshold secret sharing system
+ * - Read through the backend Main wires: The Safe slot named by the service's safe_key
+ *   ({@code wyrd cred set}), then {@code WYRDSEKAI_MCP_KEY_<SAFE_KEY>} from the environment
  * - Cached in memory with configurable TTL
- * - Never written to disk outside The Safe
  * - Never exposed to agents (injected transparently by MCP Gateway)
- *
- * Only zone administrators can store/revoke keys.
  */
 public class McpKeyStore {
 
@@ -44,6 +42,30 @@ public class McpKeyStore {
          * @return the key value, or null if not found
          */
         String getKey(String safeKey);
+    }
+
+    /**
+     * The production lookup: The Safe slot named {@code safeKey}, then
+     * {@code WYRDSEKAI_MCP_KEY_<SAFE_KEY>} ({@code -}/{@code .} become {@code _}), then the
+     * {@code wyrdsekai.mcp.key.<safeKey>} system property. The lookups are parameters so the
+     * order can be tested without touching the process environment.
+     */
+    public static KeyBackend chained(Function<String, Optional<String>> safeSlot,
+                                     Function<String, String> env,
+                                     Function<String, String> systemProperty) {
+        return safeKey -> {
+            if (safeKey == null || safeKey.isBlank()) return null;
+            try {
+                var fromSafe = safeSlot.apply(safeKey);
+                if (fromSafe != null && fromSafe.isPresent()) return fromSafe.get();
+            } catch (RuntimeException e) {
+                log.warn("Safe read failed for MCP key '{}': {}", safeKey, e.getMessage());
+            }
+            var envValue = env.apply("WYRDSEKAI_MCP_KEY_"
+                + safeKey.toUpperCase().replace('-', '_').replace('.', '_'));
+            if (envValue != null) return envValue;
+            return systemProperty.apply("wyrdsekai.mcp.key." + safeKey);
+        };
     }
 
     public McpKeyStore(KeyBackend backend) {

@@ -274,4 +274,15 @@ class CommandParserTest {
         assertThat(CommandParser.parse("Home"))
             .isInstanceOf(ParsedCommand.Office.class);
     }
+
+    @Test
+    void forgeVerbsTypedAtThePromptReachTheRoomScript() {
+        // The Forge lists `birth <name>` among its spoken commands and its own error says
+        // "Speak `birth <name>`"; typed without `say` it used to be an unknown command.
+        assertThat(CommandParser.parse("birth ada")).isEqualTo(new ParsedCommand.Say("birth ada"));
+        assertThat(CommandParser.parse("restore ada v3")).isEqualTo(new ParsedCommand.Say("restore ada v3"));
+        assertThat(CommandParser.parse("compare ada bea")).isEqualTo(new ParsedCommand.Say("compare ada bea"));
+        // A bare verb with no name stays what it was.
+        assertThat(CommandParser.parse("birth")).isInstanceOf(ParsedCommand.Unknown.class);
+    }
 }

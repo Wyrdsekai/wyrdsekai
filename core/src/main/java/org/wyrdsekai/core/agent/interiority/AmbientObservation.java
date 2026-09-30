@@ -49,12 +49,25 @@ public record AmbientObservation(
     List<String> recentJournalRefs,
     boolean contemplative,
     String duty,
-    List<String> presentPeers
+    List<String> presentPeers,
+    List<String> worldLines
 ) {
 
     public AmbientObservation {
         if (duty == null) duty = "";
         if (presentPeers == null) presentPeers = List.of();
+        if (worldLines == null) worldLines = List.of();
+    }
+
+    /** Backward-compatible constructor (pre-worldLines callers) — a world with nothing to report. */
+    public AmbientObservation(
+        Instant tickAt, Map<String, Double> driveLevels, List<String> drivesOverThreshold,
+        double energy, double capacity, List<String> recentEvents, boolean bondholderPresent,
+        String bondholderState, List<Want> openWants, List<String> recentJournalRefs,
+        boolean contemplative, String duty, List<String> presentPeers) {
+        this(tickAt, driveLevels, drivesOverThreshold, energy, capacity, recentEvents,
+            bondholderPresent, bondholderState, openWants, recentJournalRefs, contemplative,
+            duty, presentPeers, List.of());
     }
 
     /** Backward-compatible constructor (pre-presentPeers callers) — defaults to alone. */
@@ -87,7 +100,7 @@ public record AmbientObservation(
     public String renderForPrompt() {
         var sb = new StringBuilder();
         if (!drivesOverThreshold.isEmpty()) {
-            sb.append("Drives pulling: ").append(String.join(", ", drivesOverThreshold)).append(". ");
+            sb.append("Strong drives now: ").append(String.join(", ", drivesOverThreshold)).append(". ");
         }
         sb.append("Energy ").append(round1(energy))
           .append(", capacity ").append(round1(capacity)).append(". ");
@@ -104,6 +117,12 @@ public record AmbientObservation(
             sb.append(String.join(", ", presentPeers))
               .append(presentPeers.size() > 1 ? " are here in the room with you. "
                                               : " is here in the room with you. ");
+        }
+        // The world beyond the room, as plain perception: places she has not been, what is new,
+        // letters waiting. No "you could": what she makes of it is hers (2026-09-26 — her wants on
+        // her own time were made only of who was missing, because that was all she was shown).
+        if (worldLines != null && !worldLines.isEmpty()) {
+            sb.append("Out there: ").append(String.join(" ", worldLines)).append(" ");
         }
         if (!openWants.isEmpty()) {
             sb.append("Open wants: ");

@@ -12,7 +12,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.wyrdsekai.app.crypto.SealCrypto
 import org.wyrdsekai.app.engine.PhoneNode
+import org.wyrdsekai.app.i18n.currentUiStrings
 import org.wyrdsekai.app.engine.between.NatsBetweenClient
 import org.wyrdsekai.app.engine.transit.RelayTunnelHolder
 import org.wyrdsekai.app.engine.persistence.IosEventJournal
@@ -137,6 +139,15 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
      * server-url derivation path.
      */
     private suspend fun setupRelayLeg() {
+        // This KMP iOS target is not shipped (the iOS app is clients/rn) and has
+        // no sealed-tunnel crypto. The home refuses plaintext logins and tunnels
+        // ( W3), and the phone must not send them: say so
+        // and stay on the on-device node.
+        if (!SealCrypto.available) {
+            println("WyrdNode: relay leg not started — this build cannot seal its connection")
+            _errorMessage.value = currentUiStrings().secUnsupportedBuild
+            return
+        }
         try {
             val rawUrl = AppProps.get("wyrdsekai.nats.url") ?: run {
                 println("WyrdNode: NATS setup skipped — no nats url configured")

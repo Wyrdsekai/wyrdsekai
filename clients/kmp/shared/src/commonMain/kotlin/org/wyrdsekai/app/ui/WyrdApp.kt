@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -16,7 +18,17 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.wyrdsekai.app.crypto.decodeZoneKey
+import org.wyrdsekai.app.i18n.LocalUiStrings
 import org.wyrdsekai.app.i18n.ProvideUiStrings
+import org.wyrdsekai.app.i18n.currentUiStrings
+import org.wyrdsekai.app.i18n.fillTemplate
+import org.wyrdsekai.app.network.HomeLink
+import org.wyrdsekai.app.network.InviteSecurity
+import org.wyrdsekai.app.network.SecurityNotice
+import org.wyrdsekai.app.network.SecurityNotices
+import org.wyrdsekai.app.network.homeBaseUrl
+import org.wyrdsekai.app.network.relayLegUrl
 import org.wyrdsekai.app.inference.InferenceRouter
 import org.wyrdsekai.app.inference.LlamaServerManager
 import org.wyrdsekai.app.inference.ModelManager
@@ -81,6 +93,12 @@ fun WyrdApp(scope: CoroutineScope) {
     // Locale state — drives ProvideUiStrings recomposition
     var locale by remember { mutableStateOf(tokenStore.loadLocale() ?: "en") }
 
+    // The phone node's companion narrates in this language: CompanionEngine reads
+    // it per line, so a change in Settings reaches her next emote.
+    LaunchedEffect(locale) {
+        AppProps.set("wyrdsekai.locale", locale)
+    }
+
     // Login gate: after pairing, before BirthScreen
     var loggedIn by remember {
         mutableStateOf(tokenStore.loadAuthToken() != null && tokenStore.loadUserId() != null)
@@ -123,16 +141,28 @@ fun WyrdApp(scope: CoroutineScope) {
             // pairing token, and gating server-url on pairing-token-presence
             // means ServerClient.probe never fires for relay-only deployments.
             val pairingToken = tokenStore.loadPairingToken()
-            val pairedServerUrl = tokenStore.loadServerUrl()
+            // The invite's https address on the home network, or an encrypted /
+            // local saved address; never a plain http one off the device (W2).
+            val pairedServerUrl = tokenStore.homeBaseUrl()
             if (pairedServerUrl != null) {
                 AppProps.set("wyrdsekai.server.url", pairedServerUrl)
             }
             if (pairingToken != null) {
                 AppProps.set("wyrdsekai.pairing.token", pairingToken)
             }
+            // The relay leg: the invite's relay address only. The saved NATS
+            // URL may hold what an older build kept from a pairing reply (the
+            // home's bus, or the home's own loopback): that is never a relay.
+            // A usable bus address found there moves to where the bus is kept.
             val natsUrl = tokenStore.loadNatsUrl()
-            if (natsUrl != null) {
-                AppProps.set("wyrdsekai.nats.url", natsUrl)
+            val relayUrl = tokenStore.relayLegUrl()
+            if (natsUrl != null && natsUrl != tokenStore.loadRelayUrl()) {
+                val bus = HomeLink.usableHomeBus(natsUrl)
+                if (bus != null && tokenStore.loadHomeBusUrl() == null) tokenStore.saveHomeBusUrl(bus)
+                if (relayUrl != null) tokenStore.saveNatsUrl(relayUrl)
+            }
+            if (relayUrl != null) {
+                AppProps.set("wyrdsekai.nats.url", relayUrl)
             }
             // Phone NATS credentials from a wyrdphone:// invite — without
             // these the relay leg falls back to defaults and never
@@ -209,7 +239,10 @@ fun WyrdApp(scope: CoroutineScope) {
                             // the trust decision.
                             if (serverUrl != null && PhoneInvite.isPhoneInviteUrl(serverUrl)) {
                                 runCatching { PhoneInvite.parse(serverUrl) }.onSuccess { invite ->
-                                    val relay = invite.relays.first()
+                                    InviteSecurity.remember(invite, tokenStore)
+                                    invite.zoneId?.let { tokenStore.saveZoneId(it) }
+                                    scope.launch { InviteSecurity.pinHome(invite.lanHttps, invite.homeCaFp, invite.homeBus) }
+                                    val relay = invite.relays.firstOrNull() ?: return@onSuccess
                                     tokenStore.saveNatsUrl(relay.wsUrl)
                                     tokenStore.saveRelayUrl(relay.wsUrl)
                                     tokenStore.saveNatsUser(relay.natsUser)
@@ -277,8 +310,23 @@ fun WyrdApp(scope: CoroutineScope) {
                             when {
                                 PhoneInvite.isPhoneInviteUrl(input) -> {
                                     val parsed = runCatching { PhoneInvite.parse(input) }
+                                    parsed.getOrNull()?.let { invite ->
+                                        InviteSecurity.remember(invite, tokenStore)
+                                        scope.launch { InviteSecurity.pinHome(invite.lanHttps, invite.homeCaFp, invite.homeBus) }
+                                    }
                                     val relay = parsed.getOrNull()?.relays?.firstOrNull()
-                                    if (relay == null) {
+                                    val lanOnly = parsed.getOrNull()?.takeIf { it.relays.isEmpty() }?.lanHttps
+                                    if (relay == null && lanOnly != null) {
+                                        // An invite for the home network alone: account
+                                        // login at its https address (remote mode).
+                                        parsed.getOrNull()?.zoneId?.let { tokenStore.saveZoneId(it) }
+                                        tokenStore.saveServerUrl(lanOnly)
+                                        tokenStore.saveMode("remote")
+                                        AppProps.set("wyrdsekai.server.url", lanOnly)
+                                        connectionVM.setServerUrl(lanOnly)
+                                        appMode = "remote"
+                                        null
+                                    } else if (relay == null) {
                                         "That invite could not be read — ask your node for a fresh one (wyrd phone invite)."
                                     } else {
                                         // The invite IS the trust decision: persist
@@ -317,6 +365,10 @@ fun WyrdApp(scope: CoroutineScope) {
                                 input.startsWith("wss://", ignoreCase = true)
                                         || input.startsWith("ws://", ignoreCase = true) ->
                                     "That looks like a relay address. Relays need an invite — on your node, run: wyrd phone invite"
+                                // Plain http to another machine: the home no longer
+                                // serves it, and the phone would send the login in
+                                // the clear (W2). An invite carries the https address.
+                                HomeLink.isPlaintextOffDevice(input) -> currentUiStrings().secNeedsInvite
                                 else -> {
                                     tokenStore.saveServerUrl(input)
                                     tokenStore.saveMode("remote")
@@ -434,7 +486,8 @@ fun WyrdApp(scope: CoroutineScope) {
                             val bc = tunnelBetween
                             val zone = tokenStore.loadZoneId()
                             if (bc != null && bc.isConnected && !zone.isNullOrBlank()) {
-                                RelayTunnelServerConnection(bc, zone, tokenStore.loadAuthToken())
+                                RelayTunnelServerConnection(bc, zone, tokenStore.loadAuthToken(),
+                                    decodeZoneKey(tokenStore.loadZoneKey()))
                                     .also { it.open() }
                             } else null
                         }
@@ -604,7 +657,39 @@ fun WyrdApp(scope: CoroutineScope) {
                     }
                 }
             }
+            SecurityNoticeDialog()
         }
         } // Box
     }
+}
+
+/**
+ * Shows each connection-security notice (a certificate that no longer matches
+ * its pin, a pairing from before encryption) as a plain message. None offers
+ * to connect anyway: only a fresh invite changes what the phone trusts (D6).
+ */
+@Composable
+private fun SecurityNoticeDialog() {
+    val strings = LocalUiStrings.current
+    var shown by remember { mutableStateOf<SecurityNotice?>(null) }
+    LaunchedEffect(Unit) {
+        SecurityNotices.events.collect { shown = it }
+    }
+    val notice = shown ?: return
+    val text = when (notice) {
+        is SecurityNotice.PinMismatch -> fillTemplate(strings.secPinMismatch, notice.host)
+        SecurityNotice.RepairForTunnel -> strings.secRepairTunnel
+        SecurityNotice.RepairForHomeNetwork -> strings.secRepairLan
+    }
+    val dismiss = {
+        shown = null
+        SecurityNotices.clear()
+    }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text(strings.secNoticeTitle) },
+        text = { Text(text) },
+        confirmButton = { TextButton(onClick = dismiss) { Text(strings.ok) } },
+        modifier = Modifier.testTag("security-notice"),
+    )
 }

@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.time.Duration;
@@ -162,7 +163,7 @@ public final class EntityExtractor {
                                 null,           // topP
                                 null,           // presencePenalty
                                 null,           // repetitionPenalty
-                                true),          // localOnly
+                                true).withNow(NowLine.NONE),          // localOnly
                 timeout,
                 scheduler);
 

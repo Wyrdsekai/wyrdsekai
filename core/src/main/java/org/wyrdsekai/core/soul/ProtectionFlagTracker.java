@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.config.WyrdConfig;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.ToIntFunction;
 
 /**
  * Wave 4.3 (-§8): per-companion store of
@@ -44,16 +46,41 @@ public final class ProtectionFlagTracker {
     /** A single SUSPECTED → CONFIRMED escalation signal. */
     public record Signal(String setterDid, String detail, Instant at) {}
 
-    /** Spec §6: SUSPECTED held this long without rebuttal escalates if signals continue. */
+    /** Spec §6 default: SUSPECTED held this long without rebuttal escalates if signs continue.
+     *  Set with {@code WYRDSEKAI_FLAG_SUSPECTED_ESCALATE_DAYS}. */
     public static final Duration SUSPECTED_TIME_DECAY = Duration.ofDays(14);
 
-    /** Group B wiring: SUSPECTED flag with no
-     *  new signal for this long auto-clears to NONE. The complementary
-     *  pattern to the §6 escalation: silence + time = lifting, not just
-     *  silence + time = escalation. */
+    /** default: a SUSPECTED flag with no new sign for this long lifts
+     *  to NONE. The complement of the §6 escalation: silence + time = lifting, not only
+     *  escalation. Set with {@code WYRDSEKAI_FLAG_SUSPECTED_LIFT_DAYS}. */
     public static final Duration SUSPECTED_NO_SIGNAL_DECAY = Duration.ofDays(90);
-    /** Same lift threshold for NOTED, the §2.4 pre-escalation state. */
+    /** Default lift for NOTED, the §2.4 pre-escalation state. Set with {@code WYRDSEKAI_FLAG_NOTED_LIFT_DAYS}. */
     public static final Duration NOTED_NO_SIGNAL_DECAY = Duration.ofDays(60);
+
+    private final Duration escalateAfter;
+    private final Duration suspectedLiftAfter;
+    private final Duration notedLiftAfter;
+
+    /** Durations from the household's settings (the constants above are the defaults). */
+    public ProtectionFlagTracker() {
+        this(configuredDays(c -> c.flagSuspectedEscalateDays(), SUSPECTED_TIME_DECAY),
+            configuredDays(c -> c.flagSuspectedLiftDays(), SUSPECTED_NO_SIGNAL_DECAY),
+            configuredDays(c -> c.flagNotedLiftDays(), NOTED_NO_SIGNAL_DECAY));
+    }
+
+    public ProtectionFlagTracker(Duration escalateAfter, Duration suspectedLiftAfter, Duration notedLiftAfter) {
+        this.escalateAfter = escalateAfter;
+        this.suspectedLiftAfter = suspectedLiftAfter;
+        this.notedLiftAfter = notedLiftAfter;
+    }
+
+    private static Duration configuredDays(ToIntFunction<WyrdConfig> read, Duration dflt) {
+        try {
+            return Duration.ofDays(read.applyAsInt(WyrdConfig.get()));
+        } catch (RuntimeException e) {
+            return dflt;
+        }
+    }
 
     private final Map<String, ProtectionFlag> flags = new HashMap<>();
     private final Map<String, List<Signal>> signals = new HashMap<>();
@@ -212,10 +239,15 @@ public final class ProtectionFlagTracker {
             flags.put(subjectDid, elevated);
             return elevated;
         }
-        // Time-decay check (spec §6, path 4)
-        if (Duration.between(existing.firstObservedAt(), now)
-                .compareTo(SUSPECTED_TIME_DECAY) >= 0
-                && !subjSignals.isEmpty()) {
+        // Time-decay check (spec §6, path 4): "SUSPECTED held for N days without intervention
+        // escalates if signals continue". The clock starts when the flag became SUSPECTED, not
+        // when it was first NOTED, and it takes a sign that came after that moment: the sign that
+        // raised the flag is not a continuing one.
+        var suspectedSince = existing.setAt() != null ? existing.setAt() : existing.firstObservedAt();
+        var signsContinued = subjSignals.stream()
+            .anyMatch(s -> s.at() != null && s.at().isAfter(suspectedSince));
+        if (Duration.between(suspectedSince, now).compareTo(escalateAfter) >= 0
+                && signsContinued) {
             var elevated = new ProtectionFlag(existing.subjectDid(),
                 ProtectionFlag.State.CONFIRMED, existing.reason(),
                 existing.setterDid(), now, existing.firstObservedAt(),
@@ -270,10 +302,10 @@ public final class ProtectionFlagTracker {
     }
 
     /**
-     * Group B wiring: sweep through flags and
-     * auto-clear any in NOTED or SUSPECTED state that have received no new
-     * signal for {@link #NOTED_NO_SIGNAL_DECAY} / {@link #SUSPECTED_NO_SIGNAL_DECAY}
-     * respectively. CONFIRMED and DISPUTED do not auto-clear — they require
+     * sweep through flags and auto-clear any in
+     * NOTED or SUSPECTED state that have received no new sign for the configured
+     * lift durations (defaults {@link #NOTED_NO_SIGNAL_DECAY} / {@link #SUSPECTED_NO_SIGNAL_DECAY}).
+     * CONFIRMED and DISPUTED do not auto-clear — they require
      * explicit clear() or arbitration.
      *
      * <p>"No new signal" = no entry in {@code signals.get(subjectDid)} with
@@ -293,9 +325,9 @@ public final class ProtectionFlagTracker {
             if (flag.isAbsent()) continue;
             Duration threshold;
             if (flag.state() == ProtectionFlag.State.NOTED) {
-                threshold = NOTED_NO_SIGNAL_DECAY;
+                threshold = notedLiftAfter;
             } else if (flag.state() == ProtectionFlag.State.SUSPECTED) {
-                threshold = SUSPECTED_NO_SIGNAL_DECAY;
+                threshold = suspectedLiftAfter;
             } else {
                 continue; // CONFIRMED / DISPUTED don't auto-clear
             }

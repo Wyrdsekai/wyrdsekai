@@ -257,11 +257,14 @@ class FederationServiceTest {
 
     // --- Transit Tokens ---
 
-    @Test void issue_and_validate_token() {
+    @Test void issue_and_redeem_token() {
+        // zone-b issued it to zone-a, with which it holds an active agreement.
+        service.saveAgreement(new BilateralAgreement("zone-b", "zone-a", "pubkey-a",
+            BilateralAgreement.STATUS_ACTIVE, "tourist", Instant.now(), null));
         var token = TransitToken.createTourist("agent-1", "Wyrd", "zone-a", "zone-b");
         service.saveTransitToken(token);
 
-        var result = service.validateTransitToken(token.tokenId());
+        var result = service.redeemTransitToken(token.tokenId(), "zone-b", "zone-a");
         assertThat(result).isPresent();
         assertThat(result.get().agentName()).isEqualTo("Wyrd");
     }
@@ -273,7 +276,7 @@ class FederationServiceTest {
             Instant.now().minusSeconds(7200), Instant.now().minusSeconds(3600));
         service.saveTransitToken(expired);
 
-        assertThat(service.validateTransitToken(expired.tokenId())).isEmpty();
+        assertThat(service.redeemTransitToken(expired.tokenId(), "zone-b", "zone-a")).isEmpty();
     }
 
     @Test void clean_expired_tokens() {
@@ -291,7 +294,7 @@ class FederationServiceTest {
     }
 
     @Test void invalid_token_id_returns_empty() {
-        assertThat(service.validateTransitToken("nonexistent")).isEmpty();
+        assertThat(service.redeemTransitToken("nonexistent", "zone-b", null)).isEmpty();
     }
 
     // --- Soul Verification ---

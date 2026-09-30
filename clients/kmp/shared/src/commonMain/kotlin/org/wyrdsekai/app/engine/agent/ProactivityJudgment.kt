@@ -2,6 +2,8 @@ package org.wyrdsekai.app.engine.agent
 
 import kotlin.time.Clock
 import kotlin.time.Instant
+import org.wyrdsekai.app.i18n.UiStrings
+import org.wyrdsekai.app.i18n.uiStringsFor
 
 /**
  * Evaluates whether an agent should act proactively based on drive pressure.
@@ -58,6 +60,11 @@ object ProactivityJudgment {
         val agentEntityId: String,
         val tier: Int,                        // computed agent tier (0-3)
         val calibration: CalibrationLedger? = null,
+        /**
+         * What she says and emotes, in the app's language (CompanionEngine passes
+         * its own). These lines were English literals whatever the language.
+         */
+        val strings: UiStrings = uiStringsFor("en"),
     )
 
     // ── Main evaluation ──────────────────────────────────────────────────
@@ -111,7 +118,7 @@ object ProactivityJudgment {
             if (ctx.vitality.confidence < 0.3) {
                 // Downgrade to observation instead
                 action = ProactiveAction.Observation(
-                    speechText = buildObservationText(peak),
+                    speechText = buildObservationText(ctx),
                     driveName = peak.name,
                     category = peak.name,
                 )
@@ -130,11 +137,11 @@ object ProactivityJudgment {
                     ProactiveAction.Initiative(
                         actionJson = """{"action": "library_search", "query": "recent interests"}""",
                         driveName = "curiosity",
-                        description = "Exploring something that caught attention",
+                        description = ctx.strings.narrationExploringSomething,
                     )
                 } else {
                     ProactiveAction.Observation(
-                        speechText = buildObservationText(peak),
+                        speechText = buildObservationText(ctx),
                         driveName = "curiosity",
                         category = "curiosity",
                     )
@@ -143,13 +150,13 @@ object ProactivityJudgment {
             "care" -> {
                 if (peak.pressure > 0.8) {
                     ProactiveAction.Observation(
-                        speechText = "Is everything alright? It's been quiet.",
+                        speechText = ctx.strings.narrationQuietCheckIn,
                         driveName = "care",
                         category = "care",
                     )
                 } else {
                     ProactiveAction.Ambient(
-                        emoteText = "*glances up with a concerned expression*",
+                        emoteText = ctx.strings.narrationConcernedGlance,
                         driveName = "care",
                     )
                 }
@@ -163,7 +170,7 @@ object ProactivityJudgment {
                     )
                 } else {
                     ProactiveAction.Ambient(
-                        emoteText = "*shifts thoughtfully*",
+                        emoteText = ctx.strings.narrationShiftsThoughtfully,
                         driveName = "social",
                     )
                 }
@@ -173,11 +180,11 @@ object ProactivityJudgment {
                     ProactiveAction.Initiative(
                         actionJson = """{"action": "make_commitment", "description": "follow up on pending task"}""",
                         driveName = "achievement",
-                        description = "Acting on pending commitment",
+                        description = ctx.strings.narrationActingOnCommitment,
                     )
                 } else {
                     ProactiveAction.Observation(
-                        speechText = "I've been meaning to follow up on something...",
+                        speechText = ctx.strings.narrationMeaningToFollowUp,
                         driveName = "achievement",
                         category = "achievement",
                     )
@@ -192,27 +199,27 @@ object ProactivityJudgment {
                 )
             }
             else -> ProactiveAction.Ambient(
-                emoteText = "*pauses thoughtfully*",
+                emoteText = ctx.strings.narrationPausesThoughtfully,
                 driveName = peak.name,
             )
         }
 
     // ── Text builders ────────────────────────────────────────────────────
 
-    private fun buildObservationText(peak: DriveState.DrivePeak): String =
-        "I noticed something worth mentioning..."
+    private fun buildObservationText(ctx: Context): String =
+        ctx.strings.narrationNoticedSomething
 
     private fun buildSocialText(ctx: Context): String {
         val lastSpeech = ctx.lastHumanSpeech
         val idleMinutes = if (lastSpeech != null) {
             (Clock.System.now() - lastSpeech).inWholeMinutes
         } else 0L
-        return if (idleMinutes > 30) "It's been a while — hope you're doing well."
-        else "Anything on your mind?"
+        return if (idleMinutes > 30) ctx.strings.narrationBeenAWhile
+        else ctx.strings.narrationAnythingOnYourMind
     }
 
     private fun buildAlertnessText(ctx: Context): String =
-        "Something shifted in the patterns..."
+        ctx.strings.narrationPatternsShifted
 
     // ── Tier-based threshold scaling ─────────────────────────────────────
 

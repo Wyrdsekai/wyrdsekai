@@ -40,15 +40,22 @@ public final class RoomCreator {
         this.scheduler = null;
     }
 
-    @SuppressWarnings("unchecked")
     public CompletionStage<RoomResponse> createRoom(
             String roomId, String name, String description,
             String zone, List<Exit> exits, List<RoomObject> objects) {
+        return createRoom(roomId, name, description, zone, exits, objects, null);
+    }
+
+    /** As above, recording {@code createdBy} as the room's maker (a companion's name). */
+    @SuppressWarnings("unchecked")
+    public CompletionStage<RoomResponse> createRoom(
+            String roomId, String name, String description,
+            String zone, List<Exit> exits, List<RoomObject> objects, String createdBy) {
         var roomRef = RoomRegistry.get().ref(roomId);
         if (roomRef == null && system != null) {
             // Room doesn't exist — tell ZoneGuardian to spawn it
             system.tell(new ZoneGuardian.CreateNewRoom(
-                roomId, name, description, zone, exits, objects));
+                roomId, name, description, zone, exits, objects, createdBy));
             // Poll for room to appear in registry
             return CompletableFuture.supplyAsync(() -> {
                 for (int i = 0; i < 10; i++) {
@@ -70,7 +77,7 @@ public final class RoomCreator {
                 new RoomResponse.Rejected("error","No scheduler available for ask"));
         }
         return AskPattern.<RoomCommand, RoomResponse>ask(roomRef,
-            ref -> new RoomCommand.CreateRoom(name, description, zone, exits, objects, ref),
+            ref -> new RoomCommand.CreateRoom(name, description, zone, List.of(), exits, objects, createdBy, ref),
             ASK_TIMEOUT, scheduler)
             // The shared topology is built once at boot from the foundation seeds, so a
             // room made afterwards was invisible to `map` — it rendered as `->[?]`, an

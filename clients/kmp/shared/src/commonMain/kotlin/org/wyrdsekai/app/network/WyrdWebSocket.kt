@@ -21,7 +21,7 @@ class WyrdWebSocket(
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
-    private val client = HttpClient {
+    private val client = createWsHttpClient().config {
         install(WebSockets) {
             pingIntervalMillis = 15_000
         }

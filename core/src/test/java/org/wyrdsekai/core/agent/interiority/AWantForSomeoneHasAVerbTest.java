@@ -71,11 +71,11 @@ class AWantForSomeoneHasAVerbTest {
 
     @Test
     void alone_but_bonded_she_writes_to_them_rather_than_reaching_into_an_empty_room() {
-        // tell_agent toward someone who is away walks to their Study, leaves the line on
-        // their desk where it survives a restart, notifies, and fans out to their external
-        // channels. It was fully built and no relational drive had ever pointed at it.
+        // A letter (LetterToTheAbsent): written by the runtime in her voice and put in the
+        // household mail. The forced tell it replaced depended on the model making the
+        // call, and on the household node it did not (2026-09-25).
         assertThat(RelationalAffordance.verbFor("Loneliness", ALONE_BUT_BONDED))
-            .isEqualTo("tell_agent");
+            .isEqualTo(LetterToTheAbsent.VERB);
     }
 
     @Test
@@ -102,7 +102,7 @@ class AWantForSomeoneHasAVerbTest {
     @Test
     void care_is_wordless_when_they_are_here_and_written_when_they_are_not() {
         assertThat(RelationalAffordance.verbFor("Care", PEER_HERE)).isEqualTo("emote");
-        assertThat(RelationalAffordance.verbFor("Care", ALONE_BUT_BONDED)).isEqualTo("tell_agent");
+        assertThat(RelationalAffordance.verbFor("Care", ALONE_BUT_BONDED)).isEqualTo(LetterToTheAbsent.VERB);
     }
 
     @Test
@@ -167,7 +167,7 @@ class AWantForSomeoneHasAVerbTest {
             pulling("Loneliness"), WantActBridge.HEURISTIC, ALONE_BUT_BONDED);
 
         assertThat(d.isDefer()).isFalse();
-        assertThat(d.verb()).isEqualTo("tell_agent");
+        assertThat(d.verb()).isEqualTo(LetterToTheAbsent.VERB);
         assertThat(ActionPolicy.autonomyTierFor(d.verb()))
             .as("whatever the bridge picks must be firable without consent")
             .isNotIn(ActionPolicy.AutonomyTier.CONSENT, ActionPolicy.AutonomyTier.FORBIDDEN);

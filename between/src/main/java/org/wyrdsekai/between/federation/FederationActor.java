@@ -1,6 +1,7 @@
 package org.wyrdsekai.between.federation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
@@ -8,6 +9,7 @@ import org.apache.pekko.actor.typed.javadsl.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.between.BetweenEnvelope;
+import org.wyrdsekai.between.KeyRotation;
 import org.wyrdsekai.between.NatsBridge;
 import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.common.model.AppVersion;
@@ -130,7 +132,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
      * own command stream so we resolve the pending probe under actor
      * supervision (no thread-safety concerns on pendingProbes).
      */
-    private record AgreementQueryReply(String queryId, String partnerStatus) implements Command {}
+    private record AgreementQueryReply(String queryId, String partnerStatus, String fromZone) implements Command {}
 
     /** Internal: agreement-state probe to a partner timed out. F6. */
     private record AgreementQueryTimeout(String queryId) implements Command {}
@@ -235,6 +237,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
     private final Map<String, ZoneManifest> knownZones = new ConcurrentHashMap<>();
     /** Pending transit requests awaiting response from destination zone: agentId → replyTo. */
     private final Map<String, ActorRef<TransitResult>> pendingTransitRequests = new ConcurrentHashMap<>();
+    /** The zone each pending transit request went to: only that zone's response completes it. */
+    private final Map<String, String> pendingTransitTargets = new ConcurrentHashMap<>();
     /**
      * Pending agreement-state probes — F6 stale-state reconciliation.
      * Keyed by queryId; resolved either by {@link AgreementQueryReply}
@@ -252,6 +256,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
      */
     private final Map<String, PendingMeshBatch> pendingMeshBatches = new ConcurrentHashMap<>();
     private final ZoneDoors zoneDoors = new ZoneDoors();
+    /** Decides which zone a federation envelope really comes from (pinned zone keys). */
+    private ZoneGate gate;
     static final Duration ZONE_PING_EVERY = Duration.ofSeconds(60);
     private boolean initialized = false;
 
@@ -319,6 +325,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         this.zoneId = msg.zoneId();
         this.zoneName = msg.zoneName();
         this.service = msg.service();
+        this.gate = new ZoneGate(service, zoneId);
         this.initialized = true;
 
         // Subscribe to federation NATS subjects.
@@ -456,35 +463,35 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         var payload = envelope.payload();
         var type = payload.has("type") ? payload.get("type").asText() : "unknown";
 
-        // Envelope signature verification with mode policy
-        // Returns false only in HARD mode on a
-        // definitive mismatch; SOFT continues with WARN, OFF skips entirely.
-        // See EnvelopeVerificationMode for the migration path.
-        if (!verifyEnvelope(envelope, type)) {
-            return this;  // HARD-mode drop
-        }
+        // Which zone is this really from? Checked against the key pinned for that zone (ZoneGate);
+        // every handler below acts for the verified zone, never for a zone the payload merely names.
+        var sender = verifiedSender(envelope, type);
+        if (sender == null) return this;
+        var from = sender.zoneId();
 
         try {
             switch (type) {
-                case "propose" -> handleInboundProposal(envelope);
-                case "accept" -> handleInboundAccept(envelope);
-                case "revoke" -> handleInboundRevoke(envelope);
-                case "manifest" -> handleInboundManifest(envelope);
-                case "transit_request" -> handleInboundTransitRequest(envelope);
-                case "transit_response" -> handleInboundTransitResponse(envelope);
-                case "companion_relocate" -> handleInboundCompanionRelocate(envelope);
-                case "companion_relocate_ack" -> handleInboundCompanionRelocateAck(envelope);
-                case "agreement_query" -> handleInboundAgreementQuery(envelope);
-                case "agreement_query_reply" -> handleInboundAgreementQueryReply(envelope);
+                case "propose" -> handleInboundProposal(envelope, sender);
+                case "accept" -> handleInboundAccept(envelope, sender);
+                case "revoke" -> handleInboundRevoke(envelope, from);
+                case "manifest" -> handleInboundManifest(envelope, from);
+                case KeyRotation.TYPE -> handleInboundKeyRotation(sender);
+                case "transit_request" -> handleInboundTransitRequest(envelope, from);
+                case "transit_response" -> handleInboundTransitResponse(envelope, from);
+                case "companion_relocate" -> handleInboundCompanionRelocate(envelope, from);
+                case "companion_relocate_ack" -> handleInboundCompanionRelocateAck(envelope, from);
+                case "agreement_query" -> handleInboundAgreementQuery(envelope, from);
+                case "agreement_query_reply" -> handleInboundAgreementQueryReply(envelope, from);
                 // Audit 2026-07-11: this reply type was PUBLISHED by peers (F14
                 // version-incompat refusal) but had no case here — the structured
                 // remediation hint arrived and fell to the debug default, so the
                 // proposer still just timed out, defeating F14's whole purpose.
                 case "propose_rejected" -> {
                     var pr = envelope.payload();
-                    log.warn("Federation: proposal REJECTED by peer — reason={} detail={} "
+                    log.warn("Federation: proposal REJECTED by peer '{}' — reason={} detail={} "
                         + "(peer federationSchema={}, wireProtocol={}). Likely fix: upgrade "
                         + "the older node so schema/wire versions match.",
+                        from,
                         pr.path("reason").asText("unknown"),
                         pr.path("detail").asText(""),
                         pr.path("localFederationSchema").asText("?"),
@@ -500,82 +507,32 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
     }
 
     /**
-     * Mode-aware envelope signature verification.
-     * Reads the policy from {@link org.wyrdsekai.core.naming.EnvelopeVerificationMode#fromEnv()}
-     * on every call so a running deployment can flip the env var without a
-     * restart; the cost is one map lookup per message.
-     *
-     * <p>Propose/manifest messages bypass the lookup because they carry
-     * identity in-band — the handler extracts the pubkey from the payload
-     * during the handshake itself.</p>
-     *
-     * @return {@code true} to continue dispatch, {@code false} to drop the
-     *     message (only possible in {@link org.wyrdsekai.core.naming.EnvelopeVerificationMode#HARD}
-     *     mode when verification fails definitively).
+     * The zone a federation envelope verifiably comes from, or null to drop it. Blocked senders are
+     * dropped silently (§6.2). {@code WYRDSEKAI_ENVELOPE_VERIFY=soft|off} are transition settings: a
+     * message that fails the check is then still handled, for the zone it claims, with a WARN.
      */
-    private boolean verifyEnvelope(BetweenEnvelope envelope, String type) {
-        // §6.2 blocklist enforcement — consulted BEFORE signature verify so
-        // blocked DIDs never touch handler logic at all. Silent drop per
-        // §6.5: no warning, no audit, no signal back to the sender. An
-        // attacker rotating keys can still reach us via new DIDs; that's
-        // handled at §6.11 (WoT-weighted sub-tray + sybil defence).
+    private ZoneGate.Verified verifiedSender(BetweenEnvelope envelope, String type) {
         var blockSvc = BlockListService.get();
         if (blockSvc != null && blockSvc.isBlocked(envelope.src())) {
-            log.debug("Federation: blocked src='{}' type='{}' — silent drop (§6.2)",
-                envelope.src(), type);
-            return false;
+            log.debug("Federation: blocked src='{}' type='{}' — silent drop (§6.2)", envelope.src(), type);
+            return null;
         }
-
+        var verified = gate.verify(envelope, type);
+        if (verified.isPresent()) return verified.get();
         var mode = EnvelopeVerificationMode.fromEnv();
-        if (mode == EnvelopeVerificationMode.OFF) return true;
+        if (mode == EnvelopeVerificationMode.HARD) return null;
+        var claimed = ZoneGate.claimedZone(envelope.payload(), type);
+        if ("propose".equals(type)) claimed = envelope.payload().path("proposer").path("zoneId").asText(claimed);
+        if ("manifest".equals(type)) claimed = envelope.payload().path("manifest").path("zoneId").asText(claimed);
+        log.warn("Federation: handling an UNVERIFIED {} for zone '{}' because WYRDSEKAI_ENVELOPE_VERIFY={}",
+            type, claimed, mode);
+        return new ZoneGate.Verified(claimed, null, null);
+    }
 
-        // Messages that carry identity in-band — handler verifies downstream.
-        if ("propose".equals(type) || "manifest".equals(type)) return true;
-
-        var src = envelope.src();
-        if (src == null || src.isBlank()) {
-            log.warn("Federation: received {} with no src — cannot verify signature", type);
-            // In HARD mode, an unsigned envelope with no src is unverifiable
-            // AND suspicious — drop. SOFT accepts to preserve Phase-1 traffic.
-            return mode != EnvelopeVerificationMode.HARD;
-        }
-
-        var manifest = knownZones.get(src);
-        if (manifest == null) {
-            // Unknown sender — no pubkey to verify against. In HARD mode this
-            // is ambiguous: could be a first-contact message we haven't seen
-            // a manifest for yet. Accept and let the handler decide — a
-            // proposal will fail schema validation; other types just log.
-            log.debug("Federation: {} from unknown src '{}' — skipping verify (no cached pubkey)",
-                type, src);
-            return true;
-        }
-
-        try {
-            var pubKey = Base64.getDecoder().decode(manifest.publicKey());
-            if (!envelope.verify(pubKey)) {
-                switch (mode) {
-                    case SOFT -> log.warn("Federation: envelope signature MISMATCH (SOFT) — "
-                            + "src='{}' type='{}'. Accepting for Phase-1 compat; "
-                            + "flip WYRDSEKAI_ENVELOPE_VERIFY=hard once mesh is clean.",
-                        src, type);
-                    case HARD -> {
-                        log.info("Federation: envelope DROPPED (HARD) — "
-                            + "src='{}' type='{}' signature mismatch.", src, type);
-                        return false;
-                    }
-                    default -> { /* unreachable — OFF returned earlier */ }
-                }
-            }
-            return true;
-        } catch (Exception e) {
-            log.warn("Federation: envelope verification failed for src='{}' type='{}': {}",
-                src, type, e.getMessage());
-            // Exception during verify is ambiguous. HARD drops conservatively;
-            // SOFT accepts. An operator who flipped to HARD has opted into
-            // strictness.
-            return mode != EnvelopeVerificationMode.HARD;
-        }
+    /** Publish a gate message; every message names its sender zone so the receiver knows which key to check. */
+    private void publishGate(String subject, ObjectNode payload) {
+        payload.put("senderZone", zoneId);
+        natsBridge.publish(subject, BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
     }
 
     /** Read the fencing epoch carried on a federation envelope (0 for pre-fence peers). */
@@ -590,10 +547,13 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         return p != null && p.has("epochOwner") ? p.get("epochOwner").asText("") : "";
     }
 
-    private void handleInboundProposal(BetweenEnvelope envelope) {
+    private void handleInboundProposal(BetweenEnvelope envelope, ZoneGate.Verified sender) {
         try {
             var proposerNode = MAPPER.treeToValue(envelope.payload().get("proposer"), ZoneManifest.class);
-            var trustLevel = envelope.payload().get("trustLevel").asText();
+            if (!proposerNode.zoneId().equals(sender.zoneId())) return;
+            // The trust level sets what WE let them use (localQuota); a proposer does not get to pick it.
+            // Our own proposals are always tourist, so every agreement starts there.
+            var trustLevel = BilateralAgreement.TRUST_TOURIST;
             long propEpoch = payloadEpoch(envelope);
             String propOwner = payloadEpochOwner(envelope);
 
@@ -634,8 +594,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
                     AppVersion.FEDERATION_SCHEMA);
                 reply.put("localWireProtocol",
                     AppVersion.WIRE_PROTOCOL);
-                natsBridge.publish("federation." + proposerNode.zoneId() + ".gate.propose_rejected",
-                    BetweenEnvelope.create(identity.nodeId(), null, reply, identity));
+                publishGate("federation." + proposerNode.zoneId() + ".gate.propose_rejected", reply);
                 return;
             }
 
@@ -673,8 +632,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
                 payload.put("epoch", propEpoch);            // echo the proposer's epoch
                 payload.put("epochOwner", propOwner);
 
-                natsBridge.publish("federation." + proposerNode.zoneId() + ".gate.accept",
-                    BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+                publishGate("federation." + proposerNode.zoneId() + ".gate.accept", payload);
 
                 natsBridge.publish("federation.local.activated",
                     StandardCharsets.UTF_8.encode(proposerNode.zoneId()).array());
@@ -700,9 +658,9 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         }
     }
 
-    private void handleInboundAccept(BetweenEnvelope envelope) {
+    private void handleInboundAccept(BetweenEnvelope envelope, ZoneGate.Verified sender) {
         try {
-            var acceptorZoneId = envelope.payload().get("zoneId").asText();
+            var acceptorZoneId = sender.zoneId();
             var acceptorManifest = MAPPER.treeToValue(
                 envelope.payload().get("acceptor"), ZoneManifest.class);
 
@@ -725,6 +683,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
                 return;
             }
 
+            // Pin the key they accepted with (first verified contact when we proposed to them).
+            service.pinZoneKey(zoneId, acceptorZoneId, acceptorManifest.publicKey());
             // Store/update their manifest
             service.saveManifest(acceptorManifest);
             knownZones.put(acceptorManifest.zoneId(), acceptorManifest);
@@ -742,8 +702,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         }
     }
 
-    private void handleInboundRevoke(BetweenEnvelope envelope) {
-        var revokerZoneId = envelope.payload().get("zoneId").asText();
+    private void handleInboundRevoke(BetweenEnvelope envelope, String from) {
+        var revokerZoneId = from;
         var reason = envelope.payload().has("reason")
             ? envelope.payload().get("reason").asText() : "no reason given";
         long revEpoch = payloadEpoch(envelope);
@@ -762,10 +722,11 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         }
     }
 
-    private void handleInboundManifest(BetweenEnvelope envelope) {
+    private void handleInboundManifest(BetweenEnvelope envelope, String from) {
         try {
             var manifest = MAPPER.treeToValue(
                 envelope.payload().get("manifest"), ZoneManifest.class);
+            if (!manifest.zoneId().equals(from)) return;
             service.saveManifest(manifest);
             knownZones.put(manifest.zoneId(), manifest);
             log.debug("Federation: updated manifest for zone '{}'", manifest.zoneId());
@@ -774,10 +735,18 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         }
     }
 
-    private void handleInboundTransitRequest(BetweenEnvelope envelope) {
+    /** A partner zone changed its key; ZoneGate verified the message with the old key and the proof with the new. */
+    private void handleInboundKeyRotation(ZoneGate.Verified sender) {
+        if (sender.rotatedKey() == null) return;
+        service.rotateZoneKey(zoneId, sender.zoneId(), sender.rotatedKey());
+        service.getManifest(sender.zoneId()).ifPresent(m -> knownZones.put(m.zoneId(), m));
+        log.info("Federation: zone '{}' rotated its key (signed by the old key)", sender.zoneId());
+    }
+
+    private void handleInboundTransitRequest(BetweenEnvelope envelope, String from) {
         var agentId = envelope.payload().get("agentId").asText();
         var agentName = envelope.payload().get("agentName").asText();
-        var sourceZoneId = envelope.payload().get("sourceZoneId").asText();
+        var sourceZoneId = from;
 
         // Check if we have an active agreement with the source zone
         var agreement = service.getAgreement(zoneId, sourceZoneId);
@@ -850,8 +819,13 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
                 + (resolvedMode != null ? ", soul mode: " + resolvedMode : "") + ")");
     }
 
-    private void handleInboundTransitResponse(BetweenEnvelope envelope) {
+    private void handleInboundTransitResponse(BetweenEnvelope envelope, String from) {
         var agentId = envelope.payload().path("agentId").asText("");
+        if (!from.equals(pendingTransitTargets.get(agentId))) {
+            log.warn("Federation: transit_response for agent '{}' from zone '{}', which we did not ask — ignored",
+                agentId, from);
+            return;
+        }
         var allowed = envelope.payload().path("allowed").asBoolean(false);
         var tokenId = envelope.payload().path("transitToken").asText(null);
         var reason = envelope.payload().path("reason").asText("");
@@ -860,6 +834,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             agentId, allowed, tokenId);
 
         // Complete pending transit request if one exists
+        pendingTransitTargets.remove(agentId);
         var replyTo = pendingTransitRequests.remove(agentId);
         if (replyTo != null) {
             if (allowed && tokenId != null) {
@@ -873,6 +848,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
     }
 
     private Behavior<Command> onTransitTimeout(TransitTimeout msg) {
+        pendingTransitTargets.remove(msg.agentId());
         var replyTo = pendingTransitRequests.remove(msg.agentId());
         if (replyTo != null) {
             log.warn("Federation: transit request timed out for agent '{}'", msg.agentId());
@@ -967,8 +943,10 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         // (spec/tla/PeerHandshakeFenced.tla). The epoch + minting zone travel on
         // the envelope so the peer can reject a stale/crossing proposal.
         long epoch = service.nextProposalEpoch(zoneId, targetZoneId);
+        // A re-proposal keeps the key already pinned for this partner; clearing it would let the
+        // next accept pin whatever key it carries.
         var agreement = new BilateralAgreement(
-            zoneId, targetZoneId, "",
+            zoneId, targetZoneId, service.pinnedZoneKey(zoneId, targetZoneId).orElse(""),
             BilateralAgreement.STATUS_PENDING, BilateralAgreement.TRUST_TOURIST,
             Instant.now(), null
         ).withEpoch(epoch, zoneId);
@@ -981,8 +959,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         payload.put("epoch", epoch);
         payload.put("epochOwner", zoneId);
 
-        natsBridge.publish("federation." + targetZoneId + ".gate.propose",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + targetZoneId + ".gate.propose", payload);
 
         log.info("Federation: proposed agreement to zone '{}'", targetZoneId);
         msg.replyTo().tell("Proposal sent to zone '" + targetZoneId
@@ -996,8 +973,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         payload.put("type", "agreement_query");
         payload.put("queryId", queryId);
         payload.put("askerZoneId", zoneId);
-        natsBridge.publish("federation." + targetZoneId + ".gate.agreement_query",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + targetZoneId + ".gate.agreement_query", payload);
     }
 
     /**
@@ -1009,8 +985,10 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         // of a single-shot reconcile probe. Check batches first; reconciliation
         // probes use queryIds that aren't in any batch.
         for (var batch : pendingMeshBatches.values()) {
-            String partner = batch.queryIdToPartner.remove(msg.queryId());
+            String partner = batch.queryIdToPartner.get(msg.queryId());
+            if (partner != null && !partner.equals(msg.fromZone())) return this;
             if (partner != null) {
+                batch.queryIdToPartner.remove(msg.queryId());
                 batch.partnerReplies.put(partner, msg.partnerStatus());
                 if (batch.queryIdToPartner.isEmpty()) {
                     completeMeshBatch(findBatchKey(batch));
@@ -1019,11 +997,12 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             }
         }
         if (zoneDoors.replied(msg.queryId(), Instant.now())) return this;
-        var probe = pendingProbes.remove(msg.queryId());
-        if (probe == null) {
-            // Late reply or duplicate — nothing to do.
+        var probe = pendingProbes.get(msg.queryId());
+        if (probe == null || !probe.targetZoneId().equals(msg.fromZone())) {
+            // Late reply, duplicate, or a reply from a zone we did not ask — nothing to do.
             return this;
         }
+        pendingProbes.remove(msg.queryId());
         heardFrom(probe.targetZoneId());
         timers.cancel("agreement-probe-" + msg.queryId());
 
@@ -1041,7 +1020,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             }
             // Partner says ACTIVE but we don't agree — bring local up to match.
             var reconciled = new BilateralAgreement(
-                zoneId, targetZoneId, "",
+                zoneId, targetZoneId, existing.map(BilateralAgreement::remotePublicKey).orElse(""),
                 BilateralAgreement.STATUS_ACTIVE, BilateralAgreement.TRUST_TOURIST,
                 existing.map(BilateralAgreement::agreedAt).orElse(Instant.now()),
                 Instant.now()
@@ -1083,14 +1062,14 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
      * Inbound: a partner zone is asking us about our local state for them.
      * Reply with NONE / PENDING / ACTIVE based on our agreement table. F6.
      */
-    private void handleInboundAgreementQuery(BetweenEnvelope envelope) {
+    private void handleInboundAgreementQuery(BetweenEnvelope envelope, String from) {
         var payload = envelope.payload();
-        if (!payload.has("queryId") || !payload.has("askerZoneId")) {
-            log.warn("Federation: malformed agreement_query (missing queryId/askerZoneId)");
+        if (!payload.has("queryId")) {
+            log.warn("Federation: malformed agreement_query (missing queryId)");
             return;
         }
         var queryId = payload.get("queryId").asText();
-        var askerZoneId = payload.get("askerZoneId").asText();
+        var askerZoneId = from;
         heardFrom(askerZoneId);
 
         var existing = service.getAgreement(zoneId, askerZoneId);
@@ -1111,14 +1090,13 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         reply.put("type", "agreement_query_reply");
         reply.put("queryId", queryId);
         reply.put("status", status);
-        natsBridge.publish("federation." + askerZoneId + ".gate.agreement_query_reply",
-            BetweenEnvelope.create(identity.nodeId(), null, reply, identity));
+        publishGate("federation." + askerZoneId + ".gate.agreement_query_reply", reply);
         log.debug("Federation: replied to agreement_query from '{}' with status={}",
             askerZoneId, status);
     }
 
     /** Lift the inbound NATS reply onto the actor's command stream. F6. */
-    private void handleInboundAgreementQueryReply(BetweenEnvelope envelope) {
+    private void handleInboundAgreementQueryReply(BetweenEnvelope envelope, String from) {
         var payload = envelope.payload();
         if (!payload.has("queryId") || !payload.has("status")) {
             log.warn("Federation: malformed agreement_query_reply (missing queryId/status)");
@@ -1126,7 +1104,8 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         }
         getContext().getSelf().tell(new AgreementQueryReply(
             payload.get("queryId").asText(),
-            payload.get("status").asText()));
+            payload.get("status").asText(),
+            from));
     }
 
     // ── F12: mesh-status fan-out ─────────────────────────────────────────
@@ -1259,8 +1238,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         payload.put("epoch", agreement.get().epoch());
         payload.put("epochOwner", agreement.get().epochOwner());
 
-        natsBridge.publish("federation." + remoteZoneId + ".gate.accept",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + remoteZoneId + ".gate.accept", payload);
 
         log.info("Federation: accepted agreement with zone '{}' (epoch {})",
             remoteZoneId, agreement.get().epoch());
@@ -1301,8 +1279,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         payload.put("epoch", agreement.get().epoch());
         payload.put("epochOwner", agreement.get().epochOwner());
 
-        natsBridge.publish("federation." + remoteZoneId + ".gate.revoke",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + remoteZoneId + ".gate.revoke", payload);
 
         log.info("Federation: revoked agreement with zone '{}'", remoteZoneId);
         msg.replyTo().tell("Agreement with zone '" + remoteZoneId
@@ -1355,11 +1332,11 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             }
         }
 
-        natsBridge.publish("federation." + targetZoneId + ".gate.transit_request",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + targetZoneId + ".gate.transit_request", payload);
 
         // Store pending request — will be completed when destination responds with token
         pendingTransitRequests.put(msg.agentId(), msg.replyTo());
+        pendingTransitTargets.put(msg.agentId(), targetZoneId);
 
         log.info("Federation: transit request sent for {} → zone '{}'",
             msg.agentName(), targetZoneId);
@@ -1450,7 +1427,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
      * companion at the target zone via ZoneGuardian.RelocateCompanion.arrive),
      * then publishes an Ack back to the source.
      */
-    private void handleInboundCompanionRelocate(BetweenEnvelope envelope) {
+    private void handleInboundCompanionRelocate(BetweenEnvelope envelope, String from) {
         var payload = envelope.payload();
         TransitToken token = null;
         String stateJson = null;
@@ -1476,19 +1453,14 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             return;
         }
 
-        // Validate token: target must be us, must not be expired.
-        if (!zoneId.equals(token.targetZoneId())) {
-            log.warn("Federation: companion_relocate token target '{}' != us '{}' — drop",
-                token.targetZoneId(), zoneId);
-            sendCompanionRelocateAck(token.sourceZoneId(), token.tokenId(),
-                token.agentDid(), null, 0L, false, null,
-                "target_mismatch:" + zoneId);
-            return;
-        }
-        if (token.isExpired()) {
-            log.warn("Federation: companion_relocate token expired (id={})", token.tokenId());
-            sendCompanionRelocateAck(token.sourceZoneId(), token.tokenId(),
-                token.agentDid(), null, 0L, false, null, "token_expired");
+        // Only between zones that both said yes, and only a companion that arrives whole: her soul
+        // manifest travels with her and must be signed by the key her DID names (RelocationCheck).
+        var refusal = RelocationCheck.refusal(zoneId, from, service, token, stateJson,
+            payload.get("soulManifest"));
+        if (refusal != null) {
+            log.warn("Federation: companion_relocate from zone '{}' REFUSED ({}) — token={}, agent={}",
+                from, refusal, token.tokenId(), token.agentName());
+            sendCompanionRelocateAck(from, token.tokenId(), token.agentDid(), null, 0L, false, null, refusal);
             return;
         }
         if (relocateSink == null) {
@@ -1540,13 +1512,18 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
      * relocate to. Currently informational; future work uses this to roll
      * back the source-side stop on rejection.
      */
-    private void handleInboundCompanionRelocateAck(BetweenEnvelope envelope) {
+    private void handleInboundCompanionRelocateAck(BetweenEnvelope envelope, String from) {
         var payload = envelope.payload();
+        if (!from.equals(payload.path("fromZoneId").asText(from))) {
+            log.warn("Federation: companion_relocate_ack names zone '{}' but was signed by '{}' — ignored",
+                payload.path("fromZoneId").asText(), from);
+            return;
+        }
         var tokenId = payload.path("tokenId").asText("");
         var agentDid = payload.path("agentDid").asText("");
         var entityId = payload.path("entityId").asText(null);
         var transitEpoch = payload.path("transitEpoch").asLong(0L);
-        var fromZoneId = payload.path("fromZoneId").asText(null);
+        var fromZoneId = from;
         var accepted = payload.path("accepted").asBoolean(false);
         var landed = payload.path("landedRoomId").asText(null);
         var reason = payload.path("reason").asText("");
@@ -1587,6 +1564,14 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         if (cmd.stateJson() != null) payload.put("stateJson", cmd.stateJson());
         if (cmd.bondholderDid() != null) payload.put("bondholderDid", cmd.bondholderDid());
         if (cmd.targetRoomHint() != null) payload.put("targetRoomHint", cmd.targetRoomHint());
+        // The target refuses a companion whose signed soul manifest does not travel with her.
+        var manifest = service.latestSoulManifest(token.agentDid());
+        if (manifest.isPresent()) {
+            payload.set("soulManifest", MAPPER.valueToTree(manifest.get()));
+        } else {
+            log.warn("Federation: no soul manifest held for '{}' (did={}); the target zone will refuse "
+                + "the relocation and she stays here", token.agentName(), token.agentDid());
+        }
 
         // Persist the source-side copy of the token so later inbound calls
         // (e.g. visitor return) can verify the matching pair.
@@ -1596,8 +1581,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
             log.debug("Federation: source-side saveTransitToken failed: {}", e.getMessage());
         }
 
-        natsBridge.publish("federation." + token.targetZoneId() + ".gate.companion_relocate",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + token.targetZoneId() + ".gate.companion_relocate", payload);
         log.info("Federation: published companion_relocate for agent '{}' (did={}) → zone '{}'",
             token.agentName(), token.agentDid(), token.targetZoneId());
         return this;
@@ -1620,8 +1604,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         // ackZoneId = us = the zone confirming arrival (the source matches against it).
         payload.put("fromZoneId", zoneId);
 
-        natsBridge.publish("federation." + targetZoneId + ".gate.companion_relocate_ack",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + targetZoneId + ".gate.companion_relocate_ack", payload);
     }
 
     private ZoneManifest buildLocalManifest() {
@@ -1706,8 +1689,7 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         // Broadcast to all known federated zones
         for (var agreement : service.listAgreements(zoneId)) {
             if (agreement.isActive()) {
-                natsBridge.publish("federation." + agreement.remoteZoneId() + ".gate.manifest",
-                    BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+                publishGate("federation." + agreement.remoteZoneId() + ".gate.manifest", payload);
             }
         }
     }
@@ -1723,7 +1705,6 @@ public class FederationActor extends AbstractBehavior<FederationActor.Command> {
         if (targetUrl != null) payload.put("targetUrl", targetUrl);
         payload.put("reason", reason);
 
-        natsBridge.publish("federation." + targetZoneId + ".gate.transit_response",
-            BetweenEnvelope.create(identity.nodeId(), null, payload, identity));
+        publishGate("federation." + targetZoneId + ".gate.transit_response", payload);
     }
 }

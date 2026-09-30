@@ -14,8 +14,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyPairGenerator;
@@ -150,6 +153,7 @@ public final class NodeIdentity {
     }
 
     private static NodeIdentity load(Path identityFile) throws IOException {
+        restrict(identityFile);
         try {
             var mapper = new ObjectMapper();
             var root = mapper.readTree(identityFile.toFile());
@@ -260,7 +264,43 @@ public final class NodeIdentity {
         kd.put("algorithm", "PBKDF2WithHmacSHA256");
         root.set("keyDerivation", kd);
 
-        mapper.writerWithDefaultPrettyPrinter().writeValue(identityFile.toFile(), root);
+        // Readable by the node's user only (it holds the node's private keys), written through a file
+        // that is 0600 from the start. Until 0.5.0 it was left at the umask (often world-readable).
+        var tmp = identityFile.resolveSibling(identityFile.getFileName() + ".tmp");
+        Files.deleteIfExists(tmp);
+        if (posix()) {
+            Files.createFile(tmp, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        }
+        Files.write(tmp, mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(root));
+        Files.move(tmp, identityFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        ownLikeParent(identityFile);
+    }
+
+    private static boolean posix() {
+        return FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+    }
+
+    /** A tool run as root must not leave the node's user unable to read its own identity. */
+    private static void ownLikeParent(Path f) {
+        try {
+            Files.setOwner(f, Files.getOwner(f.toAbsolutePath().getParent()));
+        } catch (IOException | UnsupportedOperationException | SecurityException e) {
+            log.debug("{} owner left as is: {}", f, e.toString());
+        }
+    }
+
+    /** An identity file from before 0.5.0 may be readable by others: made the node user's alone. */
+    private static void restrict(Path identityFile) {
+        if (!posix()) return;
+        try {
+            var perms = Files.getPosixFilePermissions(identityFile);
+            if (perms.equals(PosixFilePermissions.fromString("rw-------"))) return;
+            ownLikeParent(identityFile);
+            Files.setPosixFilePermissions(identityFile, PosixFilePermissions.fromString("rw-------"));
+            log.info("{} was readable by other users; it is now the node user's alone (0600)", identityFile);
+        } catch (IOException | UnsupportedOperationException | SecurityException e) {
+            log.warn("{} could not be made private (0600): {}", identityFile, e.getMessage());
+        }
     }
 
     // --- Public API ---

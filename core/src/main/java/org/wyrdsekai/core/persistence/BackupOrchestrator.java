@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.*;
 import java.sql.DriverManager;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -17,6 +18,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -66,6 +68,33 @@ public class BackupOrchestrator {
     /** Set maximum number of snapshots to retain. */
     public void setMaxSnapshots(int max) {
         this.maxSnapshots = max;
+    }
+
+    /** The soonest a scheduled backup runs after a start: the boot has its own work, and a
+     *  service that keeps dying young must not take a full backup on every start. */
+    public static final Duration FIRST_RUN_FLOOR = Duration.ofMinutes(10);
+
+    /**
+     * How long until the next scheduled backup: {@code every}, counted from {@code last} (the
+     * newest backup already on disk) and not from this start. A timer counted from the start
+     * never fires on a node that restarts more often than {@code every}: a household node
+     * restarted five times in one day and its newest full backup stayed more than a day old
+     * (2026-09-22). With no backup on disk, or one stamped later than now (the clock moved
+     * back), the next one runs after {@link #FIRST_RUN_FLOOR}.
+     */
+    public static Duration firstRunDelay(Instant last, Duration every, Instant now) {
+        if (last == null || last.isAfter(now)) return FIRST_RUN_FLOOR;
+        var left = every.minus(Duration.between(last, now));
+        return left.compareTo(FIRST_RUN_FLOOR) < 0 ? FIRST_RUN_FLOOR : left;
+    }
+
+    /**
+     * True when {@code fileName} is the trail {@code trailName} or something rotated off it:
+     * {@code name.1}, {@code name.2.gz}, {@code name.gz}. A hand-made {@code name.orig} or a
+     * {@code name.tmp} is not.
+     */
+    public static boolean isTrailFile(String trailName, String fileName) {
+        return fileName.matches(Pattern.quote(trailName) + "(\\.\\d+)?(\\.gz)?");
     }
 
     /**
@@ -189,6 +218,9 @@ public class BackupOrchestrator {
         try (var stream = Files.list(backupDir)) {
             return stream
                 .filter(p -> p.toString().endsWith(".bak"))
+                // The node identity a full pass copies under the same id is not a database
+                // snapshot: listed, a restore by that id could stage it as world.db.
+                .filter(p -> !p.getFileName().toString().startsWith("node-identity."))
                 .map(this::toManifest)
                 .flatMap(Optional::stream)
                 .sorted(Comparator.comparing(BackupManifest::timestamp).reversed())
@@ -218,6 +250,45 @@ public class BackupOrchestrator {
     /** Get the most recent snapshot. */
     public Optional<BackupManifest> latestSnapshot() {
         return listSnapshots().stream().findFirst();
+    }
+
+    /**
+     * The snapshots of one database: {@code <db file name>.<id>.bak}, newest first. Not the
+     * brainstem's {@code brainstem.world.db.*.bak} (taken before each hang restart), and not the
+     * {@code node-identity.<id>.bak} a full pass writes under the same id, which a restore by id
+     * could pick up as the database (review of 2026-09-22).
+     */
+    public List<BackupManifest> snapshotsOf(Path sourceDb) {
+        if (sourceDb == null) return List.of();
+        var prefix = sourceDb.getFileName().toString() + ".";
+        return listSnapshots().stream()
+            .filter(m -> m.location() != null && m.location().getFileName().toString().startsWith(prefix))
+            .toList();
+    }
+
+    /**
+     * The snapshots a restore may stage for one database, newest first: a full pass's
+     * {@code <db>.<id>.bak}, and the brainstem's or the vault's copy ({@code brainstem.<db>.<id>.bak},
+     * {@code vault.<db>.<id>.bak}). Where two share an id, the full pass's comes first.
+     */
+    public List<BackupManifest> restorableSnapshotsOf(Path sourceDb) {
+        if (sourceDb == null) return List.of();
+        var db = sourceDb.getFileName().toString();
+        var plain = db + ".";
+        return listSnapshots().stream()
+            .filter(m -> m.location() != null)
+            .filter(m -> {
+                var n = m.location().getFileName().toString();
+                return n.startsWith(plain) || n.matches("[a-z]+\\." + Pattern.quote(db) + "\\..*");
+            })
+            .sorted(Comparator.comparing(BackupManifest::timestamp).reversed()
+                .thenComparing(m -> m.location().getFileName().toString().startsWith(plain) ? 0 : 1))
+            .toList();
+    }
+
+    /** The newest snapshot of one database (see {@link #snapshotsOf}). */
+    public Optional<BackupManifest> latestSnapshotOf(Path sourceDb) {
+        return snapshotsOf(sourceDb).stream().findFirst();
     }
 
     /** Prune old snapshots, keeping only the most recent maxSnapshots. */
@@ -294,10 +365,12 @@ public class BackupOrchestrator {
      * </ul>
      *
      * <p>Each extra dir lands at {@code backupDir/<basename>.<backupId>/}
-     * and is pruned to {@code maxSnapshots} on the same prefix. Missing
-     * or non-directory entries are skipped silently — callers can pass
-     * an "every dir we might care about" list without checking for
-     * existence first.
+     * and is pruned to {@code maxSnapshots} on the same prefix. A regular
+     * file in the list is an append-only trail ({@code data/agent-activity.jsonl},
+     * {@code data/drive-trace.jsonl}): it lands in the same kind of directory
+     * together with what was rotated off it (see {@link #copyTrail}).
+     * Missing entries are skipped silently — callers can pass an "every
+     * path we might care about" list without checking for existence first.
      *
      * <p>{@code adapters/} (LoRA voice-alignment weights) is intentionally
      * <i>not</i> in the default extra-dirs list: it's large (~hundreds
@@ -305,11 +378,25 @@ public class BackupOrchestrator {
      * {@code world.db}. A separate retention policy will land in a
      * follow-up.
      */
-    public Optional<BackupManifest> snapshotAll(Path sourceDb, Path searchDir,
+    public synchronized Optional<BackupManifest> snapshotAll(Path sourceDb, Path searchDir,
                                                    Path nodeIdentityFile,
                                                    List<Path> extraDirs) {
+        // The boot schedule and the steward's dial both count from the newest backup, so with
+        // the same interval they fire together. Two passes in one second shared a backupId, the
+        // second's hard links into search.<id> failed, and that fallback copies the whole index
+        // (the 174 GB copies of 2026-09-10). One pass at a time, each with an id of its own.
         var timestamp = Instant.now();
         var backupId = TIMESTAMP_FORMAT.format(timestamp);
+        while (Files.exists(backupDir.resolve("search." + backupId))) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Optional.empty();
+            }
+            timestamp = Instant.now();
+            backupId = TIMESTAMP_FORMAT.format(timestamp);
+        }
         long totalSize = 0;
         var sourceBuilder = new StringBuilder(sourceDb.toString());
 
@@ -360,20 +447,25 @@ public class BackupOrchestrator {
             }
         }
 
-        // 4. Extra dirs (agents/, classifiers/, souls/, ...).
+        // 4. Extra dirs (agents/, classifiers/, souls/, ...) and the append-only trails.
         if (extraDirs != null) {
             for (Path src : extraDirs) {
-                if (src == null || !Files.isDirectory(src)) continue;
+                if (src == null) continue;
+                boolean isDir = Files.isDirectory(src);
+                if (!isDir && !Files.isRegularFile(src)) continue;
                 var basename = src.getFileName().toString();
                 var dest = backupDir.resolve(basename + "." + backupId);
                 try {
-                    copyDirectoryRecursive(src, dest);
+                    if (isDir) copyDirectoryRecursive(src, dest);
+                    else copyTrail(src, dest);
                     long size = directorySize(dest);
                     totalSize += size;
                     log.info("Backup: {} ({} bytes) → {}", basename, size, dest);
                     pruneByPrefix(basename + ".", true);
                     sourceBuilder.append(" + ").append(basename);
-                } catch (IOException e) {
+                } catch (IOException | UncheckedIOException e) {
+                    // copyDirectoryRecursive wraps its IOException: uncaught, it ended the pass
+                    // here and, on the scheduled path, every pass after it.
                     log.error("Backup: extra-dir {} snapshot failed: {}",
                         basename, e.getMessage());
                 }
@@ -534,6 +626,42 @@ public class BackupOrchestrator {
                     throw new UncheckedIOException(e);
                 }
             });
+        }
+    }
+
+    /**
+     * An append-only trail and what was rotated off it (see {@link #isTrailFile}), copied into
+     * {@code target}. Copied, never hard-linked: the live file is appended to in place, so a
+     * link would keep growing inside the snapshot. Refuses, rather than fills the disk, when
+     * the copy would not fit, and leaves no half copy behind to count as one of the kept.
+     */
+    static void copyTrail(Path trail, Path target) throws IOException {
+        var name = trail.getFileName().toString();
+        List<Path> files;
+        try (var siblings = Files.list(trail.toAbsolutePath().getParent())) {
+            files = siblings.filter(p -> isTrailFile(name, p.getFileName().toString()))
+                .filter(Files::isRegularFile).sorted().toList();
+        }
+        long need = 0;
+        for (var f : files) need += Files.size(f);
+        Files.createDirectories(target);
+        long free = Files.getFileStore(target).getUsableSpace();
+        if (need > free) {
+            deleteRecursive(target);
+            throw new IOException("a copy of " + name + " (" + need + " bytes) would not fit in the "
+                + free + " free; skipped rather than fill the disk");
+        }
+        try {
+            for (var f : files) {
+                // Through Java's own open, as the vault reads it: the drive trace is held open
+                // for writing the whole time the server runs.
+                try (var in = Files.newInputStream(f)) {
+                    Files.copy(in, target.resolve(f.getFileName().toString()), StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        } catch (IOException e) {
+            deleteRecursive(target);
+            throw e;
         }
     }
 

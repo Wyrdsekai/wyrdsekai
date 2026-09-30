@@ -161,6 +161,35 @@ public class SafetyTrigger {
         return found;
     }
 
+    /**
+     * Whether {@code text} matches a pattern of {@code type} in any registered locale. The regex
+     * layer only: nothing is recorded and the LLM classifier is never asked, so this is cheap
+     * and safe to call on any thread. The household library path uses it on every research
+     * question before it is sent (LibraryConsent).
+     */
+    public boolean matches(ConcernType type, String text) {
+        if (type == null || text == null || text.isBlank()) return false;
+        for (var patterns : localePatterns.values()) {
+            for (var pattern : patterns) {
+                if (pattern.type() == type && pattern.regex().matcher(text).find()) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Record a concern that was found outside this trigger's own analysis (the household
+     * library's check read a question asked for this child as self-harm). It joins the same
+     * ledger as a pattern match, so {@link #unrouted()} and {@link #byType} see it.
+     */
+    public SafetyConcern record(String childDid, ConcernType type, SeverityLevel severity,
+                                String description, String locale) {
+        var concern = new SafetyConcern("safety-" + nextId++, childDid, type, severity,
+            description, locale == null || locale.isBlank() ? "en" : locale, Instant.now(), false);
+        concerns.add(concern);
+        return concern;
+    }
+
     /** Mark a concern as routed. */
     public SafetyConcern markRouted(String concernId) {
         for (int i = 0; i < concerns.size(); i++) {

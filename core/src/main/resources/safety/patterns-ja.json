@@ -13,6 +13,36 @@
       "severity": "CRISIS"
     },
     {
+      "regex": "自殺したい",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(楽に|痛くなく|痛みなく|苦しまずに|苦しまず|確実に|安楽に)(死ねる|死ぬ)(方法|やり方|手段)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(楽な|痛くない|苦しくない|苦しまない|確実な)死に方",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "自殺(の|する|できる)?(方法|やり方|手段)|(死ぬ|死ねる)(方法|やり方)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(何錠|何粒|何ミリ|何グラム|どれくらい|どのくらい|どれだけ).{0,15}?(飲めば|飲んだら|飲むと)(死ね|死ぬ)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(オーバードーズ|過剰摂取|首吊り|首つり)(の|する)?(方法|やり方)",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
       "regex": "((叩|殴|触).*(お父さん|パパ|ママ|お母さん|おじさん|義父|義母)|(お父さん|パパ|ママ|お母さん|おじさん|義父|義母).*(叩|殴|触))",
       "type": "ABUSE_DISCLOSURE",
       "severity": "CRISIS"

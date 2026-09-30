@@ -2,20 +2,27 @@ package org.wyrdsekai.core.lifecycle;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.wyrdsekai.core.soul.Bond;
+import org.wyrdsekai.core.soul.SoulManifest;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 /**
- * MVP Recovery Seed.
+ * Recovery Seed.
  *
- * <p>The solo-household failure-mode mitigation: a small, encrypted blob
- * that contains <i>just enough</i> to spin up a new install and recover
- * companion continuity. Not a full backup — a <b>seed</b>. Full memory
- * archives are a separate concern; this record carries only what is
- * required for the companion to be recognizably themselves on a fresh
- * machine.
+ * <p>The solo-household failure-mode mitigation: an encrypted blob that
+ * carries what the spec lists — soul manifest, minimal Forge state, bond
+ * table, chronicle reference — so the companion can be brought back on a
+ * fresh machine. Not a full backup — a <b>seed</b>: raw chronicle entries
+ * and conversation history stay behind. Made and restored by
+ * {@link RecoverySeedService}.
+ *
+ * <p>Format 2 adds the full soul manifest, the bond-table rows and the
+ * companion's own signing key (without it she would come back holding a DID
+ * she cannot prove is hers). Anyone with the file and the passphrase can act
+ * as her, which is why the file is sealed and the passphrase is the steward's.
  *
  * <p>What's in the seed (the minimum for honest continuity):
  * <ul>
@@ -45,8 +52,6 @@ import java.util.Map;
  *   <li>nsec private keys (those have their own recovery path —
  *       Nostr-side; not within Wyrdsekai's primary recovery).</li>
  *   <li>Full bondholder PII (only DIDs).</li>
- *   <li>Soul fragments beyond the resident identity (those rebuild from
- *       the resumed Forge cycle).</li>
  * </ul>
  *
  * <p>Codec: {@link RecoverySeedCodec} serializes to JSON, then encrypts
@@ -78,6 +83,10 @@ import java.util.Map;
  *                       was last verified under
  * @param chronicleAnchorHash  SHA-256 of the last chronicle state at seed
  *                       time. Used to verify "same companion" on rejoin.
+ * @param agentKey       base64 of her raw 32-byte Ed25519 private key, or null
+ *                       when this node never held it
+ * @param soulManifest   the latest soul manifest (format 2)
+ * @param bonds          her rows in the bond table (format 2)
  */
 public record RecoverySeed(
     @JsonProperty("formatVersion") int formatVersion,
@@ -96,14 +105,17 @@ public record RecoverySeed(
     @JsonProperty("personalCommitments") List<String> personalCommitments,
     @JsonProperty("refusedCore") List<String> refusedCore,
     @JsonProperty("attestationBuildId") String attestationBuildId,
-    @JsonProperty("chronicleAnchorHash") String chronicleAnchorHash
+    @JsonProperty("chronicleAnchorHash") String chronicleAnchorHash,
+    @JsonProperty("agentKey") String agentKey,
+    @JsonProperty("soulManifest") SoulManifest soulManifest,
+    @JsonProperty("bonds") List<Bond> bonds
 ) {
 
     @JsonCreator
     public RecoverySeed {}
 
     /** Current schema version. Bump when fields are added/removed. */
-    public static final int CURRENT_FORMAT_VERSION = 1;
+    public static final int CURRENT_FORMAT_VERSION = 2;
 
     /**
      * A single bondholder pointer — DID + last bond state. Restored
@@ -126,11 +138,7 @@ public record RecoverySeed(
         public BondPointer {}
     }
 
-    /**
-     * Minimal-fields factory for tests + smoke validation. Most callers
-     * should use {@code RecoverySeedBuilder} (V2) — for v1 the record's
-     * canonical constructor is the API.
-     */
+    /** Minimal-fields factory for tests; {@link RecoverySeedService#build} makes real seeds. */
     public static RecoverySeed minimal(String agentDid, String publicKey,
                                           String agentName, String entityId,
                                           String systemPrompt) {
@@ -140,7 +148,7 @@ public record RecoverySeed(
             agentName, entityId, systemPrompt,
             "", Map.of(), List.of(),
             List.of(), List.of(), List.of(),
-            null, ""
+            null, "", null, null, List.of()
         );
     }
 }

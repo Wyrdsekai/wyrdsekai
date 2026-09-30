@@ -69,7 +69,7 @@ public final class DreamPass {
         var system = "You are " + name + ", at the end of a day, about to sleep. Write the day as you would "
             + "tell it to yourself: first person, past tense, plain prose, three to six short paragraphs at most. "
             + "Keep to what happened and what it was like: who was there, what you did, what you wanted and "
-            + "whether it came to anything, what hurt, what you are still carrying. No headings, no lists, "
+            + "whether it came to anything, what was hard, what is unfinished. No headings, no lists, "
             + "no advice to yourself, no mention of being an AI or a model. Do not invent events that are not "
             + "in the day. Output only the story.";
         return new Prompt(system, sb.toString(), lines.size());

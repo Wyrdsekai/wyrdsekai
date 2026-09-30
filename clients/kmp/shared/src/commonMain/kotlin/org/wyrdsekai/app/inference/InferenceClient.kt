@@ -56,14 +56,48 @@ open class InferenceClient(
     /**
      * Sends a chat completion request and returns the parsed response.
      *
+     * The single send point: the outgoing copy of [messages] gets one leading
+     * system message ([consolidateSystemMessages]) and is then stamped with what
+     * the request knows about today ([CompletionOptions.now], see [NowLine]).
+     * Subclasses override [send], so every path out of this client, the
+     * on-device one included, carries that copy.
+     *
      * @param baseUrl e.g. "http://localhost:8080"
      * @param messages the conversation history
-     * @param options generation parameters
+     * @param options generation parameters, and what the request knows about today
      */
-    open suspend fun complete(
+    suspend fun complete(
         baseUrl: String,
         messages: List<ChatMessage>,
-        options: CompletionOptions = CompletionOptions(),
+        options: CompletionOptions,
+    ): ChatResponse =
+        send(baseUrl, NowLine.stampToday(options.now, consolidateSystemMessages(messages)), options)
+
+    /**
+     * [complete], but always over HTTP to [baseUrl]: the household's own endpoint,
+     * with this client's auth and model. A subclass that answers on the device
+     * (LocalFirstInferenceClient) ignores the URL in [send] whenever a model is
+     * loaded, so the deep turn and the offline replay reached through [complete]
+     * were answered by the phone's model instead of the household's.
+     */
+    suspend fun completeAt(
+        baseUrl: String,
+        messages: List<ChatMessage>,
+        options: CompletionOptions,
+    ): ChatResponse =
+        sendHttp(baseUrl, NowLine.stampToday(options.now, consolidateSystemMessages(messages)), options)
+
+    /** Sends [messages] as they are: already merged and stamped by [complete]. */
+    protected open suspend fun send(
+        baseUrl: String,
+        messages: List<ChatMessage>,
+        options: CompletionOptions,
+    ): ChatResponse = sendHttp(baseUrl, messages, options)
+
+    private suspend fun sendHttp(
+        baseUrl: String,
+        messages: List<ChatMessage>,
+        options: CompletionOptions,
     ): ChatResponse {
         val requestBody = buildJsonObject {
             // Cloud providers (Anthropic/OpenAI/OpenRouter) 400 without `model`;

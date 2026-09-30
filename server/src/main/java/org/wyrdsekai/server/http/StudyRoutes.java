@@ -4,6 +4,8 @@ import io.javalin.http.Context;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.home.ActionGrants;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.identity.StudyOwnerGuard;
 import org.wyrdsekai.core.library.CalibreCatalogIndexer;
 import org.wyrdsekai.core.library.DocumentIndexer;
@@ -116,9 +118,10 @@ public final class StudyRoutes {
 
     private void handleSearch(Context ctx) {
         var q = ctx.queryParam("q");
-        var userDid = ctx.queryParam("user");
-        if (q == null || q.isBlank() || userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "q and user parameters required"));
+        var userDid = owner(ctx, ctx.queryParam("user"), false);
+        if (userDid == null) return;
+        if (q == null || q.isBlank()) {
+            ctx.status(400).json(Map.of("error", "q parameter required"));
             return;
         }
         var results = studyService.searchAll(userDid, q, 10);
@@ -126,37 +129,37 @@ public final class StudyRoutes {
     }
 
     private void handleListJournal(Context ctx) {
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), false);
+        if (userDid == null) return;
         var entries = studyService.recentJournal(userDid, 20);
         ctx.json(Map.of("count", entries.size(), "entries", entries));
     }
 
     private void handleWriteJournal(Context ctx) {
         var body = ctx.bodyAsClass(JournalRequest.class);
-        if (body.user() == null || body.content() == null) {
-            ctx.status(400).json(Map.of("error", "user and content fields required"));
+        var user = owner(ctx, body.user(), false);
+        if (user == null) return;
+        if (body.content() == null) {
+            ctx.status(400).json(Map.of("error", "content field required"));
             return;
         }
         boolean isPrivate = body.isPrivate() != null && body.isPrivate();
         String id;
         if (isPrivate) {
-            id = studyService.writePrivateJournalEntry(body.user(), body.content());
+            id = studyService.writePrivateJournalEntry(user, body.content());
         } else {
-            id = studyService.writeJournalEntry(body.user(), body.content());
+            id = studyService.writeJournalEntry(user, body.content());
         }
         log.info("[Study] journal write user={} private={} chars={} id={}",
-            body.user(), isPrivate, body.content().length(), id);
+            user, isPrivate, body.content().length(), id);
         ctx.json(Map.of("id", id, "private", isPrivate));
     }
 
     private void handleAddDocuments(Context ctx) {
         var body = ctx.bodyAsClass(AddRequest.class);
-        if (body.user() == null || body.path() == null) {
-            ctx.status(400).json(Map.of("error", "user and path fields required"));
+        if (owner(ctx, body.user(), true) == null) return;
+        if (body.path() == null) {
+            ctx.status(400).json(Map.of("error", "path field required"));
             return;
         }
 
@@ -244,21 +247,15 @@ public final class StudyRoutes {
     }
 
     private void handleStatus(Context ctx) {
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), true);
+        if (userDid == null) return;
         ctx.json(studyService.getStats(userDid));
     }
 
     private void handleDeleteCollection(Context ctx) {
         var name = ctx.pathParam("name");
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), false);
+        if (userDid == null) return;
         long deleted = studyService.deleteCollection(userDid, name);
         ctx.json(Map.of("collection", name, "deleted", deleted));
     }
@@ -268,11 +265,13 @@ public final class StudyRoutes {
     private void handleEditItem(Context ctx) {
         var id = ctx.pathParam("id");
         var body = ctx.bodyAsClass(EditRequest.class);
-        if (body.user() == null || body.content() == null) {
-            ctx.status(400).json(Map.of("error", "user and content fields required"));
+        var user = owner(ctx, body.user(), false);
+        if (user == null) return;
+        if (body.content() == null) {
+            ctx.status(400).json(Map.of("error", "content field required"));
             return;
         }
-        int newVersion = studyService.editItem(id, body.user(), body.content());
+        int newVersion = studyService.editItem(id, user, body.content());
         if (newVersion < 0) {
             ctx.status(404).json(Map.of("error", "item not found", "id", id));
             return;
@@ -282,11 +281,8 @@ public final class StudyRoutes {
 
     private void handleVersionHistory(Context ctx) {
         var id = ctx.pathParam("id");
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), false);
+        if (userDid == null) return;
         var history = studyService.getVersionHistory(id, userDid, 20);
         ctx.json(Map.of("id", id, "versions", history.size(), "history", history));
     }
@@ -323,6 +319,9 @@ public final class StudyRoutes {
                 log.debug("[Study] sharing-context db read failed: {}", e.getMessage());
             }
         }
+        if (ApiAuth.principal(ctx) instanceof ApiAuth.Person caller) {
+            person = PersonIds.canonical(caller.user().id());
+        }
         ctx.json(Map.of(
             "person", person == null ? "" : person,
             "personReady", person != null,
@@ -331,40 +330,42 @@ public final class StudyRoutes {
 
     private void handleGrantConsent(Context ctx) {
         var body = ctx.bodyAsClass(ConsentRequest.class);
-        if (body.user() == null || body.companion() == null || body.collection() == null) {
-            ctx.status(400).json(Map.of("error", "user, companion, and collection fields required"));
+        var user = consentOwner(ctx, body.user());
+        if (user == null) return;
+        if (body.companion() == null || body.collection() == null) {
+            ctx.status(400).json(Map.of("error", "companion and collection fields required"));
             return;
         }
-        studyService.grantAccess(body.user(), body.companion(), body.collection());
+        studyService.grantAccess(user, body.companion(), body.collection());
         ctx.json(Map.of("granted", true, "companion", body.companion(), "collection", body.collection()));
     }
 
     private void handleRevokeConsent(Context ctx) {
         var body = ctx.bodyAsClass(ConsentRequest.class);
-        if (body.user() == null || body.companion() == null || body.collection() == null) {
-            ctx.status(400).json(Map.of("error", "user, companion, and collection fields required"));
+        var user = consentOwner(ctx, body.user());
+        if (user == null) return;
+        if (body.companion() == null || body.collection() == null) {
+            ctx.status(400).json(Map.of("error", "companion and collection fields required"));
             return;
         }
-        studyService.revokeAccess(body.user(), body.companion(), body.collection());
+        studyService.revokeAccess(user, body.companion(), body.collection());
         ctx.json(Map.of("revoked", true, "companion", body.companion(), "collection", body.collection()));
     }
 
     private void handleListConsent(Context ctx) {
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), true);
+        if (userDid == null) return;
         var grants = studyService.listGrants(userDid);
         ctx.json(Map.of("user", userDid, "count", grants.size(), "grants", grants));
     }
 
     private void handleSearchAsCompanion(Context ctx) {
-        var userDid = ctx.queryParam("user");
+        var userDid = owner(ctx, ctx.queryParam("user"), false);
+        if (userDid == null) return;
         var companion = ctx.queryParam("companion");
         var q = ctx.queryParam("q");
-        if (userDid == null || companion == null || q == null || q.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user, companion, and q parameters required"));
+        if (companion == null || q == null || q.isBlank()) {
+            ctx.status(400).json(Map.of("error", "companion and q parameters required"));
             return;
         }
         var results = studyService.searchAsCompanion(userDid, companion, q, 10);
@@ -375,30 +376,31 @@ public final class StudyRoutes {
 
     private void handleShare(Context ctx) {
         var body = ctx.bodyAsClass(ShareRequest.class);
-        if (body.owner() == null || body.collection() == null || body.target() == null) {
-            ctx.status(400).json(Map.of("error", "owner, collection, and target fields required"));
+        var owner = owner(ctx, body.owner(), false);
+        if (owner == null) return;
+        if (body.collection() == null || body.target() == null) {
+            ctx.status(400).json(Map.of("error", "collection and target fields required"));
             return;
         }
-        studyService.shareCollection(body.owner(), body.collection(), body.target());
+        studyService.shareCollection(owner, body.collection(), body.target());
         ctx.json(Map.of("shared", true, "collection", body.collection(), "target", body.target()));
     }
 
     private void handleUnshare(Context ctx) {
         var body = ctx.bodyAsClass(ShareRequest.class);
-        if (body.owner() == null || body.collection() == null || body.target() == null) {
-            ctx.status(400).json(Map.of("error", "owner, collection, and target fields required"));
+        var owner = owner(ctx, body.owner(), false);
+        if (owner == null) return;
+        if (body.collection() == null || body.target() == null) {
+            ctx.status(400).json(Map.of("error", "collection and target fields required"));
             return;
         }
-        studyService.unshareCollection(body.owner(), body.collection(), body.target());
+        studyService.unshareCollection(owner, body.collection(), body.target());
         ctx.json(Map.of("unshared", true, "collection", body.collection(), "target", body.target()));
     }
 
     private void handleListShares(Context ctx) {
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), true);
+        if (userDid == null) return;
         var shares = studyService.listShares(userDid);
         ctx.json(Map.of("user", userDid, "count", shares.size(), "shares", shares));
     }
@@ -406,10 +408,11 @@ public final class StudyRoutes {
     private void handleSearchShared(Context ctx) {
         var owner = ctx.queryParam("owner");
         var collection = ctx.queryParam("collection");
-        var requester = ctx.queryParam("requester");
+        var requester = owner(ctx, ctx.queryParam("requester"), false);
+        if (requester == null) return;
         var q = ctx.queryParam("q");
-        if (owner == null || collection == null || requester == null || q == null || q.isBlank()) {
-            ctx.status(400).json(Map.of("error", "owner, collection, requester, and q parameters required"));
+        if (owner == null || collection == null || q == null || q.isBlank()) {
+            ctx.status(400).json(Map.of("error", "owner, collection, and q parameters required"));
             return;
         }
         var results = studyService.searchSharedCollection(owner, collection, requester, q, 10);
@@ -419,16 +422,14 @@ public final class StudyRoutes {
     // --- L2: Storage & Export ---
 
     private void handleDiskUsage(Context ctx) {
-        var userDid = ctx.queryParam("user");
-        if (userDid == null || userDid.isBlank()) {
-            ctx.status(400).json(Map.of("error", "user parameter required"));
-            return;
-        }
+        var userDid = owner(ctx, ctx.queryParam("user"), true);
+        if (userDid == null) return;
         ctx.json(studyService.getDiskUsage(userDid));
     }
 
     private void handleExport(Context ctx) {
         var body = ctx.bodyAsClass(ExportRequest.class);
+        if (owner(ctx, body.user(), true) == null) return;
         if (body.user() == null || body.collection() == null) {
             ctx.status(400).json(Map.of("error", "user and collection fields required"));
             return;
@@ -446,6 +447,7 @@ public final class StudyRoutes {
 
     private void handleImport(Context ctx) {
         var body = ctx.bodyAsClass(ImportRequest.class);
+        if (owner(ctx, body.user(), true) == null) return;
         if (body.user() == null || body.collection() == null || body.path() == null) {
             ctx.status(400).json(Map.of("error", "user, collection, and path fields required"));
             return;
@@ -457,6 +459,54 @@ public final class StudyRoutes {
             log.error("[Study] Import failed: {}", e.getMessage());
             ctx.status(500).json(Map.of("error", "Import failed: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Whose Study this request touches. A person reaches only their own; naming someone
+     * else is refused (2026-09-28: every Study route took the owner from the request, so
+     * anyone could read, export, edit or share anyone's shelves and journal). The machine's
+     * operator must name the person, and only where {@code operatorMayName}: adding files,
+     * status, sizes and the sharing lists, never the content of a private shelf or journal.
+     */
+    private static String owner(Context ctx, String requested, boolean operatorMayName) {
+        var principal = ApiAuth.principal(ctx);
+        if (principal instanceof ApiAuth.Person caller) {
+            var id = caller.user().id();
+            if (requested != null && !requested.isBlank() && !PersonIds.samePerson(requested, id)) {
+                ctx.status(403).json(Map.of("error", "not_yours", "message", "You can only reach your own Study."));
+                return null;
+            }
+            return PersonIds.canonical(id);
+        }
+        if (principal instanceof ApiAuth.Operator && operatorMayName) {
+            if (requested == null || requested.isBlank()) {
+                ctx.status(400).json(Map.of("error", "user parameter required"));
+                return null;
+            }
+            return requested;
+        }
+        ctx.status(principal == null ? 401 : 403).json(Map.of("error", "person_required",
+            "message", "A Study is reached with that person's own login."));
+        return null;
+    }
+
+    /**
+     * Whose shelf a companion is being let into, or shut out of. A person decides for their
+     * own shelves. On the home machine the operator runs `wyrd library share` for the zone
+     * owner, the person the node belongs to, and for nobody else.
+     */
+    private static String consentOwner(Context ctx, String requested) {
+        if (ApiAuth.isOperator(ctx)) {
+            var zoneOwner = ActionGrants.get() != null ? ActionGrants.get().fallbackOwnerDid() : null;
+            if (zoneOwner != null && (requested == null || requested.isBlank()
+                    || PersonIds.samePerson(requested, zoneOwner))) {
+                return zoneOwner;
+            }
+            ctx.status(403).json(Map.of("error", "not_yours",
+                "message", "Other people share their own shelves with their own login (wyrd login)."));
+            return null;
+        }
+        return owner(ctx, requested, false);
     }
 
     // --- Request DTOs ---

@@ -6,12 +6,23 @@
 
 export type BetweenMessageHandler = (subject: string, data: Uint8Array) => void;
 
+/** The server refused a subscription (a permissions violation); it is gone. */
+export interface BetweenSubscribeError {
+  subject: string;
+  message: string;
+}
+
 export interface BetweenClient {
   readonly isConnected: boolean;
   connect(url: string): Promise<void>;
   disconnect(): Promise<void>;
   publish(subject: string, data: Uint8Array): void;
-  subscribe(subject: string, handler: BetweenMessageHandler): () => void;
+  /** `onError`: called if the server refuses the subscription (clients that can tell). */
+  subscribe(
+    subject: string,
+    handler: BetweenMessageHandler,
+    onError?: (err: BetweenSubscribeError) => void,
+  ): () => void;
 }
 
 /**

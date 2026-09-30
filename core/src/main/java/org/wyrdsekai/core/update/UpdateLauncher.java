@@ -27,7 +27,14 @@ public final class UpdateLauncher {
 
     private UpdateLauncher() {}
 
-    /** The command lines this would run on each platform, for a test to read without running them. */
+    /**
+     * The command lines this would run on each platform, for a test to read without running them.
+     *
+     * <p>{@code --no-siblings}: the node's own update is Wyrdsekai's setting ({@code WYRDSEKAI_UPDATE=auto})
+     * and updates Wyrdsekai only. CodeZaiku and ResearchZosho update on their own only by their own
+     * settings ({@code CODEZAIKU_UPDATE}, {@code RESEARCHZOSHO_UPDATE}); a person's {@code wyrd update now}
+     * is what asks them (their update contract, 2026-09-28).</p>
+     */
     public static List<String> command(String os, Path wyrd, Path logFile) {
         var o = os.toLowerCase(Locale.ROOT);
         if (o.contains("win")) {
@@ -36,15 +43,15 @@ public final class UpdateLauncher {
         }
         if (o.contains("mac") || o.contains("darwin")) {
             return List.of("launchctl", "submit", "-l", "com.wyrdsekai.self-update", "-o", logFile.toString(), "-e", logFile.toString(),
-                "--", wyrd.toString(), "update", "now", "--yes");
+                "--", wyrd.toString(), "update", "now", "--yes", "--no-siblings");
         }
         var cmd = new ArrayList<String>();
         if (Files.isExecutable(Path.of("/usr/bin/systemd-run")) || Files.isExecutable(Path.of("/bin/systemd-run"))) {
             cmd.addAll(List.of("systemd-run", "--unit", "wyrdsekai-self-update-" + System.currentTimeMillis(), "--collect", "--quiet",
                 "--property=StandardOutput=append:" + logFile, "--property=StandardError=append:" + logFile));
-            cmd.addAll(List.of(wyrd.toString(), "update", "now", "--yes"));
+            cmd.addAll(List.of(wyrd.toString(), "update", "now", "--yes", "--no-siblings"));
         } else {
-            cmd.addAll(List.of("setsid", "-f", "sh", "-c", "exec " + wyrd + " update now --yes >> " + logFile + " 2>&1"));
+            cmd.addAll(List.of("setsid", "-f", "sh", "-c", "exec " + wyrd + " update now --yes --no-siblings >> " + logFile + " 2>&1"));
         }
         return cmd;
     }

@@ -61,7 +61,10 @@ class AgentNarrationE2ETest {
 
         var dream = DreamWeaver.weave(manifest, before, after);
         assertTrue(dream.isPresent(), "Full manifest should produce a dream");
-        assertTrue(dream.get().startsWith("*stirs from sleep"), "Dream should have wake framing");
+        // A plain report of what the sleep did, not a stage direction or voiced prose (2026-09-19:
+        // these lines were recorded as her words and trained on at night).
+        assertTrue(dream.get().startsWith("While I slept: "), dream.get());
+        assertFalse(dream.get().contains("*"), "the report is not an emote");
         assertFalse(dream.get().contains("{"), "Dream should not contain JSON");
     }
 
@@ -78,11 +81,12 @@ class AgentNarrationE2ETest {
             null, null, List.of(), 3, null, null, null,
             null, List.of(), null, null, null, fingerprint, null, null, null, null, null, null, null, null);
 
+        // A report states what happened; the same sleep gives the same report.
         var dreams = new HashSet<String>();
         for (int i = 0; i < 30; i++) {
             DreamWeaver.weave(manifest, null, null).ifPresent(dreams::add);
         }
-        assertTrue(dreams.size() >= 3, "Should produce varied dreams (got " + dreams.size() + ")");
+        assertEquals(1, dreams.size(), dreams.toString());
     }
 
     // ==================================================================
@@ -93,8 +97,9 @@ class AgentNarrationE2ETest {
     void sleep_narration_reflects_exhaustion() {
         var text = AgentNarration.sleepEntry(0.05, null, 0, false);
         assertNotNull(text);
-        // Exhaustion lines are more desperate
-        assertTrue(text.contains("*"), "Should be an emote");
+        // A plain stage direction the room shows as an emote: it says she is exhausted.
+        assertTrue(text.contains("exhausted"), text);
+        assertFalse(text.contains("*"), "the room adds the emote framing, not the line");
     }
 
     @Test @Order(11)
@@ -182,8 +187,7 @@ class AgentNarrationE2ETest {
     void contradiction_detected_narration() {
         var text = AgentNarration.contradictionDetected("I prefer solitude", "I sought out company");
         assertTrue(text.isPresent());
-        assertTrue(text.get().contains("*") || text.get().contains("contradict") || text.get().contains("confusion"),
-            "Should express internal dissonance");
+        assertTrue(text.get().contains("do not fit together"), "says what happened: " + text.get());
     }
 
     // ==================================================================

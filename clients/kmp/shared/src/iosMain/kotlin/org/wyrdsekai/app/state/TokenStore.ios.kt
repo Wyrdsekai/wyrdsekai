@@ -88,6 +88,24 @@ actual class TokenStore actual constructor() {
         // Note: locale, companion name, and mode are NOT cleared on logout — user preferences, not credentials
     }
 
+    // This iOS target is not shipped and refuses every home connection (no
+    // sealed-tunnel crypto, see SealCrypto.ios.kt); the fields exist so the
+    // shared code compiles. The iOS app is clients/rn and keeps these in the Keychain.
+    actual fun saveZoneKey(zk: String) { defaults.setObject(zk, forKey = KEY_ZONE_KEY) }
+    actual fun loadZoneKey(): String? = defaults.stringForKey(KEY_ZONE_KEY)
+    actual fun saveHomeCaFp(fp: String) { defaults.setObject(fp, forKey = KEY_HOME_CA_FP) }
+    actual fun loadHomeCaFp(): String? = defaults.stringForKey(KEY_HOME_CA_FP)
+    actual fun saveLanHttps(url: String) { defaults.setObject(url, forKey = KEY_LAN_HTTPS) }
+    actual fun loadLanHttps(): String? = defaults.stringForKey(KEY_LAN_HTTPS)
+    actual fun saveHomeNatsUser(user: String) {}
+    actual fun loadHomeNatsUser(): String? = null
+    actual fun saveHomeNatsPassword(password: String) {}
+    actual fun loadHomeNatsPassword(): String? = null
+    actual fun saveHomeBusUrl(url: String) {}
+    actual fun loadHomeBusUrl(): String? = null
+    actual fun saveLanRepairNoticed(noticed: Boolean) { defaults.setBool(noticed, forKey = KEY_LAN_REPAIR_NOTICED) }
+    actual fun loadLanRepairNoticed(): Boolean = defaults.boolForKey(KEY_LAN_REPAIR_NOTICED)
+
     actual fun disconnectHomeZone() {
         // Drop only the home-zone relay leg; keep the local Study mirror + all else.
         // The SESSION token goes too — a disconnected phone holding a live zone
@@ -134,5 +152,9 @@ actual class TokenStore actual constructor() {
         const val KEY_API_BASE_URL = "wyrd_api_base_url"
         const val KEY_DEBUG_MODE = "wyrd_debug_mode"
         const val KEY_HERMOD_CONSENT = "wyrd_hermod_consent"
+        const val KEY_ZONE_KEY = "wyrd_zone_key"
+        const val KEY_HOME_CA_FP = "wyrd_home_ca_fp"
+        const val KEY_LAN_HTTPS = "wyrd_lan_https"
+        const val KEY_LAN_REPAIR_NOTICED = "wyrd_lan_repair_noticed"
     }
 }

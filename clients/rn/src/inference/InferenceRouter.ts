@@ -10,8 +10,11 @@
  * the next available backend before throwing.
  */
 
+import { isPlaintextToNetwork } from '../network/plainAddress';
 import { ChatMessage, ChatResponse, CompletionOptions } from './types';
 import { LlamaService } from './LlamaService';
+import { NowLine } from './NowLine';
+import { consolidateSystemMessages } from './consolidateSystemMessages';
 
 export type ActiveBackend = 'local' | 'remote' | 'server' | 'none';
 
@@ -181,6 +184,11 @@ export class InferenceRouter {
    * device when nothing else is configured. Each falls through the rest of its
    * chain on failure, so a dead backend costs a retry rather than the request.
    *
+   * The single send point for every backend: the outgoing copy has one leading
+   * system message and carries what the request knows about today
+   * (`options.now`, see NowLine) — on-device too, where llama.rn formats this
+   * copy with the model's own chat template.
+   *
    * @throws If every backend in the chain fails or none is configured.
    */
   async complete(
@@ -188,15 +196,16 @@ export class InferenceRouter {
     messages: ChatMessage[],
     options?: CompletionOptions,
   ): Promise<ChatResponse> {
+    const outgoing = this.outgoing(messages, options);
     const errors: string[] = [];
     for (const backend of this.chainFor(role)) {
       if (!this.canServe(backend)) continue;
       try {
         if (backend === 'local') {
-          return await this.llamaService.complete(messages, options);
+          return await this.llamaService.complete(outgoing, options);
         }
         const url = backend === 'remote' ? this.remoteBaseUrl! : this.serverBaseUrl!;
-        return await this.completeViaHttp(url, messages, options);
+        return await this.completeViaHttp(url, outgoing, options);
       } catch (e) {
         errors.push(`${backend}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -211,6 +220,31 @@ export class InferenceRouter {
     throw new Error(
       `No inference backend available for ${role}. Download a model, connect to a household node, or set a server URL.`,
     );
+  }
+
+  /**
+   * One request to `baseUrl` itself, sent the way every HTTP request here is:
+   * one leading system message and the NowLine stamp. The companion's direct
+   * household call (CompanionEngine.completeViaRemote) goes through here. No
+   * fallthrough: the caller chose the endpoint.
+   *
+   * This router's key and model go with it only when `baseUrl` is one of the
+   * router's own URLs (see completeViaHttp).
+   */
+  async completeAt(
+    baseUrl: string,
+    messages: ChatMessage[],
+    options?: CompletionOptions,
+  ): Promise<ChatResponse> {
+    return this.completeViaHttp(baseUrl, this.outgoing(messages, options), options);
+  }
+
+  /**
+   * The copy that leaves for a backend. Merged before it is stamped, so the
+   * DATE line opens the one system message (see consolidateSystemMessages).
+   */
+  private outgoing(messages: ChatMessage[], options?: CompletionOptions): ChatMessage[] {
+    return (options?.now ?? NowLine.dateTime()).stamp(consolidateSystemMessages(messages));
   }
 
   /** Whether on-device inference is available right now. */
@@ -273,13 +307,27 @@ export class InferenceRouter {
     messages: ChatMessage[],
     options?: CompletionOptions,
   ): Promise<ChatResponse> {
+    // Prompts never cross the network in the clear (
+    // W2): an http:// address off this device is refused here, whatever put it
+    // in the chain (an old saved LAN address, a typed one). The device's own
+    // loopback and https (a cloud API, or a home pinned from its invite) go.
+    if (isPlaintextToNetwork(baseUrl)) {
+      throw new Error(`not sent: ${baseUrl} is not encrypted (a prompt never goes over plain http to another machine)`);
+    }
     const url = `${baseUrl}/v1/chat/completions`;
+    // The key and model go only to this router's own URLs. completeAt is handed
+    // the companion's copy of the household URL, and Settings can move the
+    // router to another provider (OpenRouter sign-in) without moving that copy,
+    // so the key used to follow the stale URL: to a LAN host over plain HTTP,
+    // or to a different cloud provider. Any other URL gets no auth and the
+    // placeholder model, as the household call always had.
+    const withCredentials = baseUrl === this.remoteBaseUrl || baseUrl === this.serverBaseUrl;
     const body: Record<string, unknown> = {
       // Cloud OpenAI-compat endpoints (Anthropic/OpenAI/OpenRouter) require a
       // `model` field — without it Anthropic returns 400 "model: Field required"
       // and the companion never replies. LAN/household llama-server ignores the
       // value, so a placeholder is safe when no remote model is configured.
-      model: this.remoteModel ?? 'local-model',
+      model: (withCredentials ? this.remoteModel : null) ?? 'local-model',
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       max_tokens: options?.maxTokens ?? 256,
       temperature: options?.temperature ?? 0.7,
@@ -291,18 +339,21 @@ export class InferenceRouter {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...this.remoteExtraHeaders,
+      ...(withCredentials ? this.remoteExtraHeaders : {}),
     };
-    if (this.remoteApiKey) {
+    if (withCredentials && this.remoteApiKey) {
       if (this.remoteAuthType === 'x-api-key') {
         headers['x-api-key'] = this.remoteApiKey;
       } else if (this.remoteAuthType === 'bearer') {
         headers['Authorization'] = `Bearer ${this.remoteApiKey}`;
       }
-    }    const response = await fetch(url, {
+    }
+
+    const response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
     if (!response.ok) {
       // Drain the error body so the connection is released cleanly.

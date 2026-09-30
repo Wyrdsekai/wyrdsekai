@@ -71,16 +71,16 @@ class HearthDrivesMirrorPhase1ATest {
         assertThat(text).contains("Tier 3 (group / cultural):");
 
         // Each of the 10 new tanks at 0.0 → "low" description from messages_en.properties.
-        assertThat(text).contains("settled in your current rhythm");        // restlessness.low
-        assertThat(text).contains("companioned, socially full");             // loneliness.low
-        assertThat(text).contains("growing, learning new things");           // stagnation.low
-        assertThat(text).contains("acting freely, choices your own");        // autonomy_pressure.low
-        assertThat(text).contains("contributions seen and valued");          // significance.low
-        assertThat(text).contains("independent, not leaning on anyone");     // amae.low
-        assertThat(text).contains("present here, present now");              // saudade.low
-        assertThat(text).contains("commitments light, debts paid");          // obligation.low
-        assertThat(text).contains("the group's mood is easy");               // harmony.low
-        assertThat(text).contains("position secure, no slights to absorb"); // standing.low
+        assertThat(text).contains("at ease");        // restlessness.low
+        assertThat(text).contains("not lonely");             // loneliness.low
+        assertThat(text).contains("learning new things");           // stagnation.low
+        assertThat(text).contains("choosing freely");        // autonomy_pressure.low
+        assertThat(text).contains("valued");          // significance.low
+        assertThat(text).contains("independent");     // amae.low
+        assertThat(text).contains("not missing anyone");              // saudade.low
+        assertThat(text).contains("with no unkept promises");          // obligation.low
+        assertThat(text).contains("in a calm room");               // harmony.low
+        assertThat(text).contains("respected"); // standing.low
 
         // Tank labels render once each (one per tank line).
         for (var name : new String[]{"restlessness", "loneliness", "stagnation",
@@ -97,7 +97,7 @@ class HearthDrivesMirrorPhase1ATest {
         var text = String.valueOf(result.get("text"));
 
         // amae.high text
-        assertThat(text).contains("longing to be cared for, held without earning it");
+        assertThat(text).contains("wanting very much to be cared for");
         // value renders as 0.85 next to the amae label, in the Tier 2 block.
         var tier2Block = text.substring(text.indexOf("Tier 2 (relational):"));
         assertThat(tier2Block).contains("amae");
@@ -111,7 +111,7 @@ class HearthDrivesMirrorPhase1ATest {
         publishSnapshot(v, null, null);
         var result = invokeMirrorVerbose();
         var text = String.valueOf(result.get("text"));
-        assertThat(text).contains("feeling repetitive, going through motions");  // stagnation.moderate
+        assertThat(text).contains("doing repetitive things");  // stagnation.moderate
     }
 
     @Test void japanese_locale_emits_localized_amae_description() {

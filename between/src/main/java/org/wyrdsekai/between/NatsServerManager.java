@@ -2,6 +2,9 @@ package org.wyrdsekai.between;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.crypto.HouseholdBus;
+import org.wyrdsekai.core.crypto.HouseholdTls;
 
 import java.io.File;
 import java.io.IOException;
@@ -16,7 +19,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * Manages nats-server as a child process.
@@ -28,6 +34,11 @@ public final class NatsServerManager {
     private static final Logger log = LoggerFactory.getLogger(NatsServerManager.class);
     private static final Duration HEALTH_CHECK_TIMEOUT = Duration.ofSeconds(10);
     private static final int HEALTH_CHECK_INTERVAL_MS = 200;
+    /** The deb's bus service and what its configuration (/opt/wyrdsekai/etc/nats.conf) names. */
+    static final String PACKAGED_SERVICE = "wyrdsekai-nats";
+    private static final String PACKAGED_DATA_DIR = "/var/lib/wyrdsekai";
+    private static final int PACKAGED_MONITOR_PORT = 8222;
+    private static final Pattern CONFIG_LOAD_TIME = Pattern.compile("\"config_load_time\"\\s*:\\s*\"([^\"]+)\"");
 
     private final String executable;
     private final int clientPort;
@@ -36,6 +47,8 @@ public final class NatsServerManager {
     private final boolean bindAllInterfaces;
 
     private Process process;
+    /** One reload hook per data folder: the first manager for it (the one that starts nats-server). */
+    private static final Set<Path> RELOAD_HOOKED = ConcurrentHashMap.newKeySet();
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(2))
         .build();
@@ -68,14 +81,23 @@ public final class NatsServerManager {
             return natsUrl();
         }
 
+        // Write config. Also when a nats-server is already running: the packaged standalone service
+        // (deb, wyrdsekai-nats) reads the same household include and is reloaded on changes.
+        writeConfig();
+
         // Check if nats-server is already running on this port
         if (isHealthy()) {
             log.info("nats-server already running on port {} (external)", clientPort);
+            // The packaged service read the include before this start rewrote it (renewed certificate).
+            if (packagedServiceServes()) run("systemctl", "reload", PACKAGED_SERVICE);
+            checkExternalIsSecured();
             return natsUrl();
         }
-
-        // Write config
-        writeConfig();
+        if (startPackagedService()) {
+            log.info("Household bus: the packaged {} service serves port {}", PACKAGED_SERVICE, clientPort);
+            checkExternalIsSecured();
+            return natsUrl();
+        }
 
         // Start nats-server
         var configFile = configDir.resolve("nats.conf");
@@ -134,6 +156,160 @@ public final class NatsServerManager {
         }
     }
 
+    /**
+     * Applies a changed household include (a machine or phone was paired or removed, see
+     * {@link HouseholdBus#onChange}): nats-server re-reads its settings on SIGHUP. Windows has no
+     * SIGHUP for a child process, so there it restarts; clients reconnect on their own.
+     */
+    synchronized void reload() {
+        if (process != null && process.isAlive()) {
+            if (isWindows()) {
+                log.info("Restarting nats-server to apply the household bus's new logins");
+                stop();
+                try {
+                    start();
+                } catch (IOException e) {
+                    log.error("nats-server did not come back after applying new logins: {}", e.getMessage());
+                }
+                return;
+            }
+            var before = configLoadTime();
+            if (run("kill", "-HUP", Long.toString(process.pid())) != 0) {
+                log.warn("nats-server (pid {}) could not be told to reload its logins", process.pid());
+                return;
+            }
+            awaitReload(before);
+            return;
+        }
+        if (!isWindows() && Files.isDirectory(Path.of("/run/systemd/system"))
+                && run("systemctl", "is-active", "--quiet", PACKAGED_SERVICE) == 0) {
+            var before = configLoadTime();
+            if (run("systemctl", "reload", PACKAGED_SERVICE) == 0) {
+                awaitReload(before);
+                return;
+            }
+        }
+        log.warn("The household bus's logins changed, but the nats-server on port {} was not started by this "
+            + "node: reload it (SIGHUP) or restart it to apply them", clientPort);
+    }
+
+    /**
+     * A reload is a signal; nats-server applies it a moment later. The pairing reply that hands a
+     * phone its new login went out before the bus accepted it, and the phone's first connection was
+     * refused (2026-09-28 rehearsal, about one pairing in three). Wait until the server says it
+     * loaded its settings again, at most three seconds.
+     */
+    private void awaitReload(String before) {
+        if (before == null) return;
+        var deadline = System.currentTimeMillis() + 3000;
+        while (System.currentTimeMillis() < deadline) {
+            var now = configLoadTime();
+            if (now != null && !now.equals(before)) return;
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        log.warn("nats-server on port {} did not report reloading its logins within 3s", clientPort);
+    }
+
+    /** When the running server last loaded its settings ({@code /varz config_load_time}), or null. */
+    private String configLoadTime() {
+        try {
+            var request = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + monitorPort + "/varz"))
+                .timeout(Duration.ofSeconds(2)).GET().build();
+            var body = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
+            var m = CONFIG_LOAD_TIME.matcher(body);
+            return m.find() ? m.group(1) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * On a Linux package the household bus is the packaged service, run as its own unprivileged user
+     * from the same household include. {@code wyrd start} starts it before the node, but it cannot
+     * start until the node has written the include, and then the node started its own bus on the same
+     * ports: the service failed from then on, and which bus served (and with which settings) depended
+     * on the order things started (second-node, 2026-09-28). With the include written, start it and wait.
+     * Only for the package's data folder and monitor port, the ones the service's configuration names.
+     */
+    private boolean startPackagedService() {
+        if (!packagedServiceApplies()) return false;
+        run("systemctl", "reset-failed", PACKAGED_SERVICE);
+        if (run("systemctl", "restart", PACKAGED_SERVICE) != 0) {
+            log.warn("The packaged {} service could not be started; this node starts its own household bus",
+                PACKAGED_SERVICE);
+            return false;
+        }
+        var deadline = System.currentTimeMillis() + HEALTH_CHECK_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (isHealthy()) return true;
+            try {
+                Thread.sleep(HEALTH_CHECK_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        log.warn("The packaged {} service did not answer within {}s (journalctl -u {}); this node starts its own "
+            + "household bus", PACKAGED_SERVICE, HEALTH_CHECK_TIMEOUT.toSeconds(), PACKAGED_SERVICE);
+        run("systemctl", "stop", PACKAGED_SERVICE);
+        return false;
+    }
+
+    private boolean packagedServiceServes() {
+        return packagedServiceApplies() && run("systemctl", "is-active", "--quiet", PACKAGED_SERVICE) == 0;
+    }
+
+    private boolean packagedServiceApplies() {
+        if (isWindows() || !Files.isDirectory(Path.of("/run/systemd/system"))) return false;
+        if (!Files.isRegularFile(Path.of("/usr/lib/systemd/system/" + PACKAGED_SERVICE + ".service"))
+                && !Files.isRegularFile(Path.of("/lib/systemd/system/" + PACKAGED_SERVICE + ".service"))) {
+            return false;
+        }
+        return monitorPort == PACKAGED_MONITOR_PORT
+            && configDir.toAbsolutePath().normalize().equals(Path.of(PACKAGED_DATA_DIR));
+    }
+
+    /** Whether this node runs the bus itself (false: the packaged service or another server does). */
+    public boolean startedHere() {
+        return process != null && process.isAlive();
+    }
+
+    private static int run(String... cmd) {
+        try {
+            var p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            return p.waitFor(10, TimeUnit.SECONDS) ? p.exitValue() : -1;
+        } catch (IOException e) {
+            return -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    /** A nats-server this node did not start may predate the household's login and TLS: say so. */
+    private void checkExternalIsSecured() {
+        try {
+            var request = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + monitorPort + "/varz"))
+                .timeout(Duration.ofSeconds(2)).GET().build();
+            var body = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body().replace(" ", "");
+            if (!body.contains("\"auth_required\":true")) {
+                log.error("The nats-server already on port {} asks for no login: anyone who can reach it may act as "
+                    + "any member of this household. Stop it; the node starts its own with the household's login "
+                    + "and encryption", clientPort);
+            }
+        } catch (Exception e) {
+            log.debug("could not read the running nats-server's settings: {}", e.toString());
+        }
+    }
+
     public boolean isRunning() {
         return (process != null && process.isAlive()) || isHealthy();
     }
@@ -169,11 +345,39 @@ public final class NatsServerManager {
     private void writeConfig() throws IOException {
         Files.createDirectories(configDir);
 
-        var listenAddr = bindAllInterfaces ? "0.0.0.0" : "127.0.0.1";
+        // The household bus ( W2): TLS from the household certificate and a login
+        // for every client, in an include the node rewrites when a machine or phone is paired.
+        var cfg = WyrdConfig.get();
+        HouseholdTls.Material tls = null;
+        try {
+            tls = HouseholdTls.ensure(configDir);
+        } catch (Exception e) {
+            log.error("The household certificate could not be made ({}): the household bus stays on this machine "
+                + "and phones and household machines on the network cannot reach it", e.getMessage());
+        }
+        boolean lanPlaintext = cfg.natsLanPlaintext();
+        var listenAddr = bindAllInterfaces && tls != null ? "0.0.0.0" : "127.0.0.1";
+        var bus = HouseholdBus.open(configDir);
+        bus.writeInclude(tls, new HouseholdBus.Listen(listenAddr, clientPort, clientPort + 1, cfg.zoneId(), lanPlaintext));
+        if (RELOAD_HOOKED.add(configDir.toAbsolutePath().normalize())) {
+            bus.onChange(this::reload);
+        }
+        if (lanPlaintext) {
+            log.warn("WYRDSEKAI_NATS_LAN_PLAINTEXT=true: the household bus accepts clients with no login and no "
+                + "encryption, from the whole network (for machines and phone apps from before 0.5.0). Anyone on "
+                + "the network can read the household's traffic and act as any member. Re-join the machines "
+                + "(wyrd join) and re-pair the phones, then remove the setting");
+        } else if (bindAllInterfaces && tls != null) {
+            log.info("Household bus: ports {} and {} answer the network, encrypted, login required", clientPort, clientPort + 1);
+        } else {
+            log.info("Household bus: ports {} and {} answer this machine only (WYRDSEKAI_NATS_BIND_ALL=false)",
+                clientPort, clientPort + 1);
+        }
+
         var sb = new StringBuilder();
         sb.append("# Wyrdsekai NATS server configuration (auto-generated)\n");
-        sb.append("listen: ").append(listenAddr).append(":").append(clientPort).append("\n");
-        sb.append("http_port: ").append(monitorPort).append("\n");
+        // listen, tls, authorization and the phones' websocket live in the household include below.
+        sb.append("http: \"127.0.0.1:").append(monitorPort).append("\"\n");
         sb.append("max_payload: 1048576\n");
         sb.append("max_connections: 64\n");
         sb.append("write_deadline: \"60s\"\n"); // default 10s — too aggressive for WiFi/slow clients
@@ -187,19 +391,14 @@ public final class NatsServerManager {
         sb.append("  store_dir: \"").append(storeDir).append("\"\n");
         sb.append("}\n");
 
-        // Phones (RN/KMP) speak NATS-over-WEBSOCKET only — until 2026-07-11 no
-        // shipped config opened a ws listener, so LAN phones could never reach
-        // Between (relay wss was the only path). Port = clientPort+1 (4223).
+        // Phones (RN/KMP) speak NATS-over-WEBSOCKET only; the websocket listener (clientPort+1, 4223)
+        // is in the include, TLS like the client port.
         sb.append("\n");
-        sb.append("# WebSocket listener for mobile clients (NATS-over-WS)\n");
-        sb.append("websocket {\n");
-        sb.append("  listen: \"").append(listenAddr).append(":").append(clientPort + 1).append("\"\n");
-        sb.append("  no_tls: true\n");
-        sb.append("}\n");
+        sb.append("include \"").append(HouseholdBus.DIR).append('/').append(HouseholdBus.INCLUDE).append("\"\n");
 
         // When binding all interfaces (cluster mode), advertise the LAN IP
         // so remote clients get the correct reconnect URL instead of 127.0.0.1
-        if (bindAllInterfaces) {
+        if (bindAllInterfaces && tls != null) {
             var lanIp = detectLanIp();
             if (lanIp != null) {
                 sb.append("\n");
@@ -218,6 +417,10 @@ public final class NatsServerManager {
      * Returns null if no suitable address found.
      */
     static String detectLanIp() {
+        // The same choice pairing and invites make (WYRDSEKAI_LAN_IP, else a private address on a real
+        // interface): on home-server this picked a VMware interface and advertised it to reconnecting clients.
+        var preferred = HouseholdTls.preferredLanAddress();
+        if (preferred != null && !preferred.isBlank()) return preferred;
         try {
             String fallback = null;
             var interfaces = NetworkInterface.getNetworkInterfaces();

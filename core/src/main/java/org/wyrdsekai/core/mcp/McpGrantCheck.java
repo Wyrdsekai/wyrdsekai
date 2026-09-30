@@ -22,6 +22,14 @@ public interface McpGrantCheck {
     boolean canUse(String callerDid, String serverId, String toolName);
 
     /**
+     * Whether grants are strict for a {@code WYRDSEKAI_MCP_STRICT_GRANTS} value: strict
+     * unless it says {@code false}. Unset means strict.
+     */
+    static boolean strictSetting(String value) {
+        return value == null || !"false".equalsIgnoreCase(value.strip());
+    }
+
+    /**
      * HomeClient-backed implementation. When no grants have ever been issued
      * for MCP tools, {@code strictMode=false} allows access by default
      * (open world); {@code strictMode=true} requires explicit grants.
@@ -57,6 +65,8 @@ public interface McpGrantCheck {
             if (!strictMode) return true;
             if (callerId == null || callerId.isBlank()) return false;
             if (ownerDid == null || ownerDid.isBlank()) return false;
+            // The steward owns the resource; the steward's own call needs no grant to itself.
+            if (ownerDid.equals(callerId)) return true;
             var resource = ResourceUri.of(ownerDid, ResourceTypeRegistry.MCP_TOOL, serverId);
             try {
                 // check() also matches public-subject grants on the same resource.

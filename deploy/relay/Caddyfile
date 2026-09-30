@@ -54,6 +54,14 @@
 	handle /deregister {
 		reverse_proxy registration:9280
 	}
+	# Zone binding (2026-09-28): a registration binds itself to its zone, or a
+	# zone holder vouches for another node of its household. Both are signed.
+	handle /bind-zone {
+		reverse_proxy registration:9280
+	}
+	handle /zone-member {
+		reverse_proxy registration:9280
+	}
 	# P4 — NKey-signed phone-invite mint (public; possession of a
 	# registered household seed is the authorization).
 	handle /phone-invite {

@@ -157,7 +157,11 @@ public final class BodyStore {
         try (var stmt = conn.createStatement()) {
             for (var col : new String[] {"attached_by TEXT", "claim TEXT", "vouched_by TEXT", "vouched_at INTEGER"}) {
                 try { stmt.execute("ALTER TABLE body_parts ADD COLUMN " + col); }
-                catch (SQLException e) { if (!String.valueOf(e.getMessage()).contains("duplicate column")) throw e; }
+                catch (SQLException e) {
+                    // SQLite says "duplicate column", PostgreSQL "... already exists": either way it is there.
+                    var msg = String.valueOf(e.getMessage());
+                    if (!msg.contains("duplicate column") && !msg.contains("already exists")) throw e;
+                }
             }
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS immune_memory (

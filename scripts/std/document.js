@@ -43,8 +43,9 @@ function invoke(params) {
 
     if (action === "polish") {
         // Use LLM to improve the writing
+        // A rewrite: the model is not told the date, so none is written into the document.
         var polished = world.llm.analyze(item._content,
-            "Improve this " + item._format + " while preserving its meaning and voice.");
+            "Improve this " + item._format + " while preserving its meaning and voice.", {now: "none"});
         if (polished && polished.indexOf("[error]") !== 0) {
             item._content = polished;
             return { title: item._title, polished: true, content: polished };

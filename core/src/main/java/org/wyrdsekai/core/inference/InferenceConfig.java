@@ -85,6 +85,10 @@ public record InferenceConfig(
                     }
 
                     if (!enabled) continue;
+                    if (unservedUnderSingleModel(name, WyrdConfig.get().singleBrain())) {
+                        log.info("Backend '{}' is not registered: the serving profile runs one model and no voice server", name);
+                        continue;
+                    }
 
                     var backend = createBackend(bc);
                     if (backend != null) {
@@ -290,9 +294,26 @@ public record InferenceConfig(
         return new InferenceBackend.Mlx(name, client, priority, effectiveModels, displayUrl);
     }
 
+    /**
+     * The model file this process may start a server for. Under the single-model profile the
+     * launcher starts the one server, and MODEL_PATH on an install that was set up with two
+     * models still names the old drive model: nothing serves that file any more, so the wait
+     * below ran out and a CPU copy of it was started on :11525 and given the drive slot, in
+     * front of the large model. Under that profile the configured url is used as it is.
+     */
+    static String spawnablePath(String configuredModelPath, boolean singleModel) {
+        return singleModel ? "" : configuredModelPath;
+    }
+
+    /** The voice server does not run under the single-model profile; its conf keys stay for the way back. */
+    static boolean unservedUnderSingleModel(String backendName, boolean singleModel) {
+        return singleModel && "llama-voice".equals(backendName);
+    }
+
     private static InferenceBackend createLlamaServer(Config bc, String name, String url,
                                                        int priority, List<String> models) {
-        var modelPath = bc.hasPath("model-path") ? bc.getString("model-path") : "";
+        var modelPath = spawnablePath(bc.hasPath("model-path") ? bc.getString("model-path") : "",
+            WyrdConfig.get().singleBrain());
         LlamaServerManager manager = null;
 
         // Do not spawn a server for a model something else already serves.

@@ -6,11 +6,12 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 object PairingClient {
-    private val http = HttpClient {
+    private val http = createHouseholdHttpClient().config {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }
 
@@ -27,6 +28,9 @@ object PairingClient {
         val serverUrl: String,
         val relayUrl: String? = null,
         val relayToken: String? = null,
+        /** This phone's own account on the home's NATS bus (D3, ). */
+        @SerialName("nats_user") val natsUser: String? = null,
+        @SerialName("nats_pass") val natsPass: String? = null,
     )
 
     /** Request pairing with a server. Returns challengeId or null on error. */

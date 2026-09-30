@@ -31,11 +31,9 @@ public final class VaultRoutes {
     }
 
     private boolean steward(Context ctx) {
-        var token = AuthRoutes.extractToken(ctx);
-        var user = token == null ? java.util.Optional.<AuthService.User>empty() : auth.validateSession(token);
-        if (user.isEmpty()) { ctx.status(401).json(Map.of("error", "Authentication required")); return false; }
-        if (!"steward".equals(user.get().role())) { ctx.status(403).json(Map.of("error", "Only the steward opens the vault")); return false; }
-        return true;
+        // One rule for every steward route (ApiAuth): a steward's login, or the machine's
+        // operator token from the machine itself, which this copy used to refuse.
+        return ApiAuth.requireSteward(ctx);
     }
 
     private Vault vault(Context ctx) {

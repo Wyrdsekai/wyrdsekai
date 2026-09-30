@@ -14,6 +14,8 @@
  * can decide whether to fall back to local handling.
  */
 
+import { randomBytes, randomHex } from '../crypto/random';
+
 export interface AuthOk {
   token: string;
   userId: string;
@@ -35,8 +37,9 @@ export interface McpResult<T = string> {
 /** Random suffix for generating anonymous phone usernames. */
 function randomSuffix(len = 8): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = randomBytes(len);
   let s = '';
-  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < len; i++) s += chars[bytes[i] % chars.length];
   return s;
 }
 
@@ -88,11 +91,8 @@ export class ServerClient {
     auth: AuthOk;
   }> {
     const username = `phone-${companionName.toLowerCase().replace(/[^a-z0-9]/g, '')}-${randomSuffix()}`;
-    // 32 hex chars is plenty for an anonymous account
-    let password = '';
-    for (let i = 0; i < 32; i++) {
-      password += Math.floor(Math.random() * 16).toString(16);
-    }
+    // 32 hex chars from the platform CSPRNG is plenty for an anonymous account
+    const password = randomHex(16);
     const displayName = companionName + "'s phone";
 
     // First register the account (idempotent if username collision — we'd
@@ -187,21 +187,25 @@ export class ServerClient {
   }
 
   /**
-   * POST /api/study/journal — write a journal entry for the given user DID.
-   *
-   * StudyRoutes endpoint is currently auth-free (takes user DID in body),
-   * not Bearer-gated. The phone caller supplies its persisted @wyrd_user_id.
+   * POST /api/study/journal — write a journal entry in the logged-in person's
+   * own Study. The home takes the owner from the login (a `user` naming
+   * someone else is refused), so no `user` is sent; `_userId` stays in the
+   * signature so this client and NatsServerClient remain interchangeable.
    * Returns the new entry id on success.
    */
-  async writeJournal(userId: string, content: string, isPrivate = false): Promise<McpResult<string>> {
+  async writeJournal(_userId: string, content: string, isPrivate = false): Promise<McpResult<string>> {
+    if (!this.mcpToken) return { ok: false, error: 'Not logged in', status: 401 };
     try {
       const resp = await fetch(`${this.baseUrl}/api/study/journal`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.mcpToken}`,
+        },
         // Server's JournalRequest record uses `isPrivate` (Jackson does NOT
         // coerce JSON `private` → record field `isPrivate`). Mismatch produced
         // an HTTP 400 with `Unrecognized field "private"` until 2026-05-11.
-        body: JSON.stringify({ user: userId, content, isPrivate }),
+        body: JSON.stringify({ content, isPrivate }),
       });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
@@ -221,9 +225,10 @@ export class ServerClient {
    * the prose log.
    */
   async searchLibrary(query: string, limit = 5): Promise<McpResult<string>> {
+    if (!this.mcpToken) return { ok: false, error: 'Not logged in', status: 401 };
     try {
       const url = `${this.baseUrl}/api/library/search?q=${encodeURIComponent(query)}&limit=${limit}`;
-      const resp = await fetch(url, { method: 'GET' });
+      const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${this.mcpToken}` } });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         return { ok: false, error: body?.error ?? `HTTP ${resp.status}`, status: resp.status };

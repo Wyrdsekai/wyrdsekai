@@ -22,9 +22,19 @@ public class McpToolRegistry {
         JsonNode call(JsonNode arguments);
     }
 
+    /** Who a door proved is calling: a did (may be blank), a name, and whether they may write. */
+    public record Caller(String did, String name, boolean writer) {}
+
+    /** A tool that acts for a proven caller. Called without one, it refuses. */
+    @FunctionalInterface
+    public interface CallerToolHandler {
+        JsonNode call(JsonNode arguments, Caller caller);
+    }
+
     private static final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, ToolDef> tools = new LinkedHashMap<>();
     private final Map<String, ToolHandler> handlers = new LinkedHashMap<>();
+    private final Map<String, CallerToolHandler> callerHandlers = new LinkedHashMap<>();
 
     public McpToolRegistry() {
         this(true);
@@ -50,8 +60,33 @@ public class McpToolRegistry {
         return new ArrayList<>(tools.values());
     }
 
-    /** Call a tool by name. */
+    /** Register a tool that needs a proven caller. */
+    public void registerForCaller(String name, String description, JsonNode inputSchema,
+                                  CallerToolHandler handler) {
+        tools.put(name, new ToolDef(name, description, inputSchema));
+        callerHandlers.put(name, handler);
+    }
+
+    /** Call a tool by name, with no proven caller. */
     public JsonNode call(String name, JsonNode arguments) {
+        return call(name, arguments, null);
+    }
+
+    /** Call a tool by name for {@code caller} (null when the door proved no one). */
+    public JsonNode call(String name, JsonNode arguments, Caller caller) {
+        var bound = callerHandlers.get(name);
+        if (bound != null) {
+            if (caller == null) {
+                var error = mapper.createObjectNode();
+                error.put("isError", true);
+                error.putArray("content").addObject()
+                    .put("type", "text")
+                    .put("text", "This tool acts for a proven caller, and this request proved no one.");
+                error.putObject("data").put("code", "forbidden");
+                return error;
+            }
+            return bound.call(arguments, caller);
+        }
         var handler = handlers.get(name);
         if (handler == null) {
             var error = mapper.createObjectNode();

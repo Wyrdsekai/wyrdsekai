@@ -28,6 +28,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
@@ -179,6 +180,19 @@ public final class RecipeBakeMain {
             log("baseline " + head + ".onnx ABSENT — first bake");
         }
 
+        // (1b) Snapshot the bootstrap corpus the recipe regenerates IN PLACE. Its clean-corpus and
+        // expand-corpus steps delete and rewrite core/src/main/resources/classifier/bootstrap/<head>/
+        // expanded.jsonl — in the tree the installers are packaged from. When the candidate trained on
+        // that regenerated corpus does not beat the proven head, the proven head ships and so must the
+        // corpus it was trained from: 0.5.0's first candidates shipped a corpus the bake's own gate had
+        // judged weaker (786 of 1002 task_present rows replaced) with a tool call in it labelled
+        // "clean" (2026-09-27). The regenerated corpus ships only with the head it produced.
+        Path corpusPath = corpusPath(projectDir, head);
+        byte[] corpusBefore = Files.exists(corpusPath) ? Files.readAllBytes(corpusPath) : null;
+        String corpusShaBefore = corpusBefore == null ? "<missing>" : sha256Hex(corpusBefore);
+        CORPUS_EVIDENCE.put("corpus_sha256_before", corpusShaBefore);
+        log("corpus " + corpusPath.getFileName() + " sha256=" + corpusShaBefore);
+
         // (2) Wire production RecipeService + CodingBackendDispatcher.
         // CodingBackendDispatcher.usingPreferred picks goose first
         // (CodingFamiliarConfig steward default) then falls back to pi.
@@ -196,12 +210,7 @@ public final class RecipeBakeMain {
         // GooseRuntimeConfig pulls executable_path / provider / model /
         // base-url from `wyrdsekai.coding.backends.goose.*` the same way
         // the server does.
-        var base = ConfigFactory.load();
-        var userConf = resolveUserConfPath();
-        if (userConf != null && Files.isRegularFile(userConf)) {
-            base = ConfigFactory.parseFile(userConf.toFile()).withFallback(base);
-            log("loaded config overlay: " + userConf);
-        }
+        var base = overlay(ConfigFactory.load(), resolveUserConfPath());
 
         var procRunner = new ProcessCommandRunner(
             projectDir.toFile(), Duration.ofMinutes(30));
@@ -369,6 +378,7 @@ public final class RecipeBakeMain {
         try {
             started = service.run("retrain-classifier-head", params);
         } catch (RuntimeException ex) {
+            shipCorpusBefore(corpusPath, corpusBefore, corpusShaBefore);
             writeFailureEvidence(evidenceDir, head, baselineSha, baselineCopy,
                 null, ex.toString(), t0);
             log("ERROR: recipe threw: " + ex);
@@ -409,6 +419,7 @@ public final class RecipeBakeMain {
             if (qualityRejection && sha256Hex(onnxPath).equals(baselineSha)) {
                 log("kept baseline: candidate rejected by " + failedStep
                     + " — proven head retained (loop closed honestly)");
+                shipCorpusBefore(corpusPath, corpusBefore, corpusShaBefore);
                 writeRunLogEvidence(evidenceDir, head, baselineSha,
                     /* evolvedSha = unchanged */ baselineSha, baselineCopy,
                     started, durationMs, /* success */ true,
@@ -418,6 +429,7 @@ public final class RecipeBakeMain {
                 log("evidence written to " + evidenceDir);
                 System.exit(0);
             }
+            shipCorpusBefore(corpusPath, corpusBefore, corpusShaBefore);
             writeFailureEvidence(evidenceDir, head, baselineSha, baselineCopy,
                 started, "non-success: " + status, t0);
             System.exit(1);
@@ -425,6 +437,7 @@ public final class RecipeBakeMain {
 
         // (3) Evolved file should exist after the recipe's deploy step.
         if (!Files.exists(onnxPath)) {
+            shipCorpusBefore(corpusPath, corpusBefore, corpusShaBefore);
             writeFailureEvidence(evidenceDir, head, baselineSha, baselineCopy,
                 started, "deploy step left no " + onnxPath, t0);
             log("ERROR: evolved .onnx missing after success");
@@ -437,6 +450,12 @@ public final class RecipeBakeMain {
         } else {
             log("evolved " + head + ".onnx sha256=" + evolvedSha + " (differs)");
         }
+
+        // The evolved head ships with the corpus that trained it.
+        String corpusShaShipped = Files.exists(corpusPath) ? sha256Hex(corpusPath) : "<missing>";
+        CORPUS_EVIDENCE.put("corpus_sha256_shipped", corpusShaShipped);
+        CORPUS_EVIDENCE.put("corpus_restored", false);
+        log("corpus shipped with the evolved head sha256=" + corpusShaShipped);
 
         // (4) Write evidence — run log + seed fragment.
         writeRunLogEvidence(evidenceDir, head, baselineSha, evolvedSha,
@@ -478,6 +497,7 @@ public final class RecipeBakeMain {
         doc.put("duration_ms", durationMs);
         doc.put("runId", started.runId());
         doc.put("bake_did", RELEASE_BAKE_DID);
+        doc.putAll(CORPUS_EVIDENCE);
         doc.put("baked_at", Instant.now().toString());
         doc.put("outcomes", outcomes);
         Path out = dir.resolve(head + "-recipe-run-" + utcTs() + ".json");
@@ -507,6 +527,7 @@ public final class RecipeBakeMain {
         doc.put("head", head);
         doc.put("recipe", "retrain-classifier-head");
         doc.put("bake_did", RELEASE_BAKE_DID);
+        doc.putAll(CORPUS_EVIDENCE);
         doc.put("baked_at", Instant.now().toString());
         doc.put("baseline_sha256", baselineSha);
         doc.put("evolved_sha256", evolvedSha);
@@ -540,6 +561,7 @@ public final class RecipeBakeMain {
         doc.put("head", head);
         doc.put("recipe", "retrain-classifier-head");
         doc.put("bake_did", RELEASE_BAKE_DID);
+        doc.putAll(CORPUS_EVIDENCE);
         doc.put("baked_at", Instant.now().toString());
         doc.put("baseline_sha256", baselineSha);
         doc.put("evolved_sha256", baselineSha); // unchanged — that's the point
@@ -582,6 +604,7 @@ public final class RecipeBakeMain {
                 ? null : baselineCopy.getFileName().toString());
             doc.put("duration_ms", System.currentTimeMillis() - t0);
             doc.put("bake_did", RELEASE_BAKE_DID);
+        doc.putAll(CORPUS_EVIDENCE);
             doc.put("baked_at", Instant.now().toString());
             if (started != null) {
                 doc.put("status", started.run().status().name());
@@ -664,6 +687,53 @@ public final class RecipeBakeMain {
         }
     }
 
+    /** What the run-log and failure evidence say about the bootstrap corpus (see step 1b in main). */
+    private static final Map<String, Object> CORPUS_EVIDENCE = new LinkedHashMap<>();
+
+    /** The bootstrap corpus the retrain recipe regenerates in place for {@code head}. */
+    static Path corpusPath(Path projectDir, String head) {
+        return projectDir.resolve("core/src/main/resources/classifier/bootstrap/" + head + "/expanded.jsonl");
+    }
+
+    /**
+     * Put the corpus back the way it was before the recipe ran. Returns true when the file on disk was
+     * changed back (or removed, when there was none before); false when it already matched.
+     */
+    static boolean restoreCorpus(Path corpus, byte[] before) throws IOException {
+        if (before == null) return Files.deleteIfExists(corpus);
+        if (Files.exists(corpus) && Arrays.equals(Files.readAllBytes(corpus), before)) return false;
+        Files.createDirectories(corpus.getParent());
+        Files.write(corpus, before);
+        return true;
+    }
+
+    /** The proven head ships → the corpus it was trained from ships with it; the evidence says so. */
+    private static void shipCorpusBefore(Path corpus, byte[] before, String shaBefore) {
+        try {
+            boolean changedBack = restoreCorpus(corpus, before);
+            CORPUS_EVIDENCE.put("corpus_sha256_shipped", shaBefore);
+            CORPUS_EVIDENCE.put("corpus_restored", changedBack);
+            log(changedBack
+                ? "corpus restored to the one the proven head was trained from (sha256=" + shaBefore + ")"
+                : "corpus unchanged by the run (sha256=" + shaBefore + ")");
+        } catch (IOException e) {
+            CORPUS_EVIDENCE.put("corpus_restore_error", e.toString());
+            log("WARN: could not restore the corpus: " + e);
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) throws IOException {
+        try {
+            var md = MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(bytes);
+            var sb = new StringBuilder(d.length * 2);
+            for (byte b : d) sb.append(String.format("%02x", b & 0xff));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException(e);
+        }
+    }
+
     private static String sha256Hex(Path p) throws IOException {
         try {
             var md = MessageDigest.getInstance("SHA-256");
@@ -700,6 +770,26 @@ public final class RecipeBakeMain {
 
     private static void log(String s) {
         System.err.println("[bake] " + s);
+    }
+
+    /**
+     * The user's config overlaid on the classpath defaults — when it is HOCON. The system path
+     * ({@code /etc/wyrdsekai/wyrdsekai.conf}) is the service's EnvironmentFile, {@code KEY=VALUE}
+     * lines that HOCON cannot read once a value carries a colon; on a build box that is also a node
+     * the release bake died on {@code WYRDSEKAI_LLAMA_URL=http://127.0.0.1:8200} (2026-09-26). A
+     * file the parser cannot read is logged and left out; the bake runs on the defaults.
+     */
+    static com.typesafe.config.Config overlay(com.typesafe.config.Config base, Path userConf) {
+        if (userConf == null || !Files.isRegularFile(userConf)) return base;
+        try {
+            var over = ConfigFactory.parseFile(userConf.toFile()).withFallback(base);
+            log("loaded config overlay: " + userConf);
+            return over;
+        } catch (com.typesafe.config.ConfigException e) {
+            log("config overlay " + userConf + " is not HOCON (the service's KEY=VALUE file); running on the defaults: "
+                + e.getMessage().replaceAll("\\s+", " "));
+            return base;
+        }
     }
 
     /** Same resolution order as bin/wyrd: $WYRDSEKAI_CONF → /etc → ~/.wyrdsekai. */

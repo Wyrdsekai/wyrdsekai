@@ -124,8 +124,10 @@ public final class RoomCommandDispatcher {
                         node.path("name").asText(),
                         node.path("description").asText(),
                         node.path("zone").asText(),
+                        List.of(),
                         parseExits(node.path("exits")),
                         parseObjects(node.path("objects")),
+                        node.path("createdBy").asText(null),
                         replyTo));
                 case "add_exit" -> askRoom(roomRef, replyTo ->
                     new RoomCommand.AddExit(

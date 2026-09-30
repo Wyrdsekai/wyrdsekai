@@ -118,6 +118,7 @@ class RecitedTextArrivesWholeTest {
         assertThat(src).contains("Boolean.parseBoolean(String.valueOf(result.get(\"verbatim\")))");
         assertThat(src)
             .as("quoted text goes out through speakDirect, never speak() → polish")
-            .contains("for (var p : parts) speakDirect(p);");
+            // The call carries the tool mark (the words are the book's, not hers); it is still speakDirect.
+            .containsPattern("for \\(var p : parts\\) speakDirect\\(p(, ActivityLogger\\.AUTHORED_TOOL(, owed)?)?\\);");
     }
 }

@@ -179,11 +179,12 @@ class CompanionCapabilitiesTest {
             null, List.of(), null, null,
             null, null, null, null, null);
 
-        // System prompt + core rules + time context (always injected)
+        // System prompt + core rules. The date and the time ride the request itself (NowLine);
+        // Layer 3 says only what has elapsed, and here nothing has.
         var systemMsgs = messages.stream()
             .filter(m -> "system".equals(m.role()))
             .toList();
-        assertThat(systemMsgs).hasSize(3);
+        assertThat(systemMsgs).hasSize(2);
     }
 
     // --- Vitality cost model ---

@@ -10,6 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.scripting.api.CapabilityDeniedError;
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
+import org.wyrdsekai.scripting.api.ItemManifest;
+import org.wyrdsekai.scripting.api.ItemManifestParser;
 import org.wyrdsekai.scripting.api.ItemWorldApi;
 import org.wyrdsekai.scripting.api.ItemWorldApiProvider;
 import org.wyrdsekai.scripting.api.ScriptCrypto;
@@ -22,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -79,8 +82,8 @@ public class ItemScriptExecutor implements Closeable {
     private Function<String, String> scriptResolver;
 
     /**
-     * Execute an item script with no capability gating (UNRESTRICTED).
-     * Used for trusted JVM-baked items.
+     * Execute an item script with no ceiling from the caller: it runs under its own manifest,
+     * and UNRESTRICTED only when it has none (the items built into the server).
      *
      * @param itemId   Item identifier (for source caching and logging)
      * @param script   GraalJS source code (must define an {@code invoke(params)} function)
@@ -101,31 +104,24 @@ public class ItemScriptExecutor implements Closeable {
      * @param script   GraalJS source code (must define an {@code invoke(params)} function)
      * @param params   Parameters from the tool call
      * @param provider Service provider for world.* API calls
-     * @param caps     Active capability set; missing caps raise CapabilityDeniedError
+     * @param caps     The caller's ceiling; the script's own manifest narrows it further.
+     *                 Missing caps raise CapabilityDeniedError
      * @return Result map from the script's invoke() function, or error map
      */
     public Map<String, Object> execute(String itemId, String script,
                                         Map<String, Object> params,
                                         ItemWorldApiProvider provider,
                                         ItemCapabilitySet caps) {
-        var source = sourceCache.computeIfAbsent(itemId, id -> {
-            try {
-                return Source.newBuilder("js", script, id + ".js")
-                    .cached(true)
-                    .buildLiteral();
-            } catch (Exception e) {
-                log.error("Failed to compile item script {}: {}", id, e.getMessage());
-                return null;
-            }
-        });
+        var source = sourceFor(itemId, script);
 
         if (source == null) {
             return Map.of("error", "Failed to compile item script: " + itemId);
         }
 
-        var worldApi = new ItemWorldApi(provider, caps == null ? ItemCapabilitySet.UNRESTRICTED : caps);
+        var effective = effectiveCaps(itemId, script, caps);
+        var worldApi = new ItemWorldApi(provider, effective);
 
-        try (var context = createContext(worldApi)) {
+        try (var context = createContext(worldApi, effective, provider)) {
             // Schedule timeout cancellation
             var timeoutThread = scheduleTimeout(context, itemId);
 
@@ -297,8 +293,10 @@ public class ItemScriptExecutor implements Closeable {
         if (script == null || script.isBlank()) {
             return Optional.of("the file is empty — there is nothing to call.");
         }
-        var worldApi = new ItemWorldApi(provider, ItemCapabilitySet.UNRESTRICTED);
-        try (var context = createContext(worldApi)) {
+        // The file has passed no gate yet, and its top level runs here: at most the crafted ceiling.
+        var effective = effectiveCaps(itemId, script, ItemCapabilitySet.craftedDefault());
+        var worldApi = new ItemWorldApi(provider, effective);
+        try (var context = createContext(worldApi, effective, provider)) {
             var timeoutThread = scheduleTimeout(context, itemId);
             try {
                 evaluateInheritChain(context, script);
@@ -349,23 +347,15 @@ public class ItemScriptExecutor implements Closeable {
         if (hookName == null || hookName.isBlank()) {
             return Map.of("error", "hook name required");
         }
-        var source = sourceCache.computeIfAbsent(itemId, id -> {
-            try {
-                return Source.newBuilder("js", script, id + ".js")
-                    .cached(true)
-                    .buildLiteral();
-            } catch (Exception e) {
-                log.error("Failed to compile item script {}: {}", id, e.getMessage());
-                return null;
-            }
-        });
+        var source = sourceFor(itemId, script);
         if (source == null) {
             return Map.of("error", "Failed to compile item script: " + itemId);
         }
 
-        var worldApi = new ItemWorldApi(provider, caps == null ? ItemCapabilitySet.UNRESTRICTED : caps);
+        var effective = effectiveCaps(itemId, script, caps);
+        var worldApi = new ItemWorldApi(provider, effective);
 
-        try (var context = createContext(worldApi)) {
+        try (var context = createContext(worldApi, effective, provider)) {
             var timeoutThread = scheduleTimeout(context, itemId);
             try {
                 evaluateInheritChain(context, script);
@@ -439,16 +429,7 @@ public class ItemScriptExecutor implements Closeable {
      * Pre-compile a source for an item script (called when item is equipped).
      */
     public void precompile(String itemId, String script) {
-        sourceCache.computeIfAbsent(itemId, id -> {
-            try {
-                return Source.newBuilder("js", script, id + ".js")
-                    .cached(true)
-                    .buildLiteral();
-            } catch (Exception e) {
-                log.error("Failed to precompile item script {}: {}", id, e.getMessage());
-                return null;
-            }
-        });
+        sourceFor(itemId, script);
     }
 
     /**
@@ -456,6 +437,86 @@ public class ItemScriptExecutor implements Closeable {
      */
     public void evict(String itemId) {
         sourceCache.remove(itemId);
+        manifestCache.remove(itemId);
+    }
+
+    /**
+     * The compiled source for exactly this script text. Keyed by item id but checked against the
+     * text: two scripts can arrive under one id (a crafted copy named like a bundled item, a
+     * revised household item), and the capabilities are derived from the text being run.
+     */
+    private Source sourceFor(String itemId, String script) {
+        var cached = sourceCache.get(itemId);
+        if (cached != null && cached.getCharacters().toString().equals(script)) return cached;
+        try {
+            var source = Source.newBuilder("js", script, itemId + ".js")
+                .cached(true)
+                .buildLiteral();
+            sourceCache.put(itemId, source);
+            return source;
+        } catch (Exception e) {
+            log.error("Failed to compile item script {}: {}", itemId, e.getMessage());
+            return null;
+        }
+    }
+
+    private record ParsedManifest(String script, ItemManifest manifest) {}
+
+    private final ConcurrentHashMap<String, ParsedManifest> manifestCache = new ConcurrentHashMap<>();
+
+    /**
+     * The capabilities this run gets: the script's own manifest ({@code exports.manifest}),
+     * never wider than the caller's {@code requested} ceiling. A script with no manifest runs
+     * under the ceiling alone — the crafted ceiling for anything a model wrote, UNRESTRICTED
+     * only where a caller vouches for a script built into the server.
+     */
+    ItemCapabilitySet effectiveCaps(String itemId, String script, ItemCapabilitySet requested) {
+        var ceiling = requested == null ? ItemCapabilitySet.UNRESTRICTED : requested;
+        var manifest = manifestOf(itemId, script);
+        if (manifest != null && ceiling.isUnrestricted() && allowUndeclared()) {
+            return ItemCapabilitySet.unrestrictedReporting(ItemCapabilitySet.from(manifest),
+                cap -> warnUndeclared(itemId, cap));
+        }
+        if (manifest != null) return ItemCapabilitySet.from(manifest).within(ceiling);
+        // A manifest that is there but will not parse must not read as "no manifest": that
+        // would hand a built-in item's authority to whatever broke it. Crafted ceiling instead.
+        if (ItemManifestParser.declaresManifest(script)) {
+            return ItemCapabilitySet.craftedDefault().within(ceiling);
+        }
+        return ceiling;
+    }
+
+    /**
+     * Transition setting, off by default: {@code WYRDSEKAI_ITEMS_ALLOW_UNDECLARED=true} lets
+     * bundled and household items run as they did before their manifests were enforced
+     * (UNRESTRICTED), logging each capability an item uses without declaring it. Crafted and
+     * visitor items keep their ceiling either way.
+     */
+    static boolean allowUndeclared() {
+        var v = System.getProperty("wyrdsekai.items.allow_undeclared",
+            System.getenv("WYRDSEKAI_ITEMS_ALLOW_UNDECLARED"));
+        return v != null && (v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("yes"));
+    }
+
+    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
+
+    private static void warnUndeclared(String itemId, String capability) {
+        if (WARNED.add(itemId + " " + capability)) {
+            log.warn("Item {} used '{}' without declaring it in its manifest; allowed only because"
+                + " WYRDSEKAI_ITEMS_ALLOW_UNDECLARED is set. Add it to the item's"
+                + " exports.manifest.capabilities (wyrd items check lists every such call).",
+                itemId, capability);
+        }
+    }
+
+    private ItemManifest manifestOf(String itemId, String script) {
+        if (script == null) return null;
+        var key = itemId == null ? "" : itemId;
+        var cached = manifestCache.get(key);
+        if (cached != null && cached.script().equals(script)) return cached.manifest();
+        var manifest = ItemManifestParser.parse(script);
+        manifestCache.put(key, new ParsedManifest(script, manifest));
+        return manifest;
     }
 
     /**
@@ -481,7 +542,8 @@ public class ItemScriptExecutor implements Closeable {
         }
     }
 
-    private Context createContext(ItemWorldApi worldApi) {
+    private Context createContext(ItemWorldApi worldApi, ItemCapabilitySet caps,
+                                  ItemWorldApiProvider provider) {
         var hostAccess = HostAccess.newBuilder(HostAccess.EXPLICIT)
             .allowListAccess(true)
             .allowMapAccess(true)
@@ -540,12 +602,12 @@ public class ItemScriptExecutor implements Closeable {
             });
             """);
 
-        // SKILL_BASIC APIs (http, html, crypto). #3 (2026-07-19) — the raw http
-        // global sits outside the capability gate, so its SSRF policy is chosen by
-        // trust: untrusted (crafted/visitor) scripts are blocked from private and
-        // loopback ranges; trusted bundled items may reach LAN services but are
-        // still blocked from metadata/any-local/multicast.
-        bindings.putMember("http", new ScriptHttpClient(!worldApi.isUnrestricted()));
+        // SKILL_BASIC APIs (http, html, crypto). The raw http global is gated like
+        // world.web.* (2026-09-28): the item's capabilities decide which methods it may
+        // send and its external_domains where; Safe references in headers are resolved
+        // here and never reach the script. SSRF policy as in ScriptHttpClient.
+        bindings.putMember("http", new ScriptHttpClient(caps,
+            provider == null ? null : provider::safeSecretForRequest));
         bindings.putMember("html", new ScriptHtmlParser());
         bindings.putMember("crypto", new ScriptCrypto());
 

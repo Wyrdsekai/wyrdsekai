@@ -24,6 +24,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * - Pack management via HTTP API
  * - Study journal via telnet
  * - Study search via HTTP API
+ *
+ * <p>Since 0.5.0 every /api route needs a login: the household's steward ("journaluser")
+ * makes these requests, and the Study ones are about the steward's own Study.
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -33,6 +36,7 @@ class LibraryKnowledgeE2ETest {
     private static TestServerBootstrap server;
     private static WireMockInferenceServer wireMock;
     private static HttpClient http;
+    private static String token;
 
     @BeforeAll
     static void setUp() throws Exception {
@@ -46,6 +50,7 @@ class LibraryKnowledgeE2ETest {
         server.start();
 
         http = HttpClient.newHttpClient();
+        token = TestUsers.registerStewardToken(server.baseUrl(), "journaluser", "pass123", "Journal User");
 
         // Pre-index some test knowledge so searches have results
         if (server.luceneStore() != null) {
@@ -75,6 +80,7 @@ class LibraryKnowledgeE2ETest {
     @Test @Order(1)
     void http_knowledge_search_returns_results() throws Exception {
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/search?q=sourdough+bread"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -86,6 +92,7 @@ class LibraryKnowledgeE2ETest {
     @Test @Order(2)
     void http_knowledge_search_empty_query_rejected() throws Exception {
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/search?q="))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -95,6 +102,7 @@ class LibraryKnowledgeE2ETest {
     @Test @Order(3)
     void http_packs_list() throws Exception {
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/packs"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -105,6 +113,7 @@ class LibraryKnowledgeE2ETest {
     @Test @Order(4)
     void http_knowledge_status() throws Exception {
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/status"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -115,6 +124,7 @@ class LibraryKnowledgeE2ETest {
     @Test @Order(5)
     void http_available_packs() throws Exception {
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/available"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -126,6 +136,7 @@ class LibraryKnowledgeE2ETest {
     void http_pack_remove_and_verify() throws Exception {
         // Remove the test pack
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/packs/test-wiki"))
             .DELETE().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -148,10 +159,11 @@ class LibraryKnowledgeE2ETest {
     void http_study_write_and_search_journal() throws Exception {
         // Write a journal entry
         var writeResp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/study/journal"))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(
-                "{\"user\":\"test-user\",\"content\":\"Had a wonderful dinner with friends tonight\"}"))
+                "{\"content\":\"Had a wonderful dinner with friends tonight\"}"))
             .build(), HttpResponse.BodyHandlers.ofString());
 
         assertEquals(200, writeResp.statusCode());
@@ -159,7 +171,8 @@ class LibraryKnowledgeE2ETest {
 
         // Search for it
         var searchResp = http.send(HttpRequest.newBuilder()
-            .uri(URI.create(server.baseUrl() + "/api/study/search?q=dinner+friends&user=test-user"))
+            .header("Authorization", "Bearer " + token)
+            .uri(URI.create(server.baseUrl() + "/api/study/search?q=dinner+friends"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
         assertEquals(200, searchResp.statusCode());
@@ -170,7 +183,8 @@ class LibraryKnowledgeE2ETest {
     @Test @Order(8)
     void http_study_status() throws Exception {
         var resp = http.send(HttpRequest.newBuilder()
-            .uri(URI.create(server.baseUrl() + "/api/study/status?user=test-user"))
+            .header("Authorization", "Bearer " + token)
+            .uri(URI.create(server.baseUrl() + "/api/study/status"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
         assertEquals(200, resp.statusCode());
@@ -183,6 +197,7 @@ class LibraryKnowledgeE2ETest {
     void http_knowledge_search_quantum() throws Exception {
         // Verify a different search term works
         var resp = http.send(HttpRequest.newBuilder()
+            .header("Authorization", "Bearer " + token)
             .uri(URI.create(server.baseUrl() + "/api/library/search?q=quantum+computing+qubits"))
             .GET().build(), HttpResponse.BodyHandlers.ofString());
 
@@ -193,14 +208,7 @@ class LibraryKnowledgeE2ETest {
 
     @Test @Order(10)
     void telnet_study_journal_write() throws Exception {
-        // Create a user first
-        http.send(HttpRequest.newBuilder()
-            .uri(URI.create(server.baseUrl() + "/api/auth/register"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(
-                "{\"username\":\"journaluser\",\"password\":\"pass123\",\"displayName\":\"Journal User\"}"))
-            .build(), HttpResponse.BodyHandlers.ofString());
-
+        // journaluser is the steward registered in setUp.
         try (var tc = TestTelnetClient.connect("localhost", server.telnetPort())) {
             tc.waitForText("Wyrdsekai", TIMEOUT);
             tc.login("journaluser", "pass123");

@@ -6,6 +6,7 @@ import org.wyrdsekai.app.engine.agent.VitalityState
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.InferenceClient
+import org.wyrdsekai.app.inference.NowLine
 
 /**
  * Soul Authoring — Wave 5 of Phone Forge plan.
@@ -114,7 +115,9 @@ object SoulAuthoring {
                     ChatMessage(role = "system", content = systemPrompt),
                     ChatMessage(role = "user", content = userPrompt),
                 ),
-                options = CompletionOptions(maxTokens = 800, temperature = 0.7),
+                // Authors her resident identity: a date there goes stale at the top of
+                // every later prompt and breaks the prompt cache.
+                options = CompletionOptions(maxTokens = 800, temperature = 0.7, now = NowLine.NONE),
             )
             parseAuthoringResponse(response.content, companionName, answers)
         } catch (_: Exception) {

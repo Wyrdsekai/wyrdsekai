@@ -145,7 +145,9 @@ public final class RelationshipUpdater {
                 rel.entityDid(), rel.entityName(),
                 newTrust, newRapport, newBondDepth,
                 totalInteractions, Instant.now(),
-                rel.summary() // summary unchanged during Forge — could be LLM-updated later
+                rel.summaryIsAutomatic()
+                    ? Relationship.describe(newBondDepth, totalInteractions)
+                    : rel.summary()
             );
 
             byName.put(effectiveKey, rel);

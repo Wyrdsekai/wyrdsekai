@@ -54,6 +54,45 @@ if [ -n "$_phone_pw" ] && grep -q 'user: "relay_phone"' "$CONF"; then
     sed -i "s|\(user: \"relay_phone\", password: \"\)[^\"]*|\1$_phone_pw|" "$CONF"
 fi
 
+# The household-to-relay link on the NATS port is TLS (Wyrdsekai 0.5.0), served with this relay's
+# own certificate; households pin it by the fingerprint they took when joining. allow_non_tls keeps a
+# household on an older Wyrdsekai connecting in the clear while it updates (its log says so). Added
+# once to an existing relay.conf (registration.py rewrites only the authorization block).
+ensure_nats_tls() {   # <relay.conf> <cert dir>
+    grep -q '^tls {' "$1" && return 0
+    awk -v d="$2" '
+        { print }
+        !done && /^listen:/ {
+            print "# The household-to-relay link is TLS with the relay certificate (Wyrdsekai 0.5.0)."
+            print "# allow_non_tls keeps households on an older Wyrdsekai connecting in the clear while they update."
+            print "tls {"
+            print "    cert_file: \"" d "/chain.crt\""
+            print "    key_file: \"" d "/leaf.key\""
+            print "    timeout: 5"
+            print "}"
+            print "allow_non_tls: true"
+            done = 1
+        }' "$1" > "$1.tls.tmp" && cat "$1.tls.tmp" > "$1" && rm -f "$1.tls.tmp"
+}
+ensure_nats_tls "$CONF" "$CERT_DIR"
+
+# RELAY_ALLOW_NON_TLS=false makes the zone port refuse households that connect
+# in the clear. Keep the default (true) until every household on this relay runs
+# Wyrdsekai 0.5.0 or later (their log shows "Relay link to … is encrypted").
+set_allow_non_tls() {   # <relay.conf>
+    case "${RELAY_ALLOW_NON_TLS:-true}" in
+        false|0|no|off) _v=false ;;
+        *) _v=true ;;
+    esac
+    if grep -q '^allow_non_tls:' "$1"; then
+        sed -i "s|^allow_non_tls:.*|allow_non_tls: $_v|" "$1"
+    fi
+    [ "$_v" = true ] && echo "[aio] zone port accepts households in the clear too (RELAY_ALLOW_NON_TLS=false to refuse)"
+    [ "$_v" = false ] && echo "[aio] zone port requires TLS (RELAY_ALLOW_NON_TLS=false)"
+    return 0
+}
+set_allow_non_tls "$CONF"
+
 # ── 2. Certs (first boot or SAN/expiry change; CA preserved forever).
 echo "[aio] cert-gen (names=${RELAY_HOST_NAMES:-localhost} ips=${RELAY_HOST_IPS:-127.0.0.1})"
 CERT_DIR="$CERT_DIR" \

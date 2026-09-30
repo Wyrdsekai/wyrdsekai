@@ -57,10 +57,13 @@ public final class LibraryPatron {
     public record Entry(String id, String kind, String state, String claimType, String confidence,
                         String writer, String recordedAt, String title, String body,
                         List<Source> sources, boolean untrustedText) {
+        /** A raw entry is a page's own words whatever anyone says about it: always fenced. */
+        public Entry {
+            untrustedText = untrustedText || "raw".equalsIgnoreCase(kind == null ? "" : kind.strip());
+        }
         public Entry(String id, String kind, String state, String claimType, String confidence,
                      String writer, String recordedAt, String title, String body, List<Source> sources) {
-            this(id, kind, state, claimType, confidence, writer, recordedAt, title, body, sources,
-                "raw".equals(kind));
+            this(id, kind, state, claimType, confidence, writer, recordedAt, title, body, sources, false);
         }
         public String citation(String libraryId) { return libraryId + ":" + id; }
     }
@@ -149,7 +152,8 @@ public final class LibraryPatron {
             var mgr = McpServerManager.get();
             if (mgr == null) throw new IllegalStateException("MCP gateway not available");
             var sent = mgr.isAuthenticated(serviceId) ? withoutAssertedDid(args) : args;
-            return mgr.invokeTool("mcp__" + serviceId + "__" + tool, sent, callerDid);
+            // Rides out the librarian's restart after its own update (LibraryRetry).
+            return LibraryRetry.call(() -> mgr.invokeTool("mcp__" + serviceId + "__" + tool, sent, callerDid));
         };
     }
 
@@ -360,7 +364,9 @@ public final class LibraryPatron {
             }
         }
         var kind = text(e, "kind");
-        boolean untrusted = e.path("untrusted_text").asBoolean("raw".equals(kind));
+        // untrusted_text can only add a fence: a raw entry is fenced by Entry itself, so a
+        // library that sends untrusted_text:false cannot un-fence one.
+        boolean untrusted = e.path("untrusted_text").asBoolean(false);
         return new Entry(text(e, "id"), kind, text(e, "state"), text(e, "claim_type"),
             text(e, "confidence"), text(e, "writer"), text(e, "recorded_at"), text(e, "title"),
             text(e, "body") == null ? text(e, "claim") : text(e, "body"), sources, untrusted);

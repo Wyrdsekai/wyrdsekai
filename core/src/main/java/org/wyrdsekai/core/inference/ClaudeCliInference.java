@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.security.SubprocessEnv;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +30,15 @@ public final class ClaudeCliInference {
 
     private static final Logger log = LoggerFactory.getLogger(ClaudeCliInference.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * The Claude CLI keeps its own key and config (ANTHROPIC_API_KEY, its OAuth token,
+     * ~/.claude); no other daemon credential reaches it. CLAUDECODE is not passed, so a
+     * node started from a Claude Code shell does not look nested to the CLI.
+     */
+    static final SubprocessEnv ENV = SubprocessEnv.of(
+        "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "NODE_EXTRA_CA_CERTS");
 
     private static final Map<String, String> MODEL_ALIASES = Map.of(
         "claude-opus-4-20250514", "opus",
@@ -60,8 +70,7 @@ public final class ClaudeCliInference {
     public static Optional<ClaudeCliInference> autoDetect(String cliPath) {
         try {
             // Check CLI exists
-            var versionCheck = new ProcessBuilder(cliPath, "--version");
-            versionCheck.environment().remove("CLAUDECODE");
+            var versionCheck = ENV.builder(cliPath, "--version");
             versionCheck.redirectErrorStream(true);
             var p = versionCheck.start();
             if (!p.waitFor(5, TimeUnit.SECONDS) || p.exitValue() != 0) {
@@ -70,8 +79,7 @@ public final class ClaudeCliInference {
             String version = new String(p.getInputStream().readAllBytes()).trim();
 
             // Check auth status (ref: CodeZaiku ClaudeCliProvider.java:628-648)
-            var authCheck = new ProcessBuilder(cliPath, "auth", "status");
-            authCheck.environment().remove("CLAUDECODE");
+            var authCheck = ENV.builder(cliPath, "auth", "status");
             authCheck.redirectErrorStream(true);
             var auth = authCheck.start();
             if (!auth.waitFor(5, TimeUnit.SECONDS)) {
@@ -233,8 +241,7 @@ public final class ClaudeCliInference {
 
     private ProcessResult runProcess(List<String> args, String prompt) {
         try {
-            var pb = new ProcessBuilder(args);
-            pb.environment().remove("CLAUDECODE");
+            var pb = ENV.builder(args);
             pb.redirectErrorStream(false);
             var process = pb.start();
 

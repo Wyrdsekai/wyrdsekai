@@ -106,15 +106,12 @@ public final class RelayCommandBridge {
                 code = tail;
             }
         }
+        // Commons self-serve with no fingerprint carried out of band: the relay's CA from the join
+        // reply is trusted on first use and pinned (the join writes it), and the caller is shown it
+        // to compare with the relay's page. Every later contact must match it.
+        boolean firstUse = false;
         if (code == null || code.isBlank()) {
-            // Commons self-serve: a codeless /join is only safe when the CA
-            // fingerprint arrived out of band — refuse rather than TOFU.
-            if (expectedCaFp == null) {
-                return new Result(false, null,
-                    "self-serve join needs the relay's CA fingerprint: pass "
-                    + "--fingerprint <fp> (published on the relay's page), or use "
-                    + "an invite code / wyrdjoin:// token");
-            }
+            firstUse = expectedCaFp == null;
             code = "";
         }
         String host = hostArg;
@@ -138,13 +135,18 @@ public final class RelayCommandBridge {
             }
             inviteUrl = extractJsonField(resp.body(), "invite_url");
         } catch (Exception e) {
-            return new Result(false, null, e.getMessage());
+            return new Result(false, null, e.getMessage() != null ? e.getMessage() : e.toString());
         }
         if (inviteUrl == null || inviteUrl.isBlank()) {
             return new Result(false, null, "join response had no invite_url");
         }
 
-        if (expectedCaFp != null) {
+        if (firstUse) {
+            expectedCaFp = inviteCaFingerprint(inviteUrl);
+            if (expectedCaFp == null) {
+                return new Result(false, null, "the relay's join reply carries no CA fingerprint to pin");
+            }
+        } else if (expectedCaFp != null) {
             // The redeemed invite embeds the relay CA's fingerprint; it
             // must match the operator-carried token or someone on-path
             // substituted their own CA.
@@ -171,7 +173,10 @@ public final class RelayCommandBridge {
         if (captured.rc() != 0) {
             return new Result(false, null, captured.firstError());
         }
-        return new Result(true, inviteUrl, null);
+        return new Result(true, inviteUrl, firstUse
+            ? "pinned the relay's CA on first use: " + expectedCaFp
+                + " — compare it with the fingerprint on the relay's page; if it differs, run: wyrd relay leave"
+            : null);
     }
 
     /**

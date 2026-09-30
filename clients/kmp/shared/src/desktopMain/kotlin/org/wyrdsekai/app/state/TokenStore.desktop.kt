@@ -263,6 +263,21 @@ actual class TokenStore actual constructor() {
         prefs.flush()
     }
 
+    actual fun saveZoneKey(zk: String) { prefs.put(KEY_ZONE_KEY, zk); prefs.flush() }
+    actual fun loadZoneKey(): String? = prefs.get(KEY_ZONE_KEY, null)
+    actual fun saveHomeCaFp(fp: String) { prefs.put(KEY_HOME_CA_FP, fp); prefs.flush() }
+    actual fun loadHomeCaFp(): String? = prefs.get(KEY_HOME_CA_FP, null)
+    actual fun saveLanHttps(url: String) { prefs.put(KEY_LAN_HTTPS, url); prefs.flush() }
+    actual fun loadLanHttps(): String? = prefs.get(KEY_LAN_HTTPS, null)
+    actual fun saveHomeNatsUser(user: String) { prefs.put(KEY_HOME_NATS_USER, user); prefs.flush() }
+    actual fun loadHomeNatsUser(): String? = prefs.get(KEY_HOME_NATS_USER, null)
+    actual fun saveHomeNatsPassword(password: String) { prefs.put(KEY_HOME_NATS_PASSWORD, password); prefs.flush() }
+    actual fun loadHomeNatsPassword(): String? = prefs.get(KEY_HOME_NATS_PASSWORD, null)
+    actual fun saveHomeBusUrl(url: String) { prefs.put(KEY_HOME_BUS_URL, url); prefs.flush() }
+    actual fun loadHomeBusUrl(): String? = prefs.get(KEY_HOME_BUS_URL, null)
+    actual fun saveLanRepairNoticed(noticed: Boolean) { prefs.putBoolean(KEY_LAN_REPAIR_NOTICED, noticed); prefs.flush() }
+    actual fun loadLanRepairNoticed(): Boolean = prefs.getBoolean(KEY_LAN_REPAIR_NOTICED, false)
+
     actual fun disconnectHomeZone() {
         // Drop only the home-zone relay leg; keep the local Study mirror + all else.
         // The SESSION token goes too — a disconnected phone holding a live zone
@@ -310,5 +325,12 @@ actual class TokenStore actual constructor() {
         const val KEY_API_BASE_URL = "wyrd_api_base_url"
         const val KEY_DEBUG_MODE = "wyrd_debug_mode"
         const val KEY_HERMOD_CONSENT = "wyrd_hermod_consent"
+        const val KEY_ZONE_KEY = "wyrd_zone_key"
+        const val KEY_HOME_CA_FP = "wyrd_home_ca_fp"
+        const val KEY_LAN_HTTPS = "wyrd_lan_https"
+        const val KEY_HOME_NATS_USER = "wyrd_home_nats_user"
+        const val KEY_HOME_NATS_PASSWORD = "wyrd_home_nats_password"
+        const val KEY_HOME_BUS_URL = "wyrd_home_bus_url"
+        const val KEY_LAN_REPAIR_NOTICED = "wyrd_lan_repair_noticed"
     }
 }

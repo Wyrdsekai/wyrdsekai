@@ -1,5 +1,6 @@
 package org.wyrdsekai.e2e.tier3;
 
+import org.wyrdsekai.e2e.infra.SignedSoul;
 import com.typesafe.config.ConfigFactory;
 import org.apache.pekko.actor.testkit.typed.javadsl.ActorTestKit;
 import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
@@ -83,13 +84,14 @@ class CompanionRelocateTwoZoneE2ETest {
     private static Path dataAlpha;
     private static Path dataBeta;
 
-    private static final AgentProfile WYRD = new AgentProfile(
-        "Wyrd", "wyrd-relocate-e2e", "agent",
-        "Companion in Wyrdsekai", "You are Wyrd.",
-        4096, 256, 0.7, "did:key:z6MkRelocateTwoZone");
+    /** A real did:key with a signed soul manifest: the target refuses a companion without one. */
+    private static SignedSoul soul;
+    private static AgentProfile WYRD;
 
     @BeforeAll
     static void setUp() throws Exception {
+        soul = SignedSoul.create("Wyrd", "wyrd-relocate-e2e");
+        WYRD = soul.profile();
         relay = new EmbeddedNatsRelay();
         relay.start();
         AgentEventStream.init();
@@ -134,6 +136,7 @@ class CompanionRelocateTwoZoneE2ETest {
         initFederationSchema(betaJdbc);
         var alphaService = new FederationService(alphaJdbc);
         var betaService = new FederationService(betaJdbc);
+        alphaService.setSoulStore(soul.store());   // the source ships her signed soul manifest
 
         // Pre-establish bilateral agreement on both sides.
         var now = Instant.now();
@@ -267,12 +270,12 @@ class CompanionRelocateTwoZoneE2ETest {
             .isCloseTo(0.4, Offset.offset(0.01));
 
         // Token persisted on both sides.
-        assertThat(alphaService.validateTransitToken(token.tokenId()))
+        assertThat(alphaService.listActiveTransitTokens(betaZone))
             .as("source persisted token at publish")
-            .isPresent();
-        assertThat(betaService.validateTransitToken(token.tokenId()))
+            .anySatisfy(t -> assertThat(t.tokenId()).isEqualTo(token.tokenId()));
+        assertThat(betaService.listActiveTransitTokens(betaZone))
             .as("target persisted token on inbound accept")
-            .isPresent();
+            .anySatisfy(t -> assertThat(t.tokenId()).isEqualTo(token.tokenId()));
 
         alphaBridge.close();
         betaBridge.close();

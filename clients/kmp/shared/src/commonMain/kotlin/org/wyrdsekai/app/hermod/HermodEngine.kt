@@ -3,6 +3,7 @@ package org.wyrdsekai.app.hermod
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.LocalInferenceProvider
+import org.wyrdsekai.app.inference.NowLine
 import org.wyrdsekai.app.platform.epochMillis
 import kotlin.time.Instant
 
@@ -49,6 +50,8 @@ class HermodEngine(
                 CompletionOptions(
                     maxTokens = e.tokenBudget.coerceIn(16, 2048).toInt(),
                     temperature = 0.7,
+                    // Another node's request: stamped where it was made.
+                    now = NowLine.NONE,
                 ),
             )
             AnswerBody.ok(response.content)

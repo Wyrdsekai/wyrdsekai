@@ -75,6 +75,7 @@ class SpecGapE2ETest {
     void opds_catalog_endpoint_returns_json() throws Exception {
         var req = HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + "/api/library/opds"))
+            .header("Authorization", "Bearer " + TestServerBootstrap.operatorToken())
             .GET().build();
         var resp = http.send(req, HttpResponse.BodyHandlers.ofString());
 

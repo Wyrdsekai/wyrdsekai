@@ -14,10 +14,15 @@ export interface PairingCredentials {
   householdId: string;
   householdName: string;
   serverDid: string;
-  natsUrl: string;
+  /** The home bus as a phone reaches it (wss://<lan>:<bus port + 1>) since 0.5.0. */
+  natsUrl: string | null;
   serverUrl: string;
-  relayUrl: string | null;
-  relayToken: string | null;
+  /** Not sent since 0.5.0 and never used: a phone gets its relay from the invite only. */
+  relayUrl?: string | null;
+  relayToken?: string | null;
+  /** This phone's own home-bus credentials (since 0.5.0, D3). */
+  nats_user?: string;
+  nats_pass?: string;
 }
 
 function normalizeUrl(url: string): string {

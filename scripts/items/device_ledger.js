@@ -15,7 +15,7 @@ exports.manifest = {
   version: "1.1.0",
   description: "Ledger of your paired devices and SSH keys — list them, watch the pairing threshold, revoke what's lost.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["pairing.revoke_device"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

@@ -4,8 +4,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.core.naming.BlockList;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -108,17 +110,53 @@ class NamingAdminMainTest {
     }
 
     @Test void contacts_addAndList_roundTrip(@TempDir Path dir) {
-        var add = run(dir, "contacts", "add", "alice", DID_ALICE, "kitchen");
+        var add = run(dir, "contacts", "add", "alice", DID_ALICE, "kitchen", "--verified");
         assertEquals(0, add.exit);
         assertTrue(add.stdout.contains("added contact: alice"));
-        assertTrue(add.stdout.contains("verify fingerprint out-of-band"),
-            "TOFU guidance must be printed: " + add.stdout);
+        assertTrue(add.stdout.contains(NamingAdminMain.checkCode(DID_ALICE)),
+            "the check code to compare must be printed: " + add.stdout);
 
         var list = run(dir, "contacts", "list");
         assertEquals(0, list.exit);
         assertTrue(list.stdout.contains("alice"));
         assertTrue(list.stdout.contains(DID_ALICE));
         assertTrue(list.stdout.contains("kitchen"));
+    }
+
+    // Verify first, save after (security review 2026-09-28): contacts add used to save the DID and only
+    // then suggest checking it.
+
+    private static CapturedRun runWithAnswer(Path dataDir, String answer, String... args) {
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+        var in = answer == null ? null : new BufferedReader(new StringReader(answer + "\n"));
+        int exit = NamingAdminMain.run(dataDir, in, new PrintStream(out, true, StandardCharsets.UTF_8),
+            new PrintStream(err, true, StandardCharsets.UTF_8), args);
+        return new CapturedRun(exit, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test void contacts_add_withoutAnswerSavesNothing(@TempDir Path dir) {
+        var r = run(dir, "contacts", "add", "alice", DID_ALICE);
+        assertEquals(1, r.exit);
+        assertTrue(r.stdout.contains(NamingAdminMain.checkCode(DID_ALICE)), r.stdout);
+        assertTrue(run(dir, "contacts", "list").stdout.contains("no contacts yet"), "nothing saved");
+    }
+
+    @Test void contacts_add_savesOnlyWhenConfirmed(@TempDir Path dir) {
+        var no = runWithAnswer(dir, "n", "contacts", "add", "alice", DID_ALICE);
+        assertEquals(1, no.exit);
+        assertTrue(run(dir, "contacts", "list").stdout.contains("no contacts yet"), "a no saves nothing");
+        var yes = runWithAnswer(dir, "y", "contacts", "add", "alice", DID_ALICE);
+        assertEquals(0, yes.exit, yes.stderr);
+        assertTrue(run(dir, "contacts", "list").stdout.contains(DID_ALICE));
+    }
+
+    @Test void whoami_checkCodeMatchesWhatContactsAddShows(@TempDir Path dir) {
+        var did = run(dir, "whoami").stdout.strip();
+        var code = run(dir, "whoami", "--check-code").stdout.strip();
+        assertTrue(code.matches("[A-Z2-7]{4}(-[A-Z2-7]{4}){3}"), code);
+        assertEquals(NamingAdminMain.checkCode(did), code);
+        assertNotEquals(NamingAdminMain.checkCode(DID_ALICE), NamingAdminMain.checkCode(DID_BOB));
     }
 
     @Test void contacts_add_rejectsReservedAlias(@TempDir Path dir) {
@@ -136,14 +174,14 @@ class NamingAdminMainTest {
     }
 
     @Test void contacts_add_duplicateFails(@TempDir Path dir) {
-        assertEquals(0, run(dir, "contacts", "add", "alice", DID_ALICE).exit);
-        var second = run(dir, "contacts", "add", "alice", DID_BOB);
+        assertEquals(0, run(dir, "contacts", "add", "alice", DID_ALICE, "--verified").exit);
+        var second = run(dir, "contacts", "add", "alice", DID_BOB, "--verified");
         assertEquals(1, second.exit);
         assertTrue(second.stderr.contains("already"));
     }
 
     @Test void contacts_remove_worksAndPersists(@TempDir Path dir) {
-        run(dir, "contacts", "add", "alice", DID_ALICE);
+        run(dir, "contacts", "add", "alice", DID_ALICE, "--verified");
         var rm = run(dir, "contacts", "remove", "alice");
         assertEquals(0, rm.exit);
         assertTrue(rm.stdout.contains("removed"));
@@ -159,7 +197,7 @@ class NamingAdminMainTest {
     }
 
     @Test void contacts_rename_preservesDefaultLabel(@TempDir Path dir) {
-        run(dir, "contacts", "add", "alice", DID_ALICE, "kitchen");
+        run(dir, "contacts", "add", "alice", DID_ALICE, "kitchen", "--verified");
         var ren = run(dir, "contacts", "rename", "alice", "alice-2");
         assertEquals(0, ren.exit);
 
@@ -171,7 +209,7 @@ class NamingAdminMainTest {
     }
 
     @Test void contacts_update_rotatesDid(@TempDir Path dir) {
-        run(dir, "contacts", "add", "alice", DID_ALICE, "kitchen");
+        run(dir, "contacts", "add", "alice", DID_ALICE, "kitchen", "--verified");
         var upd = run(dir, "contacts", "update", "alice", DID_BOB);
         assertEquals(0, upd.exit);
 

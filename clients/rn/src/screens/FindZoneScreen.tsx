@@ -48,12 +48,12 @@ export function FindZoneScreen() {
   // the TARGET zone's own subject.
   const requestAccess = async (zone: DiscoveredZone) => {
     const client = serverClient as { requestAccess?: (
-      target: string, name: string, contact?: string, reason?: string,
+      target: string, name: string, contact?: string, reason?: string, targetZk?: string | null,
     ) => Promise<{ ok: boolean; error?: string }> } | null;
     if (!client?.requestAccess) return;
     const me = useZoneBankStore.getState().homeZone()?.username || 'a wyrdsekai user';
     setKnockState((s) => ({ ...s, [zone.zoneLabel]: 'asking' }));
-    const r = await client.requestAccess(zone.zoneLabel, me);
+    const r = await client.requestAccess(zone.zoneLabel, me, undefined, undefined, zone.zk);
     if (r.ok) {
       setKnockState((s) => ({ ...s, [zone.zoneLabel]: 'sent' }));
     } else {

@@ -6,6 +6,7 @@ import org.wyrdsekai.common.protocol.C2SMessage;
 import org.wyrdsekai.common.protocol.S2CMessage;
 import org.wyrdsekai.common.util.Json;
 
+import javax.net.ssl.SSLContext;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -46,14 +47,27 @@ public class Connection implements WebSocket.Listener, WyrdSession {
     private volatile boolean shutdownRequested = false;
     private volatile String token;
 
+    private final boolean secure;
+
     public Connection(String host, int port,
+                      Consumer<S2CMessage> messageHandler,
+                      Consumer<State> stateHandler) {
+        this(host, port, null, messageHandler, stateHandler);
+    }
+
+    /**
+     * {@code tls} non-null: wss:// with that context (another machine, pinned to its household CA,
+     * W2). Null: ws://, for this machine's own plain port.
+     */
+    public Connection(String host, int port, SSLContext tls,
                       Consumer<S2CMessage> messageHandler,
                       Consumer<State> stateHandler) {
         this.host = host;
         this.port = port;
         this.messageHandler = messageHandler;
         this.stateHandler = stateHandler;
-        this.httpClient = HttpClient.newHttpClient();
+        this.secure = tls != null;
+        this.httpClient = tls != null ? HttpClient.newBuilder().sslContext(tls).build() : HttpClient.newHttpClient();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             var t = new Thread(r, "ws-reconnect");
             t.setDaemon(true);
@@ -212,7 +226,7 @@ public class Connection implements WebSocket.Listener, WyrdSession {
     // --- Internal ---
 
     private URI buildUri() {
-        var uri = "ws://" + host + ":" + port + "/ws";
+        var uri = (secure ? "wss://" : "ws://") + host + ":" + port + "/ws";
         if (token != null && !token.isBlank()) {
             uri += "?token=" + token;
         }

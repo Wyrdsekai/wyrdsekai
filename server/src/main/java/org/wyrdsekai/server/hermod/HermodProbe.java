@@ -1,6 +1,8 @@
 package org.wyrdsekai.server.hermod;
 
 import io.nats.client.Nats;
+import io.nats.client.Options;
+import org.wyrdsekai.between.HouseholdBusClient;
 import org.wyrdsekai.hermod.Capability;
 import org.wyrdsekai.hermod.CapabilityTable;
 import org.wyrdsekai.hermod.DefaultRouter;
@@ -31,7 +33,7 @@ public final class HermodProbe {
         var prompt = args[3];
         var deviceId = "probe-" + System.getenv().getOrDefault("HOSTNAME", "bench");
 
-        var nats = Nats.connect(natsUrl);
+        var nats = Nats.connect(HouseholdBusClient.secure(new Options.Builder().server(natsUrl), natsUrl).build());
         var gossip = new NatsGossip(nats, scope);
         var table = new CapabilityTable(Duration.ofSeconds(90));
         table.attach(gossip);

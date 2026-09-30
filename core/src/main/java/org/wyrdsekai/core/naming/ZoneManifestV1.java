@@ -50,7 +50,7 @@ import java.util.Map;
     "tagline", "description", "tags",
     "capabilities", "contact", "mcp_endpoint",
     "agreements_count", "reputation", "attestations",
-    "created_at", "refreshed_at", "signature"
+    "created_at", "refreshed_at", "zk", "signature"
 })
 public record ZoneManifestV1(
     @JsonProperty("schema_version") String schemaVersion,
@@ -69,8 +69,23 @@ public record ZoneManifestV1(
     @JsonProperty("attestations") @JsonInclude(JsonInclude.Include.NON_EMPTY) List<Attestation> attestations,
     @JsonProperty("created_at") String createdAt,
     @JsonProperty("refreshed_at") String refreshedAt,
-    @JsonProperty("signature") @JsonInclude(JsonInclude.Include.NON_NULL) String signature
+    @JsonProperty("signature") @JsonInclude(JsonInclude.Include.NON_NULL) String signature,
+    // The zone's public X25519 key (base64url), so someone who has never been given an invite can
+    // still seal a knock to it (sealed requests v2). Covered by the signature like every field.
+    @JsonProperty("zk") @JsonInclude(JsonInclude.Include.NON_NULL) String zk
 ) {
+
+    /** For callers from before the zone published its key: {@link #zk} is null. */
+    public ZoneManifestV1(
+            String schemaVersion, String did, String zoneLabel,
+            String displayName, String icon, String tagline, String description,
+            List<String> tags, Capabilities capabilities, Contact contact,
+            String mcpEndpoint, int agreementsCount, Reputation reputation, List<Attestation> attestations,
+            String createdAt, String refreshedAt, String signature) {
+        this(schemaVersion, did, zoneLabel, displayName, icon, tagline, description,
+            tags, capabilities, contact, mcpEndpoint, agreementsCount, reputation, attestations,
+            createdAt, refreshedAt, signature, null);
+    }
 
     /**
      * Backward-compatible constructor for callers that don't supply
@@ -309,7 +324,8 @@ public record ZoneManifestV1(
             tagline, description, tags, capabilities, contact,
             mcpEndpoint, agreementsCount, reputation, attestations,
             createdAt, refreshedAt,
-            null  // strip signature
+            null,  // strip signature
+            zk
         );
         try {
             return MAPPER.writeValueAsBytes(unsigned);
@@ -325,7 +341,7 @@ public record ZoneManifestV1(
             schemaVersion, did, zoneLabel, displayName, icon,
             tagline, description, tags, capabilities, contact,
             mcpEndpoint, agreementsCount, reputation, attestations,
-            createdAt, refreshedAt, sig);
+            createdAt, refreshedAt, sig, zk);
     }
 
     /** @return a copy with reputation/attestations replaced. Used at publish time. */
@@ -334,6 +350,6 @@ public record ZoneManifestV1(
             schemaVersion, did, zoneLabel, displayName, icon,
             tagline, description, tags, capabilities, contact,
             mcpEndpoint, agreementsCount, rep, atts,
-            createdAt, refreshedAt, signature);
+            createdAt, refreshedAt, signature, zk);
     }
 }

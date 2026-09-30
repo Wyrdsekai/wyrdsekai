@@ -307,6 +307,16 @@ public class VisitorItemProvider implements ItemWorldApiProvider {
         return "[LLM unavailable — visiting foreign zone]";
     }
 
+    @Override
+    public String llmRewrite(String text, String instruction) {
+        var home = content();
+        if (home != null) {
+            var dflt = languageDefault(instruction);
+            return home.llmRewrite(text, dflt == null ? instruction : instruction + "\n" + dflt);
+        }
+        return "[LLM unavailable — visiting foreign zone]";
+    }
+
     /**
      * The external adapters — weather, geocoding, public data — the household has keys
      * for.

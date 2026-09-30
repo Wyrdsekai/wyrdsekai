@@ -59,7 +59,8 @@ class HermodDoorman(
         val tunnel: TunnelDoor?,    // relay candidate
     )
 
-    data class TunnelDoor(val between: BetweenClient, val zoneId: String)
+    /** [zoneKey]: the home's public tunnel key from the pairing invite; null refuses the tunnel. */
+    class TunnelDoor(val between: BetweenClient, val zoneId: String, val zoneKey: ByteArray?)
 
     private val session = DoorSession(local, models, policy, capabilityClass, heartbeatMillis)
     private val _state = MutableStateFlow("stopped")
@@ -154,7 +155,7 @@ class HermodDoorman(
         deviceToken: String,
         serverUrl: String?,
     ): Boolean = coroutineScope {
-        val pipe = TunnelDoorFrames(door.between, door.zoneId, deviceToken)
+        val pipe = TunnelDoorFrames(door.between, door.zoneId, deviceToken, door.zoneKey)
         pipe.open()
         val roamWatch = if (serverUrl != null) launch {
             while (isActive) {

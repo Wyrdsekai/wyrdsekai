@@ -1,11 +1,19 @@
 package org.wyrdsekai.app.network
 
 import io.nats.client.Connection
+import io.nats.client.ErrorListener
+import io.nats.client.JetStreamStatusException
 import io.nats.client.Message
 import io.nats.client.Nats
 import io.nats.client.Options
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.util.concurrent.CancellationException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -18,6 +26,10 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.wyrdsekai.app.crypto.SealedException
+import org.wyrdsekai.app.crypto.SealedRequest
+import org.wyrdsekai.app.engine.between.NatsBetweenClient
+import org.wyrdsekai.app.i18n.currentUiStrings
 
 /**
  * KMP (Android) NATS request/reply client for the wyrdsekai relay's
@@ -32,11 +44,18 @@ import kotlinx.serialization.json.jsonPrimitive
  *   listJournal    → wyrd.zone.{zone}.study.journal           (op = "list")
  *   searchLibrary  → wyrd.zone.{zone}.library.search
  *
- * Connection: `wss://relay:4443` via jnats (which supports wss:// since 2.16).
- * TLS verification piggy-backs on the OkHttp HouseholdTrust pin already
- * installed for HTTPS — jnats falls back to the platform default SSLContext,
- * which on Android uses the user trust store (where the household CA cert
- * is installed during the existing TOFU flow). For per-port pin granularity
+ * Connection: `wss://relay:4443` via jnats (which supports wss:// since 2.16),
+ * or the home's own bus `wss://host:4223` on the home network, with the
+ * per-host invite pin ([HouseholdTrustManager]). Never plain ws:// off the
+ * device. Reply inboxes sit under `_INBOX.<NATS username>` (D4): a relay lets
+ * each user read only its own.
+ *
+ * Every zone request is a sealed request ( W3
+ * [SealedRequest]) to the home's key [zoneKey] from the pairing invite: the
+ * relay sees who asked which zone, not what. Without that key the client
+ * refuses instead of sending plaintext. In the clear go only which zone
+ * answers here (`wyrd.discover.zone`, never sealed) and, when no key for the
+ * zone is known, a knock or a directory search: what a stranger may ask.
  *
  * Android-only. iOS phones use the RN client (clients/rn/.../NatsServerClient.ts).
  * Desktop falls through to the Ktor-based [ServerClient] HTTP path for now.
@@ -63,12 +82,26 @@ class NatsServerClient(
      */
     private val natsUser: String,
     private val natsPassword: String,
+    /** The home's public tunnel key `zk`; null (paired before 0.5.0) refuses every zone request. */
+    private val zoneKey: ByteArray?,
     initialMcpToken: String? = null,
     private val requestTimeout: Duration = Duration.ofSeconds(5),
     private val json: Json = Json { ignoreUnknownKeys = true; isLenient = true },
 ) : PhoneRemoteClient, ZoneBankSyncClient, DirectorySearchClient {
     private var nc: Connection? = null
     private var mcpToken: String? = initialMcpToken
+
+    /**
+     * Requests waiting on a subject the server may refuse this login to publish
+     * on. The refusal arrives as `-ERR 'Permissions Violation for Publish to
+     * "<subject>"'` through the error listener, not as a reply, so without this
+     * a refused request would only time out.
+     */
+    private val refusals = ConcurrentHashMap<String, CompletableFuture<Unit>>()
+
+    private fun onServerError(error: String) {
+        PUBLISH_REFUSED.find(error)?.groupValues?.get(1)?.let { refusals.remove(it)?.complete(Unit) }
+    }
 
     fun getToken(): String? = mcpToken
 
@@ -78,6 +111,7 @@ class NatsServerClient(
      */
     suspend fun connect() = withContext(Dispatchers.IO) {
         if (nc?.status == Connection.Status.CONNECTED) return@withContext
+        if (HomeLink.isPlaintextOffDevice(relayUrl)) throw PlaintextRefusedException(HomeLink.hostOf(relayUrl) ?: relayUrl)
         // jnats has its own TLS stack — it does NOT route through OkHttp's
         // HouseholdTrustManager. On wss:// to a household relay with a leaf
         // cert chained to the household CA (not a public CA), the platform
@@ -93,10 +127,14 @@ class NatsServerClient(
         val opts = Options.Builder()
             .server(relayUrl)
             .userInfo(natsUser, natsPassword)
+            .inboxPrefix(NatsBetweenClient.inboxFor(natsUser))
             .sslContext(sslCtx)
             .connectionName("wyrd-phone-kmp")
             .maxReconnects(-1)
             .reconnectWait(Duration.ofSeconds(2))
+            .errorListener(object : ErrorListener {
+                override fun errorOccurred(conn: Connection, error: String) = onServerError(error)
+            })
             .build()
         nc = Nats.connect(opts)
     }
@@ -114,29 +152,60 @@ class NatsServerClient(
      * Send a request to a NATS subject and parse the JSON reply.
      * Always returns a JsonObject — transport failures are shaped as
      * `{ "ok": false, "error": "..." }` so callers use a single path.
+     *
+     * Sealed to [key] (default: this zone's). With no key, only a subject a
+     * stranger may use goes out in the clear; anything else is refused here.
      */
-    private suspend fun request(subj: String, body: JsonObject): JsonObject = withContext(Dispatchers.IO) {
-        val conn = nc ?: return@withContext buildJsonObject {
-            put("ok", JsonPrimitive(false))
-            put("error", JsonPrimitive("Not connected — call connect() first"))
+    private suspend fun request(subj: String, body: JsonObject, key: ByteArray? = zoneKey): JsonObject = withContext(Dispatchers.IO) {
+        val conn = nc ?: return@withContext failure("Not connected — call connect() first")
+        val bodyJson = json.encodeToString(JsonObject.serializer(), body)
+        if (key == null && !mayGoInTheClear(subj)) {
+            return@withContext failure("zone_key_missing", currentUiStrings().secRepairTunnel)
         }
+        val refused = CompletableFuture<Unit>().also { refusals[subj] = it }
         try {
-            val payload = json.encodeToString(JsonObject.serializer(), body).toByteArray(StandardCharsets.UTF_8)
-            val msg: Message? = conn.request(subj, payload, requestTimeout)
-            if (msg == null) {
-                return@withContext buildJsonObject {
-                    put("ok", JsonPrimitive(false))
-                    put("error", JsonPrimitive("request-failed: timeout"))
-                }
+            val sealed = key?.let { SealedRequest.seal(it, subj, bodyJson, System.currentTimeMillis()) }
+            val payload = (sealed?.wire ?: bodyJson).toByteArray(StandardCharsets.UTF_8)
+            val answer = conn.requestWithTimeout(subj, payload, requestTimeout)
+            try {
+                CompletableFuture.anyOf(answer, refused).get(requestTimeout.toMillis() + 1_000, TimeUnit.MILLISECONDS)
+            } catch (_: TimeoutException) {
+                return@withContext failure("request-failed: timeout")
+            } catch (_: Exception) {
+                // The reply future failed or was cancelled; told apart below.
             }
-            val text = String(msg.data, StandardCharsets.UTF_8)
+            if (refused.isDone) return@withContext failure("not_permitted")
+            // jnats cancels the request when the server says nobody listens there (503).
+            if (answer.isCancelled) return@withContext failure("no_responders")
+            val msg: Message = try {
+                answer.get()
+            } catch (e: ExecutionException) {
+                val cause = e.cause
+                return@withContext when {
+                    cause is JetStreamStatusException && cause.status?.code == NO_RESPONDERS -> failure("no_responders")
+                    cause is TimeoutException || cause is CancellationException -> failure("request-failed: timeout")
+                    else -> failure("request-failed: ${cause?.message ?: cause?.let { it::class.simpleName }}")
+                }
+            } ?: return@withContext failure("request-failed: timeout")
+            if (msg.isStatusMessage && msg.status?.code == NO_RESPONDERS) return@withContext failure("no_responders")
+            val reply = String(msg.data, StandardCharsets.UTF_8)
+            val text = try {
+                sealed?.openReply(reply) ?: reply
+            } catch (_: SealedException) {
+                return@withContext failure("sealed_reply_invalid")
+            }
             json.parseToJsonElement(text).jsonObject
         } catch (e: Exception) {
-            buildJsonObject {
-                put("ok", JsonPrimitive(false))
-                put("error", JsonPrimitive("request-failed: ${e.message ?: e::class.simpleName}"))
-            }
+            failure("request-failed: ${e.message ?: e::class.simpleName}")
+        } finally {
+            refusals.remove(subj, refused)
         }
+    }
+
+    private fun failure(error: String, message: String? = null) = buildJsonObject {
+        put("ok", JsonPrimitive(false))
+        put("error", JsonPrimitive(error))
+        if (message != null) put("message", JsonPrimitive(message))
     }
 
     // ── pair.device ──
@@ -165,6 +234,8 @@ class NatsServerClient(
             serverDid = reply["serverDid"]?.jsonPrimitive?.contentOrNull ?: "",
             natsUrl = reply["natsUrl"]?.jsonPrimitive?.contentOrNull ?: "",
             serverUrl = reply["serverUrl"]?.jsonPrimitive?.contentOrNull ?: "",
+            natsUser = reply["nats_user"]?.jsonPrimitive?.contentOrNull,
+            natsPass = reply["nats_pass"]?.jsonPrimitive?.contentOrNull,
         )
     }
 
@@ -180,7 +251,9 @@ class NatsServerClient(
     suspend fun discoverZone(): String? {
         return try {
             connect()
-            val reply = request("wyrd.discover.zone", buildJsonObject {})
+            // In the clear, as PROTOCOL.md specifies: it carries nothing, and every
+            // home on the relay may answer with its zone name.
+            val reply = request("wyrd.discover.zone", buildJsonObject {}, key = null)
             if (!replyOk(reply)) null
             else reply["zoneId"]?.jsonPrimitive?.contentOrNull
         } catch (_: Exception) {
@@ -532,24 +605,38 @@ class NatsServerClient(
 
     /**
      * Knock on a discovered zone's door. Token-free — you need no account on the
-     * target zone yet. Sent to the TARGET zone's own subject, so it reaches the
-     * zone you discovered if it homes on a relay you hold. Returns the recorded
-     * request id, or null on failure.
+     * target zone yet. Sent to the TARGET zone's own subject
+     * (`wyrd.zone.{targetZone}.directory.knock`, the one subject a relay lets a
+     * phone publish for another zone), the reply to this login's own inbox.
+     * Sealed to the zone's key when the phone has it, else in the clear (it
+     * carries only a name and maybe a contact and reason).
+     *
+     * Not recorded → a plain reason: an older relay refuses the publish
+     * (permissions violation); no home for that zone on this relay answers
+     * (no responders, or no answer in time); or the zone's own refusal.
      */
     suspend fun requestAccess(
         targetZone: String,
         requesterName: String,
         requesterContact: String? = null,
         reason: String? = null,
-    ): String? {
+        /** The target zone's key when this phone has one; a knock to a stranger goes in the clear. */
+        targetZoneKey: ByteArray? = if (targetZone == zoneId) zoneKey else null,
+    ): KnockAnswer {
         connect()
         val reply = request("wyrd.zone.$targetZone.directory.knock", buildJsonObject {
             put("requesterName", JsonPrimitive(requesterName))
             if (requesterContact != null) put("requesterContact", JsonPrimitive(requesterContact))
             if (reason != null) put("reason", JsonPrimitive(reason))
+        }, targetZoneKey)
+        if (replyOk(reply)) return KnockAnswer(requestId = reply["requestId"]?.jsonPrimitive?.contentOrNull ?: "")
+        val error = reply["error"]?.jsonPrimitive?.contentOrNull
+        val strings = currentUiStrings()
+        return KnockAnswer(requestId = null, message = when {
+            error == "not_permitted" -> strings.secKnockRefusedByRelay
+            error == "no_responders" || error == "request-failed: timeout" -> strings.secKnockNoAnswer
+            else -> reply["message"]?.jsonPrimitive?.contentOrNull
         })
-        if (!replyOk(reply)) return null
-        return reply["requestId"]?.jsonPrimitive?.contentOrNull
     }
 
     // ── account.zonebank ── (: cross-device sync)
@@ -623,5 +710,22 @@ class NatsServerClient(
     private fun randomSuffix(len: Int = 8): String {
         val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
         return buildString { repeat(len) { append(chars.random()) } }
+    }
+
+    companion object {
+        /**
+         * What a stranger to a zone may ask without its key, and so the only
+         * requests that ever go in the clear: which zone answers here, a knock,
+         * and a search of the public directory (the home accepts these unsealed
+         * too). None carries a password or a token.
+         */
+        internal fun mayGoInTheClear(subject: String): Boolean =
+            subject == "wyrd.discover.zone" || subject.endsWith(".directory.knock") || subject.endsWith(".directory.search")
+
+        /** The status nats-server sends a request nobody listens for. */
+        private const val NO_RESPONDERS = 503
+
+        /** nats-server's refusal of a publish: `Permissions Violation for Publish to "<subject>"`. */
+        private val PUBLISH_REFUSED = Regex("""Permissions Violation for Publish to "([^"]+)"""")
     }
 }

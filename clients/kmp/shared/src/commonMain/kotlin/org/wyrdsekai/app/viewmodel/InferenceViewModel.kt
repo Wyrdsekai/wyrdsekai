@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.wyrdsekai.app.inference.*
+import org.wyrdsekai.app.inference.NowLine
 import org.wyrdsekai.app.platform.AppProps
 
 /**
@@ -141,7 +142,8 @@ class InferenceViewModel(
                 )
                 val response = llamaServerManager.completeLocal(
                     messages,
-                    CompletionOptions(maxTokens = 128, temperature = 0.7),
+                    // A model smoke test, not her.
+                    CompletionOptions(maxTokens = 128, temperature = 0.7, now = NowLine.NONE),
                 )
                 // Strip Qwen3 <think>...</think> tags if present
                 val clean = response.content

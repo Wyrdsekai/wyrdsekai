@@ -14,6 +14,7 @@ export interface PendingRequest {
   triggerText: string;
   triggerEntityName: string;
   roomId: string;
+  /** When she was asked — not when it was queued, after every fallback failed. */
   timestamp: number;
   retryCount: number;
 }
@@ -34,6 +35,7 @@ export class OfflineQueue {
     triggerText: string,
     triggerEntityName: string,
     roomId: string,
+    askedAt: number = Date.now(),
   ): Promise<void> {
     const list = await this.loadOrInit();
     const request: PendingRequest = {
@@ -41,7 +43,7 @@ export class OfflineQueue {
       triggerText,
       triggerEntityName,
       roomId,
-      timestamp: Date.now(),
+      timestamp: askedAt,
       retryCount: 0,
     };
     list.push(request);

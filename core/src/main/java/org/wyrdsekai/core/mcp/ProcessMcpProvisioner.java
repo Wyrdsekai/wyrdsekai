@@ -2,6 +2,7 @@ package org.wyrdsekai.core.mcp;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.security.SubprocessEnv;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -20,6 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ProcessMcpProvisioner implements McpServerProvisioner {
 
     private static final Logger log = LoggerFactory.getLogger(ProcessMcpProvisioner.class);
+    /** A provisioned server gets a clean environment plus what its request names. */
+    private static final SubprocessEnv ENV = SubprocessEnv.of();
 
     private record RunningProcess(
         String instanceId,
@@ -39,12 +42,11 @@ public class ProcessMcpProvisioner implements McpServerProvisioner {
         var port = request.preferredPort() > 0 ? request.preferredPort() : findFreePort();
 
         try {
-            var envMap = new HashMap<>(System.getenv());
-            envMap.putAll(request.env());
+            var envMap = new HashMap<String, String>(request.env());
             envMap.put("PORT", String.valueOf(port));
 
             var parts = command.split("\\s+");
-            var pb = new ProcessBuilder(parts)
+            var pb = ENV.builder(parts)
                 .redirectErrorStream(true);
             pb.environment().putAll(envMap);
 

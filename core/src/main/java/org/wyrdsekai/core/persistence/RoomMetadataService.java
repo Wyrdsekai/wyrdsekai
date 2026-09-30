@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -100,6 +102,33 @@ public final class RoomMetadataService {
         } catch (SQLException e) {
             throw new RuntimeException("Room listing failed", e);
         }
+    }
+
+    /**
+     * When each room last had an event: the newest write in its journal, by room id. The one
+     * record of a room's life the node already keeps; a room nobody has entered, spoken in or
+     * placed anything in for weeks is a candidate for {@code wyrd rooms prune --stale}. Rooms
+     * with no journal (never spoken in since the journal began) are absent from the map, and a
+     * caller treats absence as "not known", never as "stale". Empty when the journal cannot be
+     * read (a node whose events live elsewhere).
+     */
+    public Map<String, Long> lastActivityByRoom() {
+        var out = new HashMap<String, Long>();
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.createStatement();
+             var rs = stmt.executeQuery("SELECT persistence_id, MAX(write_timestamp) AS t FROM event_journal "
+                 + "WHERE persistence_id LIKE 'Room|%' GROUP BY persistence_id")) {
+            while (rs.next()) {
+                var pid = rs.getString(1);
+                if (pid == null) continue;
+                var parts = pid.split("\\|");
+                if (parts.length < 2 || parts[1].isBlank()) continue;
+                out.put(parts[1], rs.getLong(2));
+            }
+        } catch (SQLException e) {
+            log.debug("room activity unavailable: {}", e.getMessage());
+        }
+        return out;
     }
 
     /**

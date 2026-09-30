@@ -45,11 +45,19 @@ export class StudySyncLayer {
     /** Session (mcp.login) or device pairing token proving we speak for userDid —
      * the server peer drops unauthenticated study messages. */
     private readonly authToken?: string | null,
+    /**
+     * directedOnly: hear only frames addressed to this device, not every peer's
+     * state advertisement. A phone's login on the home bus may subscribe only
+     * `between.{zone}.*.{deviceId}.study.sync`: other phones' frames carry their
+     * session tokens. The home answers this device's state with directed frames,
+     * so nothing is lost.
+     */
+    private readonly opts: { directedOnly?: boolean } = {},
   ) {}
 
   startListening(): void {
-    // State advertisements from all peers
-    this.unsubState = this.between.subscribe(
+    // State advertisements from all peers (not when only directed frames may be heard)
+    if (!this.opts.directedOnly) this.unsubState = this.between.subscribe(
       this.stateSubject('*'),
       (_subject, data) => {
         try {

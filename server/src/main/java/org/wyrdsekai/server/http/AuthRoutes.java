@@ -17,6 +17,7 @@ import org.wyrdsekai.server.auth.WebAuthnService;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -33,8 +34,15 @@ public final class AuthRoutes {
     private volatile IdentityReplicator accountReplicator; // set after Between starts
     // #12 (2026-07-19 OSS hardening) — brute-force throttle for the HTTP login
     // endpoint (the most-exposed password surface: phone + web clients), keyed
-    // per source IP and per targeted account. Mirrors the SSH/NATS throttles.
-    private final LoginRateLimiter loginLimiter = new LoginRateLimiter();
+    // per source IP and per targeted account. The account count is shared with
+    // every other password login (MCP, SSH, telnet).
+    private final LoginRateLimiter loginLimiter = LoginRateLimiter.shared();
+    // /api/auth/recover and /api/auth/reset-zone stay public by design (they are the
+    // way back in), so they are throttled like login: per source address, and on the
+    // household's one recovery key whatever address the guesses come from. One limiter
+    // for both, so alternating between them buys no extra guesses.
+    private final LoginRateLimiter recoveryLimiter = new LoginRateLimiter();
+    private static final String RECOVERY_TARGET = "recovery-key";
 
     public AuthRoutes(AuthService auth) {
         this(auth, null, null, null);
@@ -154,32 +162,33 @@ public final class AuthRoutes {
             return;
         }
 
-        var isFirst = auth.isFirstUser();
-        var session = auth.register(req.username().trim(), req.password(), req.displayName());
-        if (session.isEmpty()) {
-            ctx.status(409).json(new ErrorResponse("Username already taken"));
-            return;
+        // The first account is the steward: its claim, the account, the recovery key and the
+        // closing of open registration commit together, so two registrations at the same
+        // moment cannot both become steward.
+        AuthService.Session s;
+        String recoveryKey;
+        switch (auth.registerFirstSteward(req.username().trim(), req.password(), req.displayName())) {
+            case AuthService.Registration.Created c -> {
+                s = c.session();
+                recoveryKey = c.recoveryKey();
+            }
+            case AuthService.Registration.UsernameTaken _ -> {
+                ctx.status(409).json(new ErrorResponse("Username already taken"));
+                return;
+            }
+            case AuthService.Registration.Closed _ -> {
+                ctx.status(403).json(new ErrorResponse(
+                    "This household requires an invitation to join. Use /api/auth/redeem with an invite code."));
+                return;
+            }
         }
-
-        var s = session.get();
         var user = auth.findUser(s.userId()).orElseThrow();
-        String recoveryKey = null;
-        if (isFirst) {
-            // First user = steward. Generate recovery key.
-            recoveryKey = auth.generateRecoveryKey();
-            // Explicitly close open registration now that a steward exists.
-            // Without this, isOpenRegistrationAllowed() still returns false
-            // via the null-default path — but the config row stays absent,
-            // so /api/auth/status can't distinguish "default off" from
-            // "steward explicitly opened". Make it visible + auditable.
-            auth.setConfig("open_registration", "false", user.id());
-            log.info("========================================");
-            log.info("  STEWARD CREATED: {} (household initialized)", user.username());
-            log.info("  Recovery key generated — shown to user ONCE.");
-            log.info("  Open registration closed automatically.");
-            log.info("  Use 'wyrd invite' or 'use invitation scroll' to add members.");
-            log.info("========================================");
-        }
+        log.info("========================================");
+        log.info("  STEWARD CREATED: {} (household initialized)", user.username());
+        log.info("  Recovery key generated — shown to user ONCE.");
+        log.info("  Open registration closed automatically.");
+        log.info("  Use 'wyrd invite' or 'use invitation scroll' to add members.");
+        log.info("========================================");
         // grant residency at registration time so the
         // newly-created user (esp. the first steward) actually lives here.
         // Without this, register → users-table row, but no residency row
@@ -194,12 +203,12 @@ public final class AuthRoutes {
                     "self-register", null));
             }
         }
-        // Replicate to mesh
+        // Replicate to mesh (self-registration: the account acts for itself)
         var repl = accountReplicator;
         if (repl != null) {
             var hash = auth.getPasswordHash(user.id());
             if (hash != null) repl.publishAccountCreated(user.id(), user.username(), hash,
-                user.displayName(), user.role());
+                user.displayName(), user.role(), user.id());
         }
         ctx.status(201).json(new AuthResponse(s.token(), user.id(), user.username(), user.role(), recoveryKey));
     }
@@ -304,7 +313,7 @@ public final class AuthRoutes {
         if (repl != null) {
             var hash = auth.getPasswordHash(user.id());
             if (hash != null) repl.publishAccountCreated(user.id(), user.username(), hash,
-                user.displayName(), user.role());
+                user.displayName(), user.role(), caller.id());
         }
         ctx.status(201).json(new AuthResponse(s.token(), user.id(), user.username(), user.role()));
     }
@@ -424,23 +433,29 @@ public final class AuthRoutes {
             return;
         }
 
-        var inviteRole = claimed.get().role();
         // #4-followup (adversarial review) — register() only returns empty on a
         // username-taken UNIQUE clash; ANY OTHER failure (non-UNIQUE SQL,
         // createSession/grant) THROWS. Without this try, a throw here skips the
         // releaseClaim below and leaves the invite permanently consumed_by the
         // claim token (dead invite). Release on both empty AND throw.
+        // The bootstrap invite founds the household and brings the recovery key.
         AuthService.Session s;
+        String recoveryKey;
         try {
-            var session = auth.register(req.username().trim(), req.password(),
-                req.displayName() != null ? req.displayName() : req.username().trim(),
-                inviteRole);
-            if (session.isEmpty()) {
+            var created = auth.registerByInvite(claimed.get(), req.username().trim(), req.password(),
+                req.displayName() != null ? req.displayName() : req.username().trim());
+            if (!(created instanceof AuthService.Registration.Created c)) {
                 inviteService.releaseClaim(claimToken);
-                ctx.status(409).json(new ErrorResponse("Username already taken"));
+                if (created instanceof AuthService.Registration.Closed) {
+                    ctx.status(409).json(new ErrorResponse(
+                        "This household already has a steward; the bootstrap invite no longer applies"));
+                } else {
+                    ctx.status(409).json(new ErrorResponse("Username already taken"));
+                }
                 return;
             }
-            s = session.get();
+            s = c.session();
+            recoveryKey = c.recoveryKey();
             // Bind the now-consumed invite to the real user id (audit trail).
             inviteService.rebindClaim(claimToken, s.userId());
         } catch (RuntimeException e) {
@@ -466,11 +481,12 @@ public final class AuthRoutes {
         var repl = accountReplicator;
         if (repl != null) {
             var hash = auth.getPasswordHash(user.id());
+            var issuer = claimed.get().createdBy();
             if (hash != null) repl.publishAccountCreated(user.id(), user.username(), hash,
-                user.displayName(), user.role());
+                user.displayName(), user.role(), issuer != null ? issuer : user.id());
             repl.publishInviteConsumed(code, s.userId());
         }
-        ctx.status(201).json(new AuthResponse(s.token(), user.id(), user.username(), user.role()));
+        ctx.status(201).json(new AuthResponse(s.token(), user.id(), user.username(), user.role(), recoveryKey));
     }
 
     /**
@@ -546,10 +562,11 @@ public final class AuthRoutes {
 
         if (auth.removeUser(caller.id(), req.userId())) {
             var repl = accountReplicator;
-            if (repl != null) repl.publishAccountRemoved(req.userId());
+            if (repl != null) repl.publishAccountRemoved(req.userId(), caller.id());
             ctx.json(Map.of("status", "removed"));
         } else {
-            ctx.status(404).json(new ErrorResponse("User not found or cannot remove steward"));
+            ctx.status(404).json(new ErrorResponse(
+                "User not found, or not removable: you cannot remove yourself or the last steward"));
         }
     }
 
@@ -579,7 +596,8 @@ public final class AuthRoutes {
             ctx.status(400).json(new ErrorResponse("oldPassword and newPassword (4+ chars) required"));
             return;
         }
-        if (auth.changePassword(user.get().id(), req.oldPassword(), req.newPassword())) {
+        // The session making the change stays; every other session of this account ends.
+        if (auth.changePassword(user.get().id(), req.oldPassword(), req.newPassword(), token)) {
             ctx.json(Map.of("status", "changed", "message", "Password updated."));
         } else {
             ctx.status(403).json(new ErrorResponse("Current password is incorrect"));
@@ -596,12 +614,24 @@ public final class AuthRoutes {
             ctx.status(400).json(new ErrorResponse("recoveryKey and newPassword (4+ chars) required"));
             return;
         }
+        var ipKey = "ip:" + ctx.ip();
+        if (recoveryThrottled(ctx, ipKey)) return;
         if (auth.recoverSteward(req.recoveryKey(), req.newPassword())) {
+            recoveryLimiter.recordSuccessAll(ipKey, RECOVERY_TARGET);
             ctx.json(Map.of("status", "recovered",
                 "message", "Steward password has been reset. You can now login with the new password."));
         } else {
+            recoveryLimiter.recordFailureAll(ipKey, RECOVERY_TARGET);
             ctx.status(403).json(new ErrorResponse("Invalid recovery key"));
         }
+    }
+
+    /** 429 while the source address or the recovery key is locked out; true when refused. */
+    private boolean recoveryThrottled(Context ctx, String ipKey) {
+        if (!recoveryLimiter.anyLocked(ipKey, RECOVERY_TARGET)) return false;
+        log.warn("Recovery-key attempt throttled from {}: too many recent failures", ctx.ip());
+        ctx.status(429).json(new ErrorResponse("Too many failed attempts — try again later"));
+        return true;
     }
 
     /**
@@ -614,10 +644,14 @@ public final class AuthRoutes {
             ctx.status(400).json(new ErrorResponse("recoveryKey required"));
             return;
         }
+        var ipKey = "ip:" + ctx.ip();
+        if (recoveryThrottled(ctx, ipKey)) return;
         if (auth.factoryReset(req.recoveryKey())) {
+            recoveryLimiter.recordSuccessAll(ipKey, RECOVERY_TARGET);
             ctx.json(Map.of("status", "reset",
                 "message", "Zone has been factory reset. Restart the server to begin fresh setup."));
         } else {
+            recoveryLimiter.recordFailureAll(ipKey, RECOVERY_TARGET);
             ctx.status(403).json(new ErrorResponse("Invalid recovery key"));
         }
     }
@@ -659,25 +693,50 @@ public final class AuthRoutes {
         @JsonProperty("credential_id") String credentialId,
         @JsonProperty("sign_count") long signCount) {}
 
+    /**
+     * A passkey is registered to the account the session proves, never to one the body
+     * names: a body {@code user_id} for someone else is refused.
+     */
     private void handlePasskeyRegisterBegin(Context ctx) throws Exception {
-        var req = Json.mapper().readValue(ctx.body(), PasskeyRegisterBeginRequest.class);
-        if (req.userId() == null || req.userName() == null) {
-            ctx.status(400).json(new ErrorResponse("user_id and user_name required"));
+        var user = requireSession(ctx);
+        if (user == null) return;
+        var body = ctx.body();
+        var req = body == null || body.isBlank()
+            ? new PasskeyRegisterBeginRequest(null, null)
+            : Json.mapper().readValue(body, PasskeyRegisterBeginRequest.class);
+        if (req.userId() != null && !req.userId().isBlank() && !req.userId().equals(user.id())) {
+            ctx.status(403).json(new ErrorResponse("A passkey can only be added to your own account"));
             return;
         }
-        var challenge = webAuthn.beginRegistration(req.userId(), req.userName());
+        var challenge = webAuthn.beginRegistration(user.id(), user.username());
         ctx.json(challenge);
     }
 
     private void handlePasskeyRegisterComplete(Context ctx) throws Exception {
+        var user = requireSession(ctx);
+        if (user == null) return;
         var req = Json.mapper().readValue(ctx.body(), PasskeyRegisterCompleteRequest.class);
         var result = webAuthn.completeRegistration(req.challengeBase64(), req.credentialId(),
-            req.publicKey(), req.displayName());
+            req.publicKey(), req.displayName(), user.id());
         if (result.success()) {
             ctx.json(result);
+        } else if (WebAuthnService.OTHER_ACCOUNT.equals(result.message())) {
+            ctx.status(403).json(result);
         } else {
             ctx.status(400).json(result);
         }
+    }
+
+    /** The session's user, or null after answering 401. */
+    private AuthService.User requireSession(Context ctx) {
+        var token = extractToken(ctx);
+        var user = token == null ? Optional.<AuthService.User>empty() : auth.validateSession(token);
+        if (user.isEmpty()) {
+            ctx.status(401).json(new ErrorResponse(token == null
+                ? "Authorization required" : "Invalid or expired session"));
+            return null;
+        }
+        return user.get();
     }
 
     private void handlePasskeyAuthBegin(Context ctx) throws Exception {

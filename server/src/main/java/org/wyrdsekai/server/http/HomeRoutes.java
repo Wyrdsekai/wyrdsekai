@@ -17,6 +17,7 @@ import org.wyrdsekai.common.home.GrantRequest;
 import org.wyrdsekai.common.home.ResourceUri;
 import org.wyrdsekai.common.home.RevocationMode;
 import org.wyrdsekai.core.home.HomeRegistryActor;
+import org.wyrdsekai.core.identity.PersonIds;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -28,6 +29,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * HTTP endpoints for the Home model.
@@ -61,6 +63,9 @@ public final class HomeRoutes {
      */
     private volatile Function<String, String> trustTierResolver;
 
+    /** Until told otherwise every identity counts as a person, the strict reading. */
+    private volatile Predicate<String> isPerson = id -> true;
+
     public HomeRoutes(ActorRef<HomeRegistryActor.Command> home, ActorSystem<?> system) {
         this.home = home;
         this.system = system;
@@ -92,7 +97,7 @@ public final class HomeRoutes {
     // --- Handlers ------------------------------------------------------
 
     private void handleSummary(Context ctx) {
-        var owner = requiredQuery(ctx, "owner");
+        var owner = actAs(ctx, ctx.queryParam("owner"));
         if (owner == null) return;
         var summary = ask(replyTo -> new HomeRegistryActor.GetSummary(owner, replyTo),
             HomeRegistryActor.HomeSummary.class);
@@ -107,7 +112,7 @@ public final class HomeRoutes {
     }
 
     private void handleGrantsIssued(Context ctx) {
-        var owner = requiredQuery(ctx, "owner");
+        var owner = actAs(ctx, ctx.queryParam("owner"));
         if (owner == null) return;
         var list = ask(replyTo -> new HomeRegistryActor.EnumerateIssued(owner, replyTo),
             HomeRegistryActor.GrantList.class).grants();
@@ -115,7 +120,7 @@ public final class HomeRoutes {
     }
 
     private void handleGrantsHeld(Context ctx) {
-        var subject = requiredQuery(ctx, "subject");
+        var subject = actAs(ctx, ctx.queryParam("subject"));
         if (subject == null) return;
         var list = ask(replyTo -> new HomeRegistryActor.EnumerateHeld(subject, replyTo),
             HomeRegistryActor.GrantList.class).grants();
@@ -126,7 +131,8 @@ public final class HomeRoutes {
         var id = ctx.pathParam("id");
         var detail = ask(replyTo -> new HomeRegistryActor.FetchGrant(id, replyTo),
             HomeRegistryActor.GrantDetail.class);
-        if (detail.grant() == null) {
+        if (detail.grant() == null
+                || !(mayActAs(ctx, detail.grant().issuer()) || mayActAs(ctx, detail.grant().subject()))) {
             ctx.status(404).json(Map.of("error", "grant not found"));
             return;
         }
@@ -141,13 +147,14 @@ public final class HomeRoutes {
             ctx.status(400).json(Map.of("error", "invalid JSON: " + e.getMessage()));
             return;
         }
-        var issuer = text(body, "issuer");
+        var issuer = actAs(ctx, text(body, "issuer"));
+        if (issuer == null) return;
         var subject = text(body, "subject");
         var resourceStr = text(body, "resource");
         var capStr = text(body, "capability");
         if (issuer == null || subject == null || resourceStr == null || capStr == null) {
             ctx.status(400).json(Map.of("error",
-                "required fields: issuer, subject, resource, capability"));
+                "required fields: subject, resource, capability"));
             return;
         }
         var resource = ResourceUri.parseOrNull(resourceStr);
@@ -199,7 +206,7 @@ public final class HomeRoutes {
 
     private void handleRevoke(Context ctx) {
         var id = ctx.pathParam("id");
-        var actor = requiredQuery(ctx, "actor");
+        var actor = actAs(ctx, ctx.queryParam("actor"));
         if (actor == null) return;
         var result = ask(replyTo -> new HomeRegistryActor.RevokeGrant(id, actor, replyTo),
             HomeRegistryActor.RevokeResult.class);
@@ -215,7 +222,7 @@ public final class HomeRoutes {
     }
 
     private void handleAudit(Context ctx) {
-        var owner = requiredQuery(ctx, "owner");
+        var owner = actAs(ctx, ctx.queryParam("owner"));
         if (owner == null) return;
         var sinceStr = ctx.queryParam("since");
         var limitStr = ctx.queryParam("limit");
@@ -249,10 +256,11 @@ public final class HomeRoutes {
             ctx.status(400).json(Map.of("error", "invalid JSON"));
             return;
         }
-        var subject = text(body, "subject");
+        var subject = actAs(ctx, text(body, "subject"));
+        if (subject == null) return;
         var resourceStr = text(body, "resource");
         var capStr = text(body, "capability");
-        if (subject == null || resourceStr == null || capStr == null) {
+        if (resourceStr == null || capStr == null) {
             ctx.status(400).json(Map.of("error", "required: subject, resource, capability"));
             return;
         }
@@ -289,6 +297,12 @@ public final class HomeRoutes {
             return;
         }
         var requester = text(body, "requester");
+        // A knock from another zone carries no login and is only a request; the owner decides.
+        // A knock from someone logged in here is always in their own name.
+        if (ApiAuth.principal(ctx) != null) {
+            requester = actAs(ctx, requester);
+            if (requester == null) return;
+        }
         var owner = text(body, "owner");
         var resourceStr = text(body, "resource");
         var capStr = text(body, "capability");
@@ -334,7 +348,7 @@ public final class HomeRoutes {
     }
 
     private void handlePendingRequests(Context ctx) {
-        var owner = requiredQuery(ctx, "owner");
+        var owner = actAs(ctx, ctx.queryParam("owner"));
         if (owner == null) return;
         var list = ask(replyTo -> new HomeRegistryActor.PendingRequestsForOwner(owner, replyTo),
             HomeRegistryActor.GrantRequestList.class).requests();
@@ -343,7 +357,7 @@ public final class HomeRoutes {
     }
 
     private void handleRequestsByRequester(Context ctx) {
-        var requester = requiredQuery(ctx, "requester");
+        var requester = actAs(ctx, ctx.queryParam("requester"));
         if (requester == null) return;
         var list = ask(replyTo -> new HomeRegistryActor.RequestsByRequester(requester, replyTo),
             HomeRegistryActor.GrantRequestList.class).requests();
@@ -361,10 +375,8 @@ public final class HomeRoutes {
         }
         var actor = text(body, "actor");
         if (actor == null) actor = ctx.queryParam("actor");
-        if (actor == null || actor.isBlank()) {
-            ctx.status(400).json(Map.of("error", "missing actor"));
-            return;
-        }
+        actor = actAs(ctx, actor);
+        if (actor == null) return;
         Instant expiresAt = null;
         if (body.hasNonNull("expiresAt")) {
             try { expiresAt = Instant.parse(body.get("expiresAt").asText()); }
@@ -397,10 +409,8 @@ public final class HomeRoutes {
         }
         var actor = text(body, "actor");
         if (actor == null) actor = ctx.queryParam("actor");
-        if (actor == null || actor.isBlank()) {
-            ctx.status(400).json(Map.of("error", "missing actor"));
-            return;
-        }
+        actor = actAs(ctx, actor);
+        if (actor == null) return;
         var note = text(body, "note");
         final var finalActor = actor;
         var result = ask(replyTo -> new HomeRegistryActor.DenyGrantRequest(
@@ -426,10 +436,8 @@ public final class HomeRoutes {
             }
             actor = text(body, "actor");
         }
-        if (actor == null || actor.isBlank()) {
-            ctx.status(400).json(Map.of("error", "missing actor"));
-            return;
-        }
+        actor = actAs(ctx, actor);
+        if (actor == null) return;
         final var finalActor = actor;
         var result = ask(replyTo -> new HomeRegistryActor.CancelGrantRequest(
             id, finalActor, replyTo),
@@ -496,13 +504,45 @@ public final class HomeRoutes {
 
     // --- Helpers ------------------------------------------------------
 
-    private String requiredQuery(Context ctx, String name) {
-        var v = ctx.queryParam(name);
-        if (v == null || v.isBlank()) {
-            ctx.status(400).json(Map.of("error", "missing query param: " + name));
+    /**
+     * The identity this request acts as. A person acts only as themselves; the steward
+     * (logged in, or the machine's operator) also for identities that are not people, such
+     * as a companion's home. Until 2026-09-28 the issuer, owner, actor and subject came from
+     * the request, so anyone could grant themselves reach into another person's shelves or
+     * read who could reach what.
+     */
+    private String actAs(Context ctx, String requested) {
+        if (mayActAs(ctx, requested)) {
+            if (ApiAuth.principal(ctx) instanceof ApiAuth.Person caller
+                    && (requested == null || requested.isBlank() || PersonIds.samePerson(requested, caller.user().id()))) {
+                return PersonIds.canonical(caller.user().id());
+            }
+            return requested;
+        }
+        var principal = ApiAuth.principal(ctx);
+        if (principal instanceof ApiAuth.Operator && (requested == null || requested.isBlank())) {
+            ctx.status(400).json(Map.of("error", "missing identity: name the companion or zone"));
             return null;
         }
-        return v;
+        ctx.status(principal == null ? 401 : 403).json(Map.of("error", "not_yours",
+            "message", "You can act only for yourself here; a companion's home is managed by the steward."));
+        return null;
+    }
+
+    private boolean mayActAs(Context ctx, String requested) {
+        var principal = ApiAuth.principal(ctx);
+        boolean blank = requested == null || requested.isBlank();
+        if (principal instanceof ApiAuth.Person caller) {
+            if (blank || PersonIds.samePerson(requested, caller.user().id())) return true;
+            return "steward".equals(caller.user().role()) && !isPerson.test(requested);
+        }
+        if (principal instanceof ApiAuth.Operator) return !blank && !isPerson.test(requested);
+        return false;
+    }
+
+    /** Tells a person's identity from a companion's or a zone's (see {@link #actAs}). */
+    public void setPersonCheck(Predicate<String> isPerson) {
+        this.isPerson = isPerson == null ? id -> true : isPerson;
     }
 
     private static String text(JsonNode n, String field) {

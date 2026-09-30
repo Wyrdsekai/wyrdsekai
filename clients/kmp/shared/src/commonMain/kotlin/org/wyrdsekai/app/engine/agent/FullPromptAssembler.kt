@@ -124,15 +124,28 @@ object FullPromptAssembler {
             }
         }
 
-        // Layer 3: Time awareness (wall-clock, time-of-day, elapsed since last human speech)
+        // Layer 3: Elapsed time since last human speech. The date and the time are
+        // not a layer: the send point stamps them on the last user message (NowLine).
         run {
-            // Find last human speech from recent events
+            // The last human speech before the trigger. recentSaid already holds the
+            // trigger (the engine files it in memory before it assembles), and
+            // counting it put the elapsed time under a minute, so the line never
+            // showed. Her own lines are told apart by entityId, not by name: a
+            // name can be shared, and her lines from before a rename carry the old one.
+            // "You" is whoever speaks now, so only their lines count: anyone else's
+            // gave Alice the time since Bob last spoke. A trigger that is not a
+            // person (the greeting's "system") has no one to match, so any
+            // person's line counts, as before.
+            val speaker = triggerEvent?.entityId?.takeIf { it != "system" }
             val lastHumanSaid = recentSaid
-                ?.lastOrNull { it.entityName != profile.name }
+                .lastOrNull {
+                    it != triggerEvent && it.entityId != profile.entityId &&
+                        (speaker == null || it.entityId == speaker)
+                }
                 ?.timestamp
             val timeCtx = TimeContext.build(lastHumanSaid)
             val timeTokens = estimateTokens(timeCtx)
-            if (timeTokens <= remainingBudget) {
+            if (timeCtx.isNotEmpty() && timeTokens <= remainingBudget) {
                 messages.add(ChatMessage(role = "system", content = timeCtx))
                 remainingBudget -= timeTokens
             }

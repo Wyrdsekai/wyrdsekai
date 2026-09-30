@@ -10,7 +10,7 @@
  *
  * Mirrors the KMP LoginScreen (clients/kmp/.../LoginScreen.kt).
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { useThemeColors } from '../theme/useTheme';
 import { useAppModeStore } from '../state/appModeStore';
+import { secureHomeAddress } from '../network/secureAddress';
 import {
   checkStatus,
   login,
@@ -37,7 +38,12 @@ export function LoginScreen({ navigation, route }: Props) {
   const c = useThemeColors();
   const { setAuth } = useAppModeStore();
 
-  const { serverUrl, deviceToken } = route.params;
+  const { deviceToken } = route.params;
+  // A password and a device token go to this address: only an encrypted one
+  // ( W2) — the invite's https address for the same
+  // host if the home reported a plain one, otherwise nothing is sent.
+  const address = useMemo(() => secureHomeAddress(route.params.serverUrl), [route.params.serverUrl]);
+  const serverUrl = address.ok ? address.url : '';
 
   // Server status
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
@@ -57,6 +63,11 @@ export function LoginScreen({ navigation, route }: Props) {
   // Query server status on mount
   useEffect(() => {
     let cancelled = false;
+    if (!address.ok) {
+      setStatusError(address.error);
+      setStatusLoading(false);
+      return;
+    }
     setStatusLoading(true);
     setStatusError(null);
 
@@ -80,7 +91,7 @@ export function LoginScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl]);
+  }, [serverUrl, address]);
 
   const completeLogin = useCallback(
     async (authToken: string, userId: string, role: string) => {
@@ -99,7 +110,7 @@ export function LoginScreen({ navigation, route }: Props) {
   );
 
   const handleLogin = useCallback(async () => {
-    if (!username.trim() || !password) return;
+    if (!serverUrl || !username.trim() || !password) return;
     setSubmitting(true);
     setError(null);
 
@@ -113,7 +124,7 @@ export function LoginScreen({ navigation, route }: Props) {
   }, [serverUrl, username, password, completeLogin]);
 
   const handleRegister = useCallback(async () => {
-    if (!username.trim() || !password) return;
+    if (!serverUrl || !username.trim() || !password) return;
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
       return;

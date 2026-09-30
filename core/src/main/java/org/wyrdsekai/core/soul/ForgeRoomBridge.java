@@ -549,7 +549,7 @@ public final class ForgeRoomBridge {
 
     private static boolean isSteward(String actorId) {
         var auth = authService;
-        return auth != null && actorId != null && auth.findUser(actorId)
+        return auth != null && actorId != null && auth.findUserForPerson(actorId)
             .map(u -> "steward".equals(u.role())).orElse(false);
     }
 

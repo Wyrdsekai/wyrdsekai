@@ -71,7 +71,8 @@ run_svc() { # name cmd...
     say "started $name"
 }
 
-run_svc nats nats-server -p 4222
+# This container's own bus: the server inside is its only client, so it answers this container only.
+run_svc nats nats-server -a 127.0.0.1 -p 4222
 
 if [[ "${WYRDSEKAI_SKIP_MODELS:-0}" != "1" ]]; then
     if [[ "$TIER" == "gpu" ]]; then

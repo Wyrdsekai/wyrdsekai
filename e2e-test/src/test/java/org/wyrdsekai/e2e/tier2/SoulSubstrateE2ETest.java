@@ -190,8 +190,23 @@ class SoulSubstrateE2ETest {
     @Test
     void sleepTriggersOnLowEnergy() throws Exception {
         try (var ws = connect()) {
-            // Wait for conversation grace period
-            Thread.sleep(35_000);
+            // Wait until the room has been quiet for longer than the companion's 30 s conversation
+            // grace: it rightly will not fall asleep while something was just said. A fixed wait
+            // from connect assumed the greeting lands at once; a slower model greets later, the
+            // sleep check then saw 16 s of quiet, and the companion stayed awake (2026-09-20).
+            long quietSince = System.currentTimeMillis();
+            long giveUp = quietSince + 180_000;
+            while (System.currentTimeMillis() - quietSince < 40_000 && System.currentTimeMillis() < giveUp) {
+                try {
+                    var heard = ws.waitForMessage(m -> {
+                        var type = m.path("type").asText("");
+                        return "prose".equals(type) || "emote".equals(type);
+                    }, Duration.ofSeconds(5));
+                    if (heard != null) quietSince = System.currentTimeMillis();
+                } catch (ConditionTimeoutException quiet) {
+                    // nothing said in the last five seconds
+                }
+            }
 
             // Force energy below threshold
             var ref = ZoneGuardian.getCompanionRef(null, "companion-wyrd");
@@ -286,6 +301,10 @@ class SoulSubstrateE2ETest {
                 var text = msg.path("text").asText("");
 
                 // Skip narrator/system noise
+                // The echo of the test's own tell is not a reply: it must not open the quiet window
+                // or count as "the agent responded" (a backend slower than the window lost its answer).
+                if (("narrator".equals(speaker) || "system".equals(speaker)) && text.startsWith("You tell ")) continue;
+
                 if ("narrator".equals(speaker) || "system".equals(speaker)) {
                     if (text.contains("enters") || text.contains("arrives") || text.contains("leaves")) continue;
                 }

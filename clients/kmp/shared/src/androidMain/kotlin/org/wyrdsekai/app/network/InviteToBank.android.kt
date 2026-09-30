@@ -33,6 +33,7 @@ actual fun addInviteToBank(inviteUrl: String): Boolean {
             relayUrls = listOf(relay.wsUrl),
             username = "",
             addedAt = now,
+            zk = invite.zk,
         )
     )
     return true

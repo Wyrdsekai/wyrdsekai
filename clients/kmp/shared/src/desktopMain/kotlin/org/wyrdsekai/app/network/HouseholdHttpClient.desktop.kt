@@ -10,6 +10,12 @@ import io.ktor.client.engine.java.Java
  *
  * Per-host pinning equivalent is a TODO — Desktop installs are
  * typically operator-managed nodes, not phone-style ephemeral clients,
- * so the operational footprint is lower.
+ * so the operational footprint is lower. Plain http:// is refused off
+ * the device ([RefusePlaintextOffDevice]); the desktop app's own node is
+ * on localhost.
  */
-actual fun createHouseholdHttpClient(): HttpClient = HttpClient(Java)
+actual fun createHouseholdHttpClient(): HttpClient = HttpClient(Java) {
+    install(RefusePlaintextOffDevice)
+}
+
+actual fun devLoopbackAliases(): Set<String> = emptySet()

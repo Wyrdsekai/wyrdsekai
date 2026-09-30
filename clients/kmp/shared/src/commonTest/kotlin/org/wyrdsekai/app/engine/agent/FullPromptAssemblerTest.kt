@@ -1,6 +1,7 @@
 package org.wyrdsekai.app.engine.agent
 
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import org.wyrdsekai.app.engine.event.WorldEvent
 import org.wyrdsekai.app.engine.oracle.PhonePrediction
 import org.wyrdsekai.app.protocol.*
@@ -224,5 +225,88 @@ class FullPromptAssemblerTest {
         )
         val systemMessages = messages.filter { it.role == "system" }
         assertFalse(systemMessages.any { it.content.contains("Oracle insights") })
+    }
+
+    // ── Layer 3: last heard from you ──
+
+    @Test
+    fun lastHeardCountsTheLineBeforeTheTriggerNotTheTrigger() {
+        // The engine files the trigger in memory before it assembles, so recentSaid
+        // ends with it. Counting it put the gap under a minute: the line never showed.
+        val earlier = WorldEvent.Said("nexus", now - 3.hours, "p1", "Alice", "Good night.")
+        val trigger = WorldEvent.Said("nexus", now, "p1", "Alice", "Morning!")
+
+        val messages = FullPromptAssembler.assemble(
+            profile = profile,
+            roomSnapshot = null,
+            recentSaid = listOf(earlier, trigger),
+            triggerEvent = trigger,
+        )
+
+        assertTrue(messages.any { it.role == "system" && it.content == "Last heard from you: 3 hours ago." },
+            "expected Layer 3 from the line before the trigger: ${messages.map { it.content }}")
+    }
+
+    @Test
+    fun lastHeardTellsHerLinesApartByEntityIdNotName() {
+        // A person may share her name, and her lines from before a rename carry the old one.
+        val person = WorldEvent.Said("nexus", now - 2.hours, "p1", profile.name, "See you tomorrow.")
+        val herOldName = WorldEvent.Said("nexus", now - 1.hours, profile.entityId, "Old Name", "Rest well.")
+        val trigger = WorldEvent.Said("nexus", now, "p1", profile.name, "I'm back.")
+
+        val messages = FullPromptAssembler.assemble(
+            profile = profile,
+            roomSnapshot = null,
+            recentSaid = listOf(person, herOldName, trigger),
+            triggerEvent = trigger,
+        )
+
+        val layer3 = messages.filter { it.role == "system" && it.content.startsWith("Last heard from you") }
+        assertEquals(listOf("Last heard from you: 2 hours ago."), layer3.map { it.content })
+    }
+
+    @Test
+    fun lastHeardIsFromWhoeverSpeaksNowNotAnyoneInTheRoom() {
+        // "You" is the person speaking now. Bob's line gave Alice the time since Bob spoke.
+        val alice = WorldEvent.Said("nexus", now - 5.hours, "p1", "Alice", "Good night.")
+        val bob = WorldEvent.Said("nexus", now - 3.hours, "p2", "Bob", "Anyone up?")
+        val trigger = WorldEvent.Said("nexus", now, "p1", "Alice", "Morning!")
+
+        val messages = FullPromptAssembler.assemble(
+            profile = profile,
+            roomSnapshot = null,
+            recentSaid = listOf(alice, bob, trigger),
+            triggerEvent = trigger,
+        )
+
+        val layer3 = messages.filter { it.role == "system" && it.content.startsWith("Last heard from you") }
+        assertEquals(listOf("Last heard from you: 5 hours ago."), layer3.map { it.content })
+
+        // Someone who has not spoken before has no gap to tell.
+        val first = WorldEvent.Said("nexus", now, "p3", "Cara", "Hello?")
+        val forCara = FullPromptAssembler.assemble(
+            profile = profile,
+            roomSnapshot = null,
+            recentSaid = listOf(alice, bob, first),
+            triggerEvent = first,
+        )
+        assertTrue(forCara.none { it.content.startsWith("Last heard from you") }, forCara.map { it.content }.toString())
+    }
+
+    @Test
+    fun aGreetingCountsAnyPersonsLastLine() {
+        // The greeting's trigger is the engine's own "system" line, not a person.
+        val alice = WorldEvent.Said("nexus", now - 4.hours, "p1", "Alice", "Good night.")
+        val greeting = WorldEvent.Said("nexus", now, "system", "system", "You has entered the room.")
+
+        val messages = FullPromptAssembler.assemble(
+            profile = profile,
+            roomSnapshot = null,
+            recentSaid = listOf(alice),
+            triggerEvent = greeting,
+        )
+
+        val layer3 = messages.filter { it.role == "system" && it.content.startsWith("Last heard from you") }
+        assertEquals(listOf("Last heard from you: 4 hours ago."), layer3.map { it.content })
     }
 }

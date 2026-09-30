@@ -82,6 +82,24 @@ public final class TestUsers {
         return MAPPER.readTree(redeemResp.body());
     }
 
+    /**
+     * The identity the server files a logged-in person's things under (their person DID, or
+     * the login id when no person is minted), as the Study's sharing view reports it. Since
+     * 0.5.0 a Study, journal or home is reached through the owner's own login, so tests that
+     * seed or share a person's things directly need this rather than an invented DID.
+     */
+    public static String personId(String baseUrl, String token) throws Exception {
+        var resp = HTTP.send(HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + "/api/study/sharing-context"))
+            .header("Authorization", "Bearer " + token)
+            .GET().build(), HttpResponse.BodyHandlers.ofString());
+        var person = resp.statusCode() == 200 ? MAPPER.readTree(resp.body()).path("person").asText() : "";
+        if (person.isBlank()) {
+            throw new IllegalStateException("no person for this login (" + resp.statusCode() + "): " + resp.body());
+        }
+        return person;
+    }
+
     private static HttpResponse<String> post(String url, String body, String bearer) throws Exception {
         var b = HttpRequest.newBuilder()
             .uri(URI.create(url))

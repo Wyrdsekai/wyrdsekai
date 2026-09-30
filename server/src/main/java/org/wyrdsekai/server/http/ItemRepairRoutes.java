@@ -39,12 +39,9 @@ public final class ItemRepairRoutes {
     record ErrorResponse(String error) {}
 
     private boolean steward(Context ctx) {
-        var token = AuthRoutes.extractToken(ctx);
-        if (token == null) { ctx.status(401).json(new ErrorResponse("Authentication required")); return false; }
-        var user = auth.validateSession(token);
-        if (user.isEmpty()) { ctx.status(401).json(new ErrorResponse("Invalid or expired session")); return false; }
-        if (!"steward".equals(user.get().role())) { ctx.status(403).json(new ErrorResponse("Only the steward repairs items")); return false; }
-        return true;
+        // One rule for every steward route (ApiAuth): a steward's login, or the machine's
+        // operator token from the machine itself, which this copy used to refuse.
+        return ApiAuth.requireSteward(ctx);
     }
 
     /** Every household item script with contract problems: file, problems. */

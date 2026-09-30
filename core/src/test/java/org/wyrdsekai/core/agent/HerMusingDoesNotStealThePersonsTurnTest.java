@@ -40,7 +40,7 @@ class HerMusingDoesNotStealThePersonsTurnTest {
     void proactiveHoldsWhileATurnRuns() throws Exception {
         var src = actorSource();
         var body = src.substring(src.indexOf("private void executeProactiveAction"));
-        var guard = body.indexOf("if (state != State.IDLE || reactMessages != null)");
+        var guard = body.indexOf("if (aTurnIsInFlight())");
         var budget = body.indexOf("proactivityBudget");
         assertThat(guard).as("the in-flight guard exists").isGreaterThan(-1);
         assertThat(guard)
@@ -58,7 +58,9 @@ class HerMusingDoesNotStealThePersonsTurnTest {
             .as("a live loop with a human reactRequester is reactive even if the "
                 + "flag was overwritten mid-flight")
             .contains("reactMessages != null && reactRequester != null");
-        assertThat(body).contains("isHumanRequest(reactRequester)");
+        assertThat(body)
+            .as("the same person rule as enforceActionPolicy: another companion is not a person")
+            .contains("isHumanTrigger(reactRequester)");
     }
 
     @Test

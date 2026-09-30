@@ -3,7 +3,9 @@ package org.wyrdsekai.core.item;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.wyrdsekai.scripting.api.ItemCapabilityAudit;
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
+import org.wyrdsekai.scripting.api.ItemManifestParser;
 import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 
 import java.nio.charset.StandardCharsets;
@@ -62,12 +64,27 @@ class TheToolSheBuiltActuallyAnswersTest {
         }
     }
 
+    private String recorded;
+
     @BeforeEach
     void setUp() throws Exception {
         executor = new ItemScriptExecutor();
         try (var in = getClass().getResourceAsStream("/items/library_keeper.js")) {
-            script = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            recorded = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+        // The file calls world.llm.summarize without declaring it. Since 2026-09-28 the manifest
+        // is enforced, so the contract gate sends such a file back and the repair declares it:
+        // this is that repaired file, one capability longer.
+        script = recorded.replace("capabilities: [\"library.search\",",
+            "capabilities: [\"llm.summarize\", \"library.search\",");
+    }
+
+    @Test
+    void the_file_as_goose_wrote_it_is_flagged_for_its_undeclared_call() {
+        assertThat(ItemCapabilityAudit.undeclared(recorded,
+                ItemManifestParser.parse(recorded)))
+            .singleElement().asString().contains("llm.summarize");
+        assertThat(ItemCapabilityAudit.undeclared(script, ItemManifestParser.parse(script))).isEmpty();
     }
 
     @AfterEach
@@ -152,7 +169,7 @@ class TheToolSheBuiltActuallyAnswersTest {
      */
     @Test
     void it_still_answers_under_the_crafted_ceiling_a_real_item_gets() {
-        var caps = CarriedItemUse.capabilitiesFor("codex-cd2492e9");
+        var caps = CarriedItemUse.capabilitiesFor("codex-cd2492e9", script);
         assertThat(caps).isSameAs(ItemCapabilitySet.craftedDefault());
 
         var heard = new AtomicReference<String>();

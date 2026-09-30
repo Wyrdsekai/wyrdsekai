@@ -132,7 +132,32 @@
         },
         {
           "key": "WYRDSEKAI_TELNET_BIND",
-          "description": "telnet bind address (0.0.0.0 exposes to LAN)",
+          "description": "telnet bind address (0.0.0.0 exposes to LAN, unencrypted)",
+          "default": "127.0.0.1"
+        },
+        {
+          "key": "WYRDSEKAI_HTTP_BIND",
+          "description": "plain web port bind address (0.0.0.0 exposes to LAN, unencrypted)",
+          "default": "127.0.0.1"
+        },
+        {
+          "key": "WYRDSEKAI_HTTP_LAN_PLAINTEXT",
+          "description": "transition: plain :7070 on the LAN for phone apps from before 0.5.0",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_NATS_BIND_ALL",
+          "description": "household bus :4222/:4223 on the LAN (TLS + login); false = this machine only",
+          "default": "true"
+        },
+        {
+          "key": "WYRDSEKAI_NATS_LAN_PLAINTEXT",
+          "description": "transition: bus also takes clients with no login and no TLS",
+          "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_WEB_TERMINAL_BIND",
+          "description": "browser terminal (wyrd web) bind address (LAN = HTTPS)",
           "default": "127.0.0.1"
         },
         {
@@ -173,23 +198,23 @@
         },
         {
           "key": "WYRDSEKAI_TLS_ENABLED",
-          "description": "serve HTTPS directly (prefer a reverse proxy)",
-          "default": "false"
+          "description": "HTTPS + WSS for the household, with its own certificate",
+          "default": "true"
         },
         {
           "key": "WYRDSEKAI_TLS_PORT",
-          "description": "HTTPS port",
+          "description": "HTTPS + WSS port",
           "default": "7443"
         },
         {
           "key": "WYRDSEKAI_TLS_KEYSTORE",
-          "description": "path to JKS keystore",
+          "description": "a keystore of your own instead of the household certificate",
           "default": ""
         },
         {
-          "key": "WYRDSEKAI_TLS_AUTO_GENERATE",
-          "description": "self-sign a cert when keystore is missing",
-          "default": "true"
+          "key": "WYRDSEKAI_TLS_PASSWORD",
+          "description": "that keystore's password (empty = the per-install secret)",
+          "default": ""
         },
         {
           "key": "WYRDSEKAI_ZONE_PRIVACY_FLOOR",
@@ -217,9 +242,14 @@
           "default": "true"
         },
         {
-          "key": "WYRDSEKAI_MCP_STRICT_GRANTS",
-          "description": "strict MCP grant enforcement",
+          "key": "WYRDSEKAI_SUBPROCESS_FULL_ENV",
+          "description": "started programs (skills, recipes, MCP servers) inherit the node's whole environment, keys included; transition only",
           "default": "false"
+        },
+        {
+          "key": "WYRDSEKAI_MCP_STRICT_GRANTS",
+          "description": "strict MCP grant enforcement (false lets every companion use every service)",
+          "default": "true"
         },
         {
           "key": "WYRDSEKAI_ACTION_STRICT_GRANTS",
@@ -242,6 +272,21 @@
           "default": "true"
         },
         {
+          "key": "WYRDSEKAI_LIBRARY_RESEARCH_PER_DAY",
+          "description": "research runs each household member may hand the library per day, counted per person; a child has this number unless the parental-controls scroll sets their own; 0 = none",
+          "default": "5"
+        },
+        {
+          "key": "WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_PER_DAY",
+          "description": "research runs each companion may hand the library per day on her own time; 0 = none",
+          "default": "3"
+        },
+        {
+          "key": "WYRDSEKAI_LIBRARY_RESEARCH_HOUSEHOLD_PER_DAY",
+          "description": "research runs the whole household may hand the library per day, members and companions together (each can hold the model up to 90 minutes); 0 = none",
+          "default": "10"
+        },
+        {
           "key": "WYRDSEKAI_HOST_APPS",
           "description": "allowlist of host apps agents may launch",
           "default": ""
@@ -255,6 +300,21 @@
           "key": "WYRDSEKAI_HOST_OPEN_ROOTS",
           "description": "allowlisted host filesystem roots",
           "default": ""
+        },
+        {
+          "key": "WYRDSEKAI_ROOM_SCRIPT_STATEMENTS",
+          "description": "statements one call into a room's script may run before it is stopped",
+          "default": "1000000"
+        },
+        {
+          "key": "WYRDSEKAI_ROOM_SCRIPT_CPU_MS",
+          "description": "milliseconds of processor time one call into a room's script may use before it is stopped",
+          "default": "5000"
+        },
+        {
+          "key": "WYRDSEKAI_ITEMS_ALLOW_UNDECLARED",
+          "description": "transition only: let bundled and household items use what their manifest does not declare, with a warning for each (crafted and visitor items keep their limits)",
+          "default": "false"
         },
         {
           "key": "WYRDSEKAI_ITEM_MEND_MINUTES",
@@ -440,6 +500,11 @@
           "default": "99"
         },
         {
+          "key": "WYRDSEKAI_SERVING_PROFILE",
+          "description": "local serving profile: two-model (drive + voice), sparse-drive (a large sparse model as the drive, the voice model kept) or single-sparse (one large sparse model serves every lane); see wyrd brain",
+          "default": "two-model"
+        },
+        {
           "key": "WYRDSEKAI_MODEL",
           "description": "default model id sent in API requests",
           "default": "default"
@@ -578,7 +643,12 @@
         {
           "key": "WYRDSEKAI_VOICE_PASS",
           "description": "re-voice drive output through the voice model",
-          "default": "(= voice enabled)"
+          "default": "(= voice enabled; false under single-sparse)"
+        },
+        {
+          "key": "WYRDSEKAI_VOICE_POLISH",
+          "description": "finish a full-lane draft through the voice model before it is spoken",
+          "default": "(true; false under single-sparse)"
         },
         {
           "key": "WYRDSEKAI_VOICE_ROUTE_BY_TASK",
@@ -939,6 +1009,31 @@
           "key": "WYRDSEKAI_BODY_ACHE_HOURS",
           "description": "how long a quiet part of ordinary weight stays in a companion's felt line before it is only in the boiler room",
           "default": "6"
+        },
+        {
+          "key": "WYRDSEKAI_DEEP_SLEEP_DEADLINE_MINUTES",
+          "description": "the longest a deep sleep lasts; past it her voice training is stopped and she wakes",
+          "default": "15"
+        },
+        {
+          "key": "WYRDSEKAI_VOICE_ALIGN_TIMEOUT_MINUTES",
+          "description": "the longest one voice-training run may take",
+          "default": "60"
+        },
+        {
+          "key": "WYRDSEKAI_FLAG_SUSPECTED_ESCALATE_DAYS",
+          "description": "days a suspected protection flag is held before continuing signs may confirm it",
+          "default": "14"
+        },
+        {
+          "key": "WYRDSEKAI_FLAG_SUSPECTED_LIFT_DAYS",
+          "description": "days without a new sign before a suspected protection flag lifts",
+          "default": "90"
+        },
+        {
+          "key": "WYRDSEKAI_FLAG_NOTED_LIFT_DAYS",
+          "description": "days without a new sign before a noted protection flag lifts",
+          "default": "60"
         }
       ]
     }

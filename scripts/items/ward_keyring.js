@@ -14,7 +14,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Heavy iron ring of warded keys — see which wards guard a room, cut new keys, or melt old ones down.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["ward.grant", "ward.revoke"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

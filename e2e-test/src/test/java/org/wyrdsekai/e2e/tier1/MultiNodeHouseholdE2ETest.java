@@ -1,5 +1,8 @@
 package org.wyrdsekai.e2e.tier1;
 
+import org.wyrdsekai.between.NodeIdentity;
+import org.wyrdsekai.core.identity.HouseholdStore;
+import org.wyrdsekai.core.naming.HouseholdIdentity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
@@ -82,8 +85,18 @@ class MultiNodeHouseholdE2ETest {
         nodeB.start();
         log.info("Node B started on port {}", portB);
 
+        // Account replication is signed and taken only from machines on the household roster
+        // (what `wyrd join` sets up); enrol each node on the other's roster.
+        enrol(nodeA, nodeB.betweenIdentity());
+        enrol(nodeB, nodeA.betweenIdentity());
+
         // Wait for mesh to form
         Thread.sleep(3000);
+    }
+
+    private static void enrol(TestServerBootstrap node, NodeIdentity peer) {
+        new HouseholdStore(node.jdbcUrl()).upsert(peer.nodeId(), peer.publicKeyBytes(), "e2e",
+            HouseholdIdentity.fromSpkiBytes(peer.publicKeyBytes()).did(), peer.x25519PublicKeyBytes());
     }
 
     @AfterAll

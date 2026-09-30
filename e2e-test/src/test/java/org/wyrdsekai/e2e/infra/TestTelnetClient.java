@@ -29,6 +29,15 @@ public class TestTelnetClient implements AutoCloseable {
     private final CopyOnWriteArrayList<String> receivedLines = new CopyOnWriteArrayList<>();
     private final Thread readerThread;
     private volatile boolean running = true;
+    /**
+     * Lines received before the test's last action (connecting, or {@link #sendLine}). The next
+     * wait looks from here, so a reply that lands between the action and the wait is not
+     * missed: the server answers in about a millisecond, and a test thread that is descheduled
+     * for longer than that after its send used to wait for a line it had already received
+     * (2026-09-28: the banner before the first waitForText, score, reply, look).
+     */
+    private volatile int actionMark = 0;
+    private volatile boolean actionPending = true;
 
     private TestTelnetClient(String host, int port) throws IOException {
         this.socket = new Socket(host, port);
@@ -81,6 +90,8 @@ public class TestTelnetClient implements AutoCloseable {
 
     /** Send a line (appends \r\n). */
     public void sendLine(String text) throws IOException {
+        actionMark = receivedLines.size();
+        actionPending = true;
         log.debug("[Telnet] > {}", text);
         out.write((text + "\r\n").getBytes(StandardCharsets.UTF_8));
         out.flush();
@@ -101,10 +112,22 @@ public class TestTelnetClient implements AutoCloseable {
         sendLine("create " + username + " " + password);
     }
 
+    /**
+     * Where a wait starts: the first wait after an action looks back to that action; any
+     * later wait looks only at lines that arrive after it is called.
+     */
+    private int waitStart() {
+        if (actionPending) {
+            actionPending = false;
+            return Math.min(actionMark, receivedLines.size());
+        }
+        return receivedLines.size();
+    }
+
     /** Wait for a line containing the given substring. */
     public String waitForText(String substring, Duration timeout) {
         var result = new String[1];
-        int startIdx = receivedLines.size();
+        int startIdx = waitStart();
         Awaitility.await().atMost(timeout).pollInterval(Duration.ofMillis(100)).until(() -> {
             for (int i = startIdx; i < receivedLines.size(); i++) {
                 if (receivedLines.get(i).contains(substring)) {
@@ -120,7 +143,7 @@ public class TestTelnetClient implements AutoCloseable {
     /** Wait for any line matching the predicate. */
     public String waitForLine(Predicate<String> predicate, Duration timeout) {
         var result = new String[1];
-        int startIdx = receivedLines.size();
+        int startIdx = waitStart();
         Awaitility.await().atMost(timeout).pollInterval(Duration.ofMillis(100)).until(() -> {
             for (int i = startIdx; i < receivedLines.size(); i++) {
                 if (predicate.test(receivedLines.get(i))) {
@@ -135,6 +158,7 @@ public class TestTelnetClient implements AutoCloseable {
 
     /** Check that no line contains the substring within the timeout. */
     public boolean noneContains(String substring, Duration timeout) {
+        actionPending = false;
         int startSize = receivedLines.size();
         try {
             Thread.sleep(timeout.toMillis());
@@ -149,6 +173,7 @@ public class TestTelnetClient implements AutoCloseable {
 
     /** Count lines containing the substring received within a timeout window. */
     public int countContaining(String substring, Duration window) {
+        actionPending = false;
         int startSize = receivedLines.size();
         try {
             Thread.sleep(window.toMillis());

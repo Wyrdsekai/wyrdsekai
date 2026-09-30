@@ -11,28 +11,30 @@
  * vitality state, and Study notes are persistent user data, not secrets, and
  * the encrypted-store overhead would not buy anything there.
  *
- * # Encryption key bootstrap
+ * # Encryption key
  *
- * MMKV's `encryptionKey` is used as an AES-CFB key directly. The key itself
- * needs to live somewhere. v1 (this commit): we generate a 32-byte random key
- * once on first run and stash it in a separate *unencrypted* MMKV bootstrap
- * file. This means an attacker with `adb pull` on a rooted phone can still
- * grab the key — but it locks down the steady-state on-disk artifact
- * (encrypted MMKV file), defeats casual XML inspection, and defeats backups
- * that exclude the bootstrap file. v2 follow-up: replace the bootstrap with
- * a Keystore-backed random via `react-native-keychain` so the key never
- * leaves Android Keystore / iOS Keychain.
+ * MMKV's `encryptionKey` is used as an AES-CFB key directly. Since 0.5.0 the
+ * key lives in the platform's secure storage — the iOS Keychain / Android
+ * Keystore-backed store, via expo-secure-store — readable after the first
+ * unlock and only on this device (it is not in backups, so a backup of the
+ * MMKV file alone cannot be read). D6.
  *
- * # Hard cutover
+ * Before 0.5.0 the key sat in a separate *unencrypted* MMKV bootstrap file
+ * next to the data. On the first start of 0.5.0 that key is moved into the
+ * Keychain and erased from the bootstrap file (the data stays readable; nobody
+ * has to pair again).
  *
- * On first import, we wipe the legacy AsyncStorage keys for everything we
- * now own. This means existing logged-in users will be kicked back to the
- * pairing/login screen after the upgrade. SPEC: encryption work, 2026-05-11.
+ * # Legacy AsyncStorage copies
+ *
+ * Tokens, passwords and pins that older builds wrote to plain AsyncStorage are
+ * copied into this store once and then erased from AsyncStorage.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { MMKV } from 'react-native-mmkv';
+import { toBase64Url } from '../crypto/bytes';
+import { randomBytes } from '../crypto/random';
 // NOTE: react-native-fs is dynamically required inside initSecureStorage so
 // its top-level `new NativeEventEmitter(NativeModules.RNFSManager)` does not
 // crash the entire JS bundle on platforms where the RNFS native module isn't
@@ -42,7 +44,26 @@ import { MMKV } from 'react-native-mmkv';
 
 const BOOTSTRAP_ID = 'wyrd-secure-bootstrap';
 const STORE_ID = 'wyrd-secure';
+/** Where builds before 0.5.0 kept the key, in the plain bootstrap file. */
 const KEY_ENCRYPTION_KEY = '__enc_key_v1';
+/** The key's name in the Keychain / Keystore-backed store. */
+export const KEYCHAIN_KEY_NAME = 'wyrd_secure_store_key_v2';
+
+interface KeychainModule {
+  getItem(key: string, options?: object): string | null;
+  setItem(key: string, value: string, options?: object): void;
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: unknown;
+}
+
+/** expo-secure-store, or null where it is not linked (web, tests). */
+function keychain(): KeychainModule | null {
+  try {
+    const mod = require('expo-secure-store') as KeychainModule;
+    return typeof mod?.getItem === 'function' ? mod : null;
+  } catch {
+    return null;
+  }
+}
 
 // Legacy AsyncStorage keys we used to own (pre-secureStorage). On first
 // secureStorage init we remove these — see `migrateLegacyOnce` below.
@@ -99,26 +120,42 @@ const LEGACY_KEYS_TO_DROP = [
 let storeInstance: MMKV | null = null;
 let migrationDone = false;
 
-function getOrCreateEncryptionKey(): string {
+function newEncryptionKey(): string {
+  // 32 bytes from the platform CSPRNG as base64url ≈ 43 chars. randomBytes
+  // throws when there is no secure source: a guessable key is no key.
+  return toBase64Url(randomBytes(32));
+}
+
+/**
+ * The store's key: from the Keychain; moved there from the plain bootstrap
+ * file of an older build (once); or made new. Without the secure-storage
+ * module (a build that did not link it) the old bootstrap file is used with a
+ * loud error, so the app still starts — that is a broken build, not a mode.
+ */
+export function getOrCreateEncryptionKey(): string {
   const bootstrap = new MMKV({ id: BOOTSTRAP_ID });
-  let key = bootstrap.getString(KEY_ENCRYPTION_KEY);
-  if (key) return key;
-  // 32 bytes of random as base64-no-pad ≈ 43 chars.
-  const bytes = new Uint8Array(32);
-  if (typeof globalThis !== 'undefined' && (globalThis as any).crypto?.getRandomValues) {
-    (globalThis as any).crypto.getRandomValues(bytes);
-  } else {
-    // Last-resort: Math.random is NOT crypto-safe; we log loudly and proceed
-    // so the app remains functional, but treat this as a critical bug.
+  const legacy = bootstrap.getString(KEY_ENCRYPTION_KEY);
+  const kc = keychain();
+  if (!kc) {
     // eslint-disable-next-line no-console
-    console.error('[secureStorage] crypto.getRandomValues unavailable — falling back to Math.random');
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    console.error('[secureStorage] expo-secure-store is not linked — the store key is NOT in the Keychain');
+    if (legacy) return legacy;
+    const key = newEncryptionKey();
+    bootstrap.set(KEY_ENCRYPTION_KEY, key);
+    return key;
   }
-  // base64url encode without padding
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  key = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  bootstrap.set(KEY_ENCRYPTION_KEY, key);
+  const opts = { keychainAccessible: kc.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY };
+  let key = kc.getItem(KEYCHAIN_KEY_NAME, opts);
+  if (!key) {
+    // Keep the old key (the data was written with it) but move it; else a new one.
+    key = legacy ?? newEncryptionKey();
+    kc.setItem(KEYCHAIN_KEY_NAME, key, opts);
+  }
+  // Only once the Keychain holds it: erase the plain copy.
+  if (legacy) {
+    bootstrap.delete(KEY_ENCRYPTION_KEY);
+    bootstrap.clearAll();
+  }
   return key;
 }
 
@@ -137,18 +174,13 @@ function getStore(): MMKV {
 }
 
 /**
- * Drop the legacy plaintext AsyncStorage entries for the keys we now own.
- * Called once per cold start (cheap to re-run — AsyncStorage.removeItem
- * is idempotent).
+ * Move the legacy plaintext AsyncStorage entries for the keys we now own into
+ * this store, then erase them from AsyncStorage. Called once per cold start
+ * (cheap to re-run: nothing is left to move after the first time). Values
+ * already in this store win over the old copies.
  *
- * Production: hard cutover. Any tokens/pins that were sitting in
- * AsyncStorage are gone after this; the user re-pairs / re-logs in.
- *
- * Debug builds (`__DEV__`): one-time migration. The e2e probe scripts seed
- * credentials by writing to AsyncStorage/RKStorage; we copy them into the
- * encrypted store BEFORE deleting so the new APK respects test fixtures.
- * Tradeoff: a malicious debug user could plant credentials this way, but
- * debug builds aren't signed for release distribution anyway.
+ * The e2e probe scripts seed credentials through a seed file (step 1) or by
+ * writing to AsyncStorage/RKStorage (step 2); both land here.
  */
 export async function initSecureStorage(): Promise<void> {
   if (migrationDone) return;
@@ -200,26 +232,20 @@ export async function initSecureStorage(): Promise<void> {
     // 2. AsyncStorage→MMKV migration (always-on, no-op if values absent).
     // Bundle is built with --dev false so __DEV__ is false even in e2e
     // test builds; gating on __DEV__ silently broke the e2e seed flow.
-    for (const k of LEGACY_KEYS_TO_DROP) {
-      const v = await AsyncStorage.getItem(k);
-      if (v != null && store.getString(k) == null) {
-        store.set(k, v);
-      }
-    }
+    // Every reader of these keys now goes through secureStorage, so the
+    // plain AsyncStorage copies are erased once they are copied (D6).
     const allKeys = await AsyncStorage.getAllKeys();
-    const trustKeys = allKeys.filter((k) => k.startsWith('@wyrd_trust_'));
-    for (const k of trustKeys) {
+    const legacy = [
+      ...LEGACY_KEYS_TO_DROP,
+      ...allKeys.filter((k) => k.startsWith('@wyrd_trust_') || k.startsWith('@wyrd_zone_pw_')),
+    ].filter((k) => allKeys.includes(k));
+    for (const k of legacy) {
       const v = await AsyncStorage.getItem(k);
       if (v != null && store.getString(k) == null) {
         store.set(k, v);
       }
     }
-    // NOTE: we do NOT wipe legacy AsyncStorage values. Some code paths
-    // (StandaloneNodeContext, SettingsScreen) still read AsyncStorage
-    // directly. Until those are migrated to secureStorage too, we'd
-    // break them. The encryption win for v1 is "credentials now also
-    // live in encrypted MMKV alongside AsyncStorage", not full wipe.
-    // Real hard cutover lands in a follow-up after all readers move.
+    if (legacy.length > 0) await AsyncStorage.multiRemove(legacy);
   } catch {
     // Best-effort — not fatal if the legacy store is already gone.
   }
@@ -242,6 +268,9 @@ export const secureStorage = {
   },
   async clear(): Promise<void> {
     getStore().clearAll();
+  },
+  async keys(): Promise<string[]> {
+    return getStore().getAllKeys();
   },
   // Sync helpers for call sites that don't want the await dance.
   syncGet(key: string): string | null {

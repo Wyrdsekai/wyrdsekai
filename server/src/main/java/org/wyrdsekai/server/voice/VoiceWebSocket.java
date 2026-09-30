@@ -5,8 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.UUID;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Javalin WebSocket handler for voice input (§55).
@@ -31,10 +31,27 @@ public class VoiceWebSocket implements Consumer<WsConfig> {
      * the voice socket. Null until the world socket exists (voice then only
      * echoes back to the caller, as before).
      */
-    private static volatile BiConsumer<String, String> transcriptionSink;
+    private static volatile TranscriptionSink transcriptionSink;
 
-    public static void setTranscriptionSink(BiConsumer<String, String> sink) {
+    /** A finished transcription: the world session it names, the text, and who is speaking. */
+    @FunctionalInterface
+    public interface TranscriptionSink {
+        void accept(String sessionId, String text, String userId);
+    }
+
+    public static void setTranscriptionSink(TranscriptionSink sink) {
         transcriptionSink = sink;
+    }
+
+    /**
+     * Login token → user id, or null when the token is not a login. Until 2026-09-28 the voice
+     * socket asked for no login at all and spoke its transcriptions into whichever world
+     * session the caller named. Unset (tests, a node without accounts) keeps the old behaviour.
+     */
+    private static volatile Function<String, String> tokenToUser;
+
+    public static void setAuthenticator(Function<String, String> authenticator) {
+        tokenToUser = authenticator;
     }
 
     public VoiceWebSocket(VoiceAdapter adapter) {
@@ -42,11 +59,11 @@ public class VoiceWebSocket implements Consumer<WsConfig> {
     }
 
     /** Forward a finished transcription to the world-session sink, if wired. */
-    private static void forwardToWorld(String sessionId, String text) {
+    private static void forwardToWorld(String sessionId, String text, String userId) {
         var sink = transcriptionSink;
         if (sink == null || text == null || text.isBlank()) return;
         try {
-            sink.accept(sessionId, text);
+            sink.accept(sessionId, text, userId);
         } catch (RuntimeException e) {
             log.warn("Voice transcription sink failed for {}: {}", sessionId, e.getMessage());
         }
@@ -55,6 +72,16 @@ public class VoiceWebSocket implements Consumer<WsConfig> {
     @Override
     public void accept(WsConfig ws) {
         ws.onConnect(ctx -> {
+            var auth = tokenToUser;
+            if (auth != null) {
+                var token = ctx.queryParam("token");
+                var userId = token == null || token.isBlank() ? null : auth.apply(token);
+                if (userId == null) {
+                    ctx.closeSession(4001, "login required");
+                    return;
+                }
+                ctx.attribute("voiceUserId", userId);
+            }
             var sessionId = ctx.queryParam("session");
             if (sessionId == null) sessionId = UUID.randomUUID().toString();
             ctx.attribute("voiceSessionId", sessionId);
@@ -76,7 +103,7 @@ public class VoiceWebSocket implements Consumer<WsConfig> {
                     var result = adapter.finishTranscription(sessionId);
                     if (result.transcriptionReady()) {
                         ctx.send("{\"transcription\":" + jsonString(result.text()) + "}");
-                        forwardToWorld(sessionId, result.text());
+                        forwardToWorld(sessionId, result.text(), ctx.attribute("voiceUserId"));
                     } else {
                         ctx.send("{\"status\":\"no_audio\"}");
                     }
@@ -95,7 +122,7 @@ public class VoiceWebSocket implements Consumer<WsConfig> {
             var result = adapter.processFrame(sessionId, bytes);
             if (result.transcriptionReady()) {
                 ctx.send("{\"transcription\":" + jsonString(result.text()) + "}");
-                forwardToWorld(sessionId, result.text());
+                forwardToWorld(sessionId, result.text(), ctx.attribute("voiceUserId"));
             }
         });
 

@@ -178,7 +178,7 @@ class ARoomThatMustActIsNotDoneWhenBuiltTest {
         var src = java.nio.file.Files.readString(
             java.nio.file.Files.exists(fromCore) ? fromCore : java.nio.file.Path.of(rel));
         var cont = src.indexOf("private void continueAsReact(String mission");
-        var set = src.indexOf("if (reactRequester != null && isHumanRequest(reactRequester)) {\n                reactiveInference = true;", cont);
+        var set = src.indexOf("if (reactRequester != null && isHumanTrigger(reactRequester)) {\n                reactiveInference = true;", cont);
         assertThat(set).as("continueAsReact must mark a human-served loop reactive").isGreaterThan(cont);
     }
 }

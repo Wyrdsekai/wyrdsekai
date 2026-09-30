@@ -1,9 +1,16 @@
 package org.wyrdsekai.server;
 
 import com.fasterxml.jackson.databind.SerializationFeature;
+import org.wyrdsekai.core.crypto.TunnelKey;
 import org.wyrdsekai.between.NodeIdentity;
+import org.wyrdsekai.between.RelayTls;
+import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.crypto.HouseholdBus;
+import org.wyrdsekai.core.crypto.HouseholdTls;
+import org.wyrdsekai.server.http.HouseholdJoinRoutes;
 import org.wyrdsekai.core.identity.HouseholdStore;
 import org.wyrdsekai.core.naming.HouseholdIdentity;
+import org.wyrdsekai.core.persistence.PairingService;
 
 import java.io.IOException;
 import java.sql.DriverManager;
@@ -34,7 +41,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManager;
@@ -106,6 +117,8 @@ public final class RelayNkeyAdminMain {
                 case "deregister" -> doDeregister(identity, out, err, args);
                 case "phone-invite" -> doPhoneInvite(identity, out, err, args);
                 case "claim" -> doClaim(identity, out, err, args);
+                case "bind-zone" -> doBindZone(identity, out, err, args);
+                case "zone-add" -> doZoneAdd(identity, out, err, args);
                 case "ssh-enable" -> doSshTunnel(identity, out, err, args, true);
                 case "ssh-disable" -> doSshTunnel(identity, out, err, args, false);
                 default -> {
@@ -157,6 +170,7 @@ public final class RelayNkeyAdminMain {
         var result = RelayCommandBridge.relayJoin(hostArg, code, fingerprint);
         if (result.ok()) {
             out.println("[wyrd] relay join OK — homed on " + result.inviteUrl());
+            if (result.detail() != null) out.println("[wyrd] " + result.detail());
             return 0;
         }
         err.println("[wyrd] relay join failed: " + result.detail());
@@ -168,25 +182,39 @@ public final class RelayNkeyAdminMain {
      * into a hub's household using a pre-shared household key, then mirror the
      * hub + roster locally so the GPU-borrow consumer/provider gates light up.
      *
-     * <p>Usage: {@code relay-nkey household-join <host[:port]> --household-key <key>}
-     * (default port 7070). POSTs the local identity + key to
-     * {@code http://host:port/api/household/join}; on 200, upserts the returned
+     * <p>Usage: {@code relay-nkey household-join <host[:port]> --household-key <key>[.<home_ca_fp>]
+     * [--ca-fp <home_ca_fp>]} (default port 7443). POSTs the local identity + key to
+     * {@code https://host:port/api/household/join}, pinned to the hub's household CA; on 200, upserts the returned
      * {@code hub} + every {@code members} entry into the local
      * {@code world.db:households} table and persists {@code WYRDSEKAI_NATS_URL},
      * {@code WYRDSEKAI_ZONE_ID}, {@code WYRDSEKAI_INFERENCE_HOUSEHOLD_BORROW=true}.</p>
      */
     private static int doHouseholdJoin(PrintStream out, PrintStream err, String[] args) {
         if (args.length < 2) {
-            err.println("[wyrd] usage: relay-nkey household-join <host[:port]> --household-key <key>");
+            err.println("[wyrd] usage: relay-nkey household-join <host[:port]> --household-key <key.fingerprint> [--ca-fp <fingerprint>]");
             return 1;
         }
         var hostArg = args[1];
         String key = null;
+        String caFp = null;
         for (int i = 2; i < args.length; i++) {
             if (args[i].equals("--household-key") && i + 1 < args.length) key = args[++i];
+            else if (args[i].equals("--ca-fp") && i + 1 < args.length) caFp = args[++i];
         }
         if (key == null || key.isBlank()) {
             err.println("[wyrd] household-join: missing --household-key <key>");
+            return 1;
+        }
+        // The join key `wyrd household key` prints is <key>.<home_ca_fp>: the hub's CA fingerprint rides
+        // with the key, and the key is only sent to a hub whose certificate chains to that CA (W2).
+        var keyPart = PairingService.householdKeyPart(key);
+        if (caFp == null && !keyPart.equals(key.trim())) caFp = key.trim().substring(keyPart.length() + 1);
+        key = keyPart;
+        caFp = HouseholdTls.normalizeFingerprint(caFp);
+        if (caFp == null) {
+            err.println("[wyrd] household-join: this household key does not carry the hub's certificate fingerprint.");
+            err.println("[wyrd]   On the hub, run `wyrd household key` and paste the whole line it prints.");
+            err.println("[wyrd]   (Hubs from before 0.5.0 must be updated first: the key now travels encrypted.)");
             return 1;
         }
 
@@ -212,7 +240,7 @@ public final class RelayNkeyAdminMain {
         }
 
         String host;
-        int port = 7070;
+        int port = 7443;
         var colon = hostArg.indexOf(':');
         if (colon > 0) {
             host = hostArg.substring(0, colon);
@@ -238,10 +266,36 @@ public final class RelayNkeyAdminMain {
         body.put("node", node);
 
         try {
+            // Both calls go over HTTPS pinned to the hub's household CA (W2): the key is never sent
+            // to a hub that cannot show the certificate the key names.
+            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                .sslContext(HouseholdTls.pinnedContext(caFp)).build();
+            // Proof of possession: sign the hub's one-time challenge with the node key being enrolled.
+            var challengeReq = HttpRequest.newBuilder(
+                    URI.create("https://" + host + ":" + port + "/api/household/join/challenge"))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(15))
+                .POST(BodyPublishers.ofByteArray(
+                    mapper.writeValueAsBytes(Map.of("nodeId", identity.nodeId()))))
+                .build();
+            var challengeResp = http.send(challengeReq, BodyHandlers.ofString());
+            if (challengeResp.statusCode() != 200) {
+                err.println("[wyrd] hub refused a join challenge (HTTP " + challengeResp.statusCode()
+                    + "): " + challengeResp.body() + " — is the hub on the same Wyrdsekai version?");
+                return 1;
+            }
+            var challengeRoot = mapper.readTree(challengeResp.body());
+            var challenge = challengeRoot.path("challenge").asText("");
+            var proof = identity.sign(HouseholdJoinRoutes.proofStatement(challenge,
+                challengeRoot.path("hubNodeId").asText(""), identity.nodeId(),
+                identity.publicKeyBase64(), identity.x25519PublicKeyBase64()));
+            body.put("challenge", challenge);
+            body.put("proof", Base64.getEncoder().encodeToString(proof));
+
             var json = mapper.writeValueAsBytes(body);
-            var url = "http://" + host + ":" + port + "/api/household/join";
-            out.println("[wyrd] household-join: enrolling with " + host + ":" + port);
-            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+            var url = "https://" + host + ":" + port + "/api/household/join";
+            out.println("[wyrd] household-join: enrolling with " + host + ":" + port
+                + " (encrypted; hub certificate " + caFp.substring(0, 16) + "…)");
             var req = HttpRequest.newBuilder(URI.create(url))
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofSeconds(15))
@@ -256,6 +310,21 @@ public final class RelayNkeyAdminMain {
             var root = mapper.readTree(resp.body());
             var zoneId = root.path("zoneId").asText("");
             var natsUrl = root.path("natsUrl").asText("");
+            // This machine's login for the hub's bus and the CA it pins there (W2).
+            var caPem = root.path("ca_pem").asText("");
+            var natsUser = root.path("nats_user").asText("");
+            if (!caPem.isBlank() && !natsUser.isBlank() && !natsUrl.isBlank()) {
+                var hubCa = HouseholdTls.readCertificates(caPem).getFirst();
+                if (!caFp.equals(HouseholdTls.fingerprint(hubCa))) {
+                    err.println("[wyrd] household-join: the hub sent a CA that is not the one its key names; nothing was saved.");
+                    return 2;
+                }
+                HouseholdBus.saveHubLink(dataDir, new HouseholdBus.HubLink(natsUrl, natsUser,
+                    root.path("nats_pass").asText(""), caPem));
+                out.println("[wyrd] household-join: saved this machine's login for the hub's bus (encrypted, pinned)");
+            } else {
+                err.println("[wyrd] household-join: the hub issued no bus login; this machine cannot use its bus until the hub is updated.");
+            }
 
             // Mirror the hub + roster into the LOCAL households table so the
             // GPU-borrow gate (HouseholdStore.get(peer).isPresent()) lights up.
@@ -373,18 +442,30 @@ public final class RelayNkeyAdminMain {
         // Parse wyrdrelay://host[:port]/<token>
         var parsed = parseInviteUrl(inviteUrl, err);
         if (parsed == null) return 1;
+        // The relay binds the registration to this zone and grants it only this zone's subjects.
+        if (zoneId == null) zoneId = resolveLocalZoneLabel();
+        if (zoneId == null || zoneId.isBlank()) {
+            err.println("[wyrd] relay-nkey: cannot tell this zone's name. Set WYRDSEKAI_ZONE_ID, "
+                + "or pass --zone-id <zone>, then join again.");
+            return 1;
+        }
 
         var pubkey = identity.nkeyPublicKey();
         out.println("[wyrd] relay-nkey: registering pubkey=" + truncate(pubkey)
-            + " with " + parsed.host + ":" + parsed.port);
+            + " for zone '" + zoneId + "' with " + parsed.host + ":" + parsed.port);
 
         try {
             var mapper = new ObjectMapper();
+            long ts = Instant.now().getEpochSecond();
+            var proof = identity.nkeyAuthHandler().sign(
+                ("register-nkey:" + ts + ":" + pubkey + ":" + zoneId).getBytes(StandardCharsets.UTF_8));
             var body = new LinkedHashMap<String, Object>();
             body.put("invite_token", parsed.token);
             body.put("pubkey", pubkey);
             if (householdTag != null) body.put("household_tag", householdTag);
-            if (zoneId != null) body.put("zone_id", zoneId);
+            body.put("zone_id", zoneId);
+            body.put("ts", ts);
+            body.put("signature", Base64.getEncoder().encodeToString(proof));
             if (nodeName != null) body.put("node_name", nodeName);
             var json = mapper.writeValueAsBytes(body);
 
@@ -422,6 +503,9 @@ public final class RelayNkeyAdminMain {
                     if (p > 0) relayNatsPort = p;
                 }
             } catch (Exception ignore) { /* keep 4222 */ }
+            // Pin the zone link from first contact: the relay names the certificate its zone port
+            // serves and its own authority in the register reply (RelayTls reads the pins).
+            recordRelayPins(resolveDataDir(), parsed.host + ":" + relayNatsPort, resp.body(), out);
 
             // Phase 2: auto-update the conf file so the operator doesn't have to.
             // Leg-aware (, append-not-wipe): a zone
@@ -611,6 +695,30 @@ public final class RelayNkeyAdminMain {
         }
         var endpoint = registrationUrl.replaceAll("/+$", "") + "/deregister";
 
+        // A password-mode leg is removed too: it proves its relay token without sending it.
+        int passwordRc = 0;
+        var creds = confPath == null ? new String[2] : legCredentials(confPath, registrationUrl);
+        if (creds[0] != null && creds[1] != null) {
+            try {
+                long ts = Instant.now().getEpochSecond();
+                var body = new LinkedHashMap<String, Object>();
+                body.put("household_id", creds[0]);
+                body.put("ts", ts);
+                body.put("mac", tokenMac(creds[1], "deregister:" + ts + ":" + creds[0]));
+                var resp = relayPost(endpoint, new ObjectMapper().writeValueAsBytes(body), fingerprint);
+                if (resp.statusCode() == 200) {
+                    out.println("[wyrd] deregister: password registration " + creds[0] + " removed. response=" + resp.body());
+                } else {
+                    err.println("[wyrd] relay refused deregister of " + creds[0] + " (HTTP "
+                        + resp.statusCode() + "): " + resp.body());
+                    passwordRc = 2;
+                }
+            } catch (Exception e) {
+                err.println("[wyrd] deregister of " + creds[0] + " failed — " + e.getMessage());
+                passwordRc = 2;
+            }
+        }
+
         var pubkey = identity.nkeyPublicKey();
         out.println("[wyrd] deregister: pubkey=" + truncate(pubkey)
             + " against " + endpoint);
@@ -645,7 +753,7 @@ public final class RelayNkeyAdminMain {
                 return 2;
             }
             out.println("[wyrd] deregister: ok. response=" + resp.body());
-            return 0;
+            return passwordRc;
         } catch (Exception e) {
             err.println("[wyrd] deregister failed — " + e.getMessage());
             return 2;
@@ -716,8 +824,9 @@ public final class RelayNkeyAdminMain {
             if (confPath != null) {
                 var hh = resolveHouseholdForRegistration(confPath, registrationUrl);
                 if (hh[0] != null && hh[1] != null) {
+                    // The token proves itself without crossing the wire (HMAC over the challenge).
                     body.put("household_id", hh[0]);
-                    body.put("token", hh[1]);
+                    body.put("mac", tokenMac(hh[1], "phone-invite:" + ts + ":" + hh[0]));
                 }
             }
             var mapper = new ObjectMapper();
@@ -762,6 +871,26 @@ public final class RelayNkeyAdminMain {
                         }
                         body2 = mapper.writeValueAsString(on);
                     }
+                    // The home's public tunnel key ( W3): the phone seals its
+                    // tunnel to it, so a relay cannot stand in for this home.
+                    try {
+                        var zk = TunnelKey.publicForInvite(TunnelKey.loadOrCreate(resolveDataDir()));
+                        on.put("invite_url", stampTunnelKeyIntoInviteUrl(on.get("invite_url").asText(), zk, mapper));
+                        if (on.path("payload").isObject()) ((ObjectNode) on.get("payload")).put("zk", zk);
+                        body2 = mapper.writeValueAsString(on);
+                    } catch (Exception tk) {
+                        System.err.println("[wyrd] this invite carries no tunnel key (" + tk.getMessage()
+                            + "); the phone cannot seal its connection through the relay");
+                    }
+                    // D1: the household CA the phone pins, and this home's HTTPS address on the LAN (W2).
+                    var tlsFields = homeTlsFields();
+                    if (!tlsFields.containsKey("home_ca_fp")) {
+                        System.err.println("[wyrd] this invite carries no household certificate fingerprint: start the "
+                            + "node once, then make the invite again, or the phone cannot use this home's LAN address");
+                    }
+                    on.put("invite_url", stampFieldsIntoInviteUrl(on.get("invite_url").asText(), tlsFields, mapper));
+                    if (on.path("payload").isObject()) tlsFields.forEach(((ObjectNode) on.get("payload"))::put);
+                    body2 = mapper.writeValueAsString(on);
                     finalInviteUrl = on.get("invite_url").asText();
                 }
             } catch (Exception stampErr) {
@@ -1129,6 +1258,217 @@ public final class RelayNkeyAdminMain {
         }
     }
 
+    // ── zone binding (security review 2026-09-28) ─────────────────────────
+
+    /**
+     * {@code bind-zone [--zone-id Z] [--registration-url U]}: binds this zone's registration on each relay leg
+     * (or the one named) to the zone label, so the relay grants it only this zone's subjects. Registrations
+     * made before zone binding need it once; the node also runs it at start.
+     */
+    private static int doBindZone(NodeIdentity identity, PrintStream out, PrintStream err, String[] args) {
+        String zone = null, only = null;
+        for (int i = 1; i + 1 < args.length; i += 2) {
+            switch (args[i]) {
+                case "--zone-id" -> zone = args[i + 1];
+                case "--registration-url" -> only = args[i + 1];
+                default -> { /* ignore unknown */ }
+            }
+        }
+        if (zone == null) zone = resolveLocalZoneLabel();
+        var confPath = resolveWritableConfPath();
+        if (zone == null || confPath == null) {
+            err.println("[wyrd] bind-zone: cannot tell this zone's name or find the relay settings.");
+            return 1;
+        }
+        final var want = only == null ? null : normalizeRegUrl(only);
+        Function<String, String> setting = k -> readEnvVar(confPath, k);
+        var results = bindZones(identity, zone, setting, url -> want == null || normalizeRegUrl(url).equals(want));
+        if (results.isEmpty()) {
+            err.println("[wyrd] bind-zone: no relay registered. Join one first: wyrd relay join <token>");
+            return 1;
+        }
+        boolean allOk = true;
+        for (var r : results) {
+            (r.ok() ? out : err).println("[wyrd] bind-zone: " + r.registrationUrl() + ": " + r.detail());
+            allOk &= r.ok();
+        }
+        return allOk ? 0 : 2;
+    }
+
+    /** One relay leg's answer to a bind-zone call. */
+    public record BindResult(String registrationUrl, boolean ok, String detail) {}
+
+    /**
+     * Binds {@code zone} on every relay leg found through {@code setting} (the conf keys
+     * {@code WYRDSEKAI_RELAY_REGISTRATION_URL}, {@code _FINGERPRINT}, {@code _USER}, {@code _TOKEN}, with the
+     * {@code _2}.. suffixes of further legs). The proof is the node's NKey signature, or for a leg that
+     * authenticates with a relay password, an HMAC with that password. Called at node start (Main) with
+     * the process environment, and by {@code wyrd relay bind-zone} with the conf file.
+     */
+    public static List<BindResult> bindZones(NodeIdentity identity, String zone, Function<String, String> setting,
+                                             Predicate<String> legFilter) {
+        var out = new ArrayList<BindResult>();
+        for (var sfx : LEG_SUFFIXES) {
+            var regUrl = setting.apply("WYRDSEKAI_RELAY_REGISTRATION_URL" + sfx);
+            if (regUrl == null || regUrl.isBlank() || !legFilter.test(regUrl)) continue;
+            var fp = setting.apply("WYRDSEKAI_RELAY_FINGERPRINT" + sfx);
+            var user = setting.apply("WYRDSEKAI_RELAY_USER" + sfx);
+            var token = setting.apply("WYRDSEKAI_RELAY_TOKEN" + sfx);
+            boolean nkey = RelayTls.useNkey(setting.apply(RelayTls.USE_NKEY_ENV), token) || user == null;
+            try {
+                long ts = Instant.now().getEpochSecond();
+                var key = nkey ? identity.nkeyPublicKey() : user;
+                var challenge = "bind-zone:" + ts + ":" + key + ":" + zone;
+                var body = new LinkedHashMap<String, Object>();
+                body.put(nkey ? "pubkey" : "household_id", key);
+                body.put("zone_id", zone);
+                body.put("ts", ts);
+                if (nkey) {
+                    body.put("signature", Base64.getEncoder().encodeToString(
+                        identity.nkeyAuthHandler().sign(challenge.getBytes(StandardCharsets.UTF_8))));
+                } else {
+                    body.put("mac", tokenMac(token, challenge));
+                }
+                var resp = relayPost(regUrl.replaceAll("/+$", "") + "/bind-zone",
+                    new ObjectMapper().writeValueAsBytes(body), fp);
+                var reply = resp.body();
+                if (resp.statusCode() == 200) {
+                    out.add(new BindResult(regUrl, true, "zone '" + zone + "' bound"));
+                } else if (resp.statusCode() == 404 && reply.contains("Not found")) {
+                    out.add(new BindResult(regUrl, true, "this relay has no zone binding yet (older relay)"));
+                } else {
+                    out.add(new BindResult(regUrl, false, "HTTP " + resp.statusCode() + ": " + reply));
+                }
+            } catch (Exception e) {
+                out.add(new BindResult(regUrl, false, e.getMessage()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * {@code zone-add <member>}: vouches, as the holder of this zone on the relay, for another node of this
+     * household (its NKey {@code U…}, or a password registration {@code hh-…}) so it may bind the same zone.
+     */
+    private static int doZoneAdd(NodeIdentity identity, PrintStream out, PrintStream err, String[] args) {
+        String member = null, zone = null, registrationUrl = null, fingerprint = null;
+        for (int i = 1; i < args.length; i++) {
+            switch (args[i]) {
+                case "--zone-id" -> { if (i + 1 < args.length) zone = args[++i]; }
+                case "--registration-url" -> { if (i + 1 < args.length) registrationUrl = args[++i]; }
+                case "--fingerprint" -> { if (i + 1 < args.length) fingerprint = args[++i]; }
+                default -> { if (!args[i].startsWith("--") && member == null) member = args[i]; }
+            }
+        }
+        if (member == null) {
+            err.println("[wyrd] usage: relay zone-add <member NKey U… or hh-…> [--zone-id Z] "
+                + "[--registration-url https://host[:port]]");
+            return 1;
+        }
+        if (zone == null) zone = resolveLocalZoneLabel();
+        var confPath = resolveWritableConfPath();
+        if (registrationUrl == null && confPath != null) {
+            registrationUrl = readEnvVar(confPath, "WYRDSEKAI_RELAY_REGISTRATION_URL");
+        }
+        if (registrationUrl == null || zone == null) {
+            err.println("[wyrd] zone-add: no relay registered, or this zone's name is unknown.");
+            return 1;
+        }
+        if (fingerprint == null && confPath != null) fingerprint = legSetting(confPath, registrationUrl, "FINGERPRINT");
+        var creds = confPath == null ? new String[2] : legCredentials(confPath, registrationUrl);
+        boolean nkey = RelayTls.useNkey(confPath == null ? null : readEnvVar(confPath, RelayTls.USE_NKEY_ENV), creds[1])
+            || creds[0] == null;
+        try {
+            long ts = Instant.now().getEpochSecond();
+            var key = nkey ? identity.nkeyPublicKey() : creds[0];
+            var challenge = "zone-member:" + ts + ":" + key + ":" + zone + ":" + member;
+            var body = new LinkedHashMap<String, Object>();
+            body.put(nkey ? "pubkey" : "household_id", key);
+            body.put("zone_id", zone);
+            body.put("member", member);
+            body.put("ts", ts);
+            if (nkey) {
+                body.put("signature", Base64.getEncoder().encodeToString(
+                    identity.nkeyAuthHandler().sign(challenge.getBytes(StandardCharsets.UTF_8))));
+            } else {
+                body.put("mac", tokenMac(creds[1], challenge));
+            }
+            var resp = relayPost(registrationUrl.replaceAll("/+$", "") + "/zone-member",
+                new ObjectMapper().writeValueAsBytes(body), fingerprint);
+            if (resp.statusCode() != 200) {
+                err.println("[wyrd] relay refused zone-add (HTTP " + resp.statusCode() + "): " + resp.body());
+                return 2;
+            }
+            out.println("[wyrd] zone-add: " + truncate(member) + " may now register zone '" + zone
+                + "' on this relay. On that node run: wyrd relay bind-zone");
+            return 0;
+        } catch (Exception e) {
+            err.println("[wyrd] zone-add failed — " + e.getMessage());
+            return 2;
+        }
+    }
+
+    /** Conf suffixes of relay legs: "" is leg 0, then _2._9. */
+    private static final String[] LEG_SUFFIXES = {"", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9"};
+
+    /** One field of the leg whose registration URL is {@code registrationUrl}, or null (no fallback leg). */
+    static String legSetting(Path confPath, String registrationUrl, String field) {
+        var want = normalizeRegUrl(registrationUrl);
+        for (var sfx : LEG_SUFFIXES) {
+            var legUrl = readEnvVar(confPath, "WYRDSEKAI_RELAY_REGISTRATION_URL" + sfx);
+            if (legUrl != null && normalizeRegUrl(legUrl).equals(want)) {
+                return readEnvVar(confPath, "WYRDSEKAI_RELAY_" + field + sfx);
+            }
+        }
+        return null;
+    }
+
+    /** {user, token} of the password-mode leg registered at {@code registrationUrl}; nulls when none. */
+    static String[] legCredentials(Path confPath, String registrationUrl) {
+        return new String[]{legSetting(confPath, registrationUrl, "USER"), legSetting(confPath, registrationUrl, "TOKEN")};
+    }
+
+    /** base64(HMAC-SHA256(token, challenge)): how a password registration proves its token. */
+    static String tokenMac(String token, String challenge) throws java.security.GeneralSecurityException {
+        var mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return Base64.getEncoder().encodeToString(mac.doFinal(challenge.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** POST to the relay: pinned to {@code fingerprint}, or system trust for an ACME relay (none/blank). */
+    private static HttpResponse<String> relayPost(String endpoint, byte[] json, String fingerprint) throws Exception {
+        if (fingerprint == null || fingerprint.isBlank() || fingerprint.equalsIgnoreCase("none")) {
+            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+            var req = HttpRequest.newBuilder(URI.create(endpoint))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(15))
+                .POST(BodyPublishers.ofByteArray(json))
+                .build();
+            return http.send(req, BodyHandlers.ofString());
+        }
+        return pinnedHttpsPost(endpoint, json, fingerprint);
+    }
+
+    /**
+     * Keeps the relay's zone-port certificate ({@code nats_tls_fp}) and authority ({@code ca_fp}) from a
+     * register reply as pins for {@code hostPort}, so the node's first connection to the zone port is
+     * already pinned (RelayTls).
+     */
+    static void recordRelayPins(Path dataDir, String hostPort, String replyJson, PrintStream out) {
+        try {
+            var reply = new ObjectMapper().readTree(replyJson);
+            for (var field : List.of("ca_fp", "nats_tls_fp")) {
+                var fp = reply.path(field).asText("");
+                if (!fp.isBlank()) RelayTls.recordPin(dataDir, hostPort, fp);
+            }
+            if (reply.hasNonNull("ca_fp") || reply.hasNonNull("nats_tls_fp")) {
+                out.println("[wyrd] relay-nkey: pinned the relay's zone link (" + hostPort + ")");
+            }
+        } catch (Exception e) {
+            out.println("[wyrd] relay-nkey: relay TLS pins not recorded (" + e.getMessage() + ")");
+        }
+    }
+
     /** Best-effort fetch of the relay's own DID from GET /status (empty on any failure). */
     private static String fetchRelayDid(String baseUrl, String fingerprint) {
         try {
@@ -1209,10 +1549,18 @@ public final class RelayNkeyAdminMain {
                     URI.create("http://localhost:" + port + "/.well-known/wyrd-zone"))
                 .timeout(Duration.ofSeconds(3)).GET().build();
             var resp = http.send(req, BodyHandlers.ofString());
-            if (resp.statusCode() != 200) return null;
-            var label = new ObjectMapper().readTree(resp.body()).path("zoneLabel").asText("");
-            return label.isBlank() ? null : label;
+            if (resp.statusCode() == 200) {
+                var label = new ObjectMapper().readTree(resp.body()).path("zoneLabel").asText("");
+                if (!label.isBlank()) return label;
+            }
         } catch (Exception e) {
+            // server not running: fall through to the name the server would resolve
+        }
+        // The same resolution the server uses when nothing names the zone (profile, else the host name).
+        try {
+            var z = WyrdConfig.get().zoneId();
+            return z == null || z.isBlank() ? null : z;
+        } catch (RuntimeException e) {
             return null;
         }
     }
@@ -1245,6 +1593,46 @@ public final class RelayNkeyAdminMain {
             var reencoded = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(sorted.writeValueAsBytes(payload));
             return scheme + host + "/" + reencoded;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    /**
+     * Put the home's public tunnel key {@code zk} into a {@code wyrdphone://host/<b64-json>} invite,
+     * re-encoded the same way as {@link #stampZoneIntoInviteUrl}. The invite is this home's, so its
+     * own key always wins. Returns the URL unchanged on any parse failure.
+     */
+    static String stampTunnelKeyIntoInviteUrl(String url, String zk, ObjectMapper mapper) {
+        if (zk == null || zk.isBlank()) return url;
+        return stampFieldsIntoInviteUrl(url, Map.of("zk", zk), mapper);
+    }
+
+    /** {@code home_ca_fp} and {@code lan_https} (D1) for this home, as the local tools see it. */
+    static Map<String, String> homeTlsFields() {
+        var cfg = WyrdConfig.get();
+        return HouseholdTls.inviteFields(resolveDataDir(), cfg.tlsEnabled(), cfg.tlsPort());
+    }
+
+    /**
+     * Put this home's own fields into a {@code wyrdphone://host/<b64-json>} invite, re-encoded the same
+     * way as {@link #stampZoneIntoInviteUrl}. The invite is this home's, so its own values always win.
+     * Returns the URL unchanged on any parse failure.
+     */
+    static String stampFieldsIntoInviteUrl(String url, Map<String, String> fields, ObjectMapper mapper) {
+        if (url == null || fields.isEmpty()) return url;
+        var scheme = "wyrdphone://";
+        if (!url.startsWith(scheme)) return url;
+        var slash = url.indexOf('/', scheme.length());
+        if (slash < 0) return url;
+        var host = url.substring(scheme.length(), slash);
+        var b64 = url.substring(slash + 1);
+        try {
+            var pad = b64.length() % 4 == 0 ? b64 : b64 + "=".repeat(4 - b64.length() % 4);
+            var payload = (ObjectNode) mapper.readTree(Base64.getUrlDecoder().decode(pad));
+            fields.forEach(payload::put);
+            var sorted = mapper.copy().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+            return scheme + host + "/" + Base64.getUrlEncoder().withoutPadding().encodeToString(sorted.writeValueAsBytes(payload));
         } catch (Exception e) {
             return url;
         }

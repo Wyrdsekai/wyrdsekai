@@ -3,6 +3,7 @@ package org.wyrdsekai.cli;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.wyrdsekai.common.util.Json;
 
+import javax.net.ssl.SSLContext;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,8 +19,13 @@ public class AuthClient {
     private final HttpClient httpClient;
 
     public AuthClient(String host, int port) {
-        this.baseUrl = "http://" + host + ":" + port;
-        this.httpClient = HttpClient.newHttpClient();
+        this(host, port, null);
+    }
+
+    /** {@code tls} non-null: https:// with that context (another machine, pinned to its household CA). */
+    public AuthClient(String host, int port, SSLContext tls) {
+        this.baseUrl = (tls != null ? "https://" : "http://") + host + ":" + port;
+        this.httpClient = tls != null ? HttpClient.newBuilder().sslContext(tls).build() : HttpClient.newHttpClient();
     }
 
     /** Result of an auth operation. */

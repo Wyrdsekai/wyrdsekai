@@ -131,6 +131,23 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
                             var lora = Json.mapper().createArrayNode();
                             addLoraScale(lora, 0, registerMix.get("register_warmth"));
                             addLoraScale(lora, 1, registerMix.get("register_expansiveness"));
+                            // A lane's own adapter: "adapter:<id>" carries the scale as given.
+                            // A voice adapter belongs on turns where she talks and off turns
+                            // where she works (measured 2026-09-19: at 0.5 it costs a clean tool
+                            // sheet 8 points), so the lane sets it per request.
+                            for (var e : registerMix.entrySet()) {
+                                if (!e.getKey().startsWith(ADAPTER_KEY) || e.getValue() == null) continue;
+                                try {
+                                    var entry = lora.addObject();
+                                    entry.put("id", Integer.parseInt(e.getKey().substring(ADAPTER_KEY.length())));
+                                    entry.put("scale", Math.max(0.0, Math.min(2.0, e.getValue())));
+                                } catch (NumberFormatException ignored) {
+                                    lora.remove(lora.size() - 1);
+                                }
+                            }
+                            // Never an empty list: llama.cpp answers "lora": [] with the server's
+                            // default scales, not the bare model. The bare model is every adapter named
+                            // at 0 (confirmed by the ResearchZosho team, 2026-09-28).
                             if (!lora.isEmpty()) obj.set("lora", lora);
                         }
                     }
@@ -195,6 +212,9 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
          * mapping a signed register coefficient to a [0,1] adapter scale (neutral 0.5).
          * No-op when the coefficient is absent (axis not present in the mix).
          */
+        /** Register-mix key prefix for a lane's adapter: {@code adapter:<server adapter id>}. */
+        static final String ADAPTER_KEY = "adapter:";
+
         private static void addLoraScale(ArrayNode lora, int id, Double coeff) {
             if (coeff == null) return;
             double scale = Math.max(0.0, Math.min(1.0, 0.5 + coeff));

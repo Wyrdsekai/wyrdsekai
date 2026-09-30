@@ -19,11 +19,19 @@ public record ConversationCheckpoint(
     @JsonProperty("agentId") String agentId,
     @JsonProperty("workingMemory") List<String> workingMemory,
     @JsonProperty("activePlan") TaskPlan activePlan,
-    @JsonProperty("checkpointedAt") Instant checkpointedAt
+    @JsonProperty("checkpointedAt") Instant checkpointedAt,
+    // Who each working-memory line came from (MemoryOrigin.audience()), parallel to
+    // workingMemory. Null in checkpoints written before it was kept.
+    @JsonProperty("workingMemoryAudience") List<String> workingMemoryAudience
 ) {
 
     @JsonCreator
     public ConversationCheckpoint {}
+
+    public ConversationCheckpoint(String agentId, List<String> workingMemory,
+                                  TaskPlan activePlan, Instant checkpointedAt) {
+        this(agentId, workingMemory, activePlan, checkpointedAt, null);
+    }
 
     /** Serialize to JSON string. */
     public String toJson() {

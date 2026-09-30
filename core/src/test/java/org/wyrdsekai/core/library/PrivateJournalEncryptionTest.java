@@ -71,15 +71,18 @@ final class PrivateJournalEncryptionTest {
     }
 
     @Test
-    void sync_out_is_plaintext_for_the_owner_device_and_sync_in_is_sealed() {
+    void private_entries_never_go_out_on_sync_and_sync_in_is_sealed() {
         var secret = "Private sync note about the inheritance.";
         var id = study.writePrivateJournalEntry(USER, secret);
+        var shared = study.writeJournalEntry(USER, "Shared sync note about the garden.");
 
-        // OUT: the authenticated owner device receives readable content.
+        // OUT (audit W4, 2026-09-28): the delta is plain JSON on a shared subject, so a private
+        // entry is not in it at all — neither readable nor as ciphertext. Shared items still go.
         var delta = study.getDeltaForPeer(USER, Map.of());
-        var wired = delta.stream().filter(i -> i.id().equals(id)).findFirst().orElseThrow();
-        assertEquals(secret, wired.content(),
-            "the owner's device must receive the entry readable, not ciphertext");
+        assertTrue(delta.stream().noneMatch(i -> i.id().equals(id)),
+            "a private journal entry must never be put on the sync wire");
+        assertTrue(delta.stream().noneMatch(i -> i.content() != null && i.content().contains("inheritance")));
+        assertTrue(delta.stream().anyMatch(i -> i.id().equals(shared)), "shared items still sync");
 
         // IN: a plaintext private entry arriving from a device is sealed
         // before it touches the index.

@@ -4,7 +4,9 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Configuration for a registered MCP service (§86.3).
@@ -18,6 +20,9 @@ import java.util.Map;
  * @param auth             Auth configuration (type, safeKey, header)
  * @param rateLimitOverride  Per-service rate limit overrides
  * @param enabled          Whether this service is currently active
+ * @param pricePerCall     What one call costs, when the steward knows the price (null = unknown)
+ * @param passEnv          For a stdio server: names of the daemon's environment variables it
+ *                         needs (its own key). Nothing else of the daemon's environment reaches it.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record McpServiceConfig(
@@ -28,10 +33,19 @@ public record McpServiceConfig(
     @JsonProperty("tier") String tier,
     @JsonProperty("auth") AuthConfig auth,
     @JsonProperty("rate_limit_override") Map<String, Integer> rateLimitOverride,
-    @JsonProperty("enabled") boolean enabled
+    @JsonProperty("enabled") boolean enabled,
+    @JsonProperty("price_per_call") Double pricePerCall,
+    @JsonProperty("pass_env") List<String> passEnv
 ) {
     @JsonCreator
-    public McpServiceConfig {}
+    public McpServiceConfig {
+        passEnv = passEnv == null ? List.of() : passEnv.stream().filter(Objects::nonNull).toList();
+    }
+
+    public McpServiceConfig(String id, String name, String transport, String endpoint, String tier,
+                            AuthConfig auth, Map<String, Integer> rateLimitOverride, boolean enabled) {
+        this(id, name, transport, endpoint, tier, auth, rateLimitOverride, enabled, null, null);
+    }
 
     /** Whether this service requires API keys. */
     public boolean requiresAuth() {

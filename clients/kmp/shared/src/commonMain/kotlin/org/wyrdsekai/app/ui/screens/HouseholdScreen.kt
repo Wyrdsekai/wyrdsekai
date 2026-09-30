@@ -177,7 +177,7 @@ fun HouseholdScreen(
                 value = householdUrl,
                 onValueChange = viewModel::setSavedHouseholdUrl,
                 label = { Text("Household URL") },
-                placeholder = { Text("ws://198.51.100.100:9222") },
+                placeholder = { Text("wss://192.168.1.x:4223") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )

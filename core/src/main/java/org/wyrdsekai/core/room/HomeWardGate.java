@@ -2,10 +2,12 @@ package org.wyrdsekai.core.room;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.persistence.WardService;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A companion's Home is hers. This is the lock on the door.
@@ -32,6 +34,11 @@ import java.util.Map;
  * <p>Letting someone in is hers to do — the ward stone in her Home grants and revokes
  * — and the steward keeps {@code wyrd wards} for emergencies. Nobody is let in by
  * default, her bondholder included; that door opens from the inside.</p>
+ *
+ * <p>A person's Study is sealed the same way ({@link #sealStudy}, audit W4, 2026-09-28):
+ * it was provisioned with no ward rows, so anyone in the household could walk into anyone's
+ * Study. It now opens for its owner (under every id they carry), for those they let in
+ * (knock/approve, the ward stone), and for the companion whose bondholder they are.</p>
  */
 public final class HomeWardGate {
 
@@ -50,6 +57,9 @@ public final class HomeWardGate {
     private static volatile HomeWardGate INSTANCE;
 
     private final WardService wards;
+
+    /** Each companion's bondholder, as the companion last knew it (see {@link #noteBondholder}). */
+    private static final Map<String, String> COMPANION_BONDHOLDER = new ConcurrentHashMap<>();
 
     private HomeWardGate(WardService wards) {
         this.wards = wards;
@@ -70,12 +80,51 @@ public final class HomeWardGate {
     /** Test hook. */
     public static void resetForTests() {
         INSTANCE = null;
+        COMPANION_BONDHOLDER.clear();
     }
 
-    /** May this entity walk in? Open rooms answer yes; warded rooms only for the granted. */
+    /**
+     * May this entity walk in? Open rooms answer yes; warded rooms only for the granted — under
+     * the id the entrant arrived with or the person DID it resolves to (ssh presents a login id,
+     * the phone a DID). A person's Study also opens for the companion whose bondholder they are.
+     */
     public boolean canEnter(String roomId, String entityId) {
         if (roomId == null) return true;
-        return wards.isAllowed(roomId, entityId, "enter");
+        if (wards.isAllowed(roomId, entityId, "enter")) return true;
+        if (entityId != null) {
+            var canonical = PersonIds.canonical(entityId);
+            if (canonical != null && !canonical.equals(entityId)
+                    && wards.isAllowed(roomId, canonical, "enter")) return true;
+        }
+        return StudyProvisioner.isStudyRoom(roomId) && isBondedCompanionOf(
+            StudyProvisioner.playerIdFromStudy(roomId), entityId);
+    }
+
+    /**
+     * A companion tells the gate who her bondholder is (null when she has none), so the
+     * bondholder's Study lets her in. Kept current by the companion as she moves.
+     */
+    public static void noteBondholder(String companionEntityId, String bondholderId) {
+        if (companionEntityId == null) return;
+        if (bondholderId == null || bondholderId.isBlank()) COMPANION_BONDHOLDER.remove(companionEntityId);
+        else COMPANION_BONDHOLDER.put(companionEntityId, bondholderId);
+    }
+
+    static boolean isBondedCompanionOf(String owner, String entityId) {
+        if (owner == null || entityId == null) return false;
+        var bondholder = COMPANION_BONDHOLDER.get(entityId);
+        return bondholder != null && PersonIds.samePerson(bondholder, owner);
+    }
+
+    /**
+     * Seal a person's Study to them: every permission under the id the Study is keyed by and
+     * the person DID it resolves to. Same rule as {@link #sealHome}: a Study already warded
+     * with its owner as keeper is left as they arranged it. Anonymous visitors' rooms are not
+     * sealed (their ids do not outlive the session).
+     */
+    public boolean sealStudy(String roomId, String ownerId) {
+        if (roomId == null || ownerId == null || ownerId.isBlank() || ownerId.startsWith("anon-")) return false;
+        return sealHome(roomId, ownerId, PersonIds.canonical(ownerId));
     }
 
     /**

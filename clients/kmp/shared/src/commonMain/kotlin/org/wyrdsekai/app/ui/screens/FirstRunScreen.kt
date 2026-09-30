@@ -1,5 +1,6 @@
 package org.wyrdsekai.app.ui.screens
 
+import org.wyrdsekai.app.hermod.ConsentMint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -397,7 +398,7 @@ private fun WizardStep3_FindServer(
             value = inferenceUrl,
             onValueChange = onUrlChanged,
             label = { Text("Server URL") },
-            placeholder = { Text("http://192.168.1.x:7070") },
+            placeholder = { Text("https://192.168.1.x:7443") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().testTag("inference-url-input"),
         )
@@ -583,15 +584,10 @@ private fun WizardStep4_PairWithServer(
                             verifying = false
                             return@launch
                         }
-                        // Save pairing credentials
-                        tokenStore?.savePairingToken(credentials.token)
-                        tokenStore?.saveHouseholdId(credentials.householdId)
-                        tokenStore?.saveHouseholdName(credentials.householdName)
-                        tokenStore?.saveServerDid(credentials.serverDid)
-                        tokenStore?.saveNatsUrl(credentials.natsUrl)
-                        tokenStore?.saveServerUrl(credentials.serverUrl)
-                        credentials.relayUrl?.let { tokenStore?.saveRelayUrl(it) }
-                        credentials.relayToken?.let { tokenStore?.saveRelayToken(it) }
+                        // Save pairing credentials the way every pairing door
+                        // does: the reply's natsUrl is the home's bus, never
+                        // the relay (the relay comes from the invite only).
+                        tokenStore?.let { ConsentMint.save(it, credentials) }
                         verifying = false
                         onPaired(credentials.serverUrl)
                     }

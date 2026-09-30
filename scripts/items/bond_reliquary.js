@@ -60,8 +60,11 @@ function renderAll() {
       active++;
       mark = "[" + (b.depth || "living") + "]";
     }
+    // A sacred bond carries a name only its two hold: the cabinet shows that it is named, never the name.
+    var naming = (b.active !== false && (b.depthLevel || 0) >= 3)
+      ? (b.named ? "  · named" : "  · not yet named") : "";
     lines.push("  " + mark + "  " + (b.partner || "?")
-      + "  (" + (b.interactionCount || 0) + " interactions)");
+      + "  (" + (b.interactionCount || 0) + " interactions)" + naming);
   }
   lines.push("");
   lines.push(active + " living, " + released + " tied off. None cut.");

@@ -1,5 +1,6 @@
 package org.wyrdsekai.app.engine.transit
 
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.wyrdsekai.app.engine.between.BetweenClient
@@ -20,55 +21,61 @@ import org.wyrdsekai.app.platform.secureRandomHex
  * [S2CMessage]; this transport just carries those frames over the relay's dumb
  * pipe instead of an in-process node.
  *
- * Wire: the same C2S/S2C JSON the zone's `/ws` reads/writes. We publish the
- * phone's C2S frames to `wyrd.tunnel.{zone}.{session}.up` and subscribe the
- * zone's S2C frames on `...down`. The relay only shuffles bytes; the zone
- * tunnels them into its own session server (see TunnelSessionHandler).
+ * Wire: the same C2S/S2C JSON the zone's `/ws` reads/writes, sealed end to end
+ * to the home's tunnel key ( W3, [SealedTunnelPipe]).
+ * The relay only routes; the zone opens the frames and tunnels them into its
+ * own session server (see TunnelSessionHandler).
  *
  * @param between connected cross-platform NATS pub/sub (NatsBetweenClient).
  * @param zoneId  the target zone label (from the invite / discover).
  * @param token   the session token from a prior mcp.login over the relay,
- *                used to auth the zone's loopback `/ws`. Null → guest.
+ *                used to auth the zone's loopback `/ws`. Null → guest. Sent
+ *                only inside the sealed session.
+ * @param zoneKey the home's public tunnel key `zk` from the pairing invite.
+ *                Null (paired before 0.5.0) → the session refuses to open.
  */
 class RelayTunnelServerConnection(
     private val between: BetweenClient,
-    private val zoneId: String,
-    private val token: String?,
-    private val sessionId: String = newSessionId(),
+    zoneId: String,
+    token: String?,
+    zoneKey: ByteArray?,
+    sessionId: String = newSessionId(),
 ) : ServerConnection {
 
-    private val base = "wyrd.tunnel.$zoneId.$sessionId"
     private val handlers = mutableListOf<(S2CMessage) -> Unit>()
-    private var downUnsub: (() -> Unit)? = null
-    private var opened = false
-
-    override val isConnected: Boolean get() = between.isConnected && opened
-
-    /**
-     * Subscribe the downlink and announce the session. Call once after the
-     * relay NATS connection is up. Idempotent.
-     */
-    fun open() {
-        if (opened) return
-        downUnsub = between.subscribe("$base.down") { _, data ->
+    private val pipe = SealedTunnelPipe(
+        between = between,
+        zoneId = zoneId,
+        sessionId = sessionId,
+        zoneKey = zoneKey,
+        openBody = WireJson.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject { if (!token.isNullOrBlank()) put("token", token) },
+        ),
+        onFrame = { text ->
             val msg = try {
-                parseS2CMessage(data.decodeToString())
-            } catch (e: Exception) {
+                parseS2CMessage(text)
+            } catch (_: Exception) {
                 null
             }
-            if (msg != null) for (h in handlers.toList()) h(msg)
-        }
-        val openPayload = WireJson.encodeToString(
-            kotlinx.serialization.json.JsonObject.serializer(),
-            buildJsonObject { if (!token.isNullOrBlank()) put("token", token) },
-        )
-        between.publish("$base.open", openPayload.encodeToByteArray())
-        opened = true
+            if (msg != null) deliver(msg)
+        },
+        onFailure = { code, message -> deliver(S2CMessage.Error(0, code, message)) },
+    )
+
+    override val isConnected: Boolean get() = between.isConnected && pipe.isOpen
+
+    /**
+     * Announce the session (sealed handshake). Call once after the relay NATS
+     * connection is up. Idempotent.
+     */
+    fun open() {
+        pipe.open()
     }
 
     override suspend fun send(message: C2SMessage) {
-        if (!opened) open()
-        between.publish("$base.up", message.toJson().encodeToByteArray())
+        open()
+        pipe.send(message.toJson())
     }
 
     override fun onMessage(handler: (S2CMessage) -> Unit): () -> Unit {
@@ -80,13 +87,12 @@ class RelayTunnelServerConnection(
 
     /** End the tunneled session. */
     fun close() {
-        if (opened) {
-            try { between.publish("$base.close", ByteArray(0)) } catch (_: Exception) {}
-        }
-        downUnsub?.invoke()
-        downUnsub = null
+        pipe.close()
         handlers.clear()
-        opened = false
+    }
+
+    private fun deliver(msg: S2CMessage) {
+        for (h in handlers.toList()) h(msg)
     }
 
     companion object {

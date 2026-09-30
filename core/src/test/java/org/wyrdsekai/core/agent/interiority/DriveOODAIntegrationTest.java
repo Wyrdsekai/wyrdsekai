@@ -99,6 +99,66 @@ class DriveOODAIntegrationTest {
             s.contains("Saudade"));
     }
 
+    @Test void a_want_for_rest_is_rested_on_not_acted_on() throws Exception {
+        // rose, second-node, 2026-09-25: "rest in the quiet" chosen 32 times in a day, every one an act
+        // that nothing answered, and the ledger said she never rested.
+        var ambient = AmbientObservation.empty(Instant.now());
+        ambient = new AmbientObservation(ambient.tickAt(), Map.of("Saudade", 0.9, "Calm", 0.4),
+            List.of("Saudade"), 0.3, 0.6, List.of(), true, "active", List.of(), List.of(), false, "");
+        DriveOODA.OrientStep orient = (a, intro, pulls) ->
+            List.of(CandidateWant.of("rest in the quiet", "{\"drive\":\"Saudade\"}", 1.0));
+        DriveOODA.DecideStep decide = (cands, a, live) -> Optional.of(cands.get(0));
+        var acted = new java.util.concurrent.atomic.AtomicBoolean(false);
+        DriveOODA.ActStep act = (want, a) -> { acted.set(true); return "enacted:x"; };
+
+        var outcome = ooda.run(AGENT, "Ember", Duration.ofMinutes(30), ambient,
+            DriveOODA.noIntrospection(), List.of(), orient, decide, act, 0.7);
+
+        assertThat(outcome.gateOutcome()).isEqualTo("chose_rest");
+        assertThat(acted).as("no act is asked for a want to rest").isFalse();
+        assertThat(outcome.actionResult()).isEqualTo("rested");
+        assertThat(wantStore.loadLive(AGENT)).as("she rested: the want is satisfied").isEmpty();
+        var lines = Files.readAllLines(logFile);
+        assertThat(lines).anyMatch(l -> l.contains("\"gateOutcome\":\"chose_rest\"")
+            && l.contains("rest in the quiet"));
+    }
+
+    @Test void a_held_reach_counts_as_waiting_not_acting() {
+        var ambient = AmbientObservation.empty(Instant.now());
+        ambient = new AmbientObservation(ambient.tickAt(), Map.of("Saudade", 0.9),
+            List.of("Saudade"), 0.6, 0.6, List.of(), true, "active", List.of(), List.of(), false, "");
+        DriveOODA.OrientStep orient = (a, intro, pulls) ->
+            List.of(CandidateWant.of("write to the absent one", "{\"drive\":\"Saudade\"}", 1.0));
+        DriveOODA.DecideStep decide = (cands, a, live) -> Optional.of(cands.get(0));
+        DriveOODA.ActStep act = (want, a) -> "held:write_letter (wrote to Oleg 40 min ago)";
+
+        var outcome = ooda.run(AGENT, "Ember", Duration.ofMinutes(30), ambient,
+            DriveOODA.noIntrospection(), List.of(), orient, decide, act, 0.7);
+
+        assertThat(outcome.gateOutcome()).isEqualTo("chose_rest");
+        assertThat(wantStore.loadLive(AGENT)).as("the want stays open: she will write again").hasSize(1);
+    }
+
+    @Test void a_settled_relational_axis_does_not_bring_the_next_tick_forward() {
+        // rose, second-node, 2026-09-25: saudade at its 0.80 resting point shortened every tick.
+        var ambient = AmbientObservation.empty(Instant.now());
+        ambient = new AmbientObservation(ambient.tickAt(), Map.of("Saudade", 0.80, "Curiosity", 0.2),
+            List.of("Saudade"), 1.0, 0.6, List.of(), true, "active", List.of(), List.of(), false, "");
+        DriveOODA.OrientStep orient = (a, intro, pulls) -> List.of();
+        DriveOODA.DecideStep decide = (cands, a, live) -> Optional.empty();
+        DriveOODA.ActStep act = (want, a) -> "ok";
+
+        ooda.settlePoints(Map.of("Saudade", 0.80));
+        var settled = ooda.run(AGENT, "Ember", Duration.ofMinutes(30), ambient,
+            DriveOODA.noIntrospection(), List.of(), orient, decide, act, 0.7);
+        ooda.settlePoints(null);
+
+        // Read as a level, 0.80 over 0.7 would give 26.1 min before jitter; read as pull, rest keeps
+        // the base 30 min, and the ±10% jitter cannot take that under 27.
+        assertThat(settled.nextTickDelay()).as("rest keeps the base cadence")
+            .isGreaterThanOrEqualTo(Duration.ofMinutes(27));
+    }
+
     @Test void revisit_of_same_text_increments_visit_count_not_a_new_want() {
         var ambient = AmbientObservation.empty(Instant.now());
         DriveOODA.OrientStep orient = (a, intro, pulls) ->

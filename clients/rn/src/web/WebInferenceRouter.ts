@@ -7,6 +7,8 @@
  */
 import { ChatMessage, ChatResponse, CompletionOptions } from '../inference/types';
 import type { ModelRole } from '../inference/InferenceRouter';
+import { NowLine } from '../inference/NowLine';
+import { consolidateSystemMessages } from '../inference/consolidateSystemMessages';
 import { WebLLMService } from './WebLLMService';
 
 export type WebActiveBackend = 'webllm' | 'server' | 'none';
@@ -32,6 +34,9 @@ export class WebInferenceRouter {
   /**
    * Run inference using the best available backend.
    * Currently supports WebLLM only; server relay is a future extension.
+   * The outgoing copy has one leading system message (WebLLM throws
+   * SystemMessageOrderError on any other) and carries what the request knows
+   * about today (NowLine), merged first so the DATE line opens that message.
    */
   async complete(
     role: ModelRole,
@@ -42,7 +47,8 @@ export class WebInferenceRouter {
     // is kept so this satisfies CompanionInferenceClient and so the day a
     // borrow path is added, callers already say which model they want.
     if (this.canInferLocally()) {
-      return this.webLLMService.complete(messages, options);
+      const outgoing = (options?.now ?? NowLine.dateTime()).stamp(consolidateSystemMessages(messages));
+      return this.webLLMService.complete(outgoing, options);
     }
     throw new Error(
       `No inference backend available for ${role}. Load a WebLLM model or connect to a server.`,

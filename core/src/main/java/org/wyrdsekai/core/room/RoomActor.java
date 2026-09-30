@@ -362,7 +362,7 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                 cmd.replyTo().tell(new RoomResponse.Ok(newState.toSnapshot()));
                 // Register room metadata for enumeration
                 if (metadataService != null) {
-                    metadataService.register(roomId, cmd.name(), cmd.zone(), "system");
+                    metadataService.register(roomId, cmd.name(), cmd.zone(), cmd.makerOrSystem());
                 }
                 log.info("Room created: {} ({}) — {} exits, {} objects, {} hints",
                     cmd.name(), roomId, cmd.exits().size(),

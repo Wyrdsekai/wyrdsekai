@@ -51,6 +51,23 @@ class BakeConfigVisibleTest {
                 + "this reads false from the cli classpath, the bake is dead again");
     }
 
+    /** The service's EnvironmentFile is KEY=VALUE, not HOCON; on a build box that is also a node the
+     *  bake read it as HOCON and died on a URL's colon (2026-09-26). Such a file is left out, not fatal. */
+    @Test
+    void theServicesEnvironmentFileDoesNotKillTheBake() throws Exception {
+        var conf = java.nio.file.Files.createTempFile("wyrdsekai", ".conf");
+        java.nio.file.Files.writeString(conf, "# Added by `wyrd setup`\nWYRDSEKAI_LLAMA_ENABLED=true\n"
+            + "WYRDSEKAI_LLAMA_URL=http://127.0.0.1:8200\nWYRDSEKAI_VOICE_URL=http://127.0.0.1:8201\n");
+        var base = ConfigFactory.load();
+        var out = RecipeBakeMain.overlay(base, conf);
+        assertEquals("codezaiku", out.getString("wyrdsekai.coding.default-backend"), "the defaults still stand");
+        var hocon = java.nio.file.Files.createTempFile("wyrdsekai", ".conf");
+        java.nio.file.Files.writeString(hocon, "wyrdsekai.coding.default-backend = goose\n");
+        assertEquals("goose", RecipeBakeMain.overlay(base, hocon).getString("wyrdsekai.coding.default-backend"),
+            "a HOCON overlay is still applied");
+        assertEquals(base, RecipeBakeMain.overlay(base, null));
+    }
+
     /** The documented env override has to actually reach the bake — it previously could not. */
     @Test
     void theCodingBackendTableIsResolvable() {

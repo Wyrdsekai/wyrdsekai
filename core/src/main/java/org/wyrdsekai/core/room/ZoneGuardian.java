@@ -252,7 +252,13 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     /** Create a new room on demand (from RoomCreator / companion agents). */
     public record CreateNewRoom(String roomId, String name, String description,
                                  String zone, List<Exit> exits,
-                                 List<RoomObject> objects) implements Command {}
+                                 List<RoomObject> objects, String createdBy) implements Command {
+        /** Backward-compatible constructor — no maker recorded. */
+        public CreateNewRoom(String roomId, String name, String description,
+                             String zone, List<Exit> exits, List<RoomObject> objects) {
+            this(roomId, name, description, zone, exits, objects, null);
+        }
+    }
 
     /** A demolished room: stop its actor and forget it. Doorways and metadata are the caller's. */
     public record RetireRoom(String roomId) implements Command {}
@@ -500,6 +506,11 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
      *  the session actor and companions never learned it. */
     public static Collection<ActorRef<CompanionActor.Command>> allCompanionRefs() {
         return companionRegistry.values();
+    }
+
+    /** The entity id of every companion this node holds now. */
+    public static Set<String> companionEntityIds() {
+        return Set.copyOf(companionRegistry.keySet());
     }
 
     /** Static Isekai Protocol reference — accessible for foreign agent lifecycle queries. */
@@ -758,6 +769,17 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     private Behavior<Command> onProvisionStudy(ProvisionStudy cmd) {
         var seed = StudyProvisioner.createStudySeed(cmd.playerId(), cmd.playerName(), cmd.isSteward());
         seedRoom(seed);
+        // Private in the ward table, not only in the description: a Study had no ward rows,
+        // so anyone could walk in (audit W4, 2026-09-28). Sealed at every provisioning, so a
+        // Study made before the seal is sealed at its owner's next login.
+        var gate = HomeWardGate.get();
+        if (gate != null) {
+            try {
+                gate.sealStudy(seed.roomId(), cmd.playerId());
+            } catch (RuntimeException e) {
+                log.warn("Study {} could not be sealed: {}", seed.roomId(), e.getMessage());
+            }
+        }
         if (cmd.isSteward()) {
             getContext().getSelf().tell(
                 new AnnounceBondholder(cmd.playerId(), cmd.playerName()));
@@ -918,7 +940,7 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     private Behavior<Command> onCreateNewRoom(CreateNewRoom cmd) {
         var roomRef = getOrSpawnRoom(cmd.roomId());
         roomRef.tell(new RoomCommand.CreateRoom(cmd.name(), cmd.description(),
-            cmd.zone(), cmd.exits(), cmd.objects(),
+            cmd.zone(), List.of(), cmd.exits(), cmd.objects(), cmd.createdBy(),
             getContext().getSystem().deadLetters().unsafeUpcast()));
         log.info("Created new room on demand: {} ({})", cmd.name(), cmd.roomId());
         return this;

@@ -97,4 +97,21 @@ class RepeatGuardExemptionTest {
     void nothing_spoken_yet_is_never_a_repeat() {
         assertThat(CompanionActor.judgeRepeat(LINE, null, null, null, NOW).suppress()).isFalse();
     }
+
+    /**
+     * The window is opened by a person. Two companions in a quick exchange said the same line
+     * back to each other word for word a minute apart (2026-09-22) because the other companion's
+     * line had opened it; the marker is now set only for a human speaker.
+     */
+    @Test
+    void only_a_person_opens_the_reactive_window() throws Exception {
+        var src = java.nio.file.Files.readString(java.nio.file.Path.of(
+            "src/main/java/org/wyrdsekai/core/agent/CompanionActor.java"));
+        var i = src.indexOf("lastHeardUtteranceAt = Instant.now();");
+        org.assertj.core.api.Assertions.assertThat(i).isPositive();
+        var before = src.substring(Math.max(0, i - 200), i);
+        org.assertj.core.api.Assertions.assertThat(before)
+            .as("the marker is set only inside `if (isHumanTrigger(said))`")
+            .contains("if (isHumanTrigger(said)) {");
+    }
 }

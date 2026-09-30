@@ -11,6 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MemoryEntityForgeTest {
 
     private MemoryEntityStore store;
+    /** Rows planted here have no recorded teller: her bondholder reads them. */
+    private static final MemoryReader READER = MemoryReader.of("did:wyrd:bondholder", true);
     private String jdbcUrl;
     private static final String DID = "did:wyrd:alice";
 
@@ -32,7 +34,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.entityDuplicatesDropped()).isEqualTo(1);
-        var remaining = store.findAllByType(DID, "pet", 10);
+        var remaining = store.findAllByType(DID, "pet", 10, READER);
         assertThat(remaining).hasSize(1);
         // Kept the newer one (mem-2)
         assertThat(remaining.getFirst().memoryId()).isEqualTo("mem-2");
@@ -51,7 +53,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.entityDuplicatesDropped()).isEqualTo(0);
-        assertThat(store.findAllByType(DID, "occupation", 10)).hasSize(2);
+        assertThat(store.findAllByType(DID, "occupation", 10, READER)).hasSize(2);
     }
 
     @Test
@@ -66,7 +68,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.entityDuplicatesDropped()).isEqualTo(1);
-        assertThat(store.findAllByType(DID, "family", 10)).hasSize(1);
+        assertThat(store.findAllByType(DID, "family", 10, READER)).hasSize(1);
     }
 
     @Test
@@ -82,7 +84,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.entityDuplicatesDropped()).isEqualTo(0);
-        assertThat(store.findAllByType("did:wyrd:bob", "pet", 10)).hasSize(1);
+        assertThat(store.findAllByType("did:wyrd:bob", "pet", 10, READER)).hasSize(1);
     }
 
     @Test
@@ -101,7 +103,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.edgeDuplicatesDropped()).isEqualTo(1);
-        assertThat(store.findEdgesTouching(DID, "data engineer", 10)).hasSize(1);
+        assertThat(store.findEdgesTouching(DID, "data engineer", 10, READER)).hasSize(1);
     }
 
     @Test
@@ -120,7 +122,7 @@ class MemoryEntityForgeTest {
 
         assertThat(result.danglingEdgesDropped()).isEqualTo(1);
         // The real edge survives
-        var survivors = store.findEdgesTouching(DID, "Mochi", 10);
+        var survivors = store.findEdgesTouching(DID, "Mochi", 10, READER);
         assertThat(survivors).hasSize(1);
     }
 
@@ -162,7 +164,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.staleEntitiesDropped()).isEqualTo(0);
-        assertThat(store.findAllByType(DID, "pet", 10)).hasSize(1);
+        assertThat(store.findAllByType(DID, "pet", 10, READER)).hasSize(1);
     }
 
     @Test
@@ -180,7 +182,7 @@ class MemoryEntityForgeTest {
         var result = MemoryEntityForge.consolidate(jdbcUrl, DID);
 
         assertThat(result.staleEntitiesDropped()).isEqualTo(1);
-        var remaining = store.findAllByType(DID, "occupation", 10);
+        var remaining = store.findAllByType(DID, "occupation", 10, READER);
         assertThat(remaining).hasSize(1);
         assertThat(remaining.getFirst().entityValue()).isEqualTo("data engineer");
     }
@@ -198,6 +200,6 @@ class MemoryEntityForgeTest {
 
         // 7 days < 90-day TTL, so no stale prune
         assertThat(result.staleEntitiesDropped()).isEqualTo(0);
-        assertThat(store.findAllByType(DID, "book", 10)).hasSize(2);
+        assertThat(store.findAllByType(DID, "book", 10, READER)).hasSize(2);
     }
 }

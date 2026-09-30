@@ -11,6 +11,8 @@ import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.item.CarriedItemUse;
+import org.wyrdsekai.core.library.LibraryConsent;
+import org.wyrdsekai.core.soul.BondNaming;
 import org.wyrdsekai.between.NatsBridge;
 import org.wyrdsekai.between.RelaySessionTransport;
 import org.wyrdsekai.between.federation.FederationService;
@@ -262,7 +264,7 @@ public final class VirtualSessionHandler {
         }
 
         // Validate transit token
-        var validToken = federationService.validateTransitToken(tokenStr);
+        var validToken = federationService.redeemTransitToken(tokenStr, localZoneId, sourceZoneId);
         if (validToken.isEmpty()) {
             log.warn("Session.open rejected — invalid/expired transit token: {}", tokenStr);
             sendEvent(sourceZoneId, sessionId, "error",
@@ -784,6 +786,17 @@ public final class VirtualSessionHandler {
             }
             case ParsedCommand.Journal j -> {
                 sendVisitorProse(session, sessionId, "Your journal is at home; it can't be written from here.");
+                return;
+            }
+            // A visitor's own yes to a question this household's library asked them about: it is
+            // theirs to give, and it is not something to say out loud in the room.
+            case ParsedCommand.ResearchYes r -> {
+                sendVisitorProse(session, sessionId, LibraryConsent.researchYes(session.playerId, "en"));
+                return;
+            }
+            // A visitor's own bonds with this household's companions, and the naming ritual.
+            case ParsedCommand.Bond b -> {
+                sendVisitorProse(session, sessionId, BondNaming.command(session.playerId, session.playerName, b.args(), "en"));
                 return;
             }
             default                      -> { reDispatchAsSay(sessionId, originalLine); return; }

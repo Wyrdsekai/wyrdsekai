@@ -172,7 +172,8 @@ CREATE TABLE IF NOT EXISTS transit_tokens(
   target_zone_id TEXT NOT NULL,
   trust_level    TEXT NOT NULL DEFAULT 'tourist',
   issued_at      INTEGER NOT NULL DEFAULT (unixepoch()),
-  expires_at     INTEGER NOT NULL
+  expires_at     INTEGER NOT NULL,
+  used_at        INTEGER          -- single use: set when the token is redeemed
 );
 
 -- Capabilities (The Library) — managed by LibraryStore (separate SQLite database with FTS5)
@@ -748,6 +749,9 @@ CREATE INDEX IF NOT EXISTS idx_foreign_identities_zone ON foreign_identities(hom
 -- Entity index for recall-shape questions.
 -- Append-only; contradictions resolved at query time via timestamp ORDER BY,
 -- staleness handled by Forge consolidation (not the plant path).
+-- teller_did / visibility (migration 12): who told it and whether it was said privately
+-- ('private' = read only in turns answering the teller; 'open'; 'unknown' = written before
+-- origins were recorded, read only in turns with her bondholder). See MemoryOrigin.
 CREATE TABLE IF NOT EXISTS memory_entities(
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   did           TEXT NOT NULL,
@@ -756,7 +760,9 @@ CREATE TABLE IF NOT EXISTS memory_entities(
   entity_role   TEXT,
   entity_value  TEXT NOT NULL,
   timestamp     INTEGER NOT NULL,
-  created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+  created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  teller_did    TEXT,
+  visibility    TEXT NOT NULL DEFAULT 'unknown'
 );
 
 CREATE INDEX IF NOT EXISTS idx_entities_did_type_ts
@@ -773,7 +779,9 @@ CREATE TABLE IF NOT EXISTS memory_edges(
   object      TEXT NOT NULL,
   memory_id   TEXT NOT NULL,
   confidence  REAL NOT NULL DEFAULT 1.0,
-  created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+  created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  teller_did  TEXT,
+  visibility  TEXT NOT NULL DEFAULT 'unknown'
 );
 
 CREATE INDEX IF NOT EXISTS idx_edges_did_subject ON memory_edges(did, subject);

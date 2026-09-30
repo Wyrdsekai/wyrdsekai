@@ -2,6 +2,7 @@ package org.wyrdsekai.server.http;
 
 import io.javalin.http.Context;
 import java.io.IOException;
+import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.item.PersonStudyReach;
 import org.wyrdsekai.core.item.StudyReach;
 import org.wyrdsekai.core.item.KnowledgeSearch;
@@ -229,9 +230,29 @@ public final class LibraryKnowledgeRoutes {
             ctx.status(400).json(Map.of("error", "collection field required"));
             return;
         }
-        var owner = body.owner() != null && !body.owner().isBlank()
-            ? body.owner()
-            : (ActionGrants.get() != null ? ActionGrants.get().fallbackOwnerDid() : null);
+        // A shelf goes into the household library only by its owner's hand. Until 2026-09-28
+        // the owner came from the request, so anyone could publish anyone's Study collection.
+        // The machine's operator publishes only the zone owner's shelves.
+        var zoneOwner = ActionGrants.get() != null ? ActionGrants.get().fallbackOwnerDid() : null;
+        boolean named = body.owner() != null && !body.owner().isBlank();
+        String owner;
+        if (ApiAuth.principal(ctx) instanceof ApiAuth.Person caller) {
+            if (named && !PersonIds.samePerson(body.owner(), caller.user().id())) {
+                ctx.status(403).json(Map.of("error", "not_yours", "message", "You can share only your own shelves."));
+                return;
+            }
+            owner = PersonIds.canonical(caller.user().id());
+        } else if (ApiAuth.isOperator(ctx)) {
+            if (named && (zoneOwner == null || !PersonIds.samePerson(body.owner(), zoneOwner))) {
+                ctx.status(403).json(Map.of("error", "not_yours",
+                    "message", "Other people share their own shelves with their own login."));
+                return;
+            }
+            owner = zoneOwner;
+        } else {
+            ctx.status(403).json(Map.of("error", "person_required"));
+            return;
+        }
         if (owner == null) {
             ctx.status(400).json(Map.of(
                 "error", "no owner given and no zone owner configured"));

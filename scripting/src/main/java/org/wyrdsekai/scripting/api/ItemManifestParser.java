@@ -2,6 +2,7 @@ package org.wyrdsekai.scripting.api;
 
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +43,13 @@ public final class ItemManifestParser {
 
     private ItemManifestParser() {}
 
+    /** Does the script's head declare {@code exports.manifest = {...}} at all (parseable or not)? */
+    public static boolean declaresManifest(String script) {
+        if (script == null || script.isBlank()) return false;
+        var head = script.length() > HEAD_BYTES ? script.substring(0, HEAD_BYTES) : script;
+        return MANIFEST_PATTERN.matcher(head).find();
+    }
+
     /**
      * Parse a manifest from script source. Returns null when the script has
      * no manifest declaration or the eval fails.
@@ -73,11 +81,14 @@ public final class ItemManifestParser {
 
         var snippet = head.substring(start, end) + ";";
 
+        // A manifest is a literal; the statement limit stops one that computes forever from
+        // hanging whoever is loading or running the item.
         try (var context = Context.newBuilder("js")
                 .allowHostAccess(HostAccess.EXPLICIT)
                 .allowIO(false)
                 .allowCreateThread(false)
                 .allowNativeAccess(false)
+                .resourceLimits(ResourceLimits.newBuilder().statementLimit(10_000, null).build())
                 .build()) {
 
             // Establish a bare `exports` object the snippet can attach to.

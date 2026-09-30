@@ -13,6 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MemoryEntityStoreTest {
 
     private MemoryEntityStore store;
+    /** Rows planted here have no recorded teller: her bondholder reads them. */
+    private static final MemoryReader READER = MemoryReader.of("did:wyrd:bondholder", true);
     private static final String DID = "did:wyrd:alice";
 
     @BeforeEach
@@ -27,7 +29,7 @@ class MemoryEntityStoreTest {
         assertThat(store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-1", "pet", "name", "Mochi", now))).isTrue();
 
-        var hit = store.findLatest(DID, "pet", "name");
+        var hit = store.findLatest(DID, "pet", "name", READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("Mochi");
         assertThat(hit.get().memoryId()).isEqualTo("mem-1");
@@ -42,7 +44,7 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-2", "occupation", "current", "data engineer", t2));
 
-        var hit = store.findLatest(DID, "occupation", "current");
+        var hit = store.findLatest(DID, "occupation", "current", READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("data engineer");
     }
@@ -53,7 +55,7 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-1", "location", "hometown", "Portland", t1));
 
-        var hit = store.findLatest(DID, "location", null);
+        var hit = store.findLatest(DID, "location", null, READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("Portland");
     }
@@ -66,7 +68,7 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 "did:wyrd:bob", "mem-2", "pet", "name", "Rex", t1));
 
-        var hit = store.findLatest(DID, "pet", "name");
+        var hit = store.findLatest(DID, "pet", "name", READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("Mochi");
     }
@@ -92,7 +94,7 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-2", "book", "reading", "Gravity's Rainbow", base + 1000));
 
-        var all = store.findAllByType(DID, "book", 10);
+        var all = store.findAllByType(DID, "book", 10, READER);
         assertThat(all).hasSize(2);
         assertThat(all.get(0).entityValue()).isEqualTo("Gravity's Rainbow");
         assertThat(all.get(1).entityValue()).isEqualTo("Dune");
@@ -106,14 +108,14 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-1", "pet", "type", "cat", now));
 
-        var hits = store.findByValue(DID, "Mochi", 5);
+        var hits = store.findByValue(DID, "Mochi", 5, READER);
         assertThat(hits).hasSize(1);
         assertThat(hits.getFirst().entityType()).isEqualTo("pet");
     }
 
     @Test
     void findLatest_empty_returns_optional_empty() {
-        assertThat(store.findLatest(DID, "pet", "name")).isEmpty();
+        assertThat(store.findLatest(DID, "pet", "name", READER)).isEmpty();
     }
 
     @Test
@@ -121,7 +123,7 @@ class MemoryEntityStoreTest {
         assertThat(store.insertEdge(new MemoryEntityStore.EdgeRow(
                 DID, "I", "works_as", "data engineer", "mem-1", 1.0))).isTrue();
 
-        var edges = store.findEdgesTouching(DID, "data engineer", 5);
+        var edges = store.findEdgesTouching(DID, "data engineer", 5, READER);
         assertThat(edges).hasSize(1);
         assertThat(edges.getFirst().subject()).isEqualTo("I");
         assertThat(edges.getFirst().predicate()).isEqualTo("works_as");
@@ -135,7 +137,7 @@ class MemoryEntityStoreTest {
                 new MemoryEntityStore.EntityRow(DID, "mem-1", "pet", "type", "cat", now),
                 new MemoryEntityStore.EntityRow(DID, "mem-2", "book", "reading", "Dune", now)));
 
-        var entities = store.findEntitiesByMemoryId(DID, "mem-1", 10);
+        var entities = store.findEntitiesByMemoryId(DID, "mem-1", 10, READER);
         assertThat(entities).hasSize(2);
         assertThat(entities).extracting(MemoryEntityStore.EntityRow::entityValue)
                 .containsExactlyInAnyOrder("Mochi", "cat");
@@ -147,7 +149,7 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 "did:wyrd:bob", "mem-1", "pet", "name", "Rex", now));
 
-        var hits = store.findEntitiesByMemoryId(DID, "mem-1", 10);
+        var hits = store.findEntitiesByMemoryId(DID, "mem-1", 10, READER);
         assertThat(hits).isEmpty();
     }
 
@@ -163,12 +165,12 @@ class MemoryEntityStoreTest {
                 DID, "sister", "visiting_at", "next_weekend", "mem-2", 1.0));
 
         // Seed from hop-1 (mem-1): entities = ["sister"]
-        var entities = store.findEntitiesByMemoryId(DID, "mem-1", 10);
+        var entities = store.findEntitiesByMemoryId(DID, "mem-1", 10, READER);
         assertThat(entities).hasSize(1);
         assertThat(entities.getFirst().entityValue()).isEqualTo("sister");
 
         // Traverse edges from "sister" → mem-2 surfaces
-        var edges = store.findEdgesTouching(DID, "sister", 10);
+        var edges = store.findEdgesTouching(DID, "sister", 10, READER);
         assertThat(edges).hasSize(1);
         assertThat(edges.getFirst().memoryId()).isEqualTo("mem-2");
     }
@@ -187,7 +189,7 @@ class MemoryEntityStoreTest {
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-3", "location", "workplace", "San Francisco", t2));
 
-        var rows = store.findAllForDid(DID, 20);
+        var rows = store.findAllForDid(DID, 20, READER);
         assertThat(rows).hasSize(2);
         // Ordered newest-first.
         assertThat(rows.get(0).entityValue()).isEqualTo("self-employed");
@@ -201,7 +203,7 @@ class MemoryEntityStoreTest {
                 DID, "mem-a", "allergy", null, "cashews", 1_000L));
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 DID, "mem-b", "allergy", null, "shellfish", 2_000L));
-        var rows = store.findAllForDid(DID, 10);
+        var rows = store.findAllForDid(DID, 10, READER);
         // Same (type, null role) → only newest.
         assertThat(rows).hasSize(1);
         assertThat(rows.getFirst().entityValue()).isEqualTo("shellfish");
@@ -213,7 +215,7 @@ class MemoryEntityStoreTest {
                 DID, "mem-1", "pet", "name", "Mochi", 1_000L));
         store.insertEntity(new MemoryEntityStore.EntityRow(
                 "did:wyrd:bob", "mem-2", "pet", "name", "Rex", 2_000L));
-        var rows = store.findAllForDid(DID, 10);
+        var rows = store.findAllForDid(DID, 10, READER);
         assertThat(rows).hasSize(1);
         assertThat(rows.getFirst().entityValue()).isEqualTo("Mochi");
     }
@@ -224,7 +226,7 @@ class MemoryEntityStoreTest {
             store.insertEntity(new MemoryEntityStore.EntityRow(
                     DID, "mem-" + i, "type-" + i, "role", "value-" + i, 1_000L + i));
         }
-        var rows = store.findAllForDid(DID, 3);
+        var rows = store.findAllForDid(DID, 3, READER);
         assertThat(rows).hasSize(3);
     }
 
@@ -235,13 +237,13 @@ class MemoryEntityStoreTest {
         store.insertEdge(new MemoryEntityStore.EdgeRow(
                 DID, "sister", "visiting_at", "next_weekend", "mem-2", 1.0));
 
-        var hitMochi = store.findEdgesTouching(DID, "Mochi", 5);
+        var hitMochi = store.findEdgesTouching(DID, "Mochi", 5, READER);
         assertThat(hitMochi).hasSize(1);
 
-        var hitCat = store.findEdgesTouching(DID, "cat", 5);
+        var hitCat = store.findEdgesTouching(DID, "cat", 5, READER);
         assertThat(hitCat).hasSize(1);
 
-        var hitWeekend = store.findEdgesTouching(DID, "next_weekend", 5);
+        var hitWeekend = store.findEdgesTouching(DID, "next_weekend", 5, READER);
         assertThat(hitWeekend).hasSize(1);
     }
 }

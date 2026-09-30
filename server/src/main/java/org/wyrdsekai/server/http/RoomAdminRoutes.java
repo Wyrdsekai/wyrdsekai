@@ -46,9 +46,16 @@ public final class RoomAdminRoutes {
 
     record ErrorResponse(String error) {}
 
-    /** One room as the steward sees it. */
+    /** One room as the steward sees it. {@code lastActivityAt} is the newest event in its journal, 0 when not known. */
     public record RoomRow(String roomId, String name, String madeBy, long createdAt,
-                          int doorways, List<String> occupants, boolean markupId, boolean protectedRoom) {}
+                          int doorways, List<String> occupants, boolean markupId, boolean protectedRoom,
+                          long lastActivityAt) {
+        public RoomRow(String roomId, String name, String madeBy, long createdAt,
+                       int doorways, List<String> occupants, boolean markupId, boolean protectedRoom) {
+            this(roomId, name, madeBy, createdAt, doorways, occupants, markupId, protectedRoom, 0L);
+        }
+    }
+    static final long DAY_MS = 24L * 60 * 60 * 1000;
 
     private void handleList(Context ctx) {
         ctx.json(rows());
@@ -58,7 +65,8 @@ public final class RoomAdminRoutes {
         if (requireSteward(ctx) == null) return;
         var demolition = RoomDemolition.get();
         if (demolition == null) { ctx.status(503).json(new ErrorResponse("demolition not available")); return; }
-        var result = await(demolition.demolish(ctx.pathParam("roomId"), "steward"));
+        boolean withObjects = "true".equalsIgnoreCase(ctx.queryParam("with_objects"));
+        var result = await(demolition.demolish(ctx.pathParam("roomId"), "steward", withObjects));
         ctx.status(result.ok() ? 200 : 409).json(Map.of("ok", result.ok(), "message", result.message(),
             "roomId", result.roomId() == null ? "" : result.roomId(), "doorwaysClosed", result.doorwaysClosed()));
     }
@@ -67,13 +75,16 @@ public final class RoomAdminRoutes {
         if (requireSteward(ctx) == null) return;
         boolean dry = "true".equalsIgnoreCase(ctx.queryParam("dry"));
         boolean duplicates = "true".equalsIgnoreCase(ctx.queryParam("duplicates"));
-        var plan = prunePlan(rows(), duplicates);
-        if (dry) { ctx.json(Map.of("dry", true, "rooms", plan)); return; }
+        boolean withObjects = "true".equalsIgnoreCase(ctx.queryParam("with_objects"));
+        int staleDays = 0;
+        try { staleDays = Integer.parseInt(ctx.queryParam("stale_days") == null ? "0" : ctx.queryParam("stale_days")); } catch (NumberFormatException ignored) { }
+        var plan = prunePlan(rows(), duplicates, staleDays, System.currentTimeMillis());
+        if (dry) { ctx.json(Map.of("dry", true, "rooms", plan, "now", System.currentTimeMillis())); return; }
         var demolition = RoomDemolition.get();
         if (demolition == null) { ctx.status(503).json(new ErrorResponse("demolition not available")); return; }
         var results = new ArrayList<Map<String, Object>>();
         for (var row : plan) {
-            var r = await(demolition.demolish(row.roomId(), "steward"));
+            var r = await(demolition.demolish(row.roomId(), "steward", withObjects));
             results.add(Map.of("roomId", row.roomId(), "name", row.name(), "ok", r.ok(), "message", r.message()));
         }
         ctx.json(Map.of("dry", false, "results", results));
@@ -81,6 +92,15 @@ public final class RoomAdminRoutes {
 
     /** What prune would take down: markup ids always; later duplicates of a name when asked. Pure. */
     static List<RoomRow> prunePlan(List<RoomRow> rooms, boolean duplicates) {
+        return prunePlan(rooms, duplicates, 0, 0L);
+    }
+
+    /**
+     * As above, plus the stale rule when {@code staleDays > 0}: a made room (never a protected
+     * one), nobody in it, whose newest journal event is at least that many days before {@code now}.
+     * A room whose activity is not known (no journal seen) is never called stale. Pure.
+     */
+    static List<RoomRow> prunePlan(List<RoomRow> rooms, boolean duplicates, int staleDays, long now) {
         var out = new ArrayList<RoomRow>();
         var firstByName = new HashMap<String, RoomRow>();
         var sorted = new ArrayList<>(rooms);
@@ -88,6 +108,8 @@ public final class RoomAdminRoutes {
         for (var r : sorted) {
             if (r.protectedRoom()) continue;
             if (r.markupId()) { out.add(r); continue; }
+            if (staleDays > 0 && r.lastActivityAt() > 0 && r.occupants().isEmpty()
+                    && now - r.lastActivityAt() >= staleDays * DAY_MS) { out.add(r); continue; }
             if (!duplicates) continue;
             var key = RoomNaming.normalise(r.name());
             if (key.isEmpty()) continue;
@@ -108,6 +130,7 @@ public final class RoomAdminRoutes {
         }
         var info = new LinkedHashMap<String, RoomMetadataService.RoomInfo>();
         if (metadata != null) for (var i : metadata.listRooms()) info.put(i.roomId(), i);
+        var activity = metadata == null ? Map.<String, Long>of() : metadata.lastActivityByRoom();
         var out = new ArrayList<RoomRow>();
         if (topo == null) return out;
         for (var node : topo.rooms().values()) {
@@ -116,11 +139,13 @@ public final class RoomAdminRoutes {
             // Seeded rooms carry created_by = "system" on real nodes, the same as rooms a
             // companion made — the seed set is what tells them apart.
             boolean protectedRoom = madeBy == null || protectedRooms.contains(node.roomId())
-                || node.roomId().startsWith("home-") || node.roomId().startsWith("study-");
+                || node.roomId().startsWith("home-") || node.roomId().startsWith("study-")
+                || node.roomId().startsWith("workshop-codeplane-");
             out.add(new RoomRow(node.roomId(), node.name(), madeBy == null ? "founding" : madeBy,
                 i == null ? 0 : i.createdAt(), node.exits().size(),
                 occupants.getOrDefault(node.roomId(), List.of()),
-                RoomNaming.looksLikeMarkupId(node.roomId()), protectedRoom));
+                RoomNaming.looksLikeMarkupId(node.roomId()), protectedRoom,
+                activity.getOrDefault(node.roomId(), 0L)));
         }
         return out;
     }

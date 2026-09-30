@@ -29,7 +29,7 @@ exports.manifest = {
   // lands in the catalogue we declare the Tier-1 surface the script really
   // reads (world.self.did()); the nostr adapter dispatch itself is gated
   // server-side (wyrdsekai.nostr.enabled) and rate-limited below.
-  capabilities: ["self.did"],
+  capabilities: ["self.did", "nostr.publish"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

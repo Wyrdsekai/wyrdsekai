@@ -52,6 +52,7 @@ AIO_IMAGE="${WYRD_RELAY_AIO_IMAGE:-wyrdsekai-relay:aio}"
 AIO_VOL_CERTS="${AIO_NAME}-certs"
 AIO_VOL_DATA="${AIO_NAME}-data"
 ACTION="deploy"
+REPLACE_OWNER=0
 REMOVE_PUBKEY=""                                 # `remove <pubkey>` target
 RESTORE_FILE=""                                  # `restore <archive>` source
 BACKUP_OUT=""                                    # `backup --out <file>` override
@@ -158,7 +159,9 @@ Operator commands (no host arg):
   claim-mint         mint a one-time owner-claim token from the ALREADY-RUNNING
                      relay (no redeploy). Prints the `wyrd relay claim …` line a
                      zone runs to record its DID as this relay's admin owner.
-                     Use when the deploy-time claim line was missed.
+                     Use when the deploy-time claim line was missed. A relay
+                     that has an owner refuses unless --replace-owner is given
+                     (the token then hands the relay to whoever redeems it).
   fingerprint (fp)   print the relay CA's SHA-256 fingerprint — the value a
                      commons operator publishes on their web page, and the one
                      users pass to `wyrd relay join <host> --fingerprint <fp>`
@@ -216,6 +219,7 @@ while [ $# -gt 0 ]; do
         --private)      PUBLIC=0; shift ;;
         --public)       PUBLIC=1; shift ;;
         --owner)        OWNER_DID="${2:?--owner needs a did:key: or did:wyrd: value}"; shift 2 ;;
+        --replace-owner) REPLACE_OWNER=1; shift ;;
         --owner=*)      OWNER_DID="${1#--owner=}"; shift ;;
         --mode)         RELAY_MODE="${2:?--mode needs invite-only|open|commons}"; shift 2 ;;
         --mode=*)       RELAY_MODE="${1#--mode=}"; shift ;;
@@ -701,6 +705,19 @@ if [ "$ACTION" = "invite" ]; then
     exit 0
 fi
 
+# POST a JSON body to the registration sidecar inside its container and print the answer's body,
+# a refusal's included (busybox wget prints nothing on an HTTP error). Python is in every image
+# the sidecar runs from.
+docker_reg_post() {   # <container> <path> <json>
+    docker exec "$1" python3 -c 'import sys, urllib.request, urllib.error
+r = urllib.request.Request("http://127.0.0.1:9280" + sys.argv[1], data=sys.argv[2].encode(),
+                           headers={"Content-Type": "application/json"})
+try:
+    print(urllib.request.urlopen(r, timeout=20).read().decode())
+except urllib.error.HTTPError as e:
+    print(e.read().decode())' "$2" "$3"
+}
+
 # ── Operator: mint an owner-claim token (no host arg) ───────────────────
 # Mirrors `invite` but binds OWNERSHIP not membership: prints the
 # `wyrd relay claim …` line a zone runs to record its DID as this relay's
@@ -721,11 +738,10 @@ if [ "$ACTION" = "claim-mint" ]; then
     fi
     [ -n "$OP_MODE" ] || die "no running relay found — deploy one first (no docker 'registration' container, no native install at $PREFIX)."
 
+    C_REPLACE=false; [ "$REPLACE_OWNER" = 1 ] && C_REPLACE=true
     if [ "$OP_MODE" = docker ]; then
-        CLAIM_JSON=$(docker exec "$REG_CID" wget -qO- \
-            --post-data="{\"ttl\":${INVITE_TTL}}" \
-            --header="Content-Type: application/json" \
-            http://127.0.0.1:9280/claim-owner-mint 2>/dev/null) \
+        CLAIM_JSON=$(docker_reg_post "$REG_CID" /claim-owner-mint \
+            "{\"ttl\":${INVITE_TTL},\"replace\":${C_REPLACE}}" 2>/dev/null) \
             || die "owner-claim mint failed inside the registration container"
     else
         REG_CLAIM_PORT="$REG_PORT"
@@ -734,10 +750,14 @@ if [ "$ACTION" = "claim-mint" ]; then
             ENV_REG_PORT=$( . "$PREFIX/conf/registration.env" >/dev/null 2>&1; printf '%s' "${REGISTRATION_PORT:-}" )
             [ -n "$ENV_REG_PORT" ] && REG_CLAIM_PORT="$ENV_REG_PORT"
         fi
-        CLAIM_JSON=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d "{\"ttl\":${INVITE_TTL}}" \
+        CLAIM_JSON=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d "{\"ttl\":${INVITE_TTL},\"replace\":${C_REPLACE}}" \
             "http://127.0.0.1:$REG_CLAIM_PORT/claim-owner-mint") \
             || die "owner-claim mint failed (native, port $REG_CLAIM_PORT)"
+    fi
+    C_OWNER=$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"owner_did": *"\([^"]*\)".*/\1/p')
+    if [ -n "$C_OWNER" ] && ! printf '%s' "$CLAIM_JSON" | grep -q '"claim_token"'; then
+        die "this relay already has an owner ($C_OWNER). To hand it to someone else: relay.sh claim-mint --replace-owner"
     fi
 
     CLAIM_TOKEN=$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claim_token": *"\([^"]*\)".*/\1/p')
@@ -1105,6 +1125,53 @@ else
     say "no host named — invites will advertise all relay addresses: $HOST_LIST"
 fi
 
+# The household-to-relay link on the NATS port is TLS (Wyrdsekai 0.5.0), served with this relay's
+# own certificate; households pin it by the fingerprint they took when joining. allow_non_tls keeps a
+# household on an older Wyrdsekai connecting in the clear while it updates (its log says so). Added
+# once to an existing relay.conf (registration.py rewrites only the authorization block).
+ensure_nats_tls() {   # <relay.conf> <cert dir>
+    grep -q '^tls {' "$1" && return 0
+    awk -v d="$2" '
+        { print }
+        !done && /^listen:/ {
+            print "# The household-to-relay link is TLS with the relay certificate (Wyrdsekai 0.5.0)."
+            print "# allow_non_tls keeps households on an older Wyrdsekai connecting in the clear while they update."
+            print "tls {"
+            print "    cert_file: \"" d "/chain.crt\""
+            print "    key_file: \"" d "/leaf.key\""
+            print "    timeout: 5"
+            print "}"
+            print "allow_non_tls: true"
+            done = 1
+        }' "$1" > "$1.tls.tmp" && cat "$1.tls.tmp" > "$1" && rm -f "$1.tls.tmp"
+}
+
+# RELAY_ALLOW_NON_TLS=false makes the zone port refuse households that connect in the clear. Keep the
+# default (true) until every household on this relay runs Wyrdsekai 0.5.0 or later.
+set_allow_non_tls() {   # <relay.conf>
+    case "${RELAY_ALLOW_NON_TLS:-true}" in
+        false|0|no|off) _v=false ;;
+        *) _v=true ;;
+    esac
+    grep -q '^allow_non_tls:' "$1" && sed -i.bak "s|^allow_non_tls:.*|allow_non_tls: $_v|" "$1" && rm -f "$1.bak"
+    return 0
+}
+
+# Relay security settings (deploy/relay/README.md, "Security settings"). Taken from the environment
+# of this run, else kept from the previous deploy's env file, so `relay.sh update` keeps them.
+SECURITY_KEYS="RELAY_ALLOW_NON_TLS RELAY_LEGACY_GRANT RELAY_SHARED_PHONE_ACCOUNT RELAY_PEER_TRAINER RELAY_LEGACY_INBOX RELAY_ALLOW_PLAIN_TOKEN_PROOF"
+security_env_lines() {   # <quote 0|1> <previous env file>
+    for _k in $SECURITY_KEYS; do
+        eval "_v=\${$_k:-}"
+        if [ -z "$_v" ] && [ -f "$2" ]; then
+            _v=$(sed -n "s/^$_k=\"\{0,1\}\([a-z]*\)\"\{0,1\}\$/\1/p" "$2" | head -1)
+        fi
+        [ -n "$_v" ] || continue
+        case "$_v" in true|false) ;; *) die "$_k must be true or false (got '$_v')" ;; esac
+        if [ "$1" = 1 ]; then echo "$_k=\"$_v\""; else echo "$_k=$_v"; fi
+    done
+}
+
 # The randomized passwords must be IN relay.conf for first boot (regen
 # keeps them in sync afterwards — registration.py preserves non-hh users
 # and re-injects from NATS_PASSWORD / NATS_PHONE_PASSWORD).
@@ -1122,8 +1189,10 @@ inject_conf_passwords() {
 
 # ── Deploy: docker ────────────────────────────────────────────────────────
 deploy_docker() {
+    _sec_lines=$(security_env_lines 0 "$BUNDLE_DIR/.env")
     {
         echo "# Written by relay.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) — re-run relay.sh to update."
+        [ -n "$_sec_lines" ] && printf '%s\n' "$_sec_lines"
         echo "RELAY_PORT=$PORT"
         echo "RELAY_PUBLIC_HOST=$HOST"
         echo "RELAY_PUBLIC_HOSTS=$HOST_LIST"
@@ -1280,9 +1349,14 @@ deploy_native() {
         sed -e "s|listen: 0.0.0.0:4222|listen: 0.0.0.0:$NATS_PORT|" \
             -e "s|listen: \"0.0.0.0:9222\"|listen: \"127.0.0.1:$WS_PORT\"|" \
             -e "s|http: \"127.0.0.1:8222\"|http: \"127.0.0.1:$MON_PORT\"|" \
+            -e "s|\"/certs/|\"$PREFIX/certs/|g" \
             "$BUNDLE_DIR/relay.conf" > "$PREFIX/conf/relay.conf"
     fi
     inject_conf_passwords "$PREFIX/conf/relay.conf"
+    ensure_nats_tls "$PREFIX/conf/relay.conf" "$PREFIX/certs"
+    _sec_lines=$(security_env_lines 1 "$PREFIX/conf/registration.env")
+    RELAY_ALLOW_NON_TLS=$(printf '%s\n' "$_sec_lines" | sed -n 's/^RELAY_ALLOW_NON_TLS="\([a-z]*\)"$/\1/p')
+    set_allow_non_tls "$PREFIX/conf/relay.conf"
 
     # Household CA + leaf (same certinit script the docker image runs).
     say "generating/refreshing household CA + leaf…"
@@ -1293,6 +1367,7 @@ deploy_native() {
     umask 077
     {
         echo "# Written by relay.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) — re-run relay.sh to update."
+        [ -n "$_sec_lines" ] && printf '%s\n' "$_sec_lines"
         echo "NATS_CONF=\"$PREFIX/conf/relay.conf\""
         echo "NATS_SIGNAL_CMD=\"$PREFIX/bin/nats-server --signal reload=$PREFIX/data/nats.pid\""
         echo "DATA_DIR=\"$PREFIX/data\""
@@ -1672,17 +1747,19 @@ if [ -n "$OWNER_DID" ]; then
     echo ""
 else
     if [ "$MODE" = "docker" ]; then
-        CLAIM_JSON=$(docker exec "$REG_CID" wget -qO- \
-            --post-data="{\"ttl\":${INVITE_TTL}}" \
-            --header="Content-Type: application/json" \
-            http://127.0.0.1:9280/claim-owner-mint 2>/dev/null || true)
+        CLAIM_JSON=$(docker_reg_post "$REG_CID" /claim-owner-mint "{\"ttl\":${INVITE_TTL}}" 2>/dev/null || true)
     else
-        CLAIM_JSON=$(curl -sf -X POST -H "Content-Type: application/json" \
+        CLAIM_JSON=$(curl -s -X POST -H "Content-Type: application/json" \
             -d "{\"ttl\":${INVITE_TTL}}" \
             "http://127.0.0.1:$REG_PORT/claim-owner-mint" 2>/dev/null || true)
     fi
     CLAIM_TOKEN=$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claim_token": *"\([^"]*\)".*/\1/p')
-    if [ -n "$CLAIM_TOKEN" ]; then
+    KEPT_OWNER=$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"owner_did": *"\([^"]*\)".*/\1/p')
+    if [ -z "$CLAIM_TOKEN" ] && [ -n "$KEPT_OWNER" ]; then
+        # An owned relay mints no claim token: one printed at every update could take it over.
+        echo "  Admin owner: $KEPT_OWNER (kept)."
+        echo ""
+    elif [ -n "$CLAIM_TOKEN" ]; then
         echo "  Claim ADMIN ownership of this relay from your zone (valid $TTL_HUMAN, single use):"
         echo ""
         echo "    wyrd relay claim $CLAIM_TOKEN --registration-url https://$HOST:$PORT"

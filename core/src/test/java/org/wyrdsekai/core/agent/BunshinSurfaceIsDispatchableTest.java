@@ -170,8 +170,8 @@ class BunshinSurfaceIsDispatchableTest {
     @DisplayName("human-directedness is judged by the turn IN FLIGHT, not the previous one")
     void humanDirectednessReadsThePendingTrigger() throws IOException {
         var src = Files.readString(ACTOR);
-        int h = src.indexOf("private boolean bunshinWorkIsHumanDirected");
-        assertTrue(h > 0, "bunshinWorkIsHumanDirected must exist");
+        int h = src.indexOf("private WorldEvent.Said bunshinRequester(WorldEvent.Said explicit)");
+        assertTrue(h > 0, "bunshinRequester must exist");
         var body = src.substring(h, src.indexOf("\n    }", h));
         // lastReactTrigger is assigned only when the RESPONSE returns, so a check
         // that reads it alone judges the PREVIOUS turn: null after boot (first
@@ -180,9 +180,18 @@ class BunshinSurfaceIsDispatchableTest {
         // human trigger's FORBIDDEN bypass).
         // Pin the EXPRESSION, not word order — the method's own comment mentions
         // lastReactTrigger first and tripped an ordering assertion.
-        assertTrue(body.contains("pendingTrigger != null ? pendingTrigger : lastReactTrigger"),
-            "the in-flight trigger must be decisive, falling back to the last "
-            + "completed turn only when no turn is in flight");
+        // The line in hand is decisive when someone said it; her own or the system's line (a
+        // tool's judgment turn, a plan step, her own time) falls to the turn's person rule, which
+        // reads the turn in flight and never a model-written plan's requester (2026-09-23).
+        assertTrue(body.contains("var current = pendingTrigger;")
+                && body.contains("return isHumanTrigger(current) ? current : null;")
+                && body.contains("return personThisReplyAnswers();"),
+            "the in-flight trigger must be decisive, falling back to the turn's person rule "
+            + "only when the line in hand is her own or the system's");
+        assertTrue(body.contains("if (explicit != null) return isHumanTrigger(explicit) ? explicit : null;"),
+            "a dispatch made for a tell is judged by that tell");
+        assertTrue(!src.contains("return !isAgentEntity(activePlan.requesterId());"),
+            "a requester the model wrote into a task_plan grants no bypass");
     }
 
     @Test
@@ -200,7 +209,7 @@ class BunshinSurfaceIsDispatchableTest {
         assertTrue(body.contains("msg.forBunshin()") && body.contains("pendingBunshinOutcomes.add"),
             "bunshin-initiated async outcomes must be held for the report");
         int r = src.indexOf("private Behavior<Command> onBunshinReportReceived");
-        var report = src.substring(r, src.indexOf("speakDirect(narration)", r));
+        var report = src.substring(r, src.indexOf("speakDirect(narration", r));
         assertTrue(report.contains("pendingBunshinOutcomes"),
             "the return narration must append the recorded outcomes DETERMINISTICALLY");
         assertTrue(report.contains("pendingBunshinOutcomes.clear()"),

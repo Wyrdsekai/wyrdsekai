@@ -21,7 +21,9 @@ class DreamWeaverTest {
 
         var dream = DreamWeaver.weave(manifest, null, null);
         assertTrue(dream.isPresent(), "Should produce a dream with topics");
-        assertTrue(dream.get().contains("stirs from sleep"), "Dream should have framing");
+        assertTrue(dream.get().startsWith("While I slept: "), "a plain report, not a stage direction");
+        assertTrue(dream.get().contains("most on my mind: exploration"), dream.get());
+        assertFalse(dream.get().contains("*"), "the report is not an emote and not voiced prose");
     }
 
     @Test
@@ -99,7 +101,7 @@ class DreamWeaverTest {
     }
 
     @Test
-    void weave_produces_different_dreams() {
+    void the_same_sleep_gives_the_same_report() {
         var fingerprint = new BehavioralFingerprint(
             Map.of(), Map.of(), Map.of(), Map.of("say", 0.5f),
             Map.of("exploration", 0.8f, "the nexus", 0.6f),
@@ -107,12 +109,13 @@ class DreamWeaverTest {
             Map.of("curiosity", 0.7f));
         var manifest = minimalManifest(fingerprint, List.of(), List.of());
 
-        // Generate several dreams — they should not all be identical
-        var dreams = new HashSet<String>();
+        // A report states what happened; it does not vary for effect.
+        var reports = new HashSet<String>();
         for (int i = 0; i < 20; i++) {
-            DreamWeaver.weave(manifest, null, null).ifPresent(dreams::add);
+            DreamWeaver.weave(manifest, null, null).ifPresent(reports::add);
         }
-        assertTrue(dreams.size() > 1, "Dreams should have variety (got " + dreams.size() + " unique)");
+        assertEquals(1, reports.size(), reports.toString());
+        assertTrue(reports.iterator().next().contains("strongest feeling: curiosity."));
     }
 
     // --- Helpers ---

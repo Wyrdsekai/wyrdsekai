@@ -52,7 +52,7 @@ class InferenceRouterTest {
         var lastBaseUrl: String? = null
             private set
 
-        override suspend fun complete(
+        override suspend fun send(
             baseUrl: String,
             messages: List<ChatMessage>,
             options: CompletionOptions,

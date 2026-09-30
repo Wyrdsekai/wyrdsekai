@@ -19,6 +19,7 @@ import org.wyrdsekai.core.agent.CompanionActor;
 import org.wyrdsekai.core.bootstrap.CoreServices;
 import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.crypto.ZoneSecrets;
+import org.wyrdsekai.core.security.LoginRateLimiter;
 import org.wyrdsekai.core.home.HomeClient;
 import org.wyrdsekai.core.home.HomeClients;
 import org.wyrdsekai.core.home.HomeProxy;
@@ -59,6 +60,7 @@ import org.wyrdsekai.core.search.WyrdLuceneStore;
 import org.wyrdsekai.core.soul.SqlSoulStore;
 import org.wyrdsekai.core.update.UpdateConfig;
 import org.wyrdsekai.scripting.loader.ScriptLoader;
+import org.wyrdsekai.server.http.ApiAuth;
 import org.wyrdsekai.server.http.AuthRoutes;
 import org.wyrdsekai.server.http.HealthRoutes;
 import org.wyrdsekai.server.http.HomeRoutes;
@@ -66,6 +68,7 @@ import org.wyrdsekai.server.http.IssueRoutes;
 import org.wyrdsekai.server.http.LibraryKnowledgeRoutes;
 import org.wyrdsekai.server.http.McpRoutes;
 import org.wyrdsekai.server.http.MetricsCollector;
+import org.wyrdsekai.server.http.OperatorToken;
 import org.wyrdsekai.server.http.PairingRoutes;
 import org.wyrdsekai.server.http.ResidentRoutes;
 import org.wyrdsekai.server.http.SearchRoutes;
@@ -82,12 +85,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,6 +125,7 @@ public final class TestServerBootstrap implements AutoCloseable {
     private ActorSystem<ZoneGuardian.Command> system;
     private Javalin app;
     private String jdbcUrl;
+    private NodeIdentity betweenIdentity;
     @SuppressWarnings("FieldCanBeLocal")
     private Connection keepAliveConn;
     private Path dbFile; // temp SQLite file — cleaned up on stop
@@ -134,6 +140,14 @@ public final class TestServerBootstrap implements AutoCloseable {
     private ActorRef<CountingHouseCommand> countingHouseRef;
     private WorldDnaService worldDnaServiceRef;
     private HomeClient homeClientRef;
+    private String residentToken;
+
+    /**
+     * Where this JVM's operator token lives. One directory for every server the JVM starts:
+     * {@link OperatorToken} holds one token per process, as a node does, so two servers in one
+     * test must present the same one.
+     */
+    private static Path operatorDir;
 
     /** Access the HomeClient wired into this bootstrap (for cross-zone tests). */
     public HomeClient homeClient() { return homeClientRef; }
@@ -147,6 +161,31 @@ public final class TestServerBootstrap implements AutoCloseable {
      * were configured at startup.
      */
     public ActorRef<InferenceRouter.Command> inferenceRouter() { return inferenceRouterRef; }
+
+    /**
+     * The machine's operator token, read from its file the way {@code sudo wyrd …} reads it.
+     * {@link ApiAuth} accepts it from loopback only; send it as {@code Authorization: Bearer}
+     * for OPERATOR and STEWARD routes, as the operator of the home machine would.
+     */
+    public static String operatorToken() {
+        try {
+            return Files.readString(ensureOperatorDir().resolve("operator.token")).strip();
+        } catch (Exception e) {
+            throw new IllegalStateException("operator token unreadable", e);
+        }
+    }
+
+    /** The resident bridge's token ({@code /api/resident/*}). */
+    public String residentToken() { return residentToken; }
+
+    private static synchronized Path ensureOperatorDir() throws Exception {
+        if (operatorDir == null) {
+            operatorDir = Files.createTempDirectory("wyrd-e2e-operator-");
+            operatorDir.toFile().deleteOnExit();
+        }
+        OperatorToken.ensure(operatorDir);
+        return operatorDir;
+    }
 
     public TestServerBootstrap(List<InferenceBackend> inferenceBackends) {
         this(inferenceBackends, PortAllocator.allocate());
@@ -373,6 +412,9 @@ public final class TestServerBootstrap implements AutoCloseable {
         // "no users exist", not a config toggle. Tests that need an open
         // first-user window simply start with an empty users table; tests
         // that need a closed door pre-create a user.
+        // Every password login shares one process-wide limiter; a fresh test server starts
+        // with no failures carried over from the servers before it in this JVM.
+        LoginRateLimiter.shared().clear();
         var authRoutes = new AuthRoutes(authService, inviteService, pairingService, null);
 
         // Wire Between if enabled (multi-node E2E tests)
@@ -395,6 +437,8 @@ public final class TestServerBootstrap implements AutoCloseable {
                 Props.empty());
             var dataDir = Files.createTempDirectory("wyrd-between-" + nodeId);
             dataDir.toFile().deleteOnExit();
+            // Made here so a multi-node test can put each node on the others' roster.
+            betweenIdentity = NodeIdentity.loadOrGenerate(dataDir.resolve("node-identity.json"));
             betweenActor.tell(new BetweenActor.StartBetween(
                 "test-zone", "Test Zone", dataDir, betweenCfg, jdbcUrl, null));
             // Wire account replication
@@ -423,9 +467,19 @@ public final class TestServerBootstrap implements AutoCloseable {
             log.info("Between enabled for test: node={} nats={}", nodeId, natsUrl);
         }
 
+        // Every /api route passes the same login filter as in Main.java (ApiPolicy decides what
+        // each route needs). Tests log in, or present the operator token from loopback, as real
+        // clients do.
+        ensureOperatorDir();
+        var residentBytes = new byte[24];
+        new SecureRandom().nextBytes(residentBytes);
+        residentToken = Base64.getUrlEncoder().withoutPadding().encodeToString(residentBytes);
+        final var finalResidentToken = residentToken;
+
         app = Javalin.create(cfg -> {
             cfg.jetty.modifyWebSocketServletFactory(ws ->
                 ws.setIdleTimeout(Duration.ofMinutes(15)));
+            cfg.routes.beforeMatched(ApiAuth.filter(authService, pairingService, finalResidentToken));
             cfg.routes.ws("/ws", wsHandler);
             cfg.routes.ws("/ws/zone", zoneBridge);
             healthRoutes.register(cfg.routes);
@@ -461,7 +515,7 @@ public final class TestServerBootstrap implements AutoCloseable {
             new StudyRoutes(studyService, docIndexer).register(cfg.routes);
             // Resident bridge routes — uses default companion's entityId
             new ResidentRoutes(
-                "companion-wyrd", "", system).register(cfg.routes);
+                "companion-wyrd", finalResidentToken, system).register(cfg.routes);
             // Mesh update routes (no channel in tests — status only)
             var updateConfig = UpdateConfig.fromEnv();
             new UpdateRoutes(updateConfig, null).register(cfg.routes);
@@ -624,6 +678,11 @@ public final class TestServerBootstrap implements AutoCloseable {
         // Wait for reset + cancellation of in-flight inference to complete
         try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         log.info("Reset companion state for next test");
+    }
+
+    /** The Between node identity (multi-node tests), or null when Between is off. */
+    public NodeIdentity betweenIdentity() {
+        return betweenIdentity;
     }
 
     public String jdbcUrl() {

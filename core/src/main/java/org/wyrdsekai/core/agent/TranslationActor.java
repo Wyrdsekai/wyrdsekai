@@ -6,6 +6,7 @@ import org.apache.pekko.actor.typed.javadsl.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.NowLine;
 
 import java.time.Duration;
 import java.util.List;
@@ -129,7 +130,7 @@ public class TranslationActor extends AbstractBehavior<TranslationActor.Command>
 
         inferenceRouter.tell(new InferenceRouter.InferRequest(
             "translate-" + translationCount++, null,
-            systemPrompt, cmd.text(), maxTokens, temp, adapter));
+            systemPrompt, cmd.text(), maxTokens, temp, adapter).withNow(NowLine.NONE));
 
         state = State.TRANSLATING;
         vitality = new VitalityState(
@@ -157,7 +158,7 @@ public class TranslationActor extends AbstractBehavior<TranslationActor.Command>
                 TranslationPrompts.TranslationType.DETECT, "", ""),
             cmd.text(),
             TranslationPrompts.maxTokens(TranslationPrompts.TranslationType.DETECT),
-            adapter));
+            adapter).withNow(NowLine.NONE));
 
         state = State.TRANSLATING;
         return this;

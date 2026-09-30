@@ -5,6 +5,7 @@ import org.wyrdsekai.app.engine.event.WorldEvent
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.InferenceClient
+import org.wyrdsekai.app.inference.NowLine
 
 /**
  * Wave 2 LLM extraction — enriches a heuristic [PhoneFingerprint] with
@@ -41,7 +42,8 @@ object LlmExtractor {
             val response = inferenceClient.complete(
                 baseUrl = inferenceBaseUrl,
                 messages = messages,
-                options = CompletionOptions(maxTokens = 500, temperature = 0.3),
+                // An extractor over her past events: it says what happened, not when it is.
+                options = CompletionOptions(maxTokens = 500, temperature = 0.3, now = NowLine.NONE),
             )
             val result = parseExtractionResponse(response.content)
             mergeWithHeuristic(fingerprint, result)

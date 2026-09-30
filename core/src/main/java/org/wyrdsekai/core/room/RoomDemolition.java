@@ -62,6 +62,9 @@ public final class RoomDemolition {
         if (roomId == null || roomId.isBlank()) return "no room named";
         if (roomId.startsWith("home-")) return "a companion's Home is hers — it is not demolished";
         if (roomId.startsWith("study-")) return "a person's Study is theirs — it is not demolished";
+        // The CodePlane workshop the coder makes for a person is theirs the same way; the first
+        // stale dry run on the household node listed the steward's own (2026-09-26).
+        if (roomId.startsWith("workshop-codeplane-")) return "a person's Workshop is theirs — it is not demolished";
         if (protectedRooms.contains(roomId)) return "a founding room of the zone stays";
         if (info == null) return "no record of who made it — a founding room stays";
         if (info.createdBy() == null || info.createdBy().isBlank()) return "a founding room of the zone stays";
@@ -76,8 +79,20 @@ public final class RoomDemolition {
         return out;
     }
 
-    /** Demolish the room named or identified by {@code query}. */
+    /** Why a room with things in it is not demolished unless asked: what she made is not collateral. Pure. */
+    static String objectsRefusal(RoomSnapshot snapshot, boolean withObjects) {
+        int n = snapshot == null || snapshot.objects() == null ? 0 : snapshot.objects().size();
+        if (n == 0 || withObjects) return null;
+        return "It holds " + n + " object" + (n == 1 ? "" : "s") + " — take them out first, or pass --with-objects to demolish them with it.";
+    }
+
+    /** Demolish the room named or identified by {@code query}; a room that holds objects is refused. */
     public CompletionStage<Result> demolish(String query, String requester) {
+        return demolish(query, requester, false);
+    }
+
+    /** Demolish the room named or identified by {@code query}; {@code withObjects} takes its objects down with it. */
+    public CompletionStage<Result> demolish(String query, String requester, boolean withObjects) {
         var registry = RoomRegistry.get();
         var roomId = registry.resolveRoomId(query);
         if (roomId == null) {
@@ -101,6 +116,10 @@ public final class RoomDemolition {
             if (!who.isEmpty()) {
                 return CompletableFuture.completedFuture(new Result(false,
                     "Someone is in it — " + String.join(", ", who) + ". Ask them to leave first.", roomId, 0));
+            }
+            var things = objectsRefusal(snapshot, withObjects);
+            if (things != null) {
+                return CompletableFuture.completedFuture(new Result(false, things + " (" + roomId + ")", roomId, 0));
             }
             var name = snapshot != null && snapshot.name() != null ? snapshot.name() : roomId;
             var topo = ZoneTopology.getShared();

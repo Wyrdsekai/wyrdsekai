@@ -215,6 +215,10 @@ Output format: one message per line, no numbering, no quotes, no bullets. Just r
 
 # ── Backends ─────────────────────────────────────────────────────────────────
 
+# Per-call read timeout for the local backend; see LocalClient.generate.
+LOCAL_CALL_TIMEOUT_S = int(os.environ.get("WYRDSEKAI_EXPAND_CALL_TIMEOUT", "600"))
+
+
 class LocalClient:
     """Local llama-server backend. No cloud key, no internet required.
 
@@ -243,9 +247,15 @@ class LocalClient:
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST")
+        # A call may run to max_tokens: 4096 tokens at the 9B's ~30 tok/s on the build box is
+        # ~140 s, past the old 120 s, and the release bake aborted on it (2026-09-28).
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=LOCAL_CALL_TIMEOUT_S) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
+        except TimeoutError as e:
+            raise RuntimeError(
+                f"local llama-server at {self.base_url} did not answer within "
+                f"{LOCAL_CALL_TIMEOUT_S} s (max_tokens={max_tokens})") from e
         except urllib.error.URLError as e:
             raise RuntimeError(
                 f"local llama-server at {self.base_url} unreachable: {e}. "

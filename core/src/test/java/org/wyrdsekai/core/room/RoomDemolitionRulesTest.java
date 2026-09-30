@@ -30,10 +30,27 @@ class RoomDemolitionRulesTest {
         assertNotNull(RoomDemolition.refusal("nexus", made("nexus", "system"), founding), "seeded");
         assertNotNull(RoomDemolition.refusal("home-companion-mia", made("home-companion-mia", "system"), founding), "her Home");
         assertNotNull(RoomDemolition.refusal("study-1f56", made("study-1f56", "system"), founding), "a person's Study");
+        assertNotNull(RoomDemolition.refusal("workshop-codeplane-1f56", made("workshop-codeplane-1f56", "system"), founding), "a person's Workshop");
         assertNotNull(RoomDemolition.refusal("the-loft-12", null, founding), "no record");
         assertNotNull(RoomDemolition.refusal("the-garden-4421", made("the-garden-4421", null), founding), "no maker recorded");
         assertNotNull(RoomDemolition.refusal(null, null, founding));
         assertNotNull(RoomDemolition.refusal(" ", null, founding));
+    }
+
+    @Test
+    @DisplayName("a room with things in it is not demolished blind; --with-objects takes them down with it")
+    void objects() {
+        var thing = new org.wyrdsekai.common.model.RoomObject("workbench", "workbench", "hers", false, true, false, java.util.List.of(), java.util.Map.of());
+        var full = new org.wyrdsekai.common.model.RoomSnapshot("the-hub", "the hub", "", "home", java.util.List.of(), java.util.List.of(),
+            java.util.List.of(), java.util.List.of(thing, thing), java.util.List.of());
+        var empty = new org.wyrdsekai.common.model.RoomSnapshot("the-hub", "the hub", "", "home", java.util.List.of(), java.util.List.of(),
+            java.util.List.of(), java.util.List.of(), java.util.List.of());
+        assertNotNull(RoomDemolition.objectsRefusal(full, false));
+        assertEquals("It holds 2 objects — take them out first, or pass --with-objects to demolish them with it.",
+            RoomDemolition.objectsRefusal(full, false));
+        assertNull(RoomDemolition.objectsRefusal(full, true));
+        assertNull(RoomDemolition.objectsRefusal(empty, false));
+        assertNull(RoomDemolition.objectsRefusal(null, false));
     }
 
     @Test

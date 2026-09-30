@@ -33,6 +33,13 @@ class StudySyncLayer(
     /** Session (mcp.login) or device pairing token proving we speak for userDid —
      *  the server peer drops unauthenticated study messages. */
     private val authToken: String? = null,
+    /**
+     * Hear only frames addressed to [deviceId] (`between.{household}.*.{deviceId}.study.sync`),
+     * not every peer's state broadcast. On the home's bus a phone may hear nothing
+     * else: other devices' frames carry their session tokens. The home answers this
+     * device's state with directed frames, so nothing is lost.
+     */
+    private val directedOnly: Boolean = false,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var unsubState: (() -> Unit)? = null
@@ -42,12 +49,15 @@ class StudySyncLayer(
 
     /** Start listening for sync messages from peers. */
     fun startListening() {
-        // Listen for state advertisements from all peers
-        unsubState = between.subscribe(stateSubject("*")) { _, data ->
-            try {
-                val msg = json.decodeFromString<StudySyncMessage>(data.decodeToString())
-                if (msg.deviceId != deviceId) scope.launch { handlePeerMessage(msg) }
-            } catch (_: Exception) {}
+        // Listen for state advertisements from all peers (not on a link that
+        // lets this device hear only what is addressed to it)
+        if (!directedOnly) {
+            unsubState = between.subscribe(stateSubject("*")) { _, data ->
+                try {
+                    val msg = json.decodeFromString<StudySyncMessage>(data.decodeToString())
+                    if (msg.deviceId != deviceId) scope.launch { handlePeerMessage(msg) }
+                } catch (_: Exception) {}
+            }
         }
 
         // Listen for directed sync messages to this device

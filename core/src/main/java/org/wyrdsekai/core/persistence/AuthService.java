@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.persistence;
 
+import org.wyrdsekai.core.identity.PersonIds;
 import at.favre.lib.crypto.bcrypt.BCrypt;
 import org.wyrdsekai.core.home.ResidencyStore;
 import org.wyrdsekai.core.identity.PersonIdentityProvisioner;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.List;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -41,8 +43,35 @@ public final class AuthService {
     /** Household config key for open registration. */
     public static final String CONFIG_OPEN_REGISTRATION = "open_registration";
 
+    /**
+     * Household config key naming the account that founded the household. Its primary key is what
+     * makes the first steward unique: two first registrations at the same moment both write it, and
+     * the database lets exactly one of them (SQLite and PostgreSQL alike).
+     */
+    static final String CONFIG_FOUNDED_BY = "founded_by";
+
+    /** The roles an account can hold. */
+    public static final Set<String> ROLES = Set.of("steward", "member", "guest", "child");
+
+    /** Takes a row lock on every steward, so two changes that could each remove one run one after the other. */
+    private static final String LOCK_STEWARDS = "UPDATE users SET role = role WHERE role = 'steward'";
+
     private final String jdbcUrl;
     private final SqlDialect dialect;
+
+    /**
+     * What an account creation came to. {@code recoveryKey} is set only for the account that founded
+     * the household: show it once, it is not stored.
+     */
+    public sealed interface Registration {
+        record Created(Session session, String recoveryKey) implements Registration {}
+        record UsernameTaken() implements Registration {}
+        /** The household already has an account, so the first-steward window is closed. */
+        record Closed() implements Registration {}
+    }
+
+    /** What a role change came to. */
+    public enum RoleChange { CHANGED, NOT_STEWARD, NOT_FOUND, UNKNOWN_ROLE, LAST_STEWARD }
 
     public record User(String id, String username, String displayName, String role,
                        String description, Instant createdAt) {
@@ -64,6 +93,8 @@ public final class AuthService {
 
     /**
      * Register a new user. Auto-determines role: first user becomes steward, subsequent users are members.
+     * The check and the insert are separate steps; a surface that opens the first-steward window uses
+     * {@link #registerFirstSteward} instead.
      * @return session token on success, empty if username taken
      */
     public Optional<Session> register(String username, String password, String displayName) {
@@ -91,25 +122,105 @@ public final class AuthService {
                 stmt.executeUpdate();
             }
             log.info("User registered: {} ({}) role={}", username, userId, effectiveRole);
-            // a locally created account is a resident of
-            // this zone. Granting here (not per-surface) means SSH/telnet
-            // bootstrap and invite redemption land in the Study, not the
-            // Docks. No-op when ResidencyStore isn't initialised.
-            ResidencyStore.grantLocal(userId, effectiveRole, "account-create");
-            // Mint the PERSON behind this local credential. `users.id` is a
-            // credential id for one machine; it must not become the person's
-            // identity across the world model (that conflation is what left one
-            // human owning content under four different strings). No-op until
-            // PersonIdentityProvisioner.init() has been called.
-            PersonIdentityProvisioner.provision(userId, displayName);
+            accountCreated(userId, effectiveRole, displayName);
             return Optional.of(createSession(conn, userId));
         } catch (SQLException e) {
-            if (e.getMessage() != null && e.getMessage().contains("UNIQUE")) {
+            if (isUniqueViolation(e)) {
                 log.debug("Registration failed — username taken: {}", username);
                 return Optional.empty();
             }
             throw new RuntimeException("Registration failed", e);
         }
+    }
+
+    /**
+     * Create the household's first account, the steward, together with its recovery key. The claim on
+     * {@link #CONFIG_FOUNDED_BY}, the check that no account exists, the account, the recovery key's
+     * hash and the closing of open registration commit as one transaction, so of two first
+     * registrations at the same moment exactly one becomes steward and the other gets
+     * {@link Registration.Closed}.
+     */
+    public Registration registerFirstSteward(String username, String password, String displayName) {
+        var userId = UUID.randomUUID().toString();
+        var hash = BCrypt.withDefaults().hashToString(BCRYPT_COST, password.toCharArray());
+        var recoveryKey = newRecoveryKey();
+        var recoveryHash = BCrypt.withDefaults().hashToString(BCRYPT_COST, recoveryKey.toCharArray());
+        Session session;
+        try (var conn = getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                // A claim with no account beside it was left by accounts deleted by hand.
+                try (var stmt = conn.prepareStatement(
+                        "DELETE FROM household_config WHERE key = ? AND NOT EXISTS (SELECT 1 FROM users)")) {
+                    stmt.setString(1, CONFIG_FOUNDED_BY);
+                    stmt.executeUpdate();
+                }
+                try {
+                    insertConfig(conn, CONFIG_FOUNDED_BY, userId, userId);
+                } catch (SQLException e) {
+                    if (!isUniqueViolation(e)) throw e;
+                    conn.rollback();
+                    return new Registration.Closed();
+                }
+                try (var stmt = conn.createStatement(); var rs = stmt.executeQuery("SELECT COUNT(*) FROM users")) {
+                    if (rs.next() && rs.getInt(1) > 0) {
+                        conn.rollback();
+                        return new Registration.Closed();
+                    }
+                }
+                try (var stmt = conn.prepareStatement(
+                        "INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, 'steward')")) {
+                    stmt.setString(1, userId);
+                    stmt.setString(2, username);
+                    stmt.setString(3, hash);
+                    stmt.setString(4, displayName != null ? displayName : username);
+                    stmt.executeUpdate();
+                }
+                deleteConfig(conn, CONFIG_RECOVERY_KEY_HASH);
+                insertConfig(conn, CONFIG_RECOVERY_KEY_HASH, recoveryHash, "system");
+                deleteConfig(conn, CONFIG_OPEN_REGISTRATION);
+                insertConfig(conn, CONFIG_OPEN_REGISTRATION, "false", userId);
+                session = createSession(conn, userId);
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                if (isUniqueViolation(e)) return new Registration.UsernameTaken();
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("First-steward registration failed", e);
+        }
+        log.info("First steward created: {} ({}); recovery key made, open registration closed", username, userId);
+        accountCreated(userId, "steward", displayName);
+        return new Registration.Created(session, recoveryKey);
+    }
+
+    /**
+     * Create the account a claimed invite was for. The bootstrap invite ({@code wyrd invite
+     * bootstrap}: steward, no issuer) founds the household, so it goes through
+     * {@link #registerFirstSteward} and brings the recovery key; any other invite makes an account
+     * with the invite's role.
+     */
+    public Registration registerByInvite(InviteService.Invite invite, String username, String password,
+                                         String displayName) {
+        if (invite.isBootstrap()) return registerFirstSteward(username, password, displayName);
+        return register(username, password, displayName, invite.role())
+            .<Registration>map(s -> new Registration.Created(s, null))
+            .orElseGet(Registration.UsernameTaken::new);
+    }
+
+    private void accountCreated(String userId, String role, String displayName) {
+        // a locally created account is a resident of
+        // this zone. Granting here (not per-surface) means SSH/telnet
+        // bootstrap and invite redemption land in the Study, not the
+        // Docks. No-op when ResidencyStore isn't initialised.
+        ResidencyStore.grantLocal(userId, role, "account-create");
+        // Mint the PERSON behind this local credential. `users.id` is a
+        // credential id for one machine; it must not become the person's
+        // identity across the world model (that conflation is what left one
+        // human owning content under four different strings). No-op until
+        // PersonIdentityProvisioner.init() has been called.
+        PersonIdentityProvisioner.provision(userId, displayName);
     }
 
     /**
@@ -123,37 +234,59 @@ public final class AuthService {
             return Optional.empty();
         }
         try (var conn = getConnection()) {
+            String userId;
+            String hash;
             var sql = "SELECT id, password_hash FROM users WHERE username = ?";
             try (var stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, username);
-                var rs = stmt.executeQuery();
-                if (!rs.next()) {
-                    // #16 — spend the same bcrypt time on a missing user so login
-                    // timing doesn't reveal whether the username exists.
-                    BCrypt.verifyer().verify(password.toCharArray(), DUMMY_BCRYPT_HASH);
-                    return Optional.empty();
+                try (var rs = stmt.executeQuery()) {
+                    if (!rs.next()) {
+                        // #16 — spend the same bcrypt time on a missing user so login
+                        // timing doesn't reveal whether the username exists.
+                        BCrypt.verifyer().verify(password.toCharArray(), DUMMY_BCRYPT_HASH);
+                        return Optional.empty();
+                    }
+                    userId = rs.getString("id");
+                    hash = rs.getString("password_hash");
                 }
-
-                var userId = rs.getString("id");
-                var hash = rs.getString("password_hash");
-                var result = BCrypt.verifyer().verify(password.toCharArray(), hash);
-                if (!result.verified) return Optional.empty();
-
-                return Optional.of(createSession(conn, userId));
             }
+            // The read ends before the session is written. Writing while it was still open made SQLite
+            // (WAL) refuse at once whenever another connection had written since the read began: a
+            // phone's first login right after its pairing failed (2026-09-28).
+            var result = BCrypt.verifyer().verify(password.toCharArray(), hash);
+            if (!result.verified) return Optional.empty();
+            return Optional.of(createSession(conn, userId));
         } catch (SQLException e) {
             throw new RuntimeException("Login failed", e);
         }
     }
 
+    /** The shortest password any surface accepts. */
+    public static final int MIN_PASSWORD_LENGTH = 4;
+
+    /** Whether a new password meets {@link #MIN_PASSWORD_LENGTH}. */
+    public static boolean passwordLongEnough(String password) {
+        return password != null && password.length() >= MIN_PASSWORD_LENGTH;
+    }
+
+    /**
+     * Change a logged-in user's password and end every one of their sessions (none kept).
+     * Surfaces that are not themselves a session (SSH) use this.
+     */
+    public boolean changePassword(String userId, String currentPassword, String newPassword) {
+        return changePassword(userId, currentPassword, newPassword, null);
+    }
+
     /**
      * Change a logged-in user's password: verify the current password, then write a fresh bcrypt
      * hash. The authenticated-user rotate path (distinct from {@link #recoverSteward}, the
-     * recovery-key emergency reset). Existing sessions are intentionally left valid.
+     * recovery-key emergency reset). Every other session of the user ends, so a stolen token
+     * stops working; {@code keepToken} (the session making the change) stays.
      *
      * @return true on success; false if the user is missing or the current password didn't verify.
      */
-    public boolean changePassword(String userId, String currentPassword, String newPassword) {
+    public boolean changePassword(String userId, String currentPassword, String newPassword,
+                                  String keepToken) {
         try (var conn = getConnection()) {
             String hash;
             try (var stmt = conn.prepareStatement("SELECT password_hash FROM users WHERE id = ?")) {
@@ -172,7 +305,8 @@ public final class AuthService {
                 stmt.setString(2, userId);
                 stmt.executeUpdate();
             }
-            log.info("Password changed for user {}", userId);
+            int ended = endSessions(conn, userId, keepToken);
+            log.info("Password changed for user {} ({} other session(s) ended)", userId, ended);
             return true;
         } catch (SQLException e) {
             throw new RuntimeException("Change password failed", e);
@@ -204,6 +338,18 @@ public final class AuthService {
             }
         } catch (SQLException e) {
             throw new RuntimeException("Session validation failed", e);
+        }
+    }
+
+    /** End every session of {@code userId} except {@code keepToken} (null ends them all). */
+    private static int endSessions(Connection conn, String userId, String keepToken) throws SQLException {
+        var sql = keepToken == null
+            ? "DELETE FROM sessions WHERE user_id = ?"
+            : "DELETE FROM sessions WHERE user_id = ? AND token <> ?";
+        try (var stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, userId);
+            if (keepToken != null) stmt.setString(2, keepToken);
+            return stmt.executeUpdate();
         }
     }
 
@@ -271,6 +417,22 @@ public final class AuthService {
     /**
      * Find a user by username.
      */
+    /**
+     * The account of the person behind any id they present. A session carries the login id on
+     * some surfaces (ssh) and the person DID on others (browser, phone); {@link #findUser}
+     * knows only the login id, so a check made with the DID found nobody and a steward in a
+     * browser was told the steward-only verbs were not theirs.
+     */
+    public Optional<User> findUserForPerson(String anyId) {
+        if (anyId == null || anyId.isBlank()) return Optional.empty();
+        var direct = findUser(anyId);
+        if (direct.isPresent()) return direct;
+        for (var u : listUsers()) {
+            if (PersonIds.samePerson(u.id(), anyId)) return Optional.of(u);
+        }
+        return Optional.empty();
+    }
+
     public Optional<User> findUserByUsername(String username) {
         try (var conn = getConnection()) {
             var sql = "SELECT id, username, display_name, role, description, created_at FROM users WHERE username = ?";
@@ -312,19 +474,46 @@ public final class AuthService {
      * @return true if role was changed, false if caller is not steward or target not found
      */
     public boolean setRole(String callerUserId, String targetUserId, String newRole) {
-        var caller = findUser(callerUserId);
-        if (caller.isEmpty() || !"steward".equals(caller.get().role())) {
-            return false;
-        }
+        return changeRole(callerUserId, targetUserId, newRole) == RoleChange.CHANGED;
+    }
+
+    /**
+     * Change an account's role. The caller must be a steward, and the household keeps at least one
+     * steward: demoting the last one is refused. The steward rows are locked for the check and the
+     * change, so two stewards demoting each other at the same moment cannot leave none.
+     */
+    public RoleChange changeRole(String callerUserId, String targetUserId, String newRole) {
+        var role = newRole == null ? "" : newRole.trim().toLowerCase();
+        if (!ROLES.contains(role)) return RoleChange.UNKNOWN_ROLE;
         try (var conn = getConnection()) {
-            try (var stmt = conn.prepareStatement("UPDATE users SET role = ? WHERE id = ?")) {
-                stmt.setString(1, newRole);
-                stmt.setString(2, targetUserId);
-                var rows = stmt.executeUpdate();
-                if (rows > 0) {
-                    log.info("Role changed: user {} → {}", targetUserId, newRole);
+            conn.setAutoCommit(false);
+            try {
+                lockStewards(conn);
+                if (!"steward".equals(roleOf(conn, callerUserId))) {
+                    conn.rollback();
+                    return RoleChange.NOT_STEWARD;
                 }
-                return rows > 0;
+                var current = roleOf(conn, targetUserId);
+                if (current == null) {
+                    conn.rollback();
+                    return RoleChange.NOT_FOUND;
+                }
+                if ("steward".equals(current) && !"steward".equals(role) && stewardCount(conn) <= 1) {
+                    conn.rollback();
+                    log.warn("Refused to demote {}: the household must keep at least one steward", targetUserId);
+                    return RoleChange.LAST_STEWARD;
+                }
+                try (var stmt = conn.prepareStatement("UPDATE users SET role = ? WHERE id = ?")) {
+                    stmt.setString(1, role);
+                    stmt.setString(2, targetUserId);
+                    stmt.executeUpdate();
+                }
+                conn.commit();
+                log.info("Role changed: user {} → {} (by {})", targetUserId, role, callerUserId);
+                return RoleChange.CHANGED;
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
             }
         } catch (SQLException e) {
             throw new RuntimeException("Set role failed", e);
@@ -412,6 +601,14 @@ public final class AuthService {
      * Returns the plaintext key (show to user ONCE). Stores only the bcrypt hash.
      */
     public String generateRecoveryKey() {
+        var key = newRecoveryKey();
+        var hash = BCrypt.withDefaults().hashToString(BCRYPT_COST, key.toCharArray());
+        setConfig(CONFIG_RECOVERY_KEY_HASH, hash, "system");
+        log.info("Recovery key generated and hash stored");
+        return key;
+    }
+
+    private static String newRecoveryKey() {
         // 24-word key from InviteService word list (reuse the passphrase generator)
         var words = new String[8]; // 8 words = plenty of entropy for recovery
         var rng = new SecureRandom();
@@ -419,11 +616,7 @@ public final class AuthService {
         for (int i = 0; i < 8; i++) {
             words[i] = wordList[rng.nextInt(wordList.length)];
         }
-        var key = String.join("-", words);
-        var hash = BCrypt.withDefaults().hashToString(BCRYPT_COST, key.toCharArray());
-        setConfig(CONFIG_RECOVERY_KEY_HASH, hash, "system");
-        log.info("Recovery key generated and hash stored");
-        return key;
+        return String.join("-", words);
     }
 
     /**
@@ -451,7 +644,9 @@ public final class AuthService {
                 stmt.setString(2, steward.get().id());
                 stmt.executeUpdate();
             }
-            log.info("Steward password reset via recovery key");
+            // Whoever held the steward's sessions before the recovery holds nothing now.
+            int ended = endSessions(conn, steward.get().id(), null);
+            log.info("Steward password reset via recovery key ({} session(s) ended)", ended);
             return true;
         } catch (SQLException e) {
             throw new RuntimeException("Recovery failed", e);
@@ -580,54 +775,77 @@ public final class AuthService {
 
         // No steward — promote first user
         try (var conn = getConnection()) {
+            String firstId;
+            String firstName;
             var sql = "SELECT id, username FROM users ORDER BY created_at ASC LIMIT 1";
-            try (var stmt = conn.prepareStatement(sql)) {
-                var rs = stmt.executeQuery();
+            try (var stmt = conn.prepareStatement(sql); var rs = stmt.executeQuery()) {
                 if (!rs.next()) return false;
-
-                var firstId = rs.getString("id");
-                var firstName = rs.getString("username");
-
-                try (var updateStmt = conn.prepareStatement(
-                        "UPDATE users SET role = 'steward' WHERE id = ?")) {
-                    updateStmt.setString(1, firstId);
-                    updateStmt.executeUpdate();
-                }
-
-                log.info("========================================");
-                log.info("  MIGRATION: {} promoted to steward", firstName);
-                log.info("  Open registration is now closed (no other users).");
-                log.info("  Use 'wyrd invite' to add new members.");
-                log.info("========================================");
-                return true;
+                firstId = rs.getString("id");
+                firstName = rs.getString("username");
             }
+            // The read ends before the write (see login).
+            try (var updateStmt = conn.prepareStatement(
+                    "UPDATE users SET role = 'steward' WHERE id = ?")) {
+                updateStmt.setString(1, firstId);
+                updateStmt.executeUpdate();
+            }
+
+            log.info("========================================");
+            log.info("  MIGRATION: {} promoted to steward", firstName);
+            log.info("  Open registration is now closed (no other users).");
+            log.info("  Use 'wyrd invite' to add new members.");
+            log.info("========================================");
+            return true;
         } catch (SQLException e) {
             throw new RuntimeException("Migration failed", e);
         }
     }
 
     /**
-     * Remove a user account. Steward-only operation.
+     * Remove a user account. Steward-only operation; a steward cannot remove themself, and the last
+     * steward is never removed.
      * @return true if user was removed
      */
     public boolean removeUser(String callerUserId, String targetUserId) {
-        var caller = findUser(callerUserId);
-        if (caller.isEmpty() || !"steward".equals(caller.get().role())) return false;
-        if (callerUserId.equals(targetUserId)) return false; // can't remove yourself
+        if (callerUserId == null || callerUserId.equals(targetUserId)) return false; // can't remove yourself
+        return removeGuarded(callerUserId, targetUserId);
+    }
 
+    /** Deletes the account and its sessions, unless the caller is not a steward or it is the last steward. */
+    private boolean removeGuarded(String callerUserId, String targetUserId) {
         try (var conn = getConnection()) {
-            // Delete sessions first (cascade should handle, but be explicit)
-            try (var stmt = conn.prepareStatement("DELETE FROM sessions WHERE user_id = ?")) {
-                stmt.setString(1, targetUserId);
-                stmt.executeUpdate();
-            }
-            try (var stmt = conn.prepareStatement("DELETE FROM users WHERE id = ?")) {
-                stmt.setString(1, targetUserId);
-                var rows = stmt.executeUpdate();
-                if (rows > 0) {
-                    log.info("User {} removed by steward {}", targetUserId, callerUserId);
+            conn.setAutoCommit(false);
+            try {
+                lockStewards(conn);
+                if (callerUserId != null && !"steward".equals(roleOf(conn, callerUserId))) {
+                    conn.rollback();
+                    return false;
                 }
-                return rows > 0;
+                var current = roleOf(conn, targetUserId);
+                if (current == null) {
+                    conn.rollback();
+                    return false;
+                }
+                if ("steward".equals(current) && stewardCount(conn) <= 1) {
+                    conn.rollback();
+                    log.warn("Refused to remove {}: the household must keep at least one steward", targetUserId);
+                    return false;
+                }
+                // Delete sessions first (cascade should handle, but be explicit)
+                try (var stmt = conn.prepareStatement("DELETE FROM sessions WHERE user_id = ?")) {
+                    stmt.setString(1, targetUserId);
+                    stmt.executeUpdate();
+                }
+                try (var stmt = conn.prepareStatement("DELETE FROM users WHERE id = ?")) {
+                    stmt.setString(1, targetUserId);
+                    stmt.executeUpdate();
+                }
+                conn.commit();
+                log.info("User {} removed by {}", targetUserId, callerUserId != null ? "steward " + callerUserId : "replication");
+                return true;
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
             }
         } catch (SQLException e) {
             throw new RuntimeException("Remove user failed", e);
@@ -726,20 +944,16 @@ public final class AuthService {
     }
 
     /**
-     * Remove a user directly (no caller check — used by replication).
+     * Remove a user directly (no caller check — used by replication). The last steward is still
+     * never removed.
+     * @return true if the account was removed
      */
-    public void removeUserDirect(String userId) {
-        try (var conn = getConnection()) {
-            try (var stmt = conn.prepareStatement("DELETE FROM sessions WHERE user_id = ?")) {
-                stmt.setString(1, userId);
-                stmt.executeUpdate();
-            }
-            try (var stmt = conn.prepareStatement("DELETE FROM users WHERE id = ?")) {
-                stmt.setString(1, userId);
-                stmt.executeUpdate();
-            }
-        } catch (SQLException e) {
+    public boolean removeUserDirect(String userId) {
+        try {
+            return removeGuarded(null, userId);
+        } catch (RuntimeException e) {
             log.warn("Failed to remove replicated user {}: {}", userId, e.getMessage());
+            return false;
         }
     }
 
@@ -762,6 +976,54 @@ public final class AuthService {
 
     private Connection getConnection() throws SQLException {
         return DriverManager.getConnection(jdbcUrl);
+    }
+
+    private static void lockStewards(Connection conn) throws SQLException {
+        try (var stmt = conn.createStatement()) {
+            stmt.executeUpdate(LOCK_STEWARDS);
+        }
+    }
+
+    private static String roleOf(Connection conn, String userId) throws SQLException {
+        if (userId == null) return null;
+        try (var stmt = conn.prepareStatement("SELECT role FROM users WHERE id = ?")) {
+            stmt.setString(1, userId);
+            try (var rs = stmt.executeQuery()) {
+                return rs.next() ? (rs.getString(1) != null ? rs.getString(1) : "member") : null;
+            }
+        }
+    }
+
+    private static int stewardCount(Connection conn) throws SQLException {
+        try (var stmt = conn.createStatement();
+             var rs = stmt.executeQuery("SELECT COUNT(*) FROM users WHERE role = 'steward'")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    private void insertConfig(Connection conn, String key, String value, String updatedBy) throws SQLException {
+        var sql = "INSERT INTO household_config (key, value, updated_at, updated_by) VALUES (?, ?, "
+            + dialect.currentEpoch() + ", ?)";
+        try (var stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, key);
+            stmt.setString(2, value);
+            stmt.setString(3, updatedBy);
+            stmt.executeUpdate();
+        }
+    }
+
+    private static void deleteConfig(Connection conn, String key) throws SQLException {
+        try (var stmt = conn.prepareStatement("DELETE FROM household_config WHERE key = ?")) {
+            stmt.setString(1, key);
+            stmt.executeUpdate();
+        }
+    }
+
+    /** SQLite says "UNIQUE constraint failed"; PostgreSQL gives SQLSTATE 23505 ("duplicate key ... unique constraint"). */
+    private static boolean isUniqueViolation(SQLException e) {
+        if ("23505".equals(e.getSQLState())) return true;
+        var msg = e.getMessage();
+        return msg != null && msg.toUpperCase().contains("UNIQUE");
     }
 
     // ── Per-account SSH public keys ( / SSH security) ──────

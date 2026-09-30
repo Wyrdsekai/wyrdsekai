@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.household.ParentalControlService;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.NowLine;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -180,10 +181,52 @@ public final class SafetyMonitorService {
         if (concerns.isEmpty()) return;
         var profile = profileResolver.profileFor(userId, name);
         for (var concern : concerns) {
-            var alert = alertRouter.route(concern, profile);
-            trigger.markRouted(concern.concernId());
-            deliver(alert, concern, name);
+            route(concern, profile, name);
         }
+    }
+
+    private void route(SafetyTrigger.SafetyConcern concern, ChildProfile profile, String name) {
+        var alert = alertRouter.route(concern, profile);
+        trigger.markRouted(concern.concernId());
+        deliver(alert, concern, name);
+    }
+
+    // ─── Concerns found outside the child's own speech ───────────────────
+
+    /**
+     * The household library's check (ResearchZosho 0.5.0 {@code confirm}) read a question
+     * asked for {@code childUserId} as someone asking about harming themselves. The concern is
+     * routed exactly as one found in the child's own words would be: the same parental-controls
+     * gate, the same router, the same notice with none of their words. Returns whether it was
+     * taken (false when the service is not wired or the member is not under parental controls).
+     */
+    public static boolean report(String childUserId, String childName, SafetyTrigger.ConcernType type,
+                                 SafetyTrigger.SeverityLevel severity, String locale, String source) {
+        var svc = INSTANCE;
+        if (svc == null) return false;
+        try {
+            return svc.reportConcern(childUserId, childName, type, severity, locale, source);
+        } catch (RuntimeException e) {
+            log.warn("safety report failed for {}: {}", childUserId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Instance-level {@link #report}: gate on the caller thread, routing off-thread. */
+    public boolean reportConcern(String childUserId, String childName, SafetyTrigger.ConcernType type,
+                                 SafetyTrigger.SeverityLevel severity, String locale, String source) {
+        if (childUserId == null || type == null || severity == null) return false;
+        if (!gate.test(childUserId)) return false;
+        executor.execute(() -> {
+            try {
+                var concern = trigger.record(childUserId, type, severity,
+                    source == null || source.isBlank() ? "Reported: " + type.name() : source, locale);
+                route(concern, profileResolver.profileFor(childUserId, childName), childName);
+            } catch (RuntimeException e) {
+                log.warn("safety routing failed for {}: {}", childUserId, e.getMessage());
+            }
+        });
+        return true;
     }
 
     private void deliver(SafetyAlertRouter.RoutedAlert alert,
@@ -293,7 +336,7 @@ public final class SafetyMonitorService {
                         router,
                         replyTo -> new InferenceRouter.InferRequest(
                             "safety-" + UUID.randomUUID(), null,
-                            CLASSIFIER_SYSTEM_PROMPT, text, 200, 0.0, replyTo),
+                            CLASSIFIER_SYSTEM_PROMPT, text, 200, 0.0, replyTo).withNow(NowLine.NONE),
                         CLASSIFIER_TIMEOUT, system.scheduler())
                     .toCompletableFuture()
                     .get(CLASSIFIER_TIMEOUT.toSeconds() + 5, TimeUnit.SECONDS);

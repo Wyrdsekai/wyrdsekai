@@ -3,6 +3,7 @@ package org.wyrdsekai.core.soul;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.wyrdsekai.core.agent.AgentProfile;
+import org.wyrdsekai.core.agent.VitalityState;
 import org.wyrdsekai.core.identity.AgentIdentity;
 
 import java.io.Console;
@@ -414,6 +415,15 @@ public class SoulForgeCliTool {
         }
     }
 
+    /**
+     * The baseline written for a tank the forge was not told about. Energy gets the economy's rested
+     * level, not the generic 0.5: on 0.5 the sleep/drain economy (tuned for 0.65) left a companion with
+     * 0.29 to spend per waking stretch and "tired" in her prompts nine hours in ten (2026-09-28).
+     */
+    static double baselineFallback(String tank) {
+        return "energy".equals(tank) ? VitalityState.RESTED_ENERGY : 0.5;
+    }
+
     @SuppressWarnings("unchecked")
     private static GenomeProfile parseGenome(String name, String json) {
         try {
@@ -429,7 +439,7 @@ public class SoulForgeCliTool {
             var coupling = new LinkedHashMap<String, Double>();
 
             for (var tank : VitalitySnapshot.TANK_NAMES) {
-                baselines.put(tank, node.at("/baselines/" + tank).asDouble(0.5));
+                baselines.put(tank, node.at("/baselines/" + tank).asDouble(baselineFallback(tank)));
                 sensitivity.put(tank, node.at("/sensitivity/" + tank).asDouble(0.5));
                 decayRates.put(tank, node.at("/decayRates/" + tank).asDouble(0.15));
             }

@@ -90,15 +90,29 @@ public class WebAuthnService {
         return reg;
     }
 
+    /** The failure message when a registration is completed by another account than it was begun for. */
+    public static final String OTHER_ACCOUNT = "Challenge was issued to another account";
+
     /**
      * Complete registration — verify and store the credential.
      * In production, this validates the attestation from the authenticator.
      */
     public AuthResult completeRegistration(String challengeBase64, String credentialId,
                                             String publicKeyBase64, String displayName) {
-        var reg = regChallenges.remove(challengeBase64);
+        return completeRegistration(challengeBase64, credentialId, publicKeyBase64, displayName, null);
+    }
+
+    /**
+     * Complete a registration for {@code userId}: the challenge must have been issued to
+     * that same account (null skips the check).
+     */
+    public AuthResult completeRegistration(String challengeBase64, String credentialId,
+                                            String publicKeyBase64, String displayName,
+                                            String userId) {
+        var reg = challengeBase64 == null ? null : regChallenges.remove(challengeBase64);
         if (reg == null) return AuthResult.failure("Challenge not found or expired");
         if (reg.isExpired()) return AuthResult.failure("Challenge expired");
+        if (userId != null && !userId.equals(reg.userId())) return AuthResult.failure(OTHER_ACCOUNT);
 
         var credential = new PasskeyCredential(credentialId, reg.userId(), publicKeyBase64,
             rpId, 0, Instant.now(), Instant.now(), displayName);

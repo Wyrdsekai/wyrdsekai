@@ -9,6 +9,7 @@ import org.wyrdsekai.core.persistence.SchemaInitializer;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.time.Instant;
@@ -49,6 +50,42 @@ class TheVaultKeepsTheSelfTest {
         Files.writeString(data.resolve("models").resolve("big.gguf"), "replaceable");
         Files.writeString(data.resolve("mystery.bin"), "nobody classified me");
         return data;
+    }
+
+    @Test
+    @DisplayName("the knowledge and Study indexes are carried, an unchanged segment is reused unread, the drill verifies them without writing")
+    void dearIndexes(@TempDir Path dir) throws Exception {
+        var data = household(dir);
+        var seg = data.resolve("search/search/knowledge");
+        Files.createDirectories(seg);
+        var bytes = new byte[3 * 1024 * 1024];
+        new java.util.Random(7).nextBytes(bytes);
+        Files.write(seg.resolve("_0.cfs"), bytes);
+        Files.writeString(seg.resolve("segments_1"), "commit");
+        Files.writeString(seg.resolve("write.lock"), "");
+        var vault = new Vault(data, dir.resolve("vault"));
+        var m1 = vault.snapshot("first", false).orElseThrow();
+        var paths = m1.files().stream().map(Vault.Entry::path).toList();
+        assertTrue(paths.contains("search/search/knowledge/_0.cfs") && paths.contains("search/search/knowledge/segments_1"), paths.toString());
+        assertFalse(paths.contains("search/search/knowledge/write.lock"), "the lock is the server's, not the index's");
+        assertEquals(List.of("search/search/knowledge"), m1.classes().get("dear"));
+        long chunksBefore = countChunks(vault.dir());
+        var m2 = vault.snapshot("second", false).orElseThrow();
+        assertEquals(chunksBefore, countChunks(vault.dir()), "nothing changed, nothing written");
+        var e1 = m1.files().stream().filter(e -> e.path().endsWith("_0.cfs")).findFirst().orElseThrow();
+        var e2 = m2.files().stream().filter(e -> e.path().endsWith("_0.cfs")).findFirst().orElseThrow();
+        assertEquals(e1, e2, "the unchanged segment is the previous copy's entry: size, mtime and chunks");
+        Files.write(seg.resolve("_1.cfs"), new byte[1024 * 1024 + 17]);
+        var m3 = vault.snapshot("third", false).orElseThrow();
+        assertTrue(countChunks(vault.dir()) > chunksBefore, "a new segment is stored");
+        assertTrue(m3.files().stream().anyMatch(e -> e.path().endsWith("_1.cfs")));
+        var drill = dir.resolve("drill");
+        assertTrue(vault.restoreTo(m3, drill, Vault.DEAR_DIRS).isEmpty(), "the drill verifies the index without writing it");
+        assertFalse(Files.exists(drill.resolve("search/search/knowledge/_0.cfs")), "verified, not materialised");
+        assertTrue(Files.exists(drill.resolve("souls/mia.did")), "the rest is rebuilt as before");
+        var whole = dir.resolve("whole");
+        assertTrue(vault.restoreTo(m3, whole).isEmpty(), "a real restore brings the index back");
+        assertEquals(bytes.length, Files.size(whole.resolve("search/search/knowledge/_0.cfs")));
     }
 
     @Test
@@ -116,6 +153,44 @@ class TheVaultKeepsTheSelfTest {
     }
 
     @Test
+    @DisplayName("the trail and what was rotated off it are copied once each, and an append stores only the tail")
+    void theTrail(@TempDir Path dir) throws Exception {
+        var data = household(dir);
+        var sub = data.resolve("data");
+        Files.createDirectories(sub.resolve("story"));
+        // About 10 MB of day-by-day record, so it spans more than one chunk.
+        var trail = sub.resolve("agent-activity.jsonl");
+        var sb = new StringBuilder();
+        for (int i = 0; sb.length() < 10 * 1024 * 1024; i++) {
+            sb.append("{\"v\":1,\"ts\":\"").append(i).append("\",\"type\":\"speak\",\"agent\":\"mia\",\"text\":\"line ")
+              .append(i * 7919L).append("\"}\n");
+        }
+        Files.writeString(trail, sb);
+        Files.writeString(sub.resolve("drive-trace.jsonl"), "{\"kind\":\"event\"}\n");
+        Files.writeString(sub.resolve("drive-trace.jsonl.1"), "{\"kind\":\"rotated\"}\n");
+        Files.writeString(sub.resolve("agent-activity.jsonl.orig"), "a hand-made copy, not a rotation\n");
+        var vault = new Vault(data, dir.resolve("vault"));
+        var m1 = vault.snapshot("first", false).orElseThrow();
+        var trails = m1.files().stream().map(Vault.Entry::path).filter(p -> p.startsWith("data/")).sorted().toList();
+        assertEquals(List.of("data/agent-activity.jsonl", "data/drive-trace.jsonl", "data/drive-trace.jsonl.1"), trails,
+            "each trail file once, and no hand-made copy");
+        var chunks = m1.files().stream().filter(e -> e.path().equals("data/agent-activity.jsonl")).findFirst().orElseThrow().chunks();
+        assertTrue(chunks.size() >= 2, "more than one chunk: " + chunks.size());
+        assertEquals(List.of("mystery.bin"), m1.classes().get("unclassified"));
+
+        long stored = countChunks(vault.dir());
+        Files.writeString(trail, "{\"v\":1,\"type\":\"speak\",\"agent\":\"mia\",\"text\":\"one more\"}\n", StandardOpenOption.APPEND);
+        var m2 = vault.snapshot("second", false).orElseThrow();
+        long written = countChunks(vault.dir()) - stored;
+        assertTrue(written <= 2, "an append stores the tail, not the trail again: " + written);
+
+        var out = dir.resolve("out");
+        assertTrue(vault.restoreTo(m2, out).isEmpty(), "rebuilt whole");
+        assertEquals(Files.readString(trail), Files.readString(out.resolve("data/agent-activity.jsonl")));
+        assertEquals("{\"kind\":\"rotated\"}\n", Files.readString(out.resolve("data/drive-trace.jsonl.1")));
+    }
+
+    @Test
     @DisplayName("the drill boots the newest copy and writes its verdict into the manifest and a mark")
     void theDrill(@TempDir Path dir) throws Exception {
         var data = household(dir);
@@ -153,7 +228,8 @@ class TheVaultKeepsTheSelfTest {
         // Write manifests by hand at chosen ages, all sharing one real copy's chunks.
         var real = vault.snapshot("seed", false).orElseThrow();
         var manifests = vault.dir().resolve("manifests");
-        // The real manifest is sealed; the hand-written ones below are plain, as a 0.4.0 store's are.
+        // The real manifest is sealed; the hand-written ones below are sealed with the same key
+        // (a plain file in a sealed store is refused).
         var cipher = VaultCipher.load(data.resolve(Vault.KEY_FILE));
         var json = new String(cipher.open(Files.readAllBytes(manifests.resolve(real.id() + ".json"))), java.nio.charset.StandardCharsets.UTF_8);
         record Fake(String id, Instant at, boolean keep) {}
@@ -174,7 +250,8 @@ class TheVaultKeepsTheSelfTest {
             var text = json.replace("\"id\" : \"" + real.id() + "\"", "\"id\" : \"" + f.id() + "\"")
                 .replaceFirst("\"at\" : \"[^\"]*\"", "\"at\" : \"" + f.at() + "\"")
                 .replaceFirst("\"keep\" : (true|false)", "\"keep\" : " + f.keep());
-            Files.writeString(manifests.resolve(f.id() + ".json"), text);
+            Files.write(manifests.resolve(f.id() + ".json"),
+                cipher.seal(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         }
         Files.delete(manifests.resolve(real.id() + ".json"));
         int removed = vault.prune(now);

@@ -8,6 +8,7 @@ import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.NowLine;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -67,7 +68,7 @@ public final class InferenceRoutes {
             router,
             ref -> new InferenceRouter.InferRequest(
                 requestId, req.model(), req.systemPrompt(), req.prompt(),
-                maxTokens, temperature, ref),
+                maxTokens, temperature, ref).withNow(NowLine.NONE),
             Duration.ofSeconds(60),
             system.scheduler()
         );

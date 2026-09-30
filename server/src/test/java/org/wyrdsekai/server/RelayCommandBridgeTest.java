@@ -95,12 +95,12 @@ class RelayCommandBridgeTest {
         var r = RelayCommandBridge.relayJoin("wyrdjoin://hostonly-no-slash", null);
         assertFalse(r.ok());
         assertTrue(r.detail().contains("malformed"));
-        // Codeless join (commons self-serve) is refused WITHOUT an out-of-band
-        // fingerprint — nothing anchors the trust decision, so no TOFU. The
-        // error must tell the caller exactly what to bring.
-        var r2 = RelayCommandBridge.relayJoin("relay.example.org", null);
+        // Codeless join (commons self-serve) without an out-of-band fingerprint is no
+        // longer refused up front (2026-09-28): it asks the relay and pins the CA from the
+        // join reply on first use. Here nothing listens, so it fails at the relay, not before.
+        var r2 = RelayCommandBridge.relayJoin("127.0.0.1:1", null);
         assertFalse(r2.ok());
-        assertTrue(r2.detail().contains("--fingerprint"));
+        assertFalse(r2.detail().contains("--fingerprint"), r2.detail());
     }
 
     @Test

@@ -71,7 +71,7 @@ class DualInferenceOfflineTest {
             val options: CompletionOptions,
         )
 
-        override suspend fun complete(
+        override suspend fun send(
             baseUrl: String,
             messages: List<ChatMessage>,
             options: CompletionOptions,

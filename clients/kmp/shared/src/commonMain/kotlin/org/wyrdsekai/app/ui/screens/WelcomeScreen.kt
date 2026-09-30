@@ -14,6 +14,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import org.wyrdsekai.app.i18n.currentUiStrings
+import org.wyrdsekai.app.network.HomeLink
 import org.wyrdsekai.app.ui.QrScannerPane
 import org.wyrdsekai.app.ui.qrScanningSupported
 import org.wyrdsekai.app.ui.enableTestTagsAsResourceId
@@ -60,6 +62,7 @@ fun WelcomeScreen(
     var homeInput by remember { mutableStateOf("") }
     var homeError by remember { mutableStateOf("") }
     var serverUrl by remember { mutableStateOf("") }
+    var serverError by remember { mutableStateOf("") }
     var showServerInference by remember { mutableStateOf(false) }
     var apiProvider by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
@@ -168,7 +171,7 @@ fun WelcomeScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Paste an invite, or type your server's address\nif you're on the same network.",
+                        "Scan or paste the invite from your home.",
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -178,8 +181,8 @@ fun WelcomeScreen(
                     OutlinedTextField(
                         value = homeInput,
                         onValueChange = { homeInput = it; homeError = "" },
-                        label = { Text("Invite or server address") },
-                        placeholder = { Text("wyrdphone://…  or  http://192.168.1.x:7070") },
+                        label = { Text("Invite") },
+                        placeholder = { Text("wyrdphone://…") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("welcome-home-input"),
                     )
@@ -276,21 +279,35 @@ fun WelcomeScreen(
                     }
 
                     if (showServerInference) {
+                        // The home's address on its network is the invite's
+                        // lan_https (https://<home>:7443). Plain http reaches the
+                        // home only from the home machine itself.
                         OutlinedTextField(
                             value = serverUrl,
-                            onValueChange = { serverUrl = it },
+                            onValueChange = { serverUrl = it; serverError = "" },
                             label = { Text("Server address") },
-                            placeholder = { Text("http://192.168.1.x:7070") },
+                            placeholder = { Text("https://192.168.1.x:7443") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("welcome-server-url"),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
-                            onClick = { onComplete(serverUrl.ifBlank { null }, null, null, false) },
+                            onClick = {
+                                if (HomeLink.isPlaintextOffDevice(serverUrl)) serverError = currentUiStrings().secNeedsInvite
+                                else onComplete(serverUrl.trim().ifBlank { null }, null, null, false)
+                            },
                             enabled = serverUrl.isNotBlank(),
                             modifier = Modifier.fillMaxWidth().testTag("welcome-use-server"),
                         ) {
                             Text("Use my server for thinking")
+                        }
+                        if (serverError.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                serverError,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("welcome-server-error"),
+                            )
                         }
                     }
 

@@ -1,59 +1,39 @@
 package org.wyrdsekai.core.agent;
 
+import org.wyrdsekai.core.inference.NowLine;
+
 import java.time.*;
-import java.time.format.DateTimeFormatter;
-import java.time.format.TextStyle;
-import java.util.Locale;
 
 /**
- * Builds a time-awareness context string for agent prompts.
+ * Builds the elapsed-time context for agent prompts: how long since the human
+ * last spoke, how long the agent has been awake. Injected at Layer 3 in
+ * PromptAssembler.
  *
- * Gives the agent a sense of:
- * - Current wall-clock time and date
- * - Time of day (morning, afternoon, evening, night, late night)
- * - Day of week
- * - How long since the human last spoke
- * - How long the agent has been awake (since last sleep)
- *
- * Injected at Layer 3 (context scope) in PromptAssembler.
- * Compact format — ~30-40 tokens total.
+ * <p>The date and the time are not here any more. They were, from 2026-03-28,
+ * but Layer 3 is trimmable and sits in the middle of the merged system prompt,
+ * and every path built outside PromptAssembler never had them. Every request
+ * now says what it knows about today and the router stamps it
+ * ({@link NowLine}).</p>
  */
 public final class TimeContext {
 
     private TimeContext() {}
 
     /**
-     * Build the time context string for prompt injection.
+     * Build the elapsed-time context string for prompt injection.
      *
-     * @param zone          The timezone to display (e.g. ZoneId.systemDefault())
      * @param lastHumanSaid When the human last spoke (null if never)
      * @param awokeSince    When the agent last woke from sleep (null if never slept)
-     * @return A compact context string, or empty if zone is null
+     * @return A compact context string, or empty when there is nothing to say
      */
-    public static String build(ZoneId zone, Instant lastHumanSaid, Instant awokeSince) {
-        if (zone == null) zone = ZoneId.systemDefault();
-
-        var now = ZonedDateTime.now(zone);
+    public static String build(Instant lastHumanSaid, Instant awokeSince) {
         var sb = new StringBuilder();
-
-        // Current time + date
-        sb.append("Current time: ");
-        sb.append(now.format(DateTimeFormatter.ofPattern("HH:mm")));
-        sb.append(", ");
-        sb.append(now.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
-        sb.append(" ");
-        sb.append(now.format(DateTimeFormatter.ofPattern("MMMM d, yyyy")));
-
-        // Time of day label
-        sb.append(" (");
-        sb.append(timeOfDay(now.getHour()));
-        sb.append(").");
 
         // Time since human last spoke
         if (lastHumanSaid != null && lastHumanSaid.isAfter(Instant.EPOCH)) {
             var elapsed = Duration.between(lastHumanSaid, Instant.now());
             if (elapsed.toMinutes() >= 1) {
-                sb.append(" Last heard from you: ");
+                sb.append("Last heard from you: ");
                 sb.append(formatDuration(elapsed));
                 sb.append(" ago.");
             }
@@ -63,7 +43,8 @@ public final class TimeContext {
         if (awokeSince != null && awokeSince.isAfter(Instant.EPOCH)) {
             var awake = Duration.between(awokeSince, Instant.now());
             if (awake.toMinutes() >= 5) {
-                sb.append(" Awake for ");
+                if (!sb.isEmpty()) sb.append(" ");
+                sb.append("Awake for ");
                 sb.append(formatDuration(awake));
                 sb.append(".");
             }
@@ -72,19 +53,8 @@ public final class TimeContext {
         return sb.toString();
     }
 
-    /**
-     * Build with system default timezone.
-     */
-    public static String build(Instant lastHumanSaid, Instant awokeSince) {
-        return build(ZoneId.systemDefault(), lastHumanSaid, awokeSince);
-    }
-
     static String timeOfDay(int hour) {
-        if (hour >= 5 && hour < 12) return "morning";
-        if (hour >= 12 && hour < 17) return "afternoon";
-        if (hour >= 17 && hour < 21) return "evening";
-        if (hour >= 21 || hour < 2) return "night";
-        return "late night";
+        return NowLine.partOfDay(hour);
     }
 
     static String formatDuration(Duration d) {

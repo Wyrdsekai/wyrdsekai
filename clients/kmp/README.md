@@ -1,8 +1,9 @@
 # Wyrdsekai — Kotlin Multiplatform client
 
-Compose Multiplatform. One shared module drives Android, iOS and a desktop app,
-so a change to session handling or the world model lands on every surface at
-once rather than three times.
+Compose Multiplatform. One shared module drives Android and a desktop app, so a
+change to session handling or the world model lands on every surface at once.
+The iOS target is not shipped (the iOS app is `../rn`): it has no sealed-tunnel
+crypto and refuses to connect to a home rather than connect unencrypted.
 
 ```
 shared/        the client engine — session, protocol, world state

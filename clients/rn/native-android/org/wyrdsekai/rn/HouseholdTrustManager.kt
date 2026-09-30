@@ -21,9 +21,9 @@ import javax.net.ssl.X509TrustManager
  * the cert chain, not where it came from).
  */
 /**
- * Thrown when a per-host pin EXISTS but the chain doesn't match — i.e.
- * cert rotation. Caller catches this to offer a re-TOFU prompt instead of
- * treating the failure like a generic TLS error.
+ * Thrown when a per-host pin EXISTS but the chain doesn't match. The
+ * connection is refused; JS tells the person to pair again (no prompt to
+ * trust the new certificate)., D6.
  */
 class PinMismatchException(
   val host: String,
@@ -79,6 +79,24 @@ class HouseholdTrustManager(
   // ── core ──
 
   private fun verify(chain: Array<X509Certificate>, authType: String, host: String?) {
+    // 0. The home's own network address pinned to its household CA by
+    //    fingerprint (`home_ca_fp`): the chain must contain that CA and
+    //    validate up to it as the only anchor. Checked before system trust —
+    //    a public certificate for this host does not stand in for the pin.
+    //    OkHttp's hostname verifier still runs after this.
+    val caFps = if (host.isNullOrBlank()) emptySet() else HouseholdTrustStore.caFingerprints(host)
+    if (caFps.isNotEmpty()) {
+      val ca = chain.firstOrNull { HouseholdTrustStore.plainHex(sha256Fingerprint(it.encoded)) in caFps }
+      if (ca != null && validatesAgainst(chain, authType, ca)) {
+        Log.i(tag, "TLS chain for $host validated against its pinned household CA")
+        return
+      }
+      val newFp = chain.firstOrNull()?.let { sha256Fingerprint(it.encoded) } ?: ""
+      Log.w(tag, "Chain for $host does not validate to its pinned household CA — refused")
+      TrustEventEmitter.emitPinMismatch(host!!, newFp, caFps.first())
+      throw PinMismatchException(host, newFp, caFps.first(), null)
+    }
+
     // 1. System path — Let's Encrypt / public CAs / OS user-installed.
     try {
       systemTm.checkServerTrusted(chain, authType)
@@ -114,7 +132,7 @@ class HouseholdTrustManager(
     }
 
     // Nothing matched. If a pin existed for this exact host, it's a genuine
-    // mismatch (rotation) → surface for re-TOFU; otherwise no pin covers it.
+    // mismatch → refused and reported (pair again); otherwise no pin covers it.
     if (exact != null) {
       val newFp = chain.firstOrNull()?.let { sha256Fingerprint(it.encoded) } ?: ""
       val pinnedFp = sha256Fingerprint(exact.encoded)

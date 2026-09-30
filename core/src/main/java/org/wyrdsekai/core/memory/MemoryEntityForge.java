@@ -64,6 +64,13 @@ public final class MemoryEntityForge {
             System.getenv().getOrDefault("WYRDSEKAI_ENTITY_TTL_DAYS", "90"))
             * 24L * 60L * 60L * 1000L;
 
+    /**
+     * Rows are consolidated only with rows of the same origin (who told it, whether privately):
+     * one person's fact is never superseded by, or folded into, another person's, and a private
+     * fact is never merged into an open one (audit W4, 2026-09-28).
+     */
+    private static final String ORIGIN_KEY = "COALESCE(teller_did, ''), visibility";
+
     private MemoryEntityForge() {}
 
     /**
@@ -128,7 +135,8 @@ public final class MemoryEntityForge {
                 + "WHERE did = ? AND id NOT IN ("
                 + "  SELECT MAX(id) FROM memory_entities "
                 + "  WHERE did = ? "
-                + "  GROUP BY entity_type, COALESCE(entity_role, ''), entity_value"
+                + "  GROUP BY entity_type, COALESCE(entity_role, ''), entity_value, "
+                + ORIGIN_KEY
                 + ")";
         try (var stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, did);
@@ -145,7 +153,7 @@ public final class MemoryEntityForge {
                 + "WHERE did = ? AND id NOT IN ("
                 + "  SELECT MAX(id) FROM memory_edges "
                 + "  WHERE did = ? "
-                + "  GROUP BY subject, predicate, object"
+                + "  GROUP BY subject, predicate, object, " + ORIGIN_KEY
                 + ")";
         try (var stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, did);
@@ -175,7 +183,7 @@ public final class MemoryEntityForge {
                 + "WHERE did = ? AND timestamp < ? AND id NOT IN ("
                 + "  SELECT MAX(id) FROM memory_entities "
                 + "  WHERE did = ? "
-                + "  GROUP BY entity_type, COALESCE(entity_role, '')"
+                + "  GROUP BY entity_type, COALESCE(entity_role, ''), " + ORIGIN_KEY
                 + ")";
         try (var stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, did);

@@ -12,6 +12,7 @@ import org.wyrdsekai.common.model.Entity;
 import org.wyrdsekai.common.model.Hint;
 import org.wyrdsekai.common.model.RoomSnapshot;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.library.OutputSanitizer;
 import org.wyrdsekai.core.persistence.WorldDnaService;
 import org.wyrdsekai.core.room.RoomCommand;
@@ -320,7 +321,7 @@ public class WardenActor extends AbstractBehavior<WardenActor.Command> {
         inferenceRouter.tell(InferenceRouter.ChatRequest.fromPrompt(
             requestId, prompt,
             modulation.maxResponseTokens(), modulation.temperature(),
-            inferenceResponseAdapter));
+            inferenceResponseAdapter).withNow(NowLine.dateTime()));
 
         log.debug("Warden thinking (trigger: {} said '{}')",
             pendingTrigger.entityName(), truncate(pendingTrigger.text(), 50));
@@ -357,7 +358,7 @@ public class WardenActor extends AbstractBehavior<WardenActor.Command> {
         inferenceRouter.tell(InferenceRouter.ChatRequest.fromPrompt(
             requestId, prompt,
             modulation.maxResponseTokens(), modulation.temperature(),
-            inferenceResponseAdapter));
+            inferenceResponseAdapter).withNow(NowLine.dateTime()));
 
         log.debug("Warden greeting player '{}'", msg.playerName());
         return this;

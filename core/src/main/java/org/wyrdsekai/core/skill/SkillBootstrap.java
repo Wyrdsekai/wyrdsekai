@@ -3,6 +3,7 @@ package org.wyrdsekai.core.skill;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 
+import org.wyrdsekai.core.library.OutputSanitizer;
 import org.wyrdsekai.core.skill.impl.*;
 
 import java.io.IOException;
@@ -44,7 +45,9 @@ public final class SkillBootstrap {
 
     public static SkillRegistry create(Map<String, String> config) {
         if (config == null) config = Map.of();
-        var registry = new SkillRegistry(null, null);
+        // Skill output is tool output headed for a model: scanned for prompt injection,
+        // each match replaced with [BLOCKED].
+        var registry = new SkillRegistry(OutputSanitizer.builtin(OutputSanitizer.SanitizationMode.BLOCK), null);
 
         // --- Always-on executors (no configuration required) ---
         register(registry, new WeatherSkillExecutor());

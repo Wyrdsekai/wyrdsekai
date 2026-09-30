@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.item;
 
+import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import org.wyrdsekai.scripting.api.ItemWorldApiProvider;
 
 import java.util.List;
@@ -79,6 +80,11 @@ public final class TransitItemProvider implements ItemWorldApiProvider {
     }
 
     @Override
+    public String llmRewrite(String text, String instruction) {
+        return delegate.llmRewrite(text, instruction);
+    }
+
+    @Override
     public void agentSpeak(String text) {
         delegate.agentSpeak(text);
     }
@@ -126,5 +132,11 @@ public final class TransitItemProvider implements ItemWorldApiProvider {
     @Override
     public Map<String, Object> inventoryUse(String itemId, Map<String, Object> params, int depth) {
         return delegate.inventoryUse(itemId, params, depth);
+    }
+
+    @Override
+    public Map<String, Object> inventoryUse(String itemId, Map<String, Object> params, int depth,
+                                            ItemCapabilitySet ceiling) {
+        return delegate.inventoryUse(itemId, params, depth, ceiling);
     }
 }

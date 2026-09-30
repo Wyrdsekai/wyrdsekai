@@ -19,6 +19,7 @@ import org.wyrdsekai.common.protocol.S2CMessage;
 import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.common.util.Json;
+import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.between.BetweenActor;
 import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.between.federation.FederationService;
@@ -71,7 +72,6 @@ import org.wyrdsekai.core.home.HomeClient;
 import org.wyrdsekai.core.home.HomeProxy;
 import org.wyrdsekai.core.home.RelayGovernors;
 import org.wyrdsekai.core.home.ResidencyStore;
-import org.wyrdsekai.core.identity.PlayerAccount;
 import org.wyrdsekai.core.item.HomeOwnerItemProvider;
 import org.wyrdsekai.core.item.HouseholdItemContent;
 import org.wyrdsekai.core.item.ToolItemStarterKit;
@@ -114,7 +114,9 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.time.Clock;
 import org.wyrdsekai.core.identity.PersonIds;
+import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.mail.JournalSurface;
+import org.wyrdsekai.core.soul.BondNaming;
 import org.wyrdsekai.core.mail.MailSurface;
 import org.wyrdsekai.core.item.MailboxService;
 import org.wyrdsekai.core.room.MapOccupants;
@@ -188,6 +190,8 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
     private final Map<String, String> sessionCurrentRoom = new ConcurrentHashMap<>();
     private final Map<String, String> sessionPlayerIds = new ConcurrentHashMap<>();
     private final Map<String, String> sessionUserIds = new ConcurrentHashMap<>();
+    /** The login session token a socket authenticated with (kept when it changes the password). */
+    private final Map<String, String> sessionTokens = new ConcurrentHashMap<>();
     private final Map<String, String> sessionLocales = new ConcurrentHashMap<>();
     private final Map<String, SessionRateLimiter> sessionRateLimiters = new ConcurrentHashMap<>();
     private final int rateLimitPerSecond = 10;
@@ -309,9 +313,15 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
      * param; unknown ids (standalone voice sessions) are dropped with a debug
      * line rather than spoken by nobody.
      */
-    public void routeVoiceTranscription(String sessionId, String text) {
+    public void routeVoiceTranscription(String sessionId, String text, String userId) {
         if (sessionId == null || text == null || text.isBlank()) return;
         var sessionRef = sessions.get(sessionId);
+        // Only the person the world session belongs to may speak into it by voice.
+        var owner = sessionUserIds.get(sessionId);
+        if (sessionRef != null && userId != null && owner != null && !PersonIds.samePerson(owner, userId)) {
+            log.warn("Voice transcription for session {} refused: it belongs to someone else", sessionId);
+            return;
+        }
         if (sessionRef == null) {
             log.debug("Voice transcription for unknown session {} — not routed to a room",
                 sessionId);
@@ -868,7 +878,9 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
 
             if (transitTokenParam != null && federationService != null) {
                 // Transit token authentication — visiting agent from another zone
-                var transitToken = federationService.validateTransitToken(transitTokenParam);
+                // Single use, for this zone, while the agreement with the issuing zone is active.
+                var zoneForToken = localZoneId != null ? localZoneId : WyrdConfig.get().zoneId();
+                var transitToken = federationService.redeemTransitToken(transitTokenParam, zoneForToken, null);
                 if (transitToken.isEmpty()) {
                     ctx.closeSession(4003, "Invalid or expired transit token");
                     return;
@@ -950,34 +962,20 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                         sessionId, d.name(), d.id(), startRoom);
                 }
             } else {
-                // Try device auto-login via AccountService (Phase 3 identity)
-                var deviceId = ctx.queryParam("device_id");
-                var autoAccount = (accountService != null && deviceId != null)
-                    ? accountService.autoLogin(deviceId)
-                    : Optional.<PlayerAccount>empty();
-
-                if (autoAccount.isPresent()) {
-                    var account = autoAccount.get();
-                    playerId = account.did();
-                    playerName = account.displayName();
-                    userId = null; // DID-based, not session-based
-                    startRoom = roomParam != null ? roomParam
-                        : playerLastRoom.getOrDefault(playerId, defaultLandingRoom(playerId));
-                    log.info("Auto-login WebSocket: {} as {} ({}) room={}",
-                        sessionId, account.displayName(), account.did(), startRoom);
-                } else {
-                    // Anonymous access — gated by config
-                    if (!allowAnonymous) {
-                        ctx.closeSession(4002, "Authentication required");
-                        return;
-                    }
-                    playerId = "anon-" + sessionId.substring(0, 8);
-                    playerName = "anonymous";
-                    userId = null;
-                    startRoom = roomParam != null ? roomParam
-                        : playerLastRoom.getOrDefault(playerId, GUEST_START_ROOM);
-                    log.info("Anonymous WebSocket: {} as {} room={}", sessionId, playerId, startRoom);
+                // A bare ?device_id= used to log in as that device's account with no secret at all
+                // (dead only because nothing wired the account service in). It is gone; a device
+                // proves itself with its device token.
+                // Anonymous access — gated by config
+                if (!allowAnonymous) {
+                    ctx.closeSession(4002, "Authentication required");
+                    return;
                 }
+                playerId = "anon-" + sessionId.substring(0, 8);
+                playerName = "anonymous";
+                userId = null;
+                startRoom = roomParam != null ? roomParam
+                    : playerLastRoom.getOrDefault(playerId, GUEST_START_ROOM);
+                log.info("Anonymous WebSocket: {} as {} room={}", sessionId, playerId, startRoom);
             }
 
             // Parental time limit: a member whose daily hours are spent cannot
@@ -1067,6 +1065,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             playerLastRoom.put(playerId, startRoom);
             sessionPlayerNames.put(sessionId, playerName);
             if (userId != null) sessionUserIds.put(sessionId, userId);
+            if (userId != null && token != null) sessionTokens.put(sessionId, token);
 
             // Register with transport-agnostic registry so federation and other
             // paths can reach this client by playerId regardless of transport.
@@ -1165,6 +1164,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             var playerId = sessionPlayerIds.remove(sessionId);
             var playerDisplayName = sessionPlayerNames.remove(sessionId);
             sessionUserIds.remove(sessionId);
+            sessionTokens.remove(sessionId);
             wsContexts.remove(sessionId);
             if (playerId != null) {
                 // Drop only THIS session's sink; keep the account's other surfaces.
@@ -1259,6 +1259,20 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                     sessionRef, playerId, look.id());
 
             case C2SMessage.Say say -> {
+                // "research yes" is the person's answer to the household library, not speech: a
+                // chat-first client (the phone, the browser) sends every line as a say, and the
+                // room would hand it to the companion's model. Nothing a companion says reaches
+                // this; only a person's own line does.
+                if (LibraryConsent.isResearchYes(say.text())) {
+                    sendProse(sessionRef, "system", LibraryConsent.researchYes(playerId, locale));
+                    return;
+                }
+                // "bond" and "bond name <companion> <name>" are the person's own verb too, not speech.
+                if (BondNaming.isCommand(say.text())) {
+                    sendProse(sessionRef, "system", BondNaming.command(playerId,
+                        sessionPlayerNames.getOrDefault(sessionId, "player"), BondNaming.argsOf(say.text()), locale));
+                    return;
+                }
                 if (!checkWard(sessionRef, currentRoomId, playerId, "speak", say.id(), locale)) return;
                 var pname = sessionPlayerNames.getOrDefault(sessionId, "player");
                 var parsed = InputParser.parse(say.text());
@@ -1728,7 +1742,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             CarriedItemUse.attachRoomVoice(provider, currentRoomId, playerId);
             CarriedItemUse.attachLocale(provider, locale);
             var params = CarriedItemUse.params(playerId, resolved.target(), locale);
-            var itemCaps = CarriedItemUse.capabilitiesFor(item.objectId());
+            var itemCaps = CarriedItemUse.capabilitiesFor(resolved);
             var result = itemScriptExecutor.execute(
                 item.objectId(), resolved.source(), params, provider, itemCaps);
             var text = ItemScriptResponse.extractText(
@@ -1975,7 +1989,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                 var args = cmd.args() != null ? cmd.args() : List.<String>of();
                 var target = String.join(" ", args).trim();
                 var steward = authService != null && playerId != null
-                    && authService.findUser(playerId).map(u -> "steward".equals(u.role())).orElse(false);
+                    && authService.findUserForPerson(playerId).map(u -> "steward".equals(u.role())).orElse(false);
                 if (!steward) { sendProse(sessionRef, "system", "Only the steward demolishes rooms."); return; }
                 if (target.isEmpty()) { sendProse(sessionRef, "system", "Usage: demolish <room>"); return; }
                 var demolition = RoomDemolition.get();
@@ -1990,6 +2004,33 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             }
             case "journal" -> {
                 handleJournal(sessionRef, playerId, cmd.args());
+                return;
+            }
+            case "bond" -> {
+                // The person's bonds and the naming ritual; any other line starting with the word is said.
+                var args = cmd.args() != null ? cmd.args() : List.<String>of();
+                var line = ("bond " + String.join(" ", args)).strip();
+                var bname = sessionPlayerNames.getOrDefault(sessionId, "player");
+                if (BondNaming.isCommand(line)) {
+                    sendProse(sessionRef, "system", BondNaming.command(playerId, bname, BondNaming.argsOf(line), locale));
+                } else if (room != null) {
+                    askRoom(room, ref -> new RoomCommand.SayInRoom(playerId, bname, line, locale, null, ref),
+                        sessionRef, cmd.id());
+                }
+                return;
+            }
+            case "research" -> {
+                // "research yes": the person's own yes to a question the household library asked
+                // them about. Anything else after "research" is said in the room, as before.
+                var args = cmd.args() != null ? cmd.args() : List.<String>of();
+                var line = ("research " + String.join(" ", args)).strip();
+                if (LibraryConsent.isResearchYes(line)) {
+                    sendProse(sessionRef, "system", LibraryConsent.researchYes(playerId, locale));
+                } else if (room != null) {
+                    var rname = sessionPlayerNames.getOrDefault(sessionId, "player");
+                    askRoom(room, ref -> new RoomCommand.SayInRoom(playerId, rname, line, locale, null, ref),
+                        sessionRef, cmd.id());
+                }
                 return;
             }
             case "sessions" -> {
@@ -2706,7 +2747,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             return;
         }
         try {
-            if (authService.changePassword(userId, current, next)) {
+            if (authService.changePassword(userId, current, next, sessionTokens.get(sessionId))) {
                 sendProse(sessionRef, "system", catalog.get("passwd.changed"));
             } else {
                 sendProse(sessionRef, "system", catalog.get("passwd.wrong_current"));

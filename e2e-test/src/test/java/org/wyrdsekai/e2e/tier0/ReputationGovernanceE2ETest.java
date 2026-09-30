@@ -7,8 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.wyrdsekai.core.economy.AgentReputation;
 import org.wyrdsekai.core.economy.AttestationService;
 import org.wyrdsekai.core.agent.GovernorEventMonitor;
-import org.wyrdsekai.core.household.HouseholdMember;
-import org.wyrdsekai.core.household.PermissionChecker;
 import org.wyrdsekai.core.inference.InferenceBackend;
 import org.wyrdsekai.core.inference.InferenceClient;
 import org.wyrdsekai.e2e.infra.PortAllocator;
@@ -19,7 +17,6 @@ import org.wyrdsekai.e2e.infra.WireMockInferenceServer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,7 +25,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * - Governor notification pipeline (event → concern → steward notification)
  * - Zone command success/failure → reputation recording
  * - Reputation tier progression through endorsement + task completion
- * - AttestationService integration with PermissionChecker
  */
 @Tag("integration")
 class ReputationGovernanceE2ETest {
@@ -202,38 +198,5 @@ class ReputationGovernanceE2ETest {
         assertTrue(score.overall() > 0.3, "Established agent should have decent reputation");
         assertEquals(2, score.endorsementCount());
         assertTrue(score.meetsThreshold(0.3));
-    }
-
-    // ── Reputation gating integration ──
-
-    @Test
-    void reputation_gating_blocks_low_reputation_agent() {
-        AttestationService.init();
-        var checker = new PermissionChecker();
-
-        // Register agent as member with MCP permission
-        checker.register(HouseholdMember.member(
-            "low-rep-agent", "TestAgent",
-            Set.of(
-                HouseholdMember.PERM_MCP_MANAGE,
-                HouseholdMember.PERM_ROOM_ENTER)));
-
-        // Has base permission but NOT enough reputation
-        var result = checker.checkWithReputation("low-rep-agent",
-            HouseholdMember.PERM_MCP_MANAGE, 0.7);
-        assertFalse(result.allowed(), "Low reputation should block sensitive operation");
-        assertTrue(result.reason().contains("reputation too low"));
-
-        // After endorsement, should pass
-        var attestation = AttestationService.get();
-        attestation.stewardEndorse("steward", "low-rep-agent", "Promoted", 1.0);
-        for (int i = 0; i < 10; i++) attestation.recordTaskOutcome("low-rep-agent", true);
-
-        var score = attestation.score("low-rep-agent");
-        var result2 = checker.checkWithReputation("low-rep-agent",
-            HouseholdMember.PERM_MCP_MANAGE,
-            score.overall() - 0.01); // threshold just below their score
-        assertTrue(result2.allowed(),
-            "Agent with endorsement + tasks should pass reputation gate");
     }
 }

@@ -15,7 +15,8 @@ services:
     ports:
       # HTTP and WebSocket share ONE port (WYRDSEKAI_PORT, default 7070).
       # The old WS_PORT/HTTP_PORT split never existed server-side.
-      - "${WYRDSEKAI_PORT:-7070}:7070"
+      - "127.0.0.1:${WYRDSEKAI_PORT:-7070}:7070"   # plain: this machine only
+      - "${WYRDSEKAI_TLS_PORT:-7443}:7443"
       - "${WYRDSEKAI_TELNET_PORT:-7777}:7777"
     volumes:
       - ${WYRDSEKAI_DATA:-./data}/db:/data
@@ -24,6 +25,7 @@ services:
       WYRDSEKAI_DATA_DIR: /data
       WYRDSEKAI_SCRIPTS_DIR: /app/scripts
       WYRDSEKAI_PORT: "7070"
+      WYRDSEKAI_HTTP_BIND: "0.0.0.0"
       WYRDSEKAI_TELNET_PORT: "7777"
       WYRDSEKAI_NATS_URL: "nats://nats:4222"
       JAVA_OPTS: >-

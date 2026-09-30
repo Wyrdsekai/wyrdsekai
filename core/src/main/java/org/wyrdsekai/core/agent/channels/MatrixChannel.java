@@ -155,7 +155,18 @@ public class MatrixChannel implements ConversationChannel {
     @Override
     public void stopListener() {
         listening.set(false);
-        if (listenerThread != null) listenerThread.interrupt();
+        var t = listenerThread;
+        if (t != null) {
+            t.interrupt();
+            // The poll thread persists its sync offset; wait for it so nothing is written after this returns.
+            if (t != Thread.currentThread()) {
+                try {
+                    t.join(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
         log.info("Matrix listener stopped");
     }
 

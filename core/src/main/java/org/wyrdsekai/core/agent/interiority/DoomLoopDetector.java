@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * quantitative detectors over the tick log.
@@ -38,15 +39,64 @@ public final class DoomLoopDetector {
      * the agent looks healthy on these axes.
      */
     public static List<Finding> detect(List<TickLogReader.TickEvent> ticks) {
+        return detect(ticks, null);
+    }
+
+    /**
+     * As above, with her own settle points for the stuck-drive axis (the base set points
+     * scaled by her temperament); null means the base set points.
+     */
+    public static List<Finding> detect(List<TickLogReader.TickEvent> ticks,
+                                       Map<String, Double> settlePoints) {
         var out = new ArrayList<Finding>();
         if (ticks == null || ticks.isEmpty()) return out;
 
         out.addAll(stuckOnSameWant(ticks));
         out.addAll(stuckOnSameVerb(ticks));
-        out.addAll(driveStuckHigh(ticks));
+        out.addAll(driveStuckHigh(ticks, settlePoints));
         out.addAll(pregateSkipRatio(ticks));
         out.addAll(restRatioOffBand(ticks));
         return out;
+    }
+
+    /**
+     * The tanks whose staying high means an unmet need or a pressure that is not easing:
+     * the only ones the stuck-drive axis reads. Integrity and Confidence at 1.0 are health,
+     * Care and Curiosity high are motivation; counting them lit this axis for every companion
+     * in every tick (second-node, 2026-09-25: Integrity 100%, Confidence 98% for both), so any two
+     * other concerns sent her to the sanctuary.
+     */
+    public static final Set<String> STUCK_WATCHED = Set.of(
+        "Saudade", "Loneliness", "Amae", "Restlessness", "Stagnation", "Significance",
+        "Standing", "Harmony", "AutonomyPressure", "Obligation",
+        "Frustration", "ErrorPressure", "AllostaticLoad");
+
+    /**
+     * Where each deprivation tank settles under a persisting condition (the set points in
+     * {@link org.wyrdsekai.core.agent.VitalityState}). A tank AT its settle point is a
+     * condition truthfully reported, not a drive that cannot recover; stuck means above it.
+     * Tanks without a settle point keep the flat 0.7 line.
+     */
+    public static final Map<String, Double> SETTLE_POINTS = Map.of(
+        "Saudade", org.wyrdsekai.core.agent.VitalityState.SAUDADE_SETPOINT,
+        "Loneliness", org.wyrdsekai.core.agent.VitalityState.LONELINESS_SETPOINT,
+        "Amae", org.wyrdsekai.core.agent.VitalityState.AMAE_SETPOINT,
+        "Restlessness", org.wyrdsekai.core.agent.VitalityState.RESTLESSNESS_SETPOINT,
+        "Stagnation", org.wyrdsekai.core.agent.VitalityState.STAGNATION_SETPOINT,
+        "Standing", org.wyrdsekai.core.agent.VitalityState.STANDING_SETPOINT,
+        "Harmony", org.wyrdsekai.core.agent.VitalityState.HARMONY_SETPOINT,
+        "AutonomyPressure", org.wyrdsekai.core.agent.VitalityState.AUTONOMY_SETPOINT);
+
+    /** The flat line for a watched tank that has no settle point. */
+    public static final double STUCK_FLOOR = 0.7;
+    /** Above the settle point by this much before it counts: settled is not stuck. */
+    static final double STUCK_MARGIN = 0.02;
+
+    /** The line a watched tank must sit above to count as stuck, for her temperament. */
+    public static double stuckLine(String tank, Map<String, Double> settlePoints) {
+        Double sp = settlePoints != null ? settlePoints.get(tank) : null;
+        if (sp == null) sp = SETTLE_POINTS.get(tank);
+        return Math.max(STUCK_FLOOR, sp == null ? STUCK_FLOOR : sp) + STUCK_MARGIN;
     }
 
     /** Same want chosen ≥ {@link #SAME_WANT_RUN_LIMIT} consecutive ticks, no satisfaction. */
@@ -154,16 +204,22 @@ public final class DoomLoopDetector {
         return out;
     }
 
-    /** Any drive stays > 0.7 across more than 70% of the window's ticks. */
+    /** A watched deprivation tank stays above its stuck line in more than 70% of the window's ticks. */
     static List<Finding> driveStuckHigh(List<TickLogReader.TickEvent> ticks) {
+        return driveStuckHigh(ticks, null);
+    }
+
+    static List<Finding> driveStuckHigh(List<TickLogReader.TickEvent> ticks,
+                                        Map<String, Double> settlePoints) {
         var out = new ArrayList<Finding>();
         var totals = new HashMap<String, Integer>();
         var highs = new HashMap<String, Integer>();
         for (var t : ticks) {
             if (t.driveSnapshot() == null) continue;
             for (var e : t.driveSnapshot().entrySet()) {
+                if (!STUCK_WATCHED.contains(e.getKey())) continue;
                 totals.merge(e.getKey(), 1, Integer::sum);
-                if (e.getValue() != null && e.getValue() > 0.7) {
+                if (e.getValue() != null && e.getValue() > stuckLine(e.getKey(), settlePoints)) {
                     highs.merge(e.getKey(), 1, Integer::sum);
                 }
             }
@@ -176,8 +232,9 @@ public final class DoomLoopDetector {
                 out.add(new Finding(
                     Severity.WARN,
                     "drive_stuck_high",
-                    "Drive '" + e.getKey() + "' over 0.7 in "
-                        + e.getValue() + "/" + total + " ticks (no recovery)"));
+                    String.format("Drive '%s' above its settle point (%.2f) in %d/%d ticks (no recovery)",
+                        e.getKey(), stuckLine(e.getKey(), settlePoints) - STUCK_MARGIN,
+                        e.getValue(), total)));
             }
         }
         return out;

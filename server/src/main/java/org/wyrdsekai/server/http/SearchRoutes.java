@@ -47,6 +47,16 @@ public final class SearchRoutes {
         if (limit < 1) limit = 1;
         if (limit > 100) limit = 100;
 
+        // Soul fragments and memories are the companions' own, and memories hold what each
+        // person told them in private. Until 2026-09-28 anyone who could reach the port could
+        // search every companion's memory here. Now only the machine's operator can, from the
+        // machine itself, for diagnosis (they can already read the files on disk).
+        if ((SearchCollections.SOUL_FRAGMENTS.equals(collection) || SearchCollections.MEMORY_ITEMS.equals(collection))
+                && !ApiAuth.isOperator(ctx)) {
+            ctx.status(403).json(Map.of("error", "forbidden",
+                "message", "Companions' memories are not searchable over the network."));
+            return;
+        }
         var results = switch (collection) {
             case SearchCollections.ROOM_CONTENT -> store.searchRooms(q, limit);
             case SearchCollections.LIBRARY -> store.searchCapabilities(q, limit);

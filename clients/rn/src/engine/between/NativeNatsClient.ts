@@ -11,13 +11,44 @@
  * Protocol reference: https://docs.nats.io/reference/reference-protocols/nats-protocol
  *
  * Wire format (all messages delimited by \r\n):
- *   Server INFO -> Client CONNECT -> SUB/PUB/MSG/PING/PONG
+ *   Server INFO -> Client CONNECT + PING -> server PONG (login accepted)
+ *   -> SUB/PUB/MSG/PING/PONG
+ *
+ * connect() resolves only once the server has answered the PING after CONNECT,
+ * i.e. accepted the login; a refused login (`-ERR 'Authorization Violation'`)
+ * fails connect() and stops reconnecting. After that, `-ERR 'Permissions
+ * Violation for Subscription to "<subject>"'` fails and drops that subscription,
+ * and every server error is reported to onError listeners (a refused publish
+ * has nothing else to fail: this client has no request/reply).
  */
-import type { BetweenClient, BetweenMessageHandler } from './BetweenClient';
+import type { BetweenClient, BetweenMessageHandler, BetweenSubscribeError } from './BetweenClient';
 import { createRelaySocket, type RelaySocketLike } from './RelaySocket';
 
 export type NativeNatsState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
 export type NativeNatsStateListener = (state: NativeNatsState) => void;
+
+/** A `-ERR` from the server, read. */
+export interface NatsServerError {
+  /** The server's text, without `-ERR` and the quotes. */
+  message: string;
+  /** login: the server refused the login; publish/subscribe: a permissions violation on `subject`. */
+  kind: 'login' | 'publish' | 'subscribe' | 'other';
+  subject?: string;
+}
+
+/** Reads a `-ERR '…'` line. */
+export function parseServerError(line: string): NatsServerError {
+  const message = line.replace(/^-ERR\s*/, '').trim().replace(/^'(.*)'$/, '$1');
+  const perm = /Permissions Violation for (Publish|Subscription) to "([^"]+)"/i.exec(message);
+  if (perm) return { message, kind: perm[1].toLowerCase() === 'publish' ? 'publish' : 'subscribe', subject: perm[2] };
+  if (/Authorization Violation|Authentication (Timeout|Expired)|User Authentication Revoked/i.test(message)) {
+    return { message, kind: 'login' };
+  }
+  return { message, kind: 'other' };
+}
+
+/** How long connect() waits for the server to accept the login (its PONG). */
+export const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /** Max reconnect backoff delay (16 seconds). */
 export const MAX_BACKOFF_MS = 16_000;
@@ -47,6 +78,7 @@ interface Subscription {
   sid: number;
   subject: string;
   handler: BetweenMessageHandler;
+  onError?: (err: BetweenSubscribeError) => void;
 }
 
 /**
@@ -85,6 +117,12 @@ export class NativeNatsClient implements BetweenClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private connectResolve: (() => void) | null = null;
   private connectReject: ((err: Error) => void) | null = null;
+  /** CONNECT + PING sent; waiting for the server's PONG (login accepted) or its -ERR. */
+  private awaitingLogin = false;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The server refused this login: reconnecting with it would only be refused again. */
+  private loginRefused = false;
+  private errorListeners: Array<(e: NatsServerError) => void> = [];
 
   /** Auto-reconnect on connection drop. */
   autoReconnect = true;
@@ -102,6 +140,19 @@ export class NativeNatsClient implements BetweenClient {
     return () => {
       this.stateListeners = this.stateListeners.filter(l => l !== listener);
     };
+  }
+
+  /** Every server error (-ERR) after it is read; see NatsServerError. */
+  onError(listener: (e: NatsServerError) => void): () => void {
+    this.errorListeners.push(listener);
+    return () => {
+      this.errorListeners = this.errorListeners.filter(l => l !== listener);
+    };
+  }
+
+  /** True when the server refused this client's login (connect() will not succeed with it). */
+  get refused(): boolean {
+    return this.loginRefused;
   }
 
   private setState(state: NativeNatsState): void {
@@ -131,6 +182,8 @@ export class NativeNatsClient implements BetweenClient {
     // for the study-sync Between leg. A LAN household NATS needs no auth (creds
     // undefined → anonymous CONNECT, unchanged).
     if (creds) this.authCreds = creds;
+    this.loginRefused = false;
+    this.awaitingLogin = false;
     this.setState('connecting');
     this.buffer = new Uint8Array(0);
     this.pendingMsg = null;
@@ -169,13 +222,7 @@ export class NativeNatsClient implements BetweenClient {
         };
 
         ws.onerror = () => {
-          if (this.connectReject) {
-            const rej = this.connectReject;
-            this.connectResolve = null;
-            this.connectReject = null;
-            this.setState('error');
-            rej(new Error(`WebSocket connection error to ${url}`));
-          }
+          if (this.connectReject) this.failConnect(new Error(`WebSocket connection error to ${url}`));
         };
 
         ws.onclose = () => {
@@ -184,18 +231,14 @@ export class NativeNatsClient implements BetweenClient {
           this.stopPingTimer();
 
           if (this.connectReject) {
-            // Connection dropped before handshake completed
-            const rej = this.connectReject;
-            this.connectResolve = null;
-            this.connectReject = null;
-            this.setState('error');
-            rej(new Error(`WebSocket closed before NATS handshake completed`));
+            // Connection dropped before the server accepted the login
+            this.failConnect(new Error(`WebSocket closed before NATS handshake completed`));
             return;
           }
 
           this.ws = null;
 
-          if (wasConnected && this.autoReconnect) {
+          if (wasConnected && this.autoReconnect && !this.loginRefused) {
             this.scheduleReconnect();
           } else {
             this.setState('disconnected');
@@ -210,11 +253,46 @@ export class NativeNatsClient implements BetweenClient {
     });
   }
 
+  /** End a pending connect() with `err`. */
+  private failConnect(err: Error): void {
+    this.clearHandshakeTimer();
+    this.awaitingLogin = false;
+    const rej = this.connectReject;
+    this.connectResolve = null;
+    this.connectReject = null;
+    this.setState('error');
+    rej?.(err);
+  }
+
+  private clearHandshakeTimer(): void {
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
+  }
+
+  /** Close the socket without the close handler's reconnect. */
+  private dropSocket(): void {
+    const ws = this.ws;
+    this.ws = null;
+    if (!ws) return;
+    try {
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onmessage = null;
+      ws.close();
+    } catch {
+      // Best-effort close
+    }
+  }
+
   async disconnect(): Promise<void> {
     this.autoReconnect = false; // Prevent reconnect on intentional close
     this._connected = false;
     this.cancelReconnect();
     this.stopPingTimer();
+    this.clearHandshakeTimer();
+    this.awaitingLogin = false;
 
     if (this.connectReject) {
       const rej = this.connectReject;
@@ -251,9 +329,13 @@ export class NativeNatsClient implements BetweenClient {
     }
   }
 
-  subscribe(subject: string, handler: BetweenMessageHandler): () => void {
+  subscribe(
+    subject: string,
+    handler: BetweenMessageHandler,
+    onError?: (err: BetweenSubscribeError) => void,
+  ): () => void {
     const sid = this.nextSid++;
-    const sub: Subscription = { sid, subject, handler };
+    const sub: Subscription = { sid, subject, handler, onError };
     this.subscriptions.set(sid, sub);
 
     if (this.ws && this._connected) {
@@ -348,22 +430,81 @@ export class NativeNatsClient implements BetweenClient {
     } else if (line === 'PING') {
       this.handlePing();
     } else if (line === 'PONG') {
-      // Response to our PING. Nothing to do.
+      // The answer to the PING after CONNECT: the server took the login.
+      if (this.awaitingLogin) this.loginAccepted();
     } else if (line === '+OK') {
       // Verbose mode acknowledgement. Nothing to do.
     } else if (line.startsWith('-ERR')) {
-      // Server error. Log but don't disconnect.
-      // In production, console.warn would be appropriate.
+      this.handleServerError(parseServerError(line));
     }
     // Unknown lines are silently ignored.
   }
 
   /**
-   * Handle INFO from server. On first INFO, complete the NATS handshake
-   * by sending CONNECT and resolving the connect() promise.
+   * A -ERR. Before the login is accepted, any error is the server refusing the
+   * connection: connect() fails and, for a refused login, no reconnect follows.
+   * After it, a refused subscription is dropped and told; every error goes to
+   * the onError listeners. (The server closes the connection itself for the
+   * errors that end it; the close handler takes it from there.)
+   */
+  private handleServerError(err: NatsServerError): void {
+    if (this.awaitingLogin && this.connectReject) {
+      if (err.kind === 'login') this.loginRefused = true;
+      this.dropSocket();
+      this.failConnect(new Error(`NATS refused the connection: ${err.message}`));
+    } else if (err.kind === 'subscribe' && err.subject) {
+      for (const [sid, sub] of [...this.subscriptions]) {
+        if (sub.subject !== err.subject) continue;
+        this.subscriptions.delete(sid);
+        try {
+          sub.onError?.({ subject: sub.subject, message: err.message });
+        } catch {
+          // A callback that throws must not stop the receive loop
+        }
+      }
+    } else if (err.kind === 'login') {
+      // The login was withdrawn while connected (the server closes next).
+      this.loginRefused = true;
+    }
+    for (const l of [...this.errorListeners]) {
+      try {
+        l(err);
+      } catch {
+        // Listener threw; don't crash.
+      }
+    }
+  }
+
+  /** The server answered the PING after CONNECT: the login stands. */
+  private loginAccepted(): void {
+    this.awaitingLogin = false;
+    this.clearHandshakeTimer();
+    // Subscribe everything registered so far (before connect, or from before a reconnect).
+    for (const [sid, sub] of this.subscriptions) {
+      try {
+        this.ws!.send(`SUB ${sub.subject} ${sid}\r\n`);
+      } catch {
+        // Will retry on next reconnect
+      }
+    }
+
+    this._connected = true;
+    this.reconnectAttempt = 0;
+    this.setState('connected');
+    this.startPingTimer();
+
+    const resolve = this.connectResolve;
+    this.connectResolve = null;
+    this.connectReject = null;
+    resolve?.();
+  }
+
+  /**
+   * Handle INFO from server. On the first INFO, send CONNECT and a PING; the
+   * connect() promise resolves when the PONG comes back (loginAccepted).
    */
   private handleInfo(_infoLine: string): void {
-    if (this.connectResolve) {
+    if (this.connectResolve && !this.awaitingLogin) {
       // First INFO = handshake. Send CONNECT.
       const connectJson = JSON.stringify({
         verbose: false,
@@ -377,36 +518,18 @@ export class NativeNatsClient implements BetweenClient {
       });
 
       try {
-        this.ws!.send(`CONNECT ${connectJson}\r\n`);
+        this.ws!.send(`CONNECT ${connectJson}\r\nPING\r\n`);
       } catch {
-        if (this.connectReject) {
-          const rej = this.connectReject;
-          this.connectResolve = null;
-          this.connectReject = null;
-          this.setState('error');
-          rej(new Error('Failed to send CONNECT command'));
-        }
+        if (this.connectReject) this.failConnect(new Error('Failed to send CONNECT command'));
         return;
       }
-
-      // Re-subscribe all existing subscriptions (for reconnect scenarios)
-      for (const [sid, sub] of this.subscriptions) {
-        try {
-          this.ws!.send(`SUB ${sub.subject} ${sid}\r\n`);
-        } catch {
-          // Will retry on next reconnect
-        }
-      }
-
-      this._connected = true;
-      this.reconnectAttempt = 0;
-      this.setState('connected');
-      this.startPingTimer();
-
-      const resolve = this.connectResolve;
-      this.connectResolve = null;
-      this.connectReject = null;
-      resolve();
+      this.awaitingLogin = true;
+      this.handshakeTimer = setTimeout(() => {
+        this.handshakeTimer = null;
+        if (!this.awaitingLogin || !this.connectReject) return;
+        this.dropSocket();
+        this.failConnect(new Error('NATS did not answer the connection handshake'));
+      }, HANDSHAKE_TIMEOUT_MS);
     }
     // Subsequent INFO messages (cluster change) are ignored.
   }
@@ -480,8 +603,9 @@ export class NativeNatsClient implements BetweenClient {
       try {
         await this.connect(url);
       } catch {
-        // connect() failed; onclose will schedule next reconnect
-        // if autoReconnect is still true
+        // Keep trying with backoff, unless the server refused the login (or
+        // the caller disconnected meanwhile).
+        if (this.autoReconnect && !this.loginRefused && !this.reconnectTimer) this.scheduleReconnect();
       }
     }, delay);
   }

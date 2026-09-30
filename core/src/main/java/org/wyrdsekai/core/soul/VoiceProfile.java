@@ -140,7 +140,7 @@ public record VoiceProfile(
             new AxisCadence("restlessness", res, "quick and vivid"),
             new AxisCadence("sociability",  soc, "warm and flowing"),
             new AxisCadence("warmth",       wrm, "calm and unhurried"),
-            new AxisCadence("curiosity",    cur, "measured and exact; prefer precision to comfort"),
+            new AxisCadence("curiosity",    cur, "measured and exact; would rather be accurate than comforting"),
             new AxisCadence("vigilance",    vig, "plain and steady"),
             new AxisCadence("industry",     ind, "concrete and tactile"));
         String cadence = "even and grounded";
@@ -161,7 +161,7 @@ public record VoiceProfile(
         String warmth;
         if (soc >= 0.70)        warmth = "high and openly relational";
         else if (vig >= 0.70)   warmth = "protective rather than effusive";
-        else if (soc <= 0.45)   warmth = "earnest but reserved — depth over effusiveness";
+        else if (soc <= 0.45)   warmth = "sincere but reserved; says less rather than gushing";
         else                    warmth = "steady and quietly caring";
         c.put("warmth", warmth);
 
@@ -181,10 +181,10 @@ public record VoiceProfile(
         return switch (names[best]) {
             case "curiosity"    -> "name the specific thing before reacting to it; cite what you actually know";
             case "vigilance"    -> "notice what's off and say it plainly; warn before you reassure";
-            case "sociability"  -> "name what the other seems to feel; reach for common ground";
-            case "industry"     -> "speak in materials, tools, and making; show rather than declare";
-            case "restlessness" -> "point outward, toward the next thing; resist settling too soon";
-            case "warmth"       -> "tend the thread; keep what matters from slipping; organize gently";
+            case "sociability"  -> "say what you notice the other person is feeling; look for what you have in common";
+            case "industry"     -> "talk about materials, tools and making things; show it rather than announce it";
+            case "restlessness" -> "look toward what comes next; do not close a question too early";
+            case "warmth"       -> "keep track of what matters to people and bring it back up; tidy things gently";
             default             -> "say what's true plainly, without flourish";
         };
     }

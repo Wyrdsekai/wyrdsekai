@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.item;
 
 import org.apache.pekko.actor.typed.ActorRef;
+import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.persistence.BackupOrchestrator;
 import org.wyrdsekai.core.room.HomeWardGate;
 import org.apache.pekko.actor.typed.ActorSystem;
@@ -26,6 +27,7 @@ import org.wyrdsekai.core.coding.BackendRegistry;
 import org.wyrdsekai.core.economy.MeteringService;
 import org.wyrdsekai.core.economy.TradingPostService;
 import org.wyrdsekai.core.external.AdapterRequest;
+import org.wyrdsekai.core.external.CredentialResolver;
 import org.wyrdsekai.core.external.ExternalAdapterRegistry;
 import org.wyrdsekai.core.familiar.BunshinScheduler;
 import org.wyrdsekai.core.familiar.ImprintManager;
@@ -40,6 +42,7 @@ import org.wyrdsekai.core.home.RelayGovernor;
 import org.wyrdsekai.core.host.HostActionService;
 import org.wyrdsekai.core.host.HostHand;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.library.AgentIngestService;
 import org.wyrdsekai.core.library.LibraryServices;
@@ -71,6 +74,7 @@ import org.wyrdsekai.core.skill.SkillDraftStore;
 import org.wyrdsekai.core.skill.WorkshopPinboard;
 import org.wyrdsekai.core.soul.AttendantSessionTracker;
 import org.wyrdsekai.core.soul.Bond;
+import org.wyrdsekai.core.soul.BondNameStore;
 import org.wyrdsekai.core.soul.BondStore;
 import org.wyrdsekai.core.soul.RelationalFloorView;
 import org.wyrdsekai.core.soul.RepairLedger;
@@ -769,7 +773,19 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         return llmCall(prompt, text);
     }
 
+    @Override
+    public String llmRewrite(String text, String instruction) {
+        return llmCall(instruction, text, NowLine.NONE);
+    }
+
     private String llmCall(String systemPrompt, String userText) {
+        // A summary or an answer made for her knows what day it is, at the head of the
+        // instruction (the user message is the source text itself).
+        return llmCall(systemPrompt, userText, NowLine.date());
+    }
+
+    /** @param now a rewrite (polish, translate) carries nothing about today; see llmRewrite. */
+    private String llmCall(String systemPrompt, String userText, NowLine now) {
         if (inferenceRouter == null || scheduler == null) {
             return "[error] Inference not available";
         }
@@ -822,7 +838,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
                 Thread.currentThread().getName());
             inferenceRouter.tell(new InferenceRouter.ChatRequest(
                 requestId, null, messages,
-                512, 0.3, tempActor, null, null, null, null));
+                512, 0.3, tempActor, null, null, null, null).withNow(now));
 
             log.info("Item LLM: waiting on response ({}s timeout)", LLM_TIMEOUT.toSeconds());
             var response = responseFuture.get(LLM_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
@@ -941,6 +957,12 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
 
     @Override
     public Map<String, Object> inventoryUse(String itemId, Map<String, Object> params, int depth) {
+        return inventoryUse(itemId, params, depth, ItemCapabilitySet.UNRESTRICTED);
+    }
+
+    @Override
+    public Map<String, Object> inventoryUse(String itemId, Map<String, Object> params, int depth,
+                                            ItemCapabilitySet ceiling) {
         if (depth >= MAX_COMPOSITION_DEPTH) {
             return Map.of("error", "Composition depth limit reached (" + MAX_COMPOSITION_DEPTH + ")");
         }
@@ -962,8 +984,10 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             luceneStore, inferenceRouter, scheduler, actorSystem, agentId, agentName,
             speakCallback, rememberCallback, tellCallback,
             equipmentService, scriptExecutor, itemLibrary, homeClient, pairingService);
+        childProvider.setLibraryAsker(libraryAsker);
 
-        return scriptExecutor.execute(toolItem.id(), toolItem.script(), params, childProvider);
+        return scriptExecutor.execute(toolItem.id(), toolItem.script(), params, childProvider,
+            ceiling == null ? ItemCapabilitySet.UNRESTRICTED : ceiling);
     }
 
     private ToolItem resolveToolItem(String itemId) {
@@ -2252,6 +2276,15 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
      */
     @Override
     public Map<String, Object> llmComplete(String prompt, Map<String, Object> opts) {
+        return llmComplete(prompt, opts, NowLine.dateTime());
+    }
+
+    /**
+     * @param now what the call knows about today: an item composing or judging
+     *     for her knows the date and time; a classifier or an extractor knows
+     *     nothing (a date there fills empty date fields with today).
+     */
+    private Map<String, Object> llmComplete(String prompt, Map<String, Object> opts, NowLine now) {
         if (inferenceRouter == null || actorSystem == null) {
             return Map.of("error", "inference not wired",
                 "text", "[error] inference not wired");
@@ -2286,7 +2319,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             var start = System.currentTimeMillis();
             inferenceRouter.tell(new InferenceRouter.ChatRequest(
                 requestId, model, msgs, maxTokens, temperature, tempActor,
-                null, null, null, null, null, null, null, null, false));
+                null, null, null, null, null, null, null, null, false).withNow(now));
             var response = responseFuture.get(LLM_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             long latencyMs = System.currentTimeMillis() - start;
             recordCost("inference");
@@ -2328,7 +2361,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         var resp = llmComplete(text, Map.of(
             "system", system,
             "maxTokens", 32,
-            "temperature", 0.1));
+            "temperature", 0.1), NowLine.NONE);
         if (resp.get("error") != null) {
             return Map.of("error", resp.get("error"), "label", "", "confidence", 0.0);
         }
@@ -2367,7 +2400,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         var resp = llmComplete(text, Map.of(
             "system", system,
             "maxTokens", 1024,
-            "temperature", 0.1));
+            "temperature", 0.1), NowLine.NONE);
         if (resp.get("error") != null) {
             return Map.of("error", resp.get("error"));
         }
@@ -2440,7 +2473,8 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         try {
             inferenceRouter.tell(new InferenceRouter.ChatRequest(
                 requestId, model, msgs, maxTokens, temperature, tempActor,
-                null, null, null, toolDefs, "auto", null, null, null, false));
+                null, null, null, toolDefs, "auto", null, null, null, false)
+                .withNow(NowLine.dateTime()));
             var response = responseFuture.get(LLM_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             recordCost("inference");
 
@@ -3047,6 +3081,8 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             }
             // ROLE, NOT NAME (LIBRARY_PROTOCOL.md): an item asks "library"; the steward's
             // config says which registered service plays that part today.
+            boolean libraryCall = "library".equals(server)
+                || server.equals(WyrdConfig.get().libraryPatronService());
             if ("library".equals(server)) {
                 var svc = WyrdConfig.get().libraryPatronService();
                 if (svc.isEmpty()) {
@@ -3061,7 +3097,27 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             var qualified = "mcp__" + server + "__" + tool;
             var start = System.currentTimeMillis();
             recordCost("mcp_call");
-            var text = mgr.invokeTool(qualified, args == null ? Map.of() : args, callerDid());
+            var sent = args == null ? Map.<String, Object>of() : args;
+            if (libraryCall) {
+                // The librarian: its restart ridden out, `allow` never sent (only a person's own
+                // yes carries it), and its confirm / declined answers turned into plain text for
+                // the person this turn answers (LibraryConsent).
+                var reply = LibraryConsent.call(libraryAsker, tool, sent,
+                    a -> mgr.invokeTool(qualified, a, callerDid()));
+                var latency = System.currentTimeMillis() - start;
+                if (!reply.answered()) {
+                    return Map.of("success", false,
+                        "error", Map.of("code", reply.code(), "message", reply.notice(), "retryable", false));
+                }
+                var out = new HashMap<String, Object>();
+                out.put("success", true);
+                out.put("data", reply.data() == null ? "" : reply.data());
+                out.put("cost", 0.0);
+                out.put("latencyMs", latency);
+                if (reply.notice() != null) out.put("notice", reply.notice());
+                return out;
+            }
+            var text = mgr.invokeTool(qualified, sent, callerDid());
             var latency = System.currentTimeMillis() - start;
             return Map.of("success", true, "data", text, "cost", 0.0, "latencyMs", latency);
         } catch (SecurityException e) {
@@ -3353,6 +3409,18 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
 
     public void setStewardDelegateSupplier(Supplier<ItemWorldApiProvider> s) {
         this.stewardDelegateSupplier = s;
+    }
+
+    /**
+     * Who a library question asked through this provider is for: the person the companion's
+     * turn answers, resolved on the actor thread when the provider is built. No one (her own
+     * time) unless set, so a question the library will research only with a person's yes is set
+     * aside rather than offered to whoever spoke last.
+     */
+    private volatile LibraryConsent.Asker libraryAsker = LibraryConsent.Asker.NO_ONE;
+
+    public void setLibraryAsker(LibraryConsent.Asker asker) {
+        this.libraryAsker = asker == null ? LibraryConsent.Asker.NO_ONE : asker;
     }
 
     /** The steward bondholder's provider, or null. Re-resolved per call. */
@@ -4157,11 +4225,15 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         return safe.hasSecret(slot);
     }
 
+    /**
+     * The secret behind a Safe reference, resolved the way the adapters resolve theirs (The Safe
+     * slot, then {@code WYRDSEKAI_CRED_*}, then {@code -Dwyrdsekai.cred.*}). Only the HTTP layer
+     * calls this, while it builds a request; the script holds the reference, never the value.
+     */
     @Override
-    public String safeGet(String slot) {
-        // Real safe.get requires Shamir share retrieval — the script-surface
-        // returns null and lets the steward use the MCP keychest path.
-        return null;
+    public Optional<String> safeSecretForRequest(String slot) {
+        if (slot == null || slot.isBlank()) return Optional.empty();
+        return CredentialResolver.get().resolve(slot);
     }
 
     @Override
@@ -4292,6 +4364,9 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
                 }
                 m.put("depth", b.depth().name());
                 m.put("depthLevel", b.depth().level());
+                // Whether the bond has its name (the naming ritual). The name itself stays
+                // between the two of them and is not in this list.
+                m.put("named", partner != null && BondNameStore.get().find(agentId, partner).isPresent());
                 m.put("interactionCount", b.interactionCount());
                 m.put("scarred", b.scarred());
                 m.put("kind", b.canonicalKind().name());

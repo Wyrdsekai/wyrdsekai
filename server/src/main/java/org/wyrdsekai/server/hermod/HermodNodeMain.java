@@ -1,6 +1,8 @@
 package org.wyrdsekai.server.hermod;
 
 import io.nats.client.Nats;
+import io.nats.client.Options;
+import org.wyrdsekai.between.HouseholdBusClient;
 import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.core.inference.HermodInferenceExecutor;
 import org.wyrdsekai.core.inference.InferenceClient;
@@ -48,7 +50,7 @@ public final class HermodNodeMain {
             "WYRDSEKAI_DATA_DIR", System.getProperty("user.home") + "/.wyrdsekai"));
         var identity = NodeIdentity.loadOrGenerate(dataDir.resolve("node-identity.json"));
 
-        var nats = Nats.connect(natsUrl);
+        var nats = Nats.connect(HouseholdBusClient.secure(new Options.Builder().server(natsUrl), natsUrl).build());
         var gossip = new NatsGossip(nats, scope);
         var executor = new HermodInferenceExecutor(
             new InferenceClient(inferenceUrl, "", Duration.ofSeconds(120)),

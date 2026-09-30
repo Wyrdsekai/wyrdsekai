@@ -1,6 +1,7 @@
 package org.wyrdsekai.app.engine.discovery
 
 import kotlinx.serialization.Serializable
+import org.wyrdsekai.app.network.HomeLink
 
 /**
  * Persisted household configuration for fallback when mDNS is unavailable.
@@ -53,19 +54,20 @@ data class SavedHouseholdConfig(
          * fills both natsWsUrl and relayUrl.
          */
         fun fromPhoneInvite(invite: PhoneInvite, timestamp: Long): SavedHouseholdConfig {
-            val relay = invite.relays.first()
+            val relay = invite.relays.firstOrNull()
             return SavedHouseholdConfig(
                 householdId = invite.householdId ?: "unknown",
                 householdName = invite.householdId ?: "Relay household",
-                natsWsUrl = relay.wsUrl,
-                relayUrl = relay.wsUrl,
+                // A home-network invite (no relay): the home's own bus.
+                natsWsUrl = relay?.wsUrl ?: HomeLink.homeBusUrl(invite.homeBus, invite.lanHttps).orEmpty(),
+                relayUrl = relay?.wsUrl,
                 relayToken = null,
                 lastConnected = timestamp,
-                natsUser = relay.natsUser,
-                natsPassword = relay.natsPassword,
+                natsUser = relay?.natsUser,
+                natsPassword = relay?.natsPassword,
                 zoneId = invite.zoneId,
-                relayFp = relay.fp,
-                relayCaFp = relay.caFp,
+                relayFp = relay?.fp,
+                relayCaFp = relay?.caFp,
             )
         }
     }

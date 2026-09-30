@@ -10,6 +10,7 @@ import org.apache.lucene.search.*;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.LockObtainFailedException;
+import org.apache.lucene.util.BytesRef;
 import org.wyrdsekai.core.crypto.PrivateJournalCipher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,8 @@ import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.agent.ModelAttribution;
 import org.wyrdsekai.core.library.KnowledgePackRegistry;
 import org.wyrdsekai.core.library.Provenance;
+import org.wyrdsekai.core.memory.MemoryOrigin;
+import org.wyrdsekai.core.memory.MemoryReader;
 
 import java.io.Closeable;
 import java.util.stream.Collectors;
@@ -267,8 +270,23 @@ public class WyrdLuceneStore implements Closeable {
     //  Memory Items (soul items, journal entries)
     // -----------------------------------------------------------------------
 
+    /**
+     * A memory item in the shape written before origins were recorded: no origin fields, so no
+     * reader-filtered search finds it until {@link #labelUnmarkedMemory} gives it the origin its
+     * text shows. The companion writes with an origin (the overload below).
+     */
     public void insertMemoryItem(String id, String agentDid, String itemType, String content,
                                  List<Float> embedding, long timestamp, String roomId) {
+        insertMemoryItem(id, agentDid, itemType, content, embedding, timestamp, roomId, null);
+    }
+
+    /**
+     * @param origin who told it and whether privately; searches filter on it
+     *               ({@link #searchMemory(String, String, List, int, SearchMode, MemoryReader)})
+     */
+    public void insertMemoryItem(String id, String agentDid, String itemType, String content,
+                                 List<Float> embedding, long timestamp, String roomId,
+                                 MemoryOrigin origin) {
         var doc = newDocument(id, content, embedding);
         doc.add(new StringField("agent_did", safe(agentDid), Field.Store.YES));
         doc.add(new StringField("item_type", safe(itemType), Field.Store.YES));
@@ -277,7 +295,111 @@ public class WyrdLuceneStore implements Closeable {
         // Model attribution (2026-07-09): which LLM authored this memory — for post-OSS
         // corpus mining / regression debugging across model updates.
         doc.add(new StoredField("authoring_model", ModelAttribution.current()));
+        if (origin != null) addOrigin(doc, origin);
         upsert(SearchCollections.MEMORY_ITEMS, id, doc);
+    }
+
+    /** Stored + indexed origin fields of a memory item (see {@link MemoryOrigin}). */
+    private static void addOrigin(Document doc, MemoryOrigin origin) {
+        var o = origin == null ? MemoryOrigin.UNKNOWN : origin;
+        if (o.tellerDid() != null) doc.add(new StringField(FIELD_TELLER, o.tellerDid(), Field.Store.YES));
+        doc.add(new StringField(FIELD_VISIBILITY, o.visibility().column(), Field.Store.YES));
+        doc.add(new StringField(FIELD_AUDIENCE, o.audience(), Field.Store.YES));
+    }
+
+    /** Who told a memory item. */
+    public static final String FIELD_TELLER = "teller_did";
+    /** open / private / unknown. */
+    public static final String FIELD_VISIBILITY = "visibility";
+    /** The one value a search filters on: {@link MemoryOrigin#audience()}. */
+    public static final String FIELD_AUDIENCE = "audience";
+
+    /**
+     * Search this companion's memory for the turn of one reader: only items the reader may
+     * read ({@link MemoryReader#audiences()}). Items written before origins were recorded
+     * have no audience and match nothing until {@link #labelUnmarkedMemory} has run.
+     */
+    public List<SearchResult> searchMemory(String agentDid, String queryText,
+                                           List<Float> queryEmbedding, int topK,
+                                           SearchMode mode, MemoryReader reader) {
+        var r = reader == null ? MemoryReader.NO_ONE : reader;
+        var filter = new StringBuilder();
+        if (agentDid != null) filter.append("agent_did == \"").append(agentDid).append("\" && ");
+        filter.append(FIELD_AUDIENCE).append(" in ");
+        var first = true;
+        for (var a : r.audiences()) {
+            if (!first) filter.append(',');
+            filter.append('"').append(a).append('"');
+            first = false;
+        }
+        return doSearch(SearchCollections.MEMORY_ITEMS, queryText, queryEmbedding, topK,
+            filter.toString(), mode);
+    }
+
+    /** One memory item re-labelled with the origin inferred from its text. */
+    public record MemoryOriginLabel(String id, MemoryOrigin origin) {}
+
+    /**
+     * Give every memory item of this companion that has no origin yet (written before origins
+     * were recorded) the origin its text shows ({@code infer}), keeping content, vector and
+     * every stored field. Idempotent: a labelled item is not touched again.
+     *
+     * @return the labels written, so structured rows tied to the same memory ids can follow
+     */
+    public List<MemoryOriginLabel> labelUnmarkedMemory(String agentDid,
+                                                       Function<String, MemoryOrigin> infer,
+                                                       int batchSize) {
+        var out = new ArrayList<MemoryOriginLabel>();
+        if (agentDid == null || infer == null) return out;
+        try {
+            var sm = getSearcherManager(SearchCollections.MEMORY_ITEMS);
+            while (true) {
+                var searcher = sm.acquire();
+                var rebuilt = new ArrayList<Document>();
+                var ids = new ArrayList<String>();
+                try {
+                    var q = new BooleanQuery.Builder()
+                        .add(new TermQuery(new Term("agent_did", safe(agentDid))), BooleanClause.Occur.FILTER)
+                        .add(new TermQuery(new Term(FIELD_VISIBILITY, "open")), BooleanClause.Occur.MUST_NOT)
+                        .add(new TermQuery(new Term(FIELD_VISIBILITY, "private")), BooleanClause.Occur.MUST_NOT)
+                        .add(new TermQuery(new Term(FIELD_VISIBILITY, "unknown")), BooleanClause.Occur.MUST_NOT)
+                        .build();
+                    var hits = searcher.search(q, Math.max(1, batchSize));
+                    if (hits.scoreDocs.length == 0) break;
+                    var storedFields = searcher.storedFields();
+                    for (var sd : hits.scoreDocs) {
+                        var old = storedFields.document(sd.doc);
+                        var id = old.get(FIELD_ID);
+                        if (id == null) continue;
+                        var content = old.get(FIELD_CONTENT_STORED);
+                        var origin = infer.apply(content);
+                        var doc = newDocument(id, content, readVectorById(SearchCollections.MEMORY_ITEMS, id));
+                        doc.add(new StringField("agent_did", safe(agentDid), Field.Store.YES));
+                        copyStored(old, doc, "item_type", true);
+                        copyStored(old, doc, "room_id", true);
+                        copyStored(old, doc, "authoring_model", false);
+                        copyLongStored(old, doc, "timestamp");
+                        addOrigin(doc, origin);
+                        rebuilt.add(doc);
+                        ids.add(id);
+                        out.add(new MemoryOriginLabel(id, origin));
+                    }
+                } finally {
+                    sm.release(searcher);
+                }
+                if (rebuilt.isEmpty()) break;
+                var writer = getWriter(SearchCollections.MEMORY_ITEMS);
+                for (int i = 0; i < rebuilt.size(); i++) {
+                    writer.updateDocument(new Term(FIELD_ID, ids.get(i)), rebuilt.get(i));
+                }
+                writer.commit();
+                refreshSearcher(SearchCollections.MEMORY_ITEMS);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Labelling memory origins for {} stopped after {} item(s): {}",
+                agentDid, out.size(), e.getMessage());
+        }
+        return out;
     }
 
     public List<SearchResult> searchMemory(String agentDid, String queryText,
@@ -1967,6 +2089,9 @@ public class WyrdLuceneStore implements Closeable {
                         copyStored(old, doc, "room_id", true);
                         copyStored(old, doc, "superseded_by", true);
                         copyStored(old, doc, "authoring_model", false);
+                        copyStored(old, doc, FIELD_TELLER, true);
+                        copyStored(old, doc, FIELD_VISIBILITY, true);
+                        copyStored(old, doc, FIELD_AUDIENCE, true);
                         copyLongStored(old, doc, "timestamp");
                         copyLongStored(old, doc, "valid_from");
                         copyLongStored(old, doc, "superseded_at");
@@ -3268,6 +3393,8 @@ public class WyrdLuceneStore implements Closeable {
         }
     }
 
+    private static final Pattern IN_CLAUSE = Pattern.compile("^(\\w+) in (.+)$");
+
     private Query applyFilter(
             Query baseQuery, String filter) {
         if (filter == null || filter.isBlank()) return baseQuery;
@@ -3277,6 +3404,17 @@ public class WyrdLuceneStore implements Closeable {
 
         for (String clause : filter.split("&&")) {
             clause = clause.trim();
+            var in = IN_CLAUSE.matcher(clause);
+            if (in.matches()) {
+                // field in "a","b" — any of the values (a memory's audience, MemoryReader)
+                var terms = new ArrayList<BytesRef>();
+                for (var v : in.group(2).split("\",\"")) {
+                    var value = v.replaceAll("^\\s*\"|\"\\s*$", "");
+                    if (!value.isEmpty()) terms.add(new BytesRef(value));
+                }
+                builder.add(new TermInSetQuery(in.group(1), terms), BooleanClause.Occur.FILTER);
+                continue;
+            }
             if (clause.contains("!=")) {
                 var parts = clause.split("!=", 2);
                 String field = parts[0].trim();

@@ -18,10 +18,11 @@ import kotlin.concurrent.thread
  * JS-facing surface for the household-CA trust store. Companion to
  * clients/rn/src/server/HouseholdTrust.ts.
  *
- * Called after the user accepts a TOFU fingerprint prompt — JS hands us the
- * PEM, we parse and persist it. The OkHttp TrustManager reads from the same
- * HouseholdTrustStore singleton on every TLS check, so the next HTTPS request
- * to that host picks up the new pin without an app restart.
+ * JS hands us pins that came from invites (a certificate matched against the
+ * invite's fingerprints, or the home's CA fingerprint); the store keeps them in
+ * memory and JS refills it from secure storage at every start. The OkHttp
+ * TrustManager reads from the same HouseholdTrustStore singleton on every TLS
+ * check, so the next HTTPS request to that host picks up the new pin.
  *
  * Registered via HouseholdTrustPackage and added manually to PackageList in
  * MainApplication (not autolinked — too small to justify codegen).
@@ -39,7 +40,22 @@ class HouseholdTrustModule(reactContext: ReactApplicationContext)
 
   override fun getName() = "HouseholdTrust"
 
-  /** Persist a CA PEM for a host. Subsequent HTTPS requests to that host trust it. */
+  /**
+   * Pin a host to its household CA by the CA certificate's SHA-256 (the
+   * invite's `home_ca_fp`, D1). From then on that host
+   * is accepted only with a chain containing this CA that validates up to it.
+   */
+  @ReactMethod
+  fun pinCaFingerprint(host: String, fingerprint: String, promise: Promise) {
+    try {
+      HouseholdTrustStore.putCaFingerprint(host, fingerprint)
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("PIN_CA_FINGERPRINT_FAILED", e.message, e)
+    }
+  }
+
+  /** Pin a CA PEM for a host. Subsequent HTTPS requests to that host trust it. */
   @ReactMethod
   fun addTrustedCert(host: String, pem: String, promise: Promise) {
     try {

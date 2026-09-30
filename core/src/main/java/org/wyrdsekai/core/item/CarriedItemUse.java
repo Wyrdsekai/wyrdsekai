@@ -192,16 +192,23 @@ public final class CarriedItemUse {
     }
 
     /**
-     * What authority this carried item runs with.
+     * The ceiling this carried item runs under; its own manifest narrows it further in the
+     * executor.
      *
      * <p>DEFAULT-DENY (#1, 2026-07-19 OSS hardening; polarity fixed after adversarial
-     * review): only a positively-identified bundled/disk-installed item runs
-     * UNRESTRICTED. Crafted, companion-GIVEN and cross-zone TRANSITED scripts run under
-     * the crafted ceiling. The old {@code "crafted".equals(takenFrom)} test failed OPEN.
+     * review): only the exact script of a bundled/disk-installed item gets no ceiling beyond
+     * its manifest. Crafted, companion-GIVEN and cross-zone TRANSITED scripts run under
+     * the crafted ceiling — including a copy that carries a trusted item's id with other code
+     * (2026-09-28: trust used to key on the id alone).
      */
-    public static ItemCapabilitySet capabilitiesFor(String objectId) {
-        return ToolItemStarterKit.isTrustedScriptId(objectId)
+    public static ItemCapabilitySet capabilitiesFor(String objectId, String source) {
+        return ToolItemStarterKit.isTrustedScript(objectId, source)
             ? ItemCapabilitySet.UNRESTRICTED
             : ItemCapabilitySet.craftedDefault();
+    }
+
+    /** {@link #capabilitiesFor(String, String)} for a resolved carried item. */
+    public static ItemCapabilitySet capabilitiesFor(Resolved resolved) {
+        return capabilitiesFor(resolved.item().objectId(), resolved.source());
     }
 }

@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.coding.StubItemWorldApiProvider;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.library.Provenance;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
@@ -96,7 +97,7 @@ public final class LiveSkillAuthoring {
                     router,
                     replyTo -> new InferenceRouter.ToolInferRequest(
                         requestId, agentId, "reasoning", null, null, prompt,
-                        COMPLETION_MAX_TOKENS, "household", replyTo),
+                        COMPLETION_MAX_TOKENS, "household", replyTo).withNow(NowLine.NONE),
                     Duration.ofSeconds(90), scheduler)
                 .toCompletableFuture().join();
             if (resp instanceof InferenceRouter.InferOk ok) return ok.content();

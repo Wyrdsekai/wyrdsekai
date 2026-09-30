@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
+import org.wyrdsekai.app.crypto.decodeZoneKey
 import org.wyrdsekai.app.engine.between.NatsBetweenClient
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.ChatResponse
@@ -27,7 +28,8 @@ import kotlin.test.assertTrue
  *
  * Requires: zone with WYRDSEKAI_RELAY_URL pointing at a bench relay
  * whose websocket is WYRDSEKAI_TEST_RELAY_WS, plus WYRDSEKAI_TEST_TOKEN
- * (a paired wyrd_dev_ token) and WYRDSEKAI_TEST_ZONE (scope id).
+ * (a paired wyrd_dev_ token), WYRDSEKAI_TEST_ZONE (scope id) and
+ * WYRDSEKAI_TEST_ZK (the zone's public tunnel key, as in its invite).
  * Skips quietly when unset.
  *
  * Run: ./gradlew :shared:desktopTest --tests '*HermodTunnelLiveTest*'
@@ -37,6 +39,7 @@ class HermodTunnelLiveTest {
     private val relayWs = System.getenv("WYRDSEKAI_TEST_RELAY_WS")
     private val deviceToken = System.getenv("WYRDSEKAI_TEST_TOKEN")
     private val zoneId = System.getenv("WYRDSEKAI_TEST_ZONE") ?: "ferngrove"
+    private val zoneKey = decodeZoneKey(System.getenv("WYRDSEKAI_TEST_ZK"))
 
     private class AnsweringProvider : LocalInferenceProvider {
         override val state: StateFlow<String> = MutableStateFlow("running")
@@ -52,8 +55,8 @@ class HermodTunnelLiveTest {
 
     @Test
     fun anErrandReachesTheAwayPhoneThroughTheTunnel() = runBlocking {
-        if (relayWs.isNullOrBlank() || deviceToken.isNullOrBlank()) {
-            println("SKIP: set WYRDSEKAI_TEST_RELAY_WS + WYRDSEKAI_TEST_TOKEN")
+        if (relayWs.isNullOrBlank() || deviceToken.isNullOrBlank() || zoneKey == null) {
+            println("SKIP: set WYRDSEKAI_TEST_RELAY_WS + WYRDSEKAI_TEST_TOKEN + WYRDSEKAI_TEST_ZK")
             return@runBlocking
         }
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -69,7 +72,7 @@ class HermodTunnelLiveTest {
                 HermodDoorman.Doors(
                     deviceToken = deviceToken,
                     serverUrl = null, // AWAY: no LAN door exists
-                    tunnel = HermodDoorman.TunnelDoor(between, zoneId),
+                    tunnel = HermodDoorman.TunnelDoor(between, zoneId, zoneKey),
                 )
             },
             heartbeatMillis = 5_000,

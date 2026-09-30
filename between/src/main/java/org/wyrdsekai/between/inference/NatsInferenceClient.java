@@ -3,12 +3,12 @@ package org.wyrdsekai.between.inference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.between.RelayIds;
 import org.wyrdsekai.between.RelaySessionTransport;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -95,7 +95,7 @@ public final class NatsInferenceClient {
         }
 
         // Ensure streamId matches what the provider will publish on.
-        var streamId = req.streamId() != null ? req.streamId() : UUID.randomUUID().toString();
+        var streamId = req.streamId() != null ? req.streamId() : RelayIds.scopedId(req.sourceZone());
         var finalReq = streamId.equals(req.streamId())
             ? req
             : new NatsInferenceProtocol.Request(streamId, req.sourceZone(), req.agentId(),
@@ -216,7 +216,7 @@ public final class NatsInferenceClient {
         }
         messages.add(new NatsInferenceProtocol.Message("user", userMessage));
         return new NatsInferenceProtocol.Request(
-            UUID.randomUUID().toString(), sourceZone, agentId,
+            RelayIds.scopedId(sourceZone), sourceZone, agentId,
             model, messages, maxTokens, temperature, stream);
     }
 

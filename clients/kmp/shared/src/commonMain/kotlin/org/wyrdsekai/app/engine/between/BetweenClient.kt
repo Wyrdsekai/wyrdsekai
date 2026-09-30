@@ -54,7 +54,8 @@ class InMemoryBetweenClient : BetweenClient {
 
     override fun publish(subject: String, data: ByteArray) {
         published.add(subject to data)
-        for ((pattern, handler) in subscriptions) {
+        // A snapshot: a handler may unsubscribe (a session closing) while it runs.
+        for ((pattern, handler) in subscriptions.toList()) {
             if (subjectMatches(pattern, subject)) {
                 handler(subject, data)
             }

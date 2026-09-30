@@ -42,11 +42,26 @@ public final class ProbeLoop {
      *               uses it to apply the right relief/sharpen and rest floor.
      * @param target what the probe pushed at: a peer name (social probe) or a query (epistemic probe).
      */
-    public record PendingProbe(String drive, String target, Instant sentAt, int attempt) {}
+    public record PendingProbe(String drive, String target, Instant sentAt, int attempt, boolean delivered) {
+        public PendingProbe(String drive, String target, Instant sentAt, int attempt) {
+            this(drive, target, sentAt, attempt, false);
+        }
+        /** The reach has actually gone out (her line was said): the window is re-stamped to that moment, once. */
+        public PendingProbe delivered(Instant at) { return new PendingProbe(drive, target, at, attempt, true); }
+    }
 
     /** Seconds to await a return before a probe counts as unanswered. SIM-time (soak-compressible). */
     public static final long WINDOW_SECONDS =
         Long.parseLong(System.getenv().getOrDefault("WYRD_PROBE_WINDOW_SECONDS", "45"));
+    /**
+     * The window for a SOCIAL return. A peer's answer is a whole OODA pass and a model call on a
+     * server the two of them share: on the household node a reply took 30 to 90 seconds when it
+     * came at all, and the 45-second window scored it as silence (2026-09-27).
+     */
+    public static final long SOCIAL_WINDOW_SECONDS =
+        Long.parseLong(System.getenv().getOrDefault("WYRD_PROBE_SOCIAL_WINDOW_SECONDS", "120"));
+
+    public static long windowFor(boolean social) { return social ? SOCIAL_WINDOW_SECONDS : WINDOW_SECONDS; }
     /** Silence sharpens the serving drive by this much — the unmet probe intensifies the want. */
     public static final double UNANSWERED_SHARPEN = 0.08;
     /** After this many consecutive unanswered probes, disengage (the healthy close, not a grind). */
@@ -137,6 +152,13 @@ public final class ProbeLoop {
      * probes (SEEKING) are answered by a query RESULT, not an inbound message, so they close at the
      * result-arrival site instead of here.
      */
+    /** {@link #persistVerdict(long, int, double, double)} with the window chosen by the drive's kind. */
+    public static Verdict persistVerdict(long elapsedSeconds, int attemptsSoFar,
+                                         double care, double energy, boolean social) {
+        if (elapsedSeconds < windowFor(social)) return Verdict.AWAITING;
+        return persistVerdict(Math.max(elapsedSeconds, WINDOW_SECONDS), attemptsSoFar, care, energy);
+    }
+
     public static boolean isAnswer(PendingProbe pending, String fromName, String fromId) {
         if (pending == null || pending.target() == null) return false;
         var t = pending.target();

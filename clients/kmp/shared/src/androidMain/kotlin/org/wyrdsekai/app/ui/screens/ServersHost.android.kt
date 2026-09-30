@@ -70,6 +70,10 @@ actual fun ServersHost(
                         relay.caFp?.let { tokens.saveRelayFingerprints(it) }
                     }
                     tokens.saveZoneId(zoneId)
+                    // The tunnel and requests are sealed to THIS zone's key; an
+                    // entry without one (banked before 0.5.0) clears it, so the
+                    // phone asks for a fresh invite instead of using another zone's.
+                    tokens.saveZoneKey(bank.getZone(zoneId)?.zk ?: "")
                     // Mode 1 (relay remote terminal): bridge THIS zone's account
                     // credentials — username from the bank, password from the
                     // per-device store — into the generic mcp creds the local-node

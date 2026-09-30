@@ -7,10 +7,18 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.sql.DriverManager;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class BackupOrchestratorTest {
 
@@ -126,6 +134,35 @@ class BackupOrchestratorTest {
         assertThat(Files.readString(searchDir.resolve("study/segments_1")))
             .isEqualTo("original study data");
         assertThat(Files.exists(searchDir.resolve("study/segments_2"))).isFalse();
+    }
+
+    @Test void two_passes_at_once_each_link_the_index_under_an_id_of_their_own() throws Exception {
+        // The boot schedule and the steward's dial can fire together. Two passes in one second
+        // shared a backupId, and the second's links into search.<id> failed into a full copy of
+        // the index (the 174 GB copies of 2026-09-10).
+        var sourceDb = tempDir.resolve("test.db");
+        Files.writeString(sourceDb, "db data");
+        var searchDir = tempDir.resolve("search");
+        Files.createDirectories(searchDir.resolve("study"));
+        Files.writeString(searchDir.resolve("study").resolve("_0.cfs"), "compound file");
+
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var a = pool.submit(() -> orchestrator.snapshotAll(sourceDb, searchDir, null, List.of()));
+            var b = pool.submit(() -> orchestrator.snapshotAll(sourceDb, searchDir, null, List.of()));
+            var ids = List.of(a.get().orElseThrow().backupId(), b.get().orElseThrow().backupId());
+            assertThat(ids.get(0)).isNotEqualTo(ids.get(1));
+        } finally {
+            pool.shutdownNow();
+        }
+        try (var s = Files.list(backupDir)) {
+            var searchCopies = s.filter(p -> p.getFileName().toString().startsWith("search.")).toList();
+            assertThat(searchCopies).hasSize(2);
+            for (var copy : searchCopies) {
+                assertThat(Files.isSameFile(copy.resolve("study").resolve("_0.cfs"),
+                    searchDir.resolve("study").resolve("_0.cfs"))).as("linked, not copied").isTrue();
+            }
+        }
     }
 
     @Test void snapshotAll_handles_null_search_dir() throws IOException {
@@ -382,25 +419,130 @@ class BackupOrchestratorTest {
         Files.writeString(agentsDir.resolve("a.json"), "{}");
 
         var ghost = tempDir.resolve("not-a-dir");
-        var notADir = tempDir.resolve("regular-file");
-        Files.writeString(notADir, "hi");
 
-        // Mix: existing dir, missing path, regular file (not a directory).
-        // Only the agents dir should produce a backup.
+        // Mix: existing dir and a missing path. Only the agents dir should
+        // produce a backup. (A regular file is an append-only trail and is
+        // taken: see snapshotAll_copies_a_trail_with_what_was_rotated_off_it.)
         var manifest = orchestrator.snapshotAll(sourceDb, null, null,
-            List.of(agentsDir, ghost, notADir));
+            List.of(agentsDir, ghost));
         assertThat(manifest).isPresent();
         assertThat(manifest.get().source()).contains("agents");
         assertThat(manifest.get().source()).doesNotContain("not-a-dir");
-        assertThat(manifest.get().source()).doesNotContain("regular-file");
 
         try (var stream = Files.list(backupDir)) {
             long ghostBackups = stream
-                .filter(p -> p.getFileName().toString().startsWith("not-a-dir.")
-                    || p.getFileName().toString().startsWith("regular-file."))
+                .filter(p -> p.getFileName().toString().startsWith("not-a-dir."))
                 .count();
             assertThat(ghostBackups).isZero();
         }
+    }
+
+    @Test void snapshotAll_copies_a_trail_with_what_was_rotated_off_it() throws IOException {
+        // data/agent-activity.jsonl is the companions' day-by-day record, and the night's write
+        // reads it; data/drive-trace.jsonl rotates to drive-trace.jsonl.1. Neither was in any
+        // backup (2026-09-22).
+        var sourceDb = tempDir.resolve("test.db");
+        Files.writeString(sourceDb, "db");
+        var data = tempDir.resolve("data");
+        Files.createDirectories(data);
+        var activity = data.resolve("agent-activity.jsonl");
+        Files.writeString(activity, "{\"type\":\"speak\",\"text\":\"one\"}\n");
+        Files.writeString(data.resolve("agent-activity.jsonl.orig"), "a hand-made copy, not a rotation\n");
+        var drive = data.resolve("drive-trace.jsonl");
+        Files.writeString(drive, "{\"kind\":\"event\",\"label\":\"now\"}\n");
+        Files.writeString(data.resolve("drive-trace.jsonl.1"), "{\"kind\":\"event\",\"label\":\"before\"}\n");
+        Files.writeString(data.resolve("drive-trace.jsonl.2.gz"), "compressed");
+        Files.writeString(data.resolve("drive-trace.jsonl.tmp"), "half written");
+        Files.writeString(data.resolve("unrelated.jsonl"), "not a trail\n");
+
+        var manifest = orchestrator.snapshotAll(sourceDb, null, null, List.of(activity, drive));
+        assertThat(manifest).isPresent();
+        assertThat(manifest.get().source()).contains("agent-activity.jsonl").contains("drive-trace.jsonl");
+
+        Path activityCopy;
+        Path driveCopy;
+        try (var stream = Files.list(backupDir)) {
+            var dirs = stream.filter(Files::isDirectory).toList();
+            activityCopy = dirs.stream()
+                .filter(p -> p.getFileName().toString().startsWith("agent-activity.jsonl."))
+                .findFirst().orElseThrow();
+            driveCopy = dirs.stream()
+                .filter(p -> p.getFileName().toString().startsWith("drive-trace.jsonl."))
+                .findFirst().orElseThrow();
+        }
+        try (var files = Files.list(activityCopy)) {
+            assertThat(files.map(p -> p.getFileName().toString()).toList())
+                .as("the trail, not a hand-made copy beside it").containsExactly("agent-activity.jsonl");
+        }
+        try (var files = Files.list(driveCopy)) {
+            assertThat(files.map(p -> p.getFileName().toString()).sorted().toList())
+                .as("the trail and its rotations, nothing else")
+                .containsExactly("drive-trace.jsonl", "drive-trace.jsonl.1", "drive-trace.jsonl.2.gz");
+        }
+        assertThat(Files.readString(driveCopy.resolve("drive-trace.jsonl.1"))).contains("before");
+
+        // A copy, not a link: a line appended to the live trail afterwards is not in the snapshot.
+        assertThat(Files.isSameFile(activity, activityCopy.resolve("agent-activity.jsonl"))).isFalse();
+        Files.writeString(activity, "{\"type\":\"speak\",\"text\":\"two\"}\n", StandardOpenOption.APPEND);
+        assertThat(Files.readString(activityCopy.resolve("agent-activity.jsonl")))
+            .contains("one").doesNotContain("two");
+    }
+
+    @Test void an_extra_dir_that_fails_does_not_end_the_pass() throws IOException {
+        // copyDirectoryRecursive wraps its IOException. Uncaught, it ended snapshotAll there, so
+        // nothing after it in the list was taken, and on the scheduled path the executor never
+        // ran the task again.
+        var sourceDb = tempDir.resolve("test.db");
+        Files.writeString(sourceDb, "db");
+        var story = tempDir.resolve("story");
+        Files.createDirectories(story);
+        var locked = story.resolve("scene.json");
+        Files.writeString(locked, "{}");
+        assumeTrue(Files.getFileStore(locked).supportsFileAttributeView("posix"), "needs POSIX permissions");
+        Files.setPosixFilePermissions(locked, Set.of());
+        try {
+            assumeFalse(Files.isReadable(locked), "running as root: nothing is unreadable");
+            var trail = tempDir.resolve("agent-activity.jsonl");
+            Files.writeString(trail, "{\"type\":\"speak\"}\n");
+
+            var manifest = orchestrator.snapshotAll(sourceDb, null, null, List.of(story, trail));
+            assertThat(manifest).isPresent();
+            assertThat(manifest.get().source()).contains(" + agent-activity.jsonl").doesNotContain(" + story");
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rw-------"));
+        }
+    }
+
+    @Test void the_schedule_counts_from_the_newest_backup_not_from_the_start() {
+        var now = Instant.parse("2026-09-22T13:02:00Z");
+        var day = Duration.ofHours(24);
+        // A backup two hours ago: the next is due in twenty-two, whenever the service started.
+        assertThat(BackupOrchestrator.firstRunDelay(now.minus(Duration.ofHours(2)), day, now))
+            .isEqualTo(Duration.ofHours(22));
+        // The newest backup is older than the interval (a node restarted five times a day):
+        // it runs soon after this start, not a whole day later.
+        assertThat(BackupOrchestrator.firstRunDelay(now.minus(Duration.ofHours(33)), day, now))
+            .isEqualTo(BackupOrchestrator.FIRST_RUN_FLOOR);
+        // Never sooner than the floor, even when it is due in five minutes.
+        assertThat(BackupOrchestrator.firstRunDelay(now.minus(day).plus(Duration.ofMinutes(5)), day, now))
+            .isEqualTo(BackupOrchestrator.FIRST_RUN_FLOOR);
+        // No backup yet, or one stamped later than now (the clock moved back): soon.
+        assertThat(BackupOrchestrator.firstRunDelay(null, day, now))
+            .isEqualTo(BackupOrchestrator.FIRST_RUN_FLOOR);
+        assertThat(BackupOrchestrator.firstRunDelay(now.plus(Duration.ofDays(3)), day, now))
+            .isEqualTo(BackupOrchestrator.FIRST_RUN_FLOOR);
+    }
+
+    @Test void a_restart_after_a_backup_waits_the_interval_from_that_backup() throws IOException {
+        var sourceDb = tempDir.resolve("test.db");
+        Files.writeString(sourceDb, "db");
+        orchestrator.snapshotAll(sourceDb, null, null, List.of());
+        // A restart builds a new orchestrator over the same directory, as Main does at boot.
+        var restarted = new BackupOrchestrator(backupDir);
+        var last = restarted.latestSnapshot()
+            .map(BackupOrchestrator.BackupManifest::timestamp).orElseThrow();
+        var next = BackupOrchestrator.firstRunDelay(last, Duration.ofHours(24), Instant.now());
+        assertThat(next).isGreaterThan(Duration.ofHours(23)).isLessThanOrEqualTo(Duration.ofHours(24));
     }
 
     @Test void extra_dir_prune_keeps_max() throws Exception {

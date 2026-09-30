@@ -1,6 +1,9 @@
 package org.wyrdsekai.core.persistence;
 
 import org.wyrdsekai.core.body.BodyStore;
+import org.wyrdsekai.core.library.LibraryResearchLedger;
+import org.wyrdsekai.core.library.LibraryYesReports;
+import org.wyrdsekai.core.soul.BondNameStore;
 
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -123,6 +126,13 @@ public final class SchemaInitializer {
         runMigration(conn, 9, "mail_table", () -> MailStore.ensureTable(conn));
         runMigration(conn, 10, "body_map", () -> BodyStore.ensureTables(conn));
         runMigration(conn, 11, "immune", () -> BodyStore.ensureImmune(conn));
+        runMigration(conn, 12, "memory_origin", () -> migrateMemoryOrigin(conn));
+        runMigration(conn, 13, "users_description", () -> migrateUsersDescription(conn));
+        runMigration(conn, 14, "library_research_asks", () -> LibraryResearchLedger.ensureTable(conn));
+        runMigration(conn, 15, "parental_daily_research", () -> migrateParentalDailyResearch(conn));
+        runMigration(conn, 16, "library_yes_reports", () -> LibraryYesReports.ensureTable(conn));
+        runMigration(conn, 17, "library_yes_reports_asker", () -> LibraryYesReports.ensureAsker(conn));
+        runMigration(conn, 18, "bond_names", () -> BondNameStore.ensureTable(conn));
 
         // Retry deferred indexes after migrations
         for (var statement : cleaned.split(";")) {
@@ -147,7 +157,7 @@ public final class SchemaInitializer {
      * {@link DataVersion} so an OLDER binary opening a NEWER data dir can refuse
      * instead of silently mangling tables it doesn't understand. Append-only.
      */
-    public static final int SCHEMA_VERSION = 11;
+    public static final int SCHEMA_VERSION = 18;
 
     @FunctionalInterface
     private interface Migration { void run() throws SQLException; }
@@ -193,6 +203,28 @@ public final class SchemaInitializer {
         } catch (SQLException e) {
             if (!e.getMessage().contains("duplicate column")
                     && !e.getMessage().toLowerCase().contains("already exists")) throw e;
+        }
+    }
+
+    /**
+     * Migration 12 — who told each structured memory and whether it was said privately
+     * ({@code teller_did}, {@code visibility} on memory_entities and memory_edges). Rows that
+     * exist already get {@code visibility='unknown'}: read only in turns with her bondholder
+     * until the companion's boot pass infers the teller from the source memory's text
+     * (MemoryOrigin.inferLegacy). Nothing is deleted or rewritten.
+     */
+    private static void migrateMemoryOrigin(Connection conn) throws SQLException {
+        for (var table : new String[] {"memory_entities", "memory_edges"}) {
+            if (!hasTable(conn, table)) continue;
+            try (var stmt = conn.createStatement()) {
+                if (!hasColumn(conn, table, "teller_did")) {
+                    stmt.execute("ALTER TABLE " + table + " ADD COLUMN teller_did TEXT");
+                }
+                if (!hasColumn(conn, table, "visibility")) {
+                    stmt.execute("ALTER TABLE " + table
+                        + " ADD COLUMN visibility TEXT NOT NULL DEFAULT 'unknown'");
+                }
+            }
         }
     }
 
@@ -350,6 +382,32 @@ public final class SchemaInitializer {
         try (var rs = conn.getMetaData().getTables(null, null, table, null)) {
             return rs.next();
         }
+    }
+
+    /**
+     * The PostgreSQL {@code users} table had no {@code description} column (SQLite did), so
+     * finding a user by id or name failed on PostgreSQL (found 2026-09-28).
+     */
+    private static void migrateUsersDescription(Connection conn) throws SQLException {
+        if (!hasTable(conn, "users") || hasColumn(conn, "users", "description")) return;
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE users ADD COLUMN description TEXT DEFAULT ''");
+        }
+        log.info("users.description column added");
+    }
+
+    /**
+     * Migration 15 — {@code daily_research} on {@code parental_controls}: the library research
+     * runs a child may start per day, set by the steward (null = the household's setting,
+     * 0 = none). The table is made by ParentalControlService after this runs; on a fresh
+     * database it does not exist yet and is made with the column.
+     */
+    private static void migrateParentalDailyResearch(Connection conn) throws SQLException {
+        if (!hasTable(conn, "parental_controls") || hasColumn(conn, "parental_controls", "daily_research")) return;
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE parental_controls ADD COLUMN daily_research INTEGER");
+        }
+        log.info("parental_controls.daily_research column added");
     }
 
     private static boolean hasColumn(Connection conn, String table, String column) throws SQLException {

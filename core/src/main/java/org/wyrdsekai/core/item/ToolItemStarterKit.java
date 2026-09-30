@@ -324,6 +324,28 @@ public final class ToolItemStarterKit {
     }
 
     /**
+     * True iff {@code source} is exactly the script this node has for the trusted item
+     * {@code objectId} — the starter kit, a bundled or household item, or a network item.
+     * Trust by id alone let a carried copy under a trusted id (companion-given, or carried in
+     * from another zone, where the other side picks the id) run its own code with the trusted
+     * item's authority.
+     */
+    public static boolean isTrustedScript(String objectId, String source) {
+        if (objectId == null || objectId.isBlank() || source == null) return false;
+        try {
+            for (var t : standard()) {
+                if (objectId.equals(t.id()) && t.isScripted()) return source.equals(t.script());
+            }
+            for (var t : NetworkItemKit.networkItems()) {
+                if (objectId.equals(t.id()) && t.isScripted()) return source.equals(t.script());
+            }
+        } catch (Throwable ignore) {
+            // best-effort — an unknown item is untrusted, the safe default.
+        }
+        return false;
+    }
+
+    /**
      * Minimal kit for phone/low-tier companions.
      */
     public static List<ToolItem> minimal() {
@@ -1186,18 +1208,69 @@ public final class ToolItemStarterKit {
     // ─── Item Scripts ──────────────────────────────────────────────
 
     private static final String LIBRARY_CARD_SCRIPT = """
+        // The subjects a query names, when it names more than one: split on "and", commas,
+        // "vs", and their Spanish and Japanese counterparts. A single subject comes back alone.
+        function subjectsOf(q) {
+            var s = String(q || "").replace(/[?!.。]+$/, "");
+            var parts = s.split(/\\s*(?:,|;|\\band\\b|\\bvs\\.?\\b|\\bversus\\b|\\by\\b|と|、|および)\\s*/i);
+            var out = [];
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i].replace(/^\\s+|\\s+$/g, "");
+                if (p.length >= 2) out.push(p);
+            }
+            return out.length >= 2 && out.length <= 4 ? out : [];
+        }
+
         function invoke(params) {
             var results = world.library.search(params.query);
-            if (!results || results.length === 0) {
+            // EACH SUBJECT SHE NAMED GETS ITS OWN SEARCH. Asked to read on "iaido and bushido
+            // relationship practice philosophy history", one search over fourteen million chunks
+            // brought back a page of bushido texts; the library's own iaido article never made the
+            // set, and the summary then said, truthfully of those sources, that they did not
+            // contain iaido (2026-09-25). Each subject is searched alone as well, and its best hits
+            // keep a seat among the sources whatever the combined ranking says.
+            var subjects = subjectsOf(params.query);
+            var subjectHits = [];
+            if (subjects.length >= 2) {
+                var seen = {};
+                for (var r0 = 0; results && r0 < results.length; r0++) seen[String(results[r0].id)] = true;
+                for (var sj = 0; sj < subjects.length; sj++) {
+                    var own = world.library.search(subjects[sj], 4) || [];
+                    var ownTop = (own[0] && own[0].score) ? own[0].score : 0;
+                    var kept = 0;
+                    for (var k = 0; k < own.length && kept < 2; k++) {
+                        if (seen[String(own[k].id)]) { kept++; continue; }   // already in the combined set
+                        if (own[k].score && own[k].score < ownTop * 0.3) continue;
+                        seen[String(own[k].id)] = true;
+                        subjectHits.push(own[k]);
+                        kept++;
+                    }
+                }
+            }
+            if ((!results || results.length === 0) && subjectHits.length === 0) {
                 return { findings: "No results found in the library for: " + params.query, sources: [] };
             }
+            results = results || [];
             // Relative relevance gate. Lucene scores aren't normalized cross-query
             // (depend on term frequency and query length), so a fixed threshold
             // wouldn't work. Drop chunks whose score is below 30% of the top
             // hit's score — keeps high-relevance chunks even when the absolute
             // score is small, and drops noise even when the top hit is huge.
+            // A subject's own hits were gated against their own top score above,
+            // so they pass this gate as they are.
             var topScore = (results[0] && results[0].score) ? results[0].score : 0;
             var minScore = topScore * 0.3;
+            // The combined set fills what the subjects' seats leave: two per subject.
+            var combinedCap = 8 - 2 * subjects.length;
+            if (combinedCap < 2) combinedCap = 2;
+            var ordered = [];
+            for (var c0 = 0; c0 < results.length && ordered.length < combinedCap; c0++) {
+                if (results[c0].score && results[c0].score < minScore) continue;
+                ordered.push(results[c0]);
+            }
+            for (var h0 = 0; h0 < subjectHits.length; h0++) ordered.push(subjectHits[h0]);
+            results = ordered;
+            minScore = 0;
 
             // Build source-tagged input for the LLM. Each chunk is wrapped
             // with its title and a citation key the LLM can reference back.
@@ -1290,11 +1363,22 @@ public final class ToolItemStarterKit {
             // "librarian named Velhara", turning her own typo into a character.
             // askedFor is what the person actually said.
             var question = params.askedFor || params.query;
+            // WHAT THE SOURCES HOLD COMES FIRST. The old instruction's "say so when they do not
+            // answer" made the first sentence the gap: asked for "recent advances in deep
+            // learning architectures, 2024 and 2025", with deep-learning books in hand, she was
+            // told "The provided sources do not contain information regarding recent advances
+            // ... for the years 2024 and 2025", three times in one day, and heard that the
+            // library had nothing on the subject she had said she would learn (2026-09-22).
             var instruction = "Synthesize a concise answer to: " + question
-                + ". Use ONLY the provided sources. After each substantive claim, cite the "
-                + "source key in square brackets, e.g. [S1]. If the sources don't answer "
-                + "the question, say so. Answer from the source text; a name spelled oddly "
-                + "in the question is the same name as in the sources.";
+                + (subjects.length >= 2 ? ". The question names more than one subject (" + subjects.join("; ")
+                    + "); say what the sources hold on each" : "")
+                + ". Begin with what the sources DO say that bears on it, however partly, and "
+                + "cite the source key after each substantive claim in square brackets, e.g. "
+                + "[S1]. Use ONLY the provided sources. Only after that, and briefly, say which "
+                + "part of the question they do not cover (a year, a detail, a name); if nothing "
+                + "in them bears on it at all, say that in one sentence. "
+                + "Answer from the source text; a name spelled oddly in the question is the same "
+                + "name as in the sources.";
             var summary = world.llm.analyze(combined, instruction);
             return { findings: summary, sources: sources, source_ids: sourceIds };
         }
@@ -1355,7 +1439,7 @@ public final class ToolItemStarterKit {
             var text = params.content;
             var format = params.format || "note";
             if (format === "report" || format === "story") {
-                text = world.llm.analyze(text, "Polish this " + format + ". Fix formatting, improve clarity, keep the voice.");
+                text = world.llm.analyze(text, "Polish this " + format + ". Fix formatting, improve clarity, keep the voice.", {now: "none"});
             }
             // Narrate the writing — and surface the content itself so the
             // reader/audience actually sees what was written. Previously this

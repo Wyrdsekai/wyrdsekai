@@ -15,7 +15,8 @@ class AgentNarrationTest {
     void sleepEntry_exhausted() {
         var text = AgentNarration.sleepEntry(0.05, null, 0, false);
         assertNotNull(text);
-        assertTrue(text.contains("*"), "Should be an emote");
+        assertTrue(text.contains("exhausted"), text);
+        assertFalse(text.contains("*"), "a plain stage direction for the room to show");
     }
 
     @Test
@@ -43,12 +44,9 @@ class AgentNarrationTest {
     }
 
     @Test
-    void sleepEntry_varies() {
-        var texts = new HashSet<String>();
-        for (int i = 0; i < 30; i++) {
-            texts.add(AgentNarration.sleepEntry(0.20, "curiosity", 3, false));
-        }
-        assertTrue(texts.size() > 1, "Sleep entry should have variety");
+    void sleepEntry_says_what_happened() {
+        assertEquals("goes to sleep still curious", AgentNarration.sleepEntry(0.20, "curiosity", 3, false));
+        assertEquals("goes to sleep sad", AgentNarration.sleepEntry(0.20, "grief", 3, false));
     }
 
     // --- Room Arrival ---

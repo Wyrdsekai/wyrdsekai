@@ -130,21 +130,33 @@ public final class RelationalAffordance {
             // sending_stone is the AGENT-to-agent reach and resolves its target from the
             // co-present agents, so it only means anything when a peer is actually in the
             // room. Toward a person — here or away — the act is speech.
+            // Toward a person who is away, every one of these is a letter
+            // (LetterToTheAbsent): written by the runtime in her voice and put in the
+            // household mail, not a tell the model has to remember to make. On the household
+            // node the forced tell went out once in a day of wanting (2026-09-25).
             case "loneliness", "affiliation" -> {
                 if (presence.peerPresent()) yield "sending_stone";
-                yield presence.anyoneAtAll() ? "tell_agent" : NONE;
+                if (presence.bondholderPresent()) yield "tell_agent";
+                yield presence.bondholderKnown() ? LetterToTheAbsent.VERB : NONE;
             }
-            // Longing for the absent. Writing to them if we can; otherwise turning toward
-            // them in memory, which is what the feeling already is.
-            case "saudade" -> presence.bondholderKnown() ? "tell_agent" : "recall";
+            // Longing for the absent. Saying it to them if they are here; a letter if they
+            // are away; otherwise turning toward them in memory, which is what the feeling
+            // already is.
+            case "saudade" -> {
+                if (presence.bondholderPresent()) yield "tell_agent";
+                yield presence.bondholderKnown() ? LetterToTheAbsent.VERB : "recall";
+            }
             // Amae is answered by ASKING — and asking is speech aimed at the person. The
             // handler that fires on it also credits the ask against the deficit, so the
             // tank finally moves on the side she controls.
-            case "amae" -> presence.anyoneAtAll() ? "tell_agent" : NONE;
+            case "amae" -> {
+                if (presence.anyoneHere()) yield "tell_agent";
+                yield presence.bondholderKnown() ? LetterToTheAbsent.VERB : NONE;
+            }
             // Tending someone. Wordless when they are here, written when they are not.
             case "care" -> {
                 if (presence.anyoneHere()) yield "emote";
-                yield presence.bondholderKnown() ? "tell_agent" : NONE;
+                yield presence.bondholderKnown() ? LetterToTheAbsent.VERB : NONE;
             }
             // Repair needs the other party in the room.
             case "harmony" -> presence.anyoneHere() ? "make_amends" : NONE;
@@ -184,6 +196,28 @@ public final class RelationalAffordance {
     public static boolean awayReachAllowed(Instant lastAwayReachAt, Instant now) {
         if (lastAwayReachAt == null || now == null) return true;
         return Duration.between(lastAwayReachAt, now).compareTo(AWAY_REACH_SPACING) >= 0;
+    }
+
+    /**
+     * Whether a reach toward her bondholder, who is not in the room, is held right now.
+     * {@code reason} is what she is told, or null for a hold that claims nothing.
+     */
+    public record AwayHold(boolean held, String reason) {
+        public static final AwayHold NONE = new AwayHold(false, null);
+    }
+
+    /**
+     * The away-reach hold. It applies when her bondholder is not in the room, whoever else is:
+     * a companion beside her does not make a line to someone away any less of a reach. "You wrote
+     * to them" is said only when a line to them went out within the window ({@code lastWrote});
+     * a reach that was offered and sent nothing ({@code lastOffered}) holds without saying so.
+     */
+    public static AwayHold awayHold(Presence presence, Instant lastWrote, Instant lastOffered,
+                                    Instant now) {
+        if (presence == null || presence.bondholderPresent()) return AwayHold.NONE;
+        if (!awayReachAllowed(lastWrote, now)) return new AwayHold(true, recentlyReachedReason());
+        if (!awayReachAllowed(lastOffered, now)) return new AwayHold(true, null);
+        return AwayHold.NONE;
     }
 
     /** Why a reach that would otherwise fire is being held. */

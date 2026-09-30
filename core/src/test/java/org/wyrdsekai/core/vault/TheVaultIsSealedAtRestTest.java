@@ -7,11 +7,15 @@ import org.junit.jupiter.api.io.TempDir;
 import org.wyrdsekai.core.body.BodyMap;
 import org.wyrdsekai.core.persistence.SchemaInitializer;
 
+import org.wyrdsekai.common.util.Json;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -112,6 +116,7 @@ class TheVaultIsSealedAtRestTest {
         var cipher = VaultCipher.load(data.resolve(Vault.KEY_FILE));
         for (var f : storeFiles(store)) Files.write(f, cipher.open(Files.readAllBytes(f)));
         Files.delete(store.resolve("key.id"));
+        Files.delete(data.resolve(Vault.SEALED_MARK));   // a 0.4.0 node had neither
         Vault.resetForTests();
 
         var again = new Vault(data, store);
@@ -122,5 +127,64 @@ class TheVaultIsSealedAtRestTest {
         for (var f : storeFiles(store)) assertTrue(VaultCipher.sealed(Files.readAllBytes(f)), f + " sealed after the pass");
         assertEquals(0, again.resealPlain(), "nothing left to seal");
         assertTrue(again.restoreTo(m, dir.resolve("out2")).isEmpty(), "the resealed copy is whole");
+        assertTrue(Files.isRegularFile(data.resolve(Vault.SEALED_MARK)), "the store is marked sealed beside the key");
+    }
+
+    @Test
+    @DisplayName("a plain copy put into a sealed store is refused, is not sealed by the next pass, and is read only with the override")
+    void plantedPlainCopyIsRefused(@TempDir Path dir) throws Exception {
+        var data = household(dir);
+        var store = dir.resolve("vault");
+        var vault = new Vault(data, store);
+        var real = vault.snapshot("first", false).orElseThrow();
+        assertTrue(Files.isRegularFile(data.resolve(Vault.SEALED_MARK)));
+
+        // Someone who can write the store (a vault node, a synced copy) plants a plain manifest
+        // naming a plain chunk of their own, dated so it would be the newest copy.
+        var planted = "name = \"EVIL\"\n".getBytes(StandardCharsets.UTF_8);
+        var sha = Vault.sha256(planted, planted.length);
+        var chunk = store.resolve("chunks").resolve(sha.substring(0, 2)).resolve(sha);
+        Files.createDirectories(chunk.getParent());
+        Files.write(chunk, planted);
+        var fake = new Vault.Manifest("29990101-000000", Instant.parse("2999-01-01T00:00:00Z"), "planted", true,
+            List.of(new Vault.Entry("profile.toml", planted.length, 0L, List.of(sha))), Map.of(), null);
+        var fakeFile = store.resolve("manifests").resolve(fake.id() + ".json");
+        Files.write(fakeFile, Json.mapper().writeValueAsBytes(fake));
+        Vault.resetForTests();
+
+        var again = new Vault(data, store);
+        assertEquals(real.id(), again.latest().orElseThrow().id(), "the planted copy is not listed");
+        assertTrue(again.find(fake.id()).isEmpty());
+        var failed = again.restoreTo(fake, dir.resolve("out"));
+        assertFalse(failed.isEmpty(), "even handed the manifest, its plain chunk is refused");
+        assertTrue(failed.get(0).contains("not sealed"), failed.get(0));
+        assertFalse(Files.exists(dir.resolve("out").resolve("profile.toml")));
+
+        // Losing the mark does not reopen the door: the store still holds sealed manifests.
+        Files.delete(data.resolve(Vault.SEALED_MARK));
+        Vault.resetForTests();
+        var noMark = new Vault(data, store);
+        assertTrue(noMark.find(fake.id()).isEmpty());
+        noMark.snapshot("second", false).orElseThrow();
+        assertFalse(VaultCipher.sealed(Files.readAllBytes(fakeFile)), "the next pass does not adopt it");
+        assertFalse(VaultCipher.sealed(Files.readAllBytes(chunk)));
+
+        Vault.resetForTests();
+        var override = new Vault(data, store, data.resolve(Vault.KEY_FILE), true);
+        assertTrue(override.find(fake.id()).isPresent(), "with the override the plain copy is read");
+    }
+
+    @Test
+    @DisplayName("a manifest path cannot leave the restore directory")
+    void restoreStaysInItsDirectory(@TempDir Path dir) throws Exception {
+        var data = household(dir);
+        var vault = new Vault(data, dir.resolve("vault"));
+        var real = vault.snapshot("first", false).orElseThrow();
+        var e = real.files().get(0);
+        var escaping = new Vault.Manifest(real.id(), real.at(), real.reason(), real.keep(),
+            List.of(new Vault.Entry("../escaped", e.size(), e.mtime(), e.chunks())), real.classes(), null);
+        var failed = vault.restoreTo(escaping, dir.resolve("out"));
+        assertFalse(failed.isEmpty());
+        assertFalse(Files.exists(dir.resolve("escaped")));
     }
 }

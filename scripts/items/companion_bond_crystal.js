@@ -14,7 +14,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Warm crystal showing your companion bonds — depth, activity, scars — and who shares the household.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["companions.birth", "bond.transfer"],
   embodiment: {
     silent: false,
     emits: ["body_language", "ambient_shift"],

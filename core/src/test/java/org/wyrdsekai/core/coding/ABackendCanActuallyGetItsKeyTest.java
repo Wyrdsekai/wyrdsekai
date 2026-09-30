@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -68,15 +69,17 @@ class ABackendCanActuallyGetItsKeyTest {
     }
 
     /**
-     * And the routing credential still survives the egress scrub, for the operator who
-     * exports it into the service environment instead of storing it.
+     * The operator who exports CodeZaiku's token into the service environment instead of
+     * storing it still reaches CodeZaiku, through CodeZaiku's own env. The shared allowlist
+     * carries no credential (2026-09-28 audit): it reached every backend and every CLI skill.
      */
     @Test
-    void the_ambient_route_remains_open_too() {
+    void the_ambient_route_reaches_only_its_own_backend() {
         assertThat(EgressGate.DEFAULT_ENV_ALLOWLIST)
-            .contains("CODEZAIKU_AUTH_TOKEN", "CODEZAIKU_API_KEY")
-            .as("goose has had OPENAI_API_KEY here since the gate was written")
-            .contains("OPENAI_API_KEY");
+            .doesNotContain("CODEZAIKU_AUTH_TOKEN", "CODEZAIKU_API_KEY", "OPENAI_API_KEY");
+        var daemon = Map.of("CODEZAIKU_AUTH_TOKEN", "cz-own", "OPENAI_API_KEY", "sk-other");
+        assertThat(CodeZaikuBackend.ownCredentials(daemon::get))
+            .containsExactlyEntriesOf(Map.of("CODEZAIKU_AUTH_TOKEN", "cz-own"));
     }
 
     private static Path find(String repoRelative) {

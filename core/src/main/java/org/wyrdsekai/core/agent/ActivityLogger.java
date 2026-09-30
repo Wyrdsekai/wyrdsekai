@@ -98,9 +98,86 @@ public final class ActivityLogger {
      */
     public void speak(String agentName, String agentId, String room, String text,
                        Map<String, Double> felt) {
+        speak(agentName, agentId, room, text, felt, null, null);
+    }
+
+    /**
+     * Speak, with who it was said to. {@code toName} and {@code heard} are set when the line
+     * answers a person: the nightly write reads the trail, and a reply without the line it
+     * answers is half an exchange. Both are null for a line said to the room or to nobody.
+     *
+     * <p>The text is kept whole up to {@link #SPEAK_TEXT_MAX}. It used to be cut at 200
+     * characters, and most of what a companion says is longer than that, so the night
+     * trained on sentences that stopped mid-thought.
+     *
+     * @param toName  the person this line answers, or null
+     * @param heard   what that person said, or null
+     */
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt, String toName, String heard) {
+        speak(agentName, agentId, room, text, felt, toName, heard, (String) null);
+    }
+
+    /** The line is a sentence the product wrote (a hard-coded confirmation or status line). */
+    public static final String AUTHORED_PRODUCT = "product";
+    /** The line is what a tool returned (library findings, a search digest, a recitation). */
+    public static final String AUTHORED_TOOL = "tool";
+    /** The line is the frame of a bunshin's or a familiar's report ("My bunshin came back with…")
+     *  around what the work brought back. Left out of the night like the others, but kept in the
+     *  exchange: the person's next question is about what the work found. */
+    public static final String AUTHORED_REPORT = "report";
+
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt, String toName, String heard, boolean productAuthored) {
+        speak(agentName, agentId, room, text, felt, toName, heard, productAuthored ? AUTHORED_PRODUCT : null);
+    }
+
+    /**
+     * {@code authoredBy}: null when the words are the companion's own. Otherwise who wrote them —
+     * {@link #AUTHORED_PRODUCT} or {@link #AUTHORED_TOOL}. The person still needs to see such a
+     * line, so it is spoken; the row is marked so that what reads the trail as the companion's
+     * own words (the night's write) leaves it out. On a household node one day's training text
+     * was 58% tool output and product messages once lines were kept whole, and the night's
+     * write failed its gate on neutral drift (2026-09-21).
+     */
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt, String toName, String heard, String authoredBy) {
+        speak(agentName, agentId, room, text, felt, toName, heard, authoredBy, false);
+    }
+
+    /**
+     * As above; {@code withHerNight} marks a line made with her own night adapter raised. Under the
+     * single-model profile that adapter is raised only on a turn of conversation with a person, so
+     * the night watch, which judges a night by her real lines, reads these and not the lines her
+     * night had no part in (2026-09-22: a watch passed a night on lines made without it).
+     */
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt, String toName, String heard, String authoredBy,
+                       boolean withHerNight) {
+        speak(agentName, agentId, room, text, felt, toName, null, heard, authoredBy, withHerNight);
+    }
+
+    /**
+     * As above; {@code toId} is the entity id of the person the line answers, written beside
+     * {@code "to"}. Rows written before it existed could name the own-time prompt's speaker
+     * ("system") or another companion in {@code "to"}; a row with {@code "toId"} names a person,
+     * so what reads the trail can tell the two apart without guessing from a name.
+     */
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt, String toName, String toId, String heard,
+                       String authoredBy, boolean withHerNight) {
         var node = event("speak", agentName, agentId)
             .put("room", room)
-            .put("text", truncate(text, 200));
+            .put("text", truncate(text, SPEAK_TEXT_MAX));
+        if (authoredBy != null && !authoredBy.isBlank()) node.put("authored", authoredBy);
+        if (withHerNight && (authoredBy == null || authoredBy.isBlank())) node.put("night", true);
+        if (toName != null && !toName.isBlank()) {
+            node.put("to", toName);
+            if (toId != null && !toId.isBlank()) node.put("toId", toId);
+            if (heard != null && !heard.isBlank()) {
+                node.put("heard", truncate(heard, SPEAK_TEXT_MAX));
+            }
+        }
         attachFelt(node, felt);
         write(node);
     }
@@ -357,6 +434,9 @@ public final class ActivityLogger {
             log.debug("Failed to write activity log: {}", e.getMessage());
         }
     }
+
+    /** Longest spoken line kept whole in the trail. */
+    static final int SPEAK_TEXT_MAX = 4000;
 
     private static String truncate(String s, int maxLen) {
         if (s == null) return "";

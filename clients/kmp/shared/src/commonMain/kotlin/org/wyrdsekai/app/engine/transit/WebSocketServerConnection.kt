@@ -9,6 +9,7 @@ import org.wyrdsekai.app.protocol.C2SMessage
 import org.wyrdsekai.app.protocol.S2CMessage
 import org.wyrdsekai.app.platform.AppProps
 import org.wyrdsekai.app.platform.AppFiles
+import org.wyrdsekai.app.network.createWsHttpClient
 import kotlin.time.Clock
 
 /**
@@ -26,7 +27,7 @@ class WebSocketServerConnection(
         classDiscriminator = "type"
     }
 
-    private val client = HttpClient {
+    private val client = createWsHttpClient().config {
         install(WebSockets) {
             pingIntervalMillis = 20_000
         }

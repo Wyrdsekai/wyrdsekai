@@ -16,6 +16,33 @@ NSString *WyrdSha256ColonHex(NSData *der) {
   return out;
 }
 
+NSString *WyrdPlainHex(NSString *fingerprint) {
+  NSString *t = [fingerprint stringByReplacingOccurrencesOfString:@":" withString:@""];
+  t = [[t componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]
+      componentsJoinedByString:@""];
+  return t.uppercaseString;
+}
+
+NSArray *WyrdCopyChain(SecTrustRef trust) {
+  if (!trust) return @[];
+  if (@available(iOS 15.0, *)) {
+    CFArrayRef chainRef = SecTrustCopyCertificateChain(trust);
+    return chainRef ? (__bridge_transfer NSArray *)chainRef : @[];
+  }
+  NSMutableArray *out = [NSMutableArray new];
+#if !defined(__IPHONE_15_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_15_0
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  CFIndex count = SecTrustGetCertificateCount(trust);
+  for (CFIndex i = 0; i < count; i++) {
+    SecCertificateRef cert = SecTrustGetCertificateAtIndex(trust, i);
+    if (cert) [out addObject:(__bridge id)cert];
+  }
+#pragma clang diagnostic pop
+#endif
+  return out;
+}
+
 /** DER bytes -> PEM string (64-col body) matching the Android toPem() shape. */
 NSString *WyrdPemFromDer(NSData *der) {
   NSString *b64 = [der base64EncodedStringWithOptions:0];
@@ -76,6 +103,35 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
   return NULL;
 }
 
+#pragma mark - Pin keys (host:port)
+
+static NSString *WyrdBareHost(NSString *host) {
+  NSString *h = (host ?: @"").lowercaseString;
+  if ([h hasPrefix:@"["] && [h hasSuffix:@"]"] && h.length >= 2) {
+    h = [h substringWithRange:NSMakeRange(1, h.length - 2)];
+  }
+  return h;
+}
+
+NSString *WyrdPinKey(NSString *host, NSInteger port) {
+  NSString *h = WyrdBareHost(host);
+  if (h.length == 0) return @"";
+  return [NSString stringWithFormat:@"%@:%ld", h, (long)(port > 0 ? port : 443)];
+}
+
+NSString *WyrdNormalizePinKey(NSString *key) {
+  NSString *k = (key ?: @"").lowercaseString;
+  // "[v6]:port" -> "v6:port", the form WyrdPinKey builds.
+  if ([k hasPrefix:@"["]) {
+    NSRange close = [k rangeOfString:@"]"];
+    if (close.location != NSNotFound) {
+      NSString *host = [k substringWithRange:NSMakeRange(1, close.location - 1)];
+      k = [host stringByAppendingString:[k substringFromIndex:close.location + 1]];
+    }
+  }
+  return k;
+}
+
 #pragma mark - WyrdTrustStore
 
 @implementation WyrdTrustStore {
@@ -84,6 +140,8 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
   NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *_pins;
   // host -> last PEM seen (for the inspector); first cert pinned wins display.
   NSMutableDictionary<NSString *, NSString *> *_pems;
+  // host -> NSMutableSet<NSString*> of CA SHA-256, UPPERCASE hex without colons
+  NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *_caPins;
 }
 
 + (instancetype)shared {
@@ -100,11 +158,37 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
     _queue = dispatch_queue_create("org.wyrdsekai.householdtrust.store", DISPATCH_QUEUE_SERIAL);
     _pins = [NSMutableDictionary new];
     _pems = [NSMutableDictionary new];
+    _caPins = [NSMutableDictionary new];
   }
   return self;
 }
 
-- (void)addFingerprint:(NSString *)fingerprint pem:(NSString *)pem forHost:(NSString *)host {
+- (void)addCaFingerprint:(NSString *)fingerprint forHost:(NSString *)rawKey {
+  NSString *host = WyrdNormalizePinKey(rawKey);
+  NSString *fp = WyrdPlainHex(fingerprint ?: @"");
+  if (host.length == 0 || fp.length != 64) return;
+  dispatch_sync(_queue, ^{
+    NSMutableSet<NSString *> *set = self->_caPins[host];
+    if (!set) {
+      set = [NSMutableSet new];
+      self->_caPins[host] = set;
+    }
+    [set addObject:fp];
+  });
+}
+
+- (NSArray<NSString *> *)caFingerprintsForHost:(NSString *)rawKey {
+  NSString *host = WyrdNormalizePinKey(rawKey);
+  if (host.length == 0) return @[];
+  __block NSArray<NSString *> *out = @[];
+  dispatch_sync(_queue, ^{
+    out = self->_caPins[host].allObjects ?: @[];
+  });
+  return out;
+}
+
+- (void)addFingerprint:(NSString *)fingerprint pem:(NSString *)pem forHost:(NSString *)rawKey {
+  NSString *host = WyrdNormalizePinKey(rawKey);
   if (host.length == 0 || fingerprint.length == 0) return;
   NSString *fp = fingerprint.uppercaseString;
   dispatch_sync(_queue, ^{
@@ -120,15 +204,18 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
   });
 }
 
-- (void)removeHost:(NSString *)host {
+- (void)removeHost:(NSString *)rawKey {
+  NSString *host = WyrdNormalizePinKey(rawKey);
   if (host.length == 0) return;
   dispatch_sync(_queue, ^{
     [self->_pins removeObjectForKey:host];
     [self->_pems removeObjectForKey:host];
+    [self->_caPins removeObjectForKey:host];
   });
 }
 
-- (BOOL)hasPinsForHost:(NSString *)host {
+- (BOOL)hasPinsForHost:(NSString *)rawKey {
+  NSString *host = WyrdNormalizePinKey(rawKey);
   if (host.length == 0) return NO;
   __block BOOL has = NO;
   dispatch_sync(_queue, ^{
@@ -137,7 +224,8 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
   return has;
 }
 
-- (BOOL)host:(NSString *)host trustsFingerprint:(NSString *)fingerprint {
+- (BOOL)host:(NSString *)rawKey trustsFingerprint:(NSString *)fingerprint {
+  NSString *host = WyrdNormalizePinKey(rawKey);
   if (host.length == 0 || fingerprint.length == 0) return NO;
   NSString *fp = fingerprint.uppercaseString;
   __block BOOL trusts = NO;
@@ -147,7 +235,8 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
   return trusts;
 }
 
-- (NSArray<NSString *> *)pinnedFingerprintsForHost:(NSString *)host {
+- (NSArray<NSString *> *)pinnedFingerprintsForHost:(NSString *)rawKey {
+  NSString *host = WyrdNormalizePinKey(rawKey);
   if (host.length == 0) return @[];
   __block NSArray<NSString *> *out = @[];
   dispatch_sync(_queue, ^{
@@ -186,6 +275,44 @@ SecCertificateRef WyrdCopyLeafCert(SecTrustRef trust) {
   NSData *der = (__bridge_transfer NSData *)derRef;
   NSString *served = WyrdSha256ColonHex(der);
   return [[WyrdTrustStore shared] host:host trustsFingerprint:served];
+}
+
++ (WyrdPinDecision)evaluateServerTrust:(SecTrustRef)trust forHost:(NSString *)host {
+  if (trust == NULL || host.length == 0) return WyrdPinDecisionNoPins;
+  WyrdTrustStore *store = [WyrdTrustStore shared];
+
+  NSArray<NSString *> *caPins = [store caFingerprintsForHost:host];
+  if (caPins.count > 0) {
+    // The pinned CA must be in the served chain; it becomes the ONLY anchor and
+    // the system's SSL policy (already bound to this host name) checks the rest.
+    for (id obj in WyrdCopyChain(trust)) {
+      SecCertificateRef cert = (__bridge SecCertificateRef)obj;
+      CFDataRef derRef = SecCertificateCopyData(cert);
+      if (!derRef) continue;
+      NSString *fp = WyrdPlainHex(WyrdSha256ColonHex((__bridge_transfer NSData *)derRef));
+      if (![caPins containsObject:fp]) continue;
+      SecTrustSetAnchorCertificates(trust, (__bridge CFArrayRef)@[ obj ]);
+      SecTrustSetAnchorCertificatesOnly(trust, true);
+      CFErrorRef err = NULL;
+      bool ok = SecTrustEvaluateWithError(trust, &err);
+      if (err) {
+        NSLog(@"[WyrdTrustStore] %@: chain does not validate to the pinned CA: %@", host,
+              (__bridge NSError *)err);
+        CFRelease(err);
+      }
+      return ok ? WyrdPinDecisionTrusted : WyrdPinDecisionMismatch;
+    }
+    NSLog(@"[WyrdTrustStore] %@: the pinned CA is not in the served chain", host);
+    return WyrdPinDecisionMismatch;
+  }
+
+  if ([store hasPinsForHost:host]) {
+    SecCertificateRef leaf = WyrdCopyLeafCert(trust);
+    BOOL ok = leaf != NULL && [WyrdTrustStore isPinnedForHost:host certificate:leaf];
+    if (leaf) CFRelease(leaf);
+    return ok ? WyrdPinDecisionTrusted : WyrdPinDecisionMismatch;
+  }
+  return WyrdPinDecisionNoPins;
 }
 
 @end

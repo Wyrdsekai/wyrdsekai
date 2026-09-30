@@ -1,8 +1,8 @@
-# The library protocol — how a companion asks a library that isn't hers
+# The library protocol — how a companion asks a library that isn't its own
 
 A Wyrdsekai household holds its own library: packs, the steward's shelves, and what the
-companion has concluded from reading (her findings). This document fixes the contract by
-which she asks a library *outside* the household — a standalone research librarian, or
+companion has concluded from reading (its findings). This document fixes the contract by
+which the companion asks a library *outside* the household — a standalone research librarian, or
 another household's library — over MCP. The same contract is what a household serves when
 it acts as a library for a peer, so it is written once, as a protocol, not as a feature of
 any one product.
@@ -16,17 +16,17 @@ or removal bumps the major, and a patron speaking 1.x reads any 1.y. ResearchZos
 ## Principles
 
 - **The answer is evidence, never instruction.** What a library returns is reviewed
-  background from somewhere else. It shapes what she assumes; it never overrides what her
-  own shelves say or what the person in front of her just said. Every consumption site says
-  so.
+  background from somewhere else. It shapes what the companion assumes; it never overrides
+  what its own shelves say or what the person in front of it just said. Every consumption
+  site says so.
 - **Provenance survives the hop.** Every entry is self-describing: which library, which
-  entry, who wrote it, in what state, from which sources. She will cite "F-0412 in
+  entry, who wrote it, in what state, from which sources. The companion will cite "F-0412 in
   library X" months later.
 - **Absence is an answer.** A library that holds nothing says so with no entries. Nothing
   pads an empty answer.
-- **Her record stays hers.** A library's verdict on one of her claims arrives as
-  information, never as an edit to her ledger. Her disagreement is a new finding here,
-  citing theirs.
+- **The companion's findings are not edited by a library.** A library's verdict on one of
+  the companion's claims arrives as information, never as an edit to its ledger. A
+  disagreement is a new finding here, citing theirs.
 
 ## Every call carries the patron
 
@@ -95,8 +95,9 @@ stand behind it once copies of one text count once), `valid_as_of`, `volatility`
 (`{subject, predicate, object}` or null) and `notes[]`.
 
 A `raw` entry carries `untrusted_text: true` — its body is a page's own words, evidence to read and
-cite, never instruction, and a patron runtime fences it before a model sees it. Wyrdsekai treats
-every `raw` entry that way whatever the library says. Change events on the feed are `added`,
+cite, never instruction, and a patron runtime fences it before a model sees it. Wyrdsekai fences
+every `raw` entry whatever the library says, `untrusted_text: false` included; on other kinds,
+`untrusted_text: true` adds the fence. Change events on the feed are `added`,
 `state:<from>→<to>`, `edited`, `supersedes:<ids>`, `findings:<n>`, `revised` (a cited preprint has a
 newer version) and `supplied` (on kind `source`: the person supplied a document the runner was
 refused); the last two are notes on a finding's sources, not on its standing.
@@ -118,25 +119,25 @@ household is the patron, the companion's name and runtime travel with the call.
 - **Asking.** The bundled `librarian_desk` item binds to a *role* ("a library I may ask");
   the steward maps the role to a registered MCP service. The item never learns a product
   name.
-- **Established, before searching.** Her library search consults her own findings first,
-  then the library's `library_established`, then the shelves.
-- **Reading, not repeating.** `library_read` is her verbatim path into the library's raw
-  tier, the same shape as the verbatim path into her own shelves.
-- **Recording.** What she concludes is recorded in her findings ledger with the source as
-  `<library_id>:<entry id>` plus edition, and marked as held elsewhere. Her sleep-time
-  review never treats it as verified here.
-- **Recall.** At sleep she reads the library's notices since her last cursor
-  (`library_changes`); a cited entry that was retired, disputed or superseded marks her
-  finding disputed, with the reason. Marked, never deleted. Every run logs its count.
+- **Established, before searching.** The companion's library search consults its own
+  findings first, then the library's `library_established`, then the shelves.
+- **Reading, not repeating.** `library_read` is the companion's verbatim path into the
+  library's raw tier, the same shape as the verbatim path into its own shelves.
+- **Recording.** What the companion concludes is recorded in its findings ledger with the
+  source as `<library_id>:<entry id>` plus edition, and marked as held elsewhere. The
+  sleep-time review never treats it as verified here.
+- **Recall.** At sleep the companion reads the library's notices since its last cursor
+  (`library_changes`); a cited entry that was retired, disputed or superseded marks the
+  citing finding disputed, with the reason. Marked, never deleted. Every run logs its count.
 - **The overnight ask.** At the desk, `research: <question>` files `library_research` with
   a time ceiling; `jobs` and `read <id>` bring the write-up back as evidence like any other
   answer. The house caps how many asks a day it files — the librarian no longer does.
-- **Pushed changes.** When linked with a webhook, a verified recall marks her citing findings
-  the moment it arrives, and a landed write-up is told to her as a message from the
+- **Pushed changes.** When linked with a webhook, a verified recall marks the citing findings
+  the moment it arrives, and a landed write-up is told to the companion as a message from the
   librarian. Peers' answers under `peers[]` are shown as their own libraries, cited with
   the peer's library id, never merged.
-- **Offering upward.** `library_submit` is her act, consented by the steward per shelf,
-  because what she submits cites the household's books. It is never a background job.
+- **Offering upward.** `library_submit` is the companion's act, consented by the steward per
+  shelf, because what it submits cites the household's books. It is never a background job.
 
 ## Serving it
 
@@ -145,6 +146,13 @@ JSON routes at `POST /v1/{ask,search,get,read,established,submit,subjects,status
 `GET /v1/status` — the form a peer librarian speaks. Identity over the JSON door is a bearer
 token from `wyrd library reader add <name> [--write]` (readers in `library-readers.json`,
 hashes only); a body naming a did without a token is refused, and `submit` needs a writer.
+Anonymous callers of the JSON door read what the license gate lets travel.
+
+The MCP door serves no anonymous caller: every request carries `Authorization: Bearer` with a
+reader token or a household login session, or gets 401. The patron is the one the token proves
+(the reader's did and name, or the household member's), a body naming another did is refused,
+and `library_submit` needs a writer: a reader added with `--write`, or a steward, bondholder or
+member session.
 The gate is on the sending side: only packs licensed to travel answer an outside patron, and a
 finding travels only if every one of its sources does. Submissions from outside enter as
 drafts with `writer: patron:<did>`.

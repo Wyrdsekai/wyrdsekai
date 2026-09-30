@@ -1,28 +1,49 @@
 /**
- * HouseholdTrust — TOFU cert-pinning helper for the wyrdsekai phone client.
+ * HouseholdTrust — certificate pinning for the wyrdsekai phone client.
  *
- * Implementation status: Phase 1 (this file) — probe/fetch/fingerprint/store
- * with a native module hook left as TODO. Phase 2 will wire the native OkHttp
- * TrustManager to actually use stored pins. Until Phase 2 lands the user
- * still needs the household CA installed via Android Settings (or via ADB:
- * `adb push ca.crt /sdcard/ && Settings → Security → Install certificate`),
- * after which the existing `<certificates src="user"/>` trust anchor in
- * network_security_config.xml covers TLS.
+ * Where the pins come from: only invites (the relay's `fp`/`ca_fp`, the home's
+ * `home_ca_fp`) and certificates matched against them. The invite IS the trust
+ * decision; the phone never asks the person to trust a certificate, and a
+ * certificate that does not match a pin is refused with a plain message to pair
+ * again ( D6; SECURITY_MODEL.md "not TOFU").
  *
- * The Phase 1 work persists the cert + fingerprint so Phase 2 can pin
- * directly without re-prompting the user, and exposes the user-facing
- * confirmation UX shape (caller passes a `confirm` callback returning bool).
+ * Where they are kept: in secureStorage (encrypted, its key in the iOS Keychain
+ * / Android Keystore). The native pin stores (iOS WyrdTrustStore, Android
+ * HouseholdTrustStore) hold them in memory only and are filled from here at
+ * every start (restoreNativePins) — nothing pin-related lives in
+ * NSUserDefaults or SharedPreferences.
  *
  */
-
-// Trust pins are credentials in the sense that anyone with them can MITM
-// fewer hosts (forge them) — store in secureStorage, not plaintext
-// AsyncStorage. The legacy @wyrd_trust_* AsyncStorage entries are wiped by
-// initSecureStorage() on first cold start.
 import { secureStorage as AsyncStorage } from '../state/secureStorage';
 import { Alert, DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import { useZoneBankStore, type ZoneTrust } from '../state/zoneBankStore';
+import { endpointOf, sameEndpoint } from '../network/secureAddress';
+import { securityText } from '../security/securityText';
 
 const STORAGE_PREFIX = '@wyrd_trust_';
+
+/**
+ * The key a pin is kept under in the native store. On iOS pins are per
+ * `host:port` (WyrdTrustStore), so a relay and a home on the same machine
+ * never share pins: the relay's leaf pin must not stand for the home, and the
+ * home's CA pin must not refuse the relay. Android's store (HouseholdTrustStore,
+ * used by the Android build of this app only) is still per host.
+ */
+export function pinKey(host: string, port: number): string {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return Platform.OS === 'ios' ? `${h}:${port}` : h;
+}
+
+/** The pin key for an address (https/wss/http/ws; default ports filled in), or null. */
+export function pinKeyForUrl(url: string): string | null {
+  const e = endpointOf(url);
+  return e ? pinKey(e.host, e.port) : null;
+}
+
+/** The home-network addresses an invite gave for one home, each pinned to its CA. */
+function homeEndpoints(t: ZoneTrust): string[] {
+  return [t.lanHttps, t.homeBus].filter((u): u is string => !!u);
+}
 
 /**
  * Native bridge to the OkHttp HouseholdTrustManager (Android only).
@@ -35,9 +56,10 @@ const STORAGE_PREFIX = '@wyrd_trust_';
  * pins the SocketRocket WebSocket via an SRSecurityPolicy fingerprint check,
  * so both platforms use the identical JS surface below.
  */
+/** Every `key` below is a pin key: `host:port` on iOS, the host on Android (see pinKey). */
 interface NativeHouseholdTrust {
-  addTrustedCert(host: string, pem: string): Promise<boolean>;
-  removeTrustedCert(host: string): Promise<boolean>;
+  addTrustedCert(key: string, pem: string): Promise<boolean>;
+  removeTrustedCert(key: string): Promise<boolean>;
   listTrustedHosts(): Promise<
     Array<{ host: string; subject: string; validUntil: number }>
   >;
@@ -48,7 +70,10 @@ interface NativeHouseholdTrust {
   ): Promise<Array<{ pem: string; fingerprint: string }>>;
   /** Pin a fingerprint directly (no cert fetch) — see pinInviteFingerprints.
    *  iOS-only today; absent on Android (use addTrustedCert there). */
-  pinFingerprint?(host: string, fingerprint: string): Promise<boolean>;
+  pinFingerprint?(key: string, fingerprint: string): Promise<boolean>;
+  /** Pin a host to a CA by the CA certificate's SHA-256: the served chain must
+   *  validate up to that CA (hostname checked too). Used for `home_ca_fp`. */
+  pinCaFingerprint?(key: string, fingerprint: string): Promise<boolean>;
 }
 
 const nativeTrust: NativeHouseholdTrust | null =
@@ -61,38 +86,14 @@ export interface PinnedHouseholdTrust {
   certPem: string;
   fingerprint: string;
   trustedAt: number;
-  /** "tofu" = user-accepted self-signed CA; "system" = chain validated against public CA. */
+  /** "tofu" (historical name) = a cert matched against an invite's fingerprints;
+   *  "system" = chain validated against a public CA. */
   source: 'tofu' | 'system';
 }
 
-export interface TrustConfirmation {
-  host: string;
-  fingerprint: string;
-  /** Bytes the user is being asked to trust, for display/printing the CA. */
-  certPem: string;
-}
-
 export interface HouseholdTrustOptions {
-  /**
-   * Called when an HTTPS probe rejects the cert and we've fetched /ca.crt.
-   * Implementation: present a UI showing the fingerprint + ask the user.
-   * Return true to accept and store the pin, false to abort the connection.
-   */
-  confirm: (c: TrustConfirmation) => Promise<boolean>;
   /** Optional override for fetch (testing). */
   fetchImpl?: typeof fetch;
-}
-
-/** Read the SHA-256 fingerprint as colon-separated hex pairs, lowercased. */
-async function sha256Hex(input: string): Promise<string> {
-  // Browser-style: react-native runtime exposes globalThis.crypto.subtle.
-  // (rn 0.79+ ships a polyfill that proxies to native CommonCrypto / Conscrypt.)
-  const data = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  const bytes = new Uint8Array(digest);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join(':');
 }
 
 /**
@@ -109,12 +110,12 @@ export async function getTrust(host: string): Promise<PinnedHouseholdTrust | nul
 }
 
 /**
- * Persist a trust record. Used both by `probeAndTrust` after user confirm
- * and by callers who already have the cert (e.g. wired CA install flow).
+ * Persist a trust record: a certificate matched against an invite
+ * (trustFromInviteFingerprints) or a system-trusted probe (probeAndTrust).
  *
- * Two-write path: AsyncStorage (for JS-side reads) AND the native
- * HouseholdTrustStore (for OkHttp TLS pinning). The native call is what
- * actually unblocks HTTPS — the AsyncStorage entry is metadata.
+ * Two-write path: secure storage (the lasting copy, restored into the native
+ * store at every start) AND the native pin store (in memory, what the TLS
+ * layer checks).
  */
 export async function setTrust(t: PinnedHouseholdTrust): Promise<void> {
   await AsyncStorage.setItem(STORAGE_PREFIX + t.host, JSON.stringify(t));
@@ -250,21 +251,22 @@ export async function probeAndTrust(
  * Android, which pins via OkHttp/addTrustedCert instead).
  */
 export async function pinInviteFingerprints(
-  host: string,
+  relayWsUrl: string,
   fingerprints: Array<string | undefined>,
 ): Promise<number> {
-  if (!nativeTrust?.pinFingerprint) return 0;
+  const key = pinKeyForUrl(relayWsUrl);
+  if (!nativeTrust?.pinFingerprint || !key) return 0;
   const wanted = fingerprints
     .filter((f): f is string => !!f)
     .map((f) => f.toUpperCase());
   let pinned = 0;
   for (const fp of wanted) {
     try {
-      await nativeTrust.pinFingerprint(host, fp);
+      await nativeTrust.pinFingerprint(key, fp);
       pinned += 1;
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.warn(`[HouseholdTrust] direct pin failed for ${host} ${fp}:`, e);
+      console.warn(`[HouseholdTrust] direct pin failed for ${key} ${fp}:`, e);
     }
   }
   return pinned;
@@ -307,7 +309,7 @@ export async function trustFromInviteFingerprints(
   }
 
   const record: PinnedHouseholdTrust = {
-    host,
+    host: pinKey(host, port),
     certPem: match.pem,
     fingerprint: match.fingerprint,
     trustedAt: Date.now(),
@@ -318,53 +320,28 @@ export async function trustFromInviteFingerprints(
 }
 
 /**
- * Pin-mismatch recovery listener — wire this once at app startup. Native
- * TLS layer emits `wyrd_trust_pin_mismatch` when an existing pin doesn't
- * match the chain (i.e. operator ran `wyrd relay rotate-cert --ca`).
- * We pop an Alert showing the new fingerprint; on accept we clear the
- * pin so the next request flips into the TOFU path and re-pins. On
- * deny we do nothing — the request will keep failing until the user
- * either accepts or rolls back the relay cert.
- *
+ * Pin-mismatch listener — wire this once at app startup. The native TLS layer
+ * emits `wyrd_trust_pin_mismatch` when a host that has pins presents a
+ * certificate that does not match them. The connection has already been
+ * refused; this only tells the person why and what to do (pair again). There
+ * is no "trust the new certificate" choice: a changed certificate reaches the
+ * phone only through a new invite., D6.
  */
 let pinMismatchSub: ReturnType<typeof DeviceEventEmitter.addListener> | null = null;
+const pinMismatchShown = new Set<string>();
 export function installPinMismatchListener(): () => void {
   if (pinMismatchSub) return () => {};
   pinMismatchSub = DeviceEventEmitter.addListener(
     'wyrd_trust_pin_mismatch',
-    async (e: { host: string; newFingerprint: string; pinnedFingerprint: string }) => {
-      const { host, newFingerprint, pinnedFingerprint } = e;
-      // Coalesce: if the user already saw this event for this host in the
-      // last few seconds, don't re-prompt (TLS retries hammer the bus).
-      const now = Date.now();
-      const last = pinMismatchLastAt[host] ?? 0;
-      if (now - last < 5000) return;
-      pinMismatchLastAt[host] = now;
-
-      const accepted = await new Promise<boolean>((resolve) => {
-        Alert.alert(
-          'Server certificate changed',
-          `${host}\n\nThe TLS cert presented by this server does not match the\nfingerprint you previously trusted.\n\n` +
-          `Pinned : ${pinnedFingerprint || '(unknown)'}\n` +
-          `New    : ${newFingerprint}\n\n` +
-          `If you (or your household steward) just rotated the cert,\n` +
-          `accept the new fingerprint to continue. Otherwise this could\n` +
-          `be an attempt to intercept your traffic — choose Cancel.`,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Trust new cert', style: 'destructive', onPress: () => resolve(true) },
-          ],
-          { cancelable: false },
-        );
-      });
-      if (!accepted) return;
-      try {
-        await clearTrust(host);
-        // Next HTTPS request hits the empty-pin branch → probeAndTrust
-        // re-fetches /ca.crt and re-pins after the user confirms again.
-      } catch {
-        // best-effort — clearTrust is idempotent
-      }
+    (e: { host: string; newFingerprint: string; pinnedFingerprint: string }) => {
+      const host = e?.host ?? '';
+      // TLS retries repeat the event; say it once per host while the app runs.
+      if (pinMismatchShown.has(host)) return;
+      pinMismatchShown.add(host);
+      // eslint-disable-next-line no-console
+      console.warn(`[HouseholdTrust] refused ${host}: served ${e?.newFingerprint} does not match pin ${e?.pinnedFingerprint}`);
+      const t = securityText();
+      Alert.alert(t.pinMismatchTitle, t.pinMismatchBody(host), [{ text: t.ok }]);
     },
   );
   return () => {
@@ -372,4 +349,70 @@ export function installPinMismatchListener(): () => void {
     pinMismatchSub = null;
   };
 }
-const pinMismatchLastAt: Record<string, number> = {};
+
+/** `home_ca_fp` (hex, any case, colons or not) → the store's UPPERCASE colon form. */
+export function toColonHex(fp: string): string {
+  const hex = fp.replace(/[:\s]/g, '').toUpperCase();
+  return (hex.match(/.{2}/g) ?? []).join(':');
+}
+
+/**
+ * Pin one of the home's network addresses (its lan_https, or its bus
+ * websocket) to its household CA (`home_ca_fp` from the invite). The native
+ * layer then accepts that host:port only with a chain that validates up to that
+ * exact CA — for fetch(), the session websocket and the home-bus websocket.
+ */
+export async function pinHomeCa(url: string, homeCaFp: string): Promise<boolean> {
+  const key = pinKeyForUrl(url);
+  if (!nativeTrust?.pinCaFingerprint || !key || !homeCaFp) return false;
+  try {
+    return await nativeTrust.pinCaFingerprint(key, toColonHex(homeCaFp));
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[HouseholdTrust] CA pin failed for ${key}:`, e);
+    return false;
+  }
+}
+
+/** The household CA fingerprint for `url` when an invite named exactly that host and port as its home. */
+export function knownHomeCaFor(url: string): string | null {
+  for (const t of Object.values(useZoneBankStore.getState().trust ?? {})) {
+    if (t.homeCaFp && homeEndpoints(t).some((u) => sameEndpoint(u, url))) return t.homeCaFp;
+  }
+  return null;
+}
+
+/** Before connecting to `url`: pin it to its zone's household CA when an invite named that address. */
+export async function pinKnownHome(url: string): Promise<void> {
+  const fp = knownHomeCaFor(url);
+  if (fp) await pinHomeCa(url, fp);
+}
+
+/**
+ * Fill the native pin stores from secure storage. They keep pins in memory
+ * only, so this runs at every start, before any screen can connect: the
+ * certificates matched from invites (@wyrd_trust_*), the held relays'
+ * fingerprints, and each zone's household CA for its home-network addresses
+ * (lan_https and the home bus, each its own host:port).
+ */
+export async function restoreNativePins(): Promise<void> {
+  if (!nativeTrust) return;
+  const keys = await AsyncStorage.keys();
+  for (const k of keys.filter((key) => key.startsWith(STORAGE_PREFIX))) {
+    try {
+      const rec = JSON.parse((await AsyncStorage.getItem(k)) ?? 'null') as PinnedHouseholdTrust | null;
+      if (rec?.host && rec.certPem) await nativeTrust.addTrustedCert(rec.host, rec.certPem);
+    } catch {
+      /* one unreadable record must not stop the rest */
+    }
+  }
+  const bank = useZoneBankStore.getState();
+  for (const relay of bank.relays) {
+    const fps = [relay.caFp, relay.fp].filter((f): f is string => !!f);
+    if (fps.length > 0) await pinInviteFingerprints(relay.wsUrl, fps);
+  }
+  for (const t of Object.values(bank.trust ?? {})) {
+    if (!t.homeCaFp) continue;
+    for (const u of homeEndpoints(t)) await pinHomeCa(u, t.homeCaFp);
+  }
+}

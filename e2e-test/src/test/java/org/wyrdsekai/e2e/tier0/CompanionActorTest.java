@@ -18,6 +18,7 @@ import org.wyrdsekai.core.persistence.VitalityPersistence;
 import org.wyrdsekai.core.room.RoomCommand;
 import org.wyrdsekai.core.room.RoomNotification;
 import org.wyrdsekai.core.room.RoomResponse;
+import org.wyrdsekai.core.search.EmbeddingService;
 import org.wyrdsekai.e2e.infra.NodeProfile;
 import org.wyrdsekai.e2e.infra.TestActorSystem;
 
@@ -54,6 +55,10 @@ class CompanionActorTest {
     @BeforeAll
     static void setup() {
         testKit = TestActorSystem.create("companion-actor-test");
+        // The first turn starts the voice classifier's encoder (about ten seconds from a cold JVM);
+        // the tests wait three seconds for a turn. Run alone, the first ones timed out; in the full
+        // suite an earlier class had started it.
+        EmbeddingService.classifierEncoder();
     }
 
     @AfterAll

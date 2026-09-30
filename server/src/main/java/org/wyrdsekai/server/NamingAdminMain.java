@@ -3,6 +3,7 @@ package org.wyrdsekai.server;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.wyrdsekai.between.NodeIdentity;
+import org.wyrdsekai.common.i18n.I18n;
 import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.naming.BlockList;
 import org.wyrdsekai.core.naming.ContactsBook;
@@ -10,7 +11,9 @@ import org.wyrdsekai.core.naming.HouseholdIdentity;
 import org.wyrdsekai.core.naming.LocalZoneRegistry;
 import org.wyrdsekai.core.naming.WellKnownZoneDirectory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -20,9 +23,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Admin CLI entry point for zone-naming operations
@@ -46,9 +53,10 @@ import java.util.ArrayList;
  *           absent (idempotent with server boot).</td></tr>
  *   <tr><td>{@code contacts list}</td>
  *       <td>Print each contact alias, DID, default label.</td></tr>
- *   <tr><td>{@code contacts add <alias> <did> [<default-label>]}</td>
- *       <td>TOFU add — prints the DID for out-of-band verification, writes
- *           {@code ~/.wyrdsekai/contacts}.</td></tr>
+ *   <tr><td>{@code contacts add <alias> <did> [<default-label>] [--verified]}</td>
+ *       <td>Shows the DID's check code and saves to {@code ~/.wyrdsekai/contacts}
+ *           only once the person confirms it matches what the other household
+ *           read out ({@code wyrd whoami --check-code}), or passes {@code --verified}.</td></tr>
  *   <tr><td>{@code contacts remove <alias>}</td>
  *       <td>Delete entry.</td></tr>
  *   <tr><td>{@code contacts rename <old> <new>}</td>
@@ -78,7 +86,10 @@ public final class NamingAdminMain {
 
     public static void main(String[] args) {
         var dataDir = resolveDataDir();
-        int exit = run(dataDir, System.out, System.err, args);
+        var console = System.console();
+        var in = console != null && console.isTerminal()
+            ? new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8)) : null;
+        int exit = run(dataDir, in, System.out, System.err, args);
         System.exit(exit);
     }
 
@@ -96,6 +107,11 @@ public final class NamingAdminMain {
      *         found), 2 on unexpected internal failure.
      */
     static int run(Path dataDir, PrintStream out, PrintStream err, String... args) {
+        return run(dataDir, null, out, err, args);
+    }
+
+    /** As {@link #run(Path, PrintStream, PrintStream, String...)}; {@code in} answers questions (null: no terminal). */
+    static int run(Path dataDir, BufferedReader in, PrintStream out, PrintStream err, String... args) {
         if (args.length == 0) {
             printUsage(err);
             return 1;
@@ -111,8 +127,8 @@ public final class NamingAdminMain {
         var sub = args.length > 1 ? args[1] : "";
         try {
             return switch (cmd) {
-                case "whoami" -> doWhoami(dataDir, out);
-                case "contacts" -> doContacts(dataDir, out, err, sub, tail(args, 2));
+                case "whoami" -> doWhoami(dataDir, out, sub);
+                case "contacts" -> doContacts(dataDir, in, out, err, sub, tail(args, 2));
                 case "zones" -> doZones(dataDir, out, err, sub, tail(args, 2));
                 case "block" -> doBlock(dataDir, out, err, tail(args, 1), false);
                 case "unblock" -> doUnblock(dataDir, out, err, tail(args, 1));
@@ -139,17 +155,41 @@ public final class NamingAdminMain {
 
     // ── whoami ─────────────────────────────────────────────────────────
 
-    private static int doWhoami(Path dataDir, PrintStream out) throws Exception {
+    private static int doWhoami(Path dataDir, PrintStream out, String flag) throws Exception {
         var identityFile = dataDir.resolve("node-identity.json");
         var node = NodeIdentity.loadOrGenerate(identityFile);
         var household = HouseholdIdentity.fromSpkiBytes(node.publicKeyBytes());
-        out.println(household.did());
+        // --check-code: the short code another household compares before saving this one as a contact.
+        out.println("--check-code".equals(flag) ? checkCode(household.did()) : household.did());
         return 0;
+    }
+
+    /**
+     * A short code for comparing a DID over the phone or in person: the first 80 bits of SHA-256 of the
+     * DID, in base32, grouped by four ({@code ABCD-EFGH-IJKL-MNOP}). Finding another key with the same
+     * code takes about 2^80 tries.
+     */
+    static String checkCode(String did) {
+        byte[] h;
+        try {
+            h = MessageDigest.getInstance("SHA-256").digest(did.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        var sb = new StringBuilder();
+        for (int i = 0; i < 16; i++) {
+            int bit = i * 5;
+            int v = ((h[bit / 8] & 0xff) << 8 | (h[bit / 8 + 1] & 0xff)) >> (11 - bit % 8) & 31;
+            if (i > 0 && i % 4 == 0) sb.append('-');
+            sb.append(alphabet.charAt(v));
+        }
+        return sb.toString();
     }
 
     // ── contacts ───────────────────────────────────────────────────────
 
-    private static int doContacts(Path dataDir, PrintStream out, PrintStream err,
+    private static int doContacts(Path dataDir, BufferedReader in, PrintStream out, PrintStream err,
                                    String sub, String[] rest) throws Exception {
         var file = dataDir.resolve("contacts");
         var book = ContactsBook.load(file);
@@ -163,16 +203,47 @@ public final class NamingAdminMain {
                 return 0;
             }
             case "add" -> {
-                if (rest.length < 2) {
-                    err.println("Usage: wyrd contacts add <alias> <did> [<default-label>]");
+                boolean verified = false;
+                var pos = new ArrayList<String>();
+                for (var a : rest) {
+                    if (a.equals("--verified")) verified = true; else pos.add(a);
+                }
+                if (pos.size() < 2) {
+                    err.println("Usage: wyrd contacts add <alias> <did> [<default-label>] [--verified]");
                     return 1;
                 }
-                var defaultLabel = rest.length >= 3 ? rest[2] : null;
-                book.add(rest[0], rest[1], defaultLabel);
+                var alias = pos.get(0);
+                var did = pos.get(1);
+                var defaultLabel = pos.size() >= 3 ? pos.get(2) : null;
+                // Validate before asking anything (throws on a bad alias, DID or label).
+                new ContactsBook.Contact(alias, did, defaultLabel);
+                if (book.get(alias).isPresent()) {
+                    err.println("[wyrd] " + I18n.get("naming.contacts.exists", alias));
+                    return 1;
+                }
+                // Verify first, save after (security review 2026-09-28): a DID copied from a message
+                // could be anyone's until the other household confirms it by a channel you trust.
+                out.println("[wyrd] " + I18n.get("naming.contacts.verify_intro", alias));
+                out.println("       " + I18n.get("naming.contacts.verify_code", checkCode(did)));
+                if (!verified) {
+                    if (in == null) {
+                        err.println("[wyrd] " + I18n.get("naming.contacts.verify_needed"));
+                        return 1;
+                    }
+                    out.print("       " + I18n.get("naming.contacts.verify_prompt") + " ");
+                    out.flush();
+                    var answer = in.readLine();
+                    verified = answer != null && Set.of("y", "yes", "s", "si", "sí", "はい")
+                        .contains(answer.trim().toLowerCase(Locale.ROOT));
+                    if (!verified) {
+                        out.println("[wyrd] " + I18n.get("naming.contacts.not_saved"));
+                        return 1;
+                    }
+                }
+                book.add(alias, did, defaultLabel);
                 book.save();
-                out.println("[wyrd] added contact: " + rest[0]);
-                out.println("       DID: " + rest[1]);
-                out.println("       (verify fingerprint out-of-band before relying on this contact)");
+                out.println("[wyrd] added contact: " + alias);
+                out.println("       DID: " + did);
                 return 0;
             }
             case "remove", "rm" -> {

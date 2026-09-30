@@ -12,7 +12,7 @@
 # NOT yet ported to Windows (honest stubs — use a Linux/macOS node, or the
 # REST API on :7070):
 #   daemon / relay-server / rendezvous / web / reseed / embed-migrate /
-#   embedding-model / verify-release / residency / connect / phone / bond /
+#   embedding-model / verify-release / residency / connect / bond /
 #   issue / voice / reset / nuke
 #
 # Conf + data dir mirror the bash CLI's model:
@@ -119,7 +119,7 @@ $V8Default = @(
 $GooseRepo    = "aaif-goose/goose"   # repo moved block/goose -> aaif-goose/goose
 $GooseTag     = "v1.50.1"            # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuRepo = "Wyrdsekai/codezaiku"
-$CodeZaikuTag  = "v0.3.6"             # pinned floor (matches coding-cli-bundle/manifest.json)
+$CodeZaikuTag  = "v0.3.10"            # pinned floor (matches coding-cli-bundle/manifest.json)
 $CodeZaikuDir  = Join-Path $DataDir "coding-cli-bundle\codezaiku"
 # The tarball carries its own top-level codezaiku/ dir, so the launcher lands
 # nested — same shape BackendExecutableResolver searches on the Java side.
@@ -261,6 +261,132 @@ function Get-IndexModel {
 # Null-safe property read on JSON objects (PSCustomObject) — Set-StrictMode makes
 # bare access on an absent property a terminating error, so every optional field
 # in REST/index payloads goes through here.
+# The hub's HTTPS, pinned: a server counts as the hub only when its certificate chains to the household
+# CA with the given SHA-256 fingerprint. Names are not checked: the pin is the identity. The check is
+# compiled C#: Windows PowerShell runs a certificate callback on a thread with no runspace, where a
+# script block cannot run, and pwsh 7's web cmdlets never call ServicePointManager's.
+function Initialize-WyrdHubHttps {
+    if ('WyrdHubHttps' -as [type]) { return }
+    $refs = @{}
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        Add-Type -AssemblyName System.Net.Http
+        $refs.ReferencedAssemblies = 'System.Net.Http'
+    }
+    Add-Type @refs -TypeDefinition @'
+using System;
+using System.Net.Http;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
+
+public static class WyrdHubHttps {
+    // "OK <days left>", "BADCERT <why>" or "DOWN <why>" for HTTPS on host:port.
+    public static string Probe(string host, int port, string caSha256, int timeoutMs) {
+        string pin = Pin(caSha256);
+        X509Certificate2 served = null;
+        string refused = null;
+        try {
+            using (TcpClient tcp = new TcpClient()) {
+                if (!tcp.ConnectAsync(host, port).Wait(timeoutMs)) return "DOWN timeout";
+                tcp.ReceiveTimeout = timeoutMs;
+                tcp.SendTimeout = timeoutMs;
+                RemoteCertificateValidationCallback check = delegate (object sender, X509Certificate cert, X509Chain presented, SslPolicyErrors errors) {
+                    if (cert == null) { refused = "no certificate"; return false; }
+                    served = new X509Certificate2(cert);
+                    refused = Refusal(served, presented, pin);
+                    return refused == null;
+                };
+                using (SslStream tls = new SslStream(tcp.GetStream(), false, check)) {
+                    tls.AuthenticateAsClient(host, null, Protocols(), false);
+                    return "OK " + (int)Math.Floor((served.NotAfter.ToUniversalTime() - DateTime.UtcNow).TotalDays);
+                }
+            }
+        } catch (Exception e) {
+            if (refused != null) return "BADCERT " + refused;
+            while (e.InnerException != null) e = e.InnerException;
+            return "DOWN " + e.GetType().Name;
+        }
+    }
+
+    // POSTs JSON and returns the answer's body. The body is sent only after the certificate checks out,
+    // so a household key never reaches another server. Throws on a refused certificate, no answer, or a
+    // status other than 2xx.
+    public static string PostJson(string url, string json, string caSha256, int timeoutMs) {
+        string pin = Pin(caSha256);
+        using (HttpClientHandler handler = new HttpClientHandler()) {
+            handler.SslProtocols = Protocols();
+            handler.ServerCertificateCustomValidationCallback = delegate (HttpRequestMessage m, X509Certificate2 cert, X509Chain presented, SslPolicyErrors errors) {
+                return cert != null && Refusal(cert, presented, pin) == null;
+            };
+            using (HttpClient http = new HttpClient(handler)) {
+                http.Timeout = TimeSpan.FromMilliseconds(timeoutMs);
+                http.DefaultRequestHeaders.ExpectContinue = false;
+                using (HttpResponseMessage answer = http.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json")).GetAwaiter().GetResult()) {
+                    string body = answer.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (!answer.IsSuccessStatusCode) throw new HttpRequestException("HTTP " + (int)answer.StatusCode);
+                    return body;
+                }
+            }
+        }
+    }
+
+    // Null when the served certificate chains to the pinned CA and is in date; otherwise why not.
+    static string Refusal(X509Certificate2 served, X509Chain presented, string pin) {
+        using (X509Chain chain = new X509Chain()) {
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+            chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+            if (presented != null) {
+                foreach (X509ChainElement el in presented.ChainElements) chain.ChainPolicy.ExtraStore.Add(el.Certificate);
+                chain.ChainPolicy.ExtraStore.AddRange(presented.ChainPolicy.ExtraStore);
+            }
+            chain.Build(served);
+            int n = chain.ChainElements.Count;
+            if (n < 2 || Sha256(chain.ChainElements[n - 1].Certificate.RawData) != pin) return "issued by " + served.Issuer;
+            foreach (X509ChainStatus st in chain.ChainStatus) {
+                if (st.Status != X509ChainStatusFlags.UntrustedRoot && st.Status != X509ChainStatusFlags.NoError) return st.Status.ToString();
+            }
+            return null;
+        }
+    }
+
+    // TLS 1.2 on .NET Framework, whose default may still be TLS 1.0; the system's choice elsewhere.
+    static SslProtocols Protocols() {
+        return Environment.Version.Major < 5 ? SslProtocols.Tls12 : SslProtocols.None;
+    }
+
+    static string Pin(string fingerprint) {
+        return (fingerprint ?? "").Replace(":", "").Trim().ToLowerInvariant();
+    }
+
+    static string Sha256(byte[] data) {
+        using (SHA256 sha = SHA256.Create()) {
+            return BitConverter.ToString(sha.ComputeHash(data)).Replace("-", "").ToLowerInvariant();
+        }
+    }
+}
+'@
+}
+
+# "OK <days left>", "BADCERT <why>" or "DOWN <why>" for HTTPS on this node's $Port, as the bash doctor reports it.
+function Test-HubHttps {
+    param([string]$Fingerprint, [int]$Port, [int]$TimeoutMs = 4000)
+    Initialize-WyrdHubHttps
+    return [WyrdHubHttps]::Probe('127.0.0.1', $Port, $Fingerprint, $TimeoutMs)
+}
+
+# POSTs $Body (JSON) to $Uri on the hub pinned by $Fingerprint and returns the answer as an object. Throws
+# when the certificate is not the household's (the body is never sent), on no answer, or on a non-2xx status.
+function Invoke-PinnedHubPost {
+    param([string]$Uri, [string]$Body, [string]$Fingerprint, [int]$TimeoutSec = 20)
+    Initialize-WyrdHubHttps
+    $answer = [WyrdHubHttps]::PostJson($Uri, $Body, $Fingerprint, $TimeoutSec * 1000)
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $null }
+    return ($answer | ConvertFrom-Json)
+}
+
 function Get-JProp {
     param($Obj, [string]$Name, $Default = $null)
     if ($null -ne $Obj) {
@@ -281,6 +407,61 @@ function Add-ModelManifestRecord {
                '","sha256":"' + $sha + '","source_url":"' + $SourceUrl + '","recorded_at":"' + $ts + '"}'
         Add-Content -Path (Join-Path $ModelsDir "models-manifest.jsonl") -Value $rec
     } catch { Write-Warn2 "manifest record failed: $_" }
+}
+
+# Where an index entry's file lives on this node: adapters beside the brain
+# (adapters\brain\<local_file>), everything else under models\ (parity with bin/wyrd).
+# An index entry's download addresses in order: the pinned Hugging Face link, the entry's url, its
+# mirror on wyrdsekai.org (parity with bin/wyrd _index_urls). Each is tried until one delivers a file
+# whose sha256 matches the index.
+function Get-ModelUrls {
+    param($Model)
+    $urls = @()
+    $repo = [string](Get-JProp $Model 'hf_repo'); $rev = [string](Get-JProp $Model 'hf_revision'); $pf = [string](Get-JProp $Model 'published_file')
+    if ($repo -and $rev -and $pf) { $urls += "https://huggingface.co/$repo/resolve/$rev/$pf" }
+    foreach ($k in @('url', 'mirror_url')) { $u = [string](Get-JProp $Model $k); if ($u -and ($urls -notcontains $u)) { $urls += $u } }
+    return $urls
+}
+
+# Fetch an index entry to $Dest.part, walking its addresses; a checksum mismatch discards the file and
+# tries the next. Returns the address that delivered it, or $null.
+function Invoke-IndexDownload {
+    param($Model, [string]$Part)
+    $sha = [string](Get-JProp $Model 'sha256')
+    foreach ($u in (Get-ModelUrls $Model)) {
+        Write-Info ("fetching from " + ($u -replace '^https://', ''))
+        Remove-Item $Part -ErrorAction SilentlyContinue
+        if (-not (Invoke-RobustDownload -Url $u -Dest $Part)) { Write-Warn2 ("mirror unavailable: " + ($u -replace '^https://', '')); continue }
+        if ($sha) {
+            $got = (Get-FileHash $Part -Algorithm SHA256).Hash.ToLower()
+            if ($got -ne $sha.ToLower()) { Write-Warn2 ("checksum mismatch from " + ($u -replace '^https://', '') + ", discarding and trying next mirror"); Remove-Item $Part -ErrorAction SilentlyContinue; continue }
+        }
+        return $u
+    }
+    Remove-Item $Part -ErrorAction SilentlyContinue
+    return $null
+}
+
+function Get-ModelLocalPath {
+    param($Model)
+    $lf = [string](Get-JProp $Model 'local_file')
+    if (-not $lf) { return $null }
+    if ([string](Get-JProp $Model 'kind') -eq 'adapter') { return (Join-Path $AdaptersDir ("brain\" + $lf)) }
+    return (Join-Path $ModelsDir $lf)
+}
+
+# brain\work.gguf is the honesty adapter copied in under the working-turn name. When the
+# honesty file is replaced and work.gguf was that same file, it follows; a work.gguf someone
+# put there themselves is left alone.
+function Sync-WorkAdapter {
+    param([string]$New, [string]$Old)
+    $work = Join-Path $AdaptersDir "brain\work.gguf"
+    if (-not (Test-Path $work) -or -not (Test-Path $Old)) { return }
+    try {
+        if ((Get-FileHash $work -Algorithm SHA256).Hash -ne (Get-FileHash $Old -Algorithm SHA256).Hash) { return }
+        Copy-Item -Force $New $work
+        Write-Info (_T 'brain.setup.linked_work')
+    } catch { Write-Warn2 "work adapter not refreshed: $_" }
 }
 
 function Add-ModelHistory {
@@ -328,10 +509,56 @@ function Get-SessionToken {
     return $null
 }
 
+# The login a call to this node's /api carries: the person's session, else the node's operator
+# token, which the node honours only from this machine (2026-09-28: /api refuses calls without one).
+function Get-ApiToken {
+    $t = Get-SessionToken
+    if ($t) { return $t }
+    $op = Join-Path $DataDir "operator.token"
+    if (Test-Path $op) {
+        $o = Get-Content $op -Raw -ErrorAction SilentlyContinue
+        if ($o) { return $o.Trim() }
+    }
+    return $null
+}
+
 function Get-AdminHeaders {
     $h = @{}
     if ($env:WYRDSEKAI_ADMIN_TOKEN) { $h['X-Wyrdsekai-Admin-Token'] = $env:WYRDSEKAI_ADMIN_TOKEN }
+    $t = Get-ApiToken
+    if ($t) { $h['Authorization'] = "Bearer $t" }
     return $h
+}
+
+# Every Invoke-RestMethod / Invoke-WebRequest to this node's /api carries that login unless the
+# call passes its own -Headers. Only this node's address gets it, never another service. (A
+# $PSDefaultParameterValues block cannot see the -Uri value, so these are thin wrappers.)
+function Get-WyrdApiLoginHeaders($a) {
+    $uri = $null
+    for ($i = 0; $i -lt $a.Count; $i++) {
+        $x = "$($a[$i])"
+        if ($x -ieq '-Headers') { return $null }
+        if ($x -ieq '-Uri' -and $i + 1 -lt $a.Count) { $uri = [string]$a[$i + 1] }
+    }
+    if (-not $uri) { return $null }
+    $port = if ($env:WYRDSEKAI_PORT) { $env:WYRDSEKAI_PORT } else { $RestPort }
+    $local = $uri.StartsWith("$(Get-ApiBase)/api/") -or
+        ($uri -match "^http://(localhost|127\.0\.0\.1):$port/(api/|metrics)") -or
+        ($uri -match '^https://(localhost|127\.0\.0\.1):7443/api/')
+    if (-not $local) { return $null }
+    $t = Get-ApiToken
+    if ($t) { return @{ Authorization = "Bearer $t" } }
+    return $null
+}
+function Invoke-RestMethod {
+    $h = Get-WyrdApiLoginHeaders $args
+    if ($h) { Microsoft.PowerShell.Utility\Invoke-RestMethod @args -Headers $h }
+    else { Microsoft.PowerShell.Utility\Invoke-RestMethod @args }
+}
+function Invoke-WebRequest {
+    $h = Get-WyrdApiLoginHeaders $args
+    if ($h) { Microsoft.PowerShell.Utility\Invoke-WebRequest @args -Headers $h }
+    else { Microsoft.PowerShell.Utility\Invoke-WebRequest @args }
 }
 
 # ── Conf load/save (KEY=VALUE env file) ───────────────────────────────────────
@@ -463,7 +690,7 @@ function Invoke-Relay {
     # Subcommands that forward verbatim to the Java entrypoint (args[0]=subcmd).
     $javaForwarded = @("join","register-nkey","re-enroll","re-register-existing",
                        "deregister","print-pubkey","phone-invite","ssh-enable",
-                       "ssh-disable","claim")
+                       "ssh-disable","claim","bind-zone","zone-add")
     if ($javaForwarded -contains $sub) {
         if ($sub -eq "join") { Write-Info "Joining relay-homed household..." }
         # Stream variant, NOT Invoke-WyrdJavaClass: these verbs print output
@@ -540,6 +767,50 @@ function Invoke-Relay {
             Write-Ok "Relay disabled. Apply: wyrd restart"
         }
         "leave" {
+            # Relay legs as {suffix → fields}: leg 0 is unsuffixed, then _2._N.
+            $legFields = @("URL","USER","TOKEN","FINGERPRINT","VISIBILITY","REGISTRATION_URL")
+            $legs = [System.Collections.Generic.List[object]]::new()
+            foreach ($sfx in @("","_2","_3","_4","_5","_6","_7","_8","_9")) {
+                if (-not $conf.Contains("WYRDSEKAI_RELAY_URL$sfx")) { continue }
+                $leg = [ordered]@{}
+                foreach ($f in $legFields) { if ($conf.Contains("WYRDSEKAI_RELAY_$f$sfx")) { $leg[$f] = $conf["WYRDSEKAI_RELAY_$f$sfx"] } }
+                $legs.Add($leg)
+            }
+            $leaveUrl = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+            $targets = if ($leaveUrl) { @($legs | Where-Object { $_["URL"] -eq $leaveUrl }) } else { @($legs) }
+            if ($leaveUrl -and $targets.Count -eq 0) {
+                Write-Warn2 "No configured relay leg matched URL: $leaveUrl (see: wyrd relay legs)"
+                return
+            }
+            # Remove each leg's registration on the relay itself (NKey-signed, or the leg's
+            # password proof) while its settings are still on file.
+            foreach ($leg in $targets) {
+                if (-not $leg["REGISTRATION_URL"]) {
+                    Write-Warn2 "No registration address on file for $($leg['URL']); the relay's record goes when the relay's clean-up removes it."
+                    continue
+                }
+                $dArgs = @("deregister","--registration-url",$leg["REGISTRATION_URL"])
+                if ($leg["FINGERPRINT"]) { $dArgs += @("--fingerprint",$leg["FINGERPRINT"]) }
+                $rcD = Invoke-WyrdJavaClassStream -Class "org.wyrdsekai.server.RelayNkeyAdminMain" -JavaArgs $dArgs
+                if ($rcD -eq 0) { Write-Ok "Removed this zone's registration on $($leg['REGISTRATION_URL'])." }
+                else { Write-Warn2 "The relay at $($leg['REGISTRATION_URL']) did not confirm the removal; its record goes when the relay's clean-up removes it." }
+            }
+            if ($leaveUrl) {
+                # Rewrite the remaining legs densely (leg 0, then _2.._N) so the Java reader sees no gap.
+                $kept = @($legs | Where-Object { $_["URL"] -ne $leaveUrl })
+                $lines = if (Test-Path $ConfFile) { Get-Content $ConfFile } else { @() }
+                $lines = @($lines | Where-Object { $_ -notmatch '^\s*WYRDSEKAI_RELAY_(URL|USER|TOKEN|FINGERPRINT|VISIBILITY|REGISTRATION_URL)(_\d+)?\s*=' })
+                $n = 0
+                foreach ($leg in $kept) {
+                    $sfx = if ($n -eq 0) { "" } else { "_$($n + 1)" }
+                    foreach ($f in $legFields) { if ($leg.Contains($f)) { $lines += "WYRDSEKAI_RELAY_$f$sfx=$($leg[$f])" } }
+                    $n++
+                }
+                if ($kept.Count -eq 0) { $lines = @($lines | Where-Object { $_ -notmatch '^\s*WYRDSEKAI_RELAY_ENABLED\s*=' }) }
+                Set-Content -Path $ConfFile -Value $lines -Encoding ASCII
+                Write-Ok "Left relay leg $leaveUrl (remaining legs renumbered). Apply: wyrd restart"
+                return
+            }
             # If SSH-over-relay is enabled, tear it down FIRST — while the
             # relay credentials still authorize the signed ssh-disable
             # (parity with bin/wyrd, found live 2026-07-30: leaving stripped
@@ -549,8 +820,10 @@ function Invoke-Relay {
                 Write-Info "SSH-over-relay is enabled - disabling it before leaving..."
                 Invoke-WyrdJavaClass -Class "org.wyrdsekai.server.RelayNkeyAdminMain" -JavaArgs @("ssh-disable") | Out-Null
             }
-            Write-Info "Deregistering from relay (best-effort)..."
-            Invoke-WyrdJavaClass -Class "org.wyrdsekai.server.RelayNkeyAdminMain" -JavaArgs @("deregister") | Out-Null
+            if ($targets.Count -eq 0) {
+                Write-Info "Deregistering from relay (best-effort)..."
+                Invoke-WyrdJavaClass -Class "org.wyrdsekai.server.RelayNkeyAdminMain" -JavaArgs @("deregister") | Out-Null
+            }
             if (Test-Path $ConfFile) {
                 $kept = Get-Content $ConfFile | Where-Object { $_ -notmatch '^\s*WYRDSEKAI_(RELAY|SSH_TUNNEL)_' }
                 Set-Content -Path $ConfFile -Value $kept -Encoding ASCII
@@ -563,17 +836,18 @@ function Invoke-Relay {
         { $_ -in @("legs","list-legs") } {
             Write-Host "Relay legs:"
             if ($conf.Contains('WYRDSEKAI_RELAY_URL')) { Write-Host ("  [0] {0}" -f $conf['WYRDSEKAI_RELAY_URL']) }
-            $conf.Keys | Where-Object { $_ -match '^WYRDSEKAI_RELAY_LEG_(\d+)_URL$' } | Sort-Object | ForEach-Object {
+            $conf.Keys | Where-Object { $_ -match '^WYRDSEKAI_RELAY_URL_(\d+)$' } | Sort-Object | ForEach-Object {
                 $n = $Matches[1]; Write-Host ("  [$n] {0}" -f $conf[$_])
             }
         }
         default {
             Write-Host "usage: wyrd relay <subcommand>"
             Write-Host "  join <wyrdjoin://host:port/code.cafp> | <host[:port]> <code>   join a relay-homed household"
-            Write-Host "  join <host> --fingerprint <ca_fp>                             self-serve on a commons relay"
-            Write-Host "       (no invite code; the fingerprint comes from the relay's web page — on Windows"
-            Write-Host "        --fingerprint is REQUIRED for self-serve; there is no interactive confirm)"
-            Write-Host "  status | disable | leave | legs                               manage the relay leg"
+            Write-Host "  join <host> [--fingerprint <ca_fp>]                           self-serve on a commons relay"
+            Write-Host "       (no invite code; the fingerprint comes from the relay's web page. Without it the"
+            Write-Host "        relay's CA is pinned on first use and shown: compare it with the relay's page)"
+            Write-Host "  status | disable | leave [<url>] | legs                       manage the relay legs"
+            Write-Host "  bind-zone | zone-add <U...|hh-...>                            zone binding on the relay"
             Write-Host "  register-nkey <wyrdrelay://...> | re-enroll | re-register-existing | deregister"
             Write-Host "  print-pubkey | phone-invite | ssh-enable | ssh-disable | claim <owner-token>"
             Write-Host ""
@@ -1145,6 +1419,13 @@ function Invoke-Coding {
                 default { Write-Err2 "Installable on Windows: codezaiku (default), goose, claude-sdk, gemini-cli, cline, continue, opencode. openhands needs Docker; devin is config-only."; exit 2 }
             }
         }
+        "update" {
+            # CodeZaiku updates itself (its update contract): we ask its own updater, never unpack over its folder.
+            $what = if ($Rest.Count -ge 2) { $Rest[1] } else { "codezaiku" }
+            if ($what -ne 'codezaiku') { Write-Err2 "On Windows, 'wyrd coding update' asks codezaiku to update itself; reinstall others with 'wyrd coding install <backend> --force'."; exit 2 }
+            if (-not (Test-Path $CodeZaikuBat)) { Write-Err2 "CodeZaiku is not installed here (wyrd coding install codezaiku)."; exit 1 }
+            Invoke-SiblingUpdate 'CodeZaiku' $CodeZaikuBat 'Wyrdsekai/codezaiku' '--version'
+        }
         "use" {
             if ($Rest.Count -lt 2) { Write-Err2 "usage: wyrd coding use <backend>"; exit 2 }
             $b = $Rest[1] -replace '[^A-Za-z0-9_-]',''
@@ -1153,7 +1434,7 @@ function Invoke-Coding {
             Write-Ok "coding backend -> $b  ($ConfFile)"
             Write-Info "Restart to apply:  wyrd restart"
         }
-        default { Write-Err2 "usage: wyrd coding [status|install <backend> [--force]|use <backend>]"; exit 2 }
+        default { Write-Err2 "usage: wyrd coding [status|install <backend> [--force]|update codezaiku|use <backend>]"; exit 2 }
     }
 }
 
@@ -1273,8 +1554,183 @@ function Get-LlamaPid {
     return $null
 }
 
+# ── Serving profile `single-sparse`: one large sparse model serves every lane ──
+# Parity with bin/wyrd (_serving_profile / plan_brain_residency / _start_brain_compose).
+# Opt-in through WYRDSEKAI_SERVING_PROFILE=single-sparse. The two-model stack (drive +
+# voice) is the default and is untouched by any of this.
+$BrainModelDefault = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+$BrainCtx          = "32768"
+$AdaptersDir       = Join-Path $DataDir "adapters"
+# Residency figures for the default brain model — the same constants as bin/wyrd: all
+# routed experts in system RAM = ~3.4 GB of VRAM; each layer's experts moved to the card
+# costs ~0.47 GB of VRAM and frees the same from RAM. 40 layers, 22 GB file.
+$BrainLayers         = 40
+$BrainSpineVramMb    = 3500
+$BrainLayerMb        = 480
+$BrainFileMb         = 22200
+$BrainVramHeadroomMb = 2300   # context, the adapters, the desktop
+$BrainRamFloorMb     = 9000   # the server, the OS, the embedder
+
+function Get-ServingProfile {
+    # 'single-sparse' or 'two-model'. The conf file is read first because Import-ConfEnv
+    # lets the conf win over the inherited environment; verbs that never call
+    # Import-ConfEnv then report the same profile that `wyrd start` will use.
+    $v = $null
+    $conf = Get-Conf
+    if ($conf.Contains('WYRDSEKAI_SERVING_PROFILE')) { $v = $conf['WYRDSEKAI_SERVING_PROFILE'] }
+    if (-not $v) { $v = $env:WYRDSEKAI_SERVING_PROFILE }
+    if ($v -and ([string]$v).Trim().ToLower() -eq 'single-sparse') { return 'single-sparse' }
+    return 'two-model'
+}
+
+# Get-BrainResidencyPlan -VramMb <int> -RamMb <int>  ->  'gpu-full' | '<N>' | 'all' | 'not-viable'
+# N is the value for --n-cpu-moe: the routed experts of the first N layers stay in system
+# RAM. Pure arithmetic, identical to bin/wyrd plan_brain_residency, so both are table-tested
+# against the same rows.
+function Get-BrainResidencyPlan {
+    param([int]$VramMb = 0, [int]$RamMb = 0)
+    $room = $VramMb - $BrainSpineVramMb - $BrainVramHeadroomMb
+    if ($room -lt 0) { return 'not-viable' }
+    $onGpu = [int][math]::Floor($room / $BrainLayerMb)
+    if ($onGpu -gt $BrainLayers) { $onGpu = $BrainLayers }
+    $inRamMb = $BrainFileMb - $BrainSpineVramMb - ($onGpu * $BrainLayerMb)
+    if ($inRamMb -lt 0) { $inRamMb = 0 }
+    if ($RamMb -lt ($inRamMb + $BrainRamFloorMb)) { return 'not-viable' }
+    if ($onGpu -ge $BrainLayers) { return 'gpu-full' }
+    if ($onGpu -eq 0) { return 'all' }
+    return [string]($BrainLayers - $onGpu)
+}
+
+function Get-BrainVramMb {
+    # The largest single NVIDIA card: the brain runs on one. 0 without nvidia-smi.
+    $max = 0
+    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+        try {
+            $rows = & nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null
+            foreach ($row in @($rows)) {
+                $n = 0
+                if ([int]::TryParse(([string]$row).Trim(), [ref]$n) -and $n -gt $max) { $max = $n }
+            }
+        } catch {}
+    }
+    return $max
+}
+
+# The VRAM a plan may use now: the largest card less what is already in use on it (nothing of
+# ours runs at start), no more than the steward's ceiling WYRDSEKAI_BRAIN_VRAM_CAP_MB.
+function Get-BrainVramAvailableMb {
+    $total = Get-BrainVramMb; $used = 0
+    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+        try {
+            $rows = & nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>$null
+            foreach ($row in @($rows)) { $n = 0; if ([int]::TryParse(([string]$row).Trim(), [ref]$n) -and $n -gt $used) { $used = $n } }
+        } catch {}
+    }
+    $avail = $total - $used; if ($avail -lt 0) { $avail = 0 }
+    $cap = 0; $v = $null
+    try { $conf = Get-Conf; if ($conf.Contains('WYRDSEKAI_BRAIN_VRAM_CAP_MB')) { $v = $conf['WYRDSEKAI_BRAIN_VRAM_CAP_MB'] } } catch {}
+    if (-not $v) { $v = $env:WYRDSEKAI_BRAIN_VRAM_CAP_MB }
+    if ($v -and [int]::TryParse(([string]$v).Trim(), [ref]$cap) -and $cap -gt 0 -and $avail -gt $cap) { $avail = $cap }
+    return $avail
+}
+
+function Get-BrainRamMb {
+    try {
+        $bytes = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory
+        return [int][math]::Floor([double]$bytes / 1MB)
+    } catch { return 0 }
+}
+
+function Get-BrainModelPath {
+    $name = if ($env:LLAMA_BRAIN_MODEL) { $env:LLAMA_BRAIN_MODEL } else { $BrainModelDefault }
+    return (Join-Path $ModelsDir $name)
+}
+
+# Start the single brain on the drive port. Returns $true when it is up or starting, $false
+# when this node cannot run it (the caller falls back to the two-model stack). It occupies
+# the drive port, so it reuses the drive server's PID and log files and the existing
+# stop/status code covers it unchanged.
+function Start-BrainServer {
+    $modelPath = Get-BrainModelPath
+    if (-not (Test-Path $modelPath)) {
+        Write-Warn2 (_T 'brain.start.model_missing' $modelPath)
+        return $false
+    }
+    # An explicit LLAMA_CPU_MOE overrides the planner (all|on, 0|none, or a layer count).
+    $plan = ([string]$env:LLAMA_CPU_MOE).Trim().ToLower()
+    if ($plan -and $plan -notin @('all','on','0','none','gpu-full') -and $plan -notmatch '^\d+$') {
+        Write-Warn2 "LLAMA_CPU_MOE='$plan' is not all|on|0|none|<N> - using the residency planner instead."
+        $plan = ''
+    }
+    if (-not $plan) {
+        $vram = Get-BrainVramAvailableMb; $ram = Get-BrainRamMb
+        $plan = Get-BrainResidencyPlan -VramMb $vram -RamMb $ram
+        if ($plan -eq 'not-viable') {
+            Write-Warn2 (_T 'brain.start.not_viable' "$vram" "$ram")
+            return $false
+        }
+    }
+    # Already serving on the drive port: leave it be (`wyrd restart` applies a profile change).
+    if ((Get-LlamaPid -File $LlamaPidFile) -or (Test-PortListening -Port $DrivePort)) { return $true }
+
+    $moeArgs = @()
+    if ($plan -in @('all','on')) { $moeArgs = @("--cpu-moe") }
+    elseif ($plan -notin @('0','none','gpu-full')) { $moeArgs = @("--n-cpu-moe", $plan) }
+
+    # --lora-scaled takes FNAME:SCALE, the same shape that breaks --control-vector-scaled on
+    # a Windows drive-letter colon (C:\...gguf:1.0). Same fix as the voice server: run with
+    # the working directory = the adapters dir and pass paths relative to it. Order fixes
+    # the adapter ids the server reports: 0 = generic (every request), 1 = the night's
+    # adapter (loaded at scale 0, raised per request). The night's adapter is only loaded
+    # on top of the honesty adapter.
+    $loraArgs = @()
+    # Adapter 0 is the floor: the species floor when the node has it, else the honesty adapter.
+    $floor = $null
+    if (Test-Path (Join-Path $AdaptersDir "brain\species.gguf")) { $floor = "brain\species.gguf" }
+    elseif (Test-Path (Join-Path $AdaptersDir "brain\honesty.gguf")) { $floor = "brain\honesty.gguf" }
+    if ($floor) {
+        $loraArgs += @("--lora-scaled", "$($floor):1.0")
+        # The styled species adapter: raised per turn by her state (the register dial); loads at 0.
+        if (Test-Path (Join-Path $AdaptersDir "brain\styled.gguf")) {
+            $loraArgs += @("--lora-scaled", "brain\styled.gguf:0.0")
+        }
+        # The working-turn adapter: raised on the turns that call tools, zeroed when she speaks; loads at 0.
+        if (Test-Path (Join-Path $AdaptersDir "brain\work.gguf")) {
+            $loraArgs += @("--lora-scaled", "brain\work.gguf:0.0")
+        }
+        if (Test-Path (Join-Path $AdaptersDir "brainwrite\current.gguf")) {
+            $loraArgs += @("--lora-scaled", "brainwrite\current.gguf:0.0")
+        }
+    } else {
+        Write-Warn2 (_T 'brain.start.no_generic_adapter' (Join-Path $AdaptersDir "brain\honesty.gguf"))
+    }
+
+    # A voice server left over from the two-model stack holds the same card.
+    $vp = Get-LlamaPid -File $VoicePidFile
+    if ($vp) {
+        Stop-Process -Id $vp -Force -ErrorAction SilentlyContinue
+        Remove-Item $VoicePidFile -ErrorAction SilentlyContinue
+    }
+
+    $ngl = if ($env:WYRDSEKAI_GPU_LAYERS) { $env:WYRDSEKAI_GPU_LAYERS } else { "99" }
+    Write-Info (_T 'brain.start.starting' (Split-Path $modelPath -Leaf) $plan)
+    # Same flags as the llama-brain compose service, minus --mlock (not used on Windows)
+    # and bound to loopback like the other native servers here. Two slots on one shared
+    # context pool (-np 2 --kv-unified): a one-token typed question is answered while the
+    # other slot writes a long reply, and either slot may use the whole -c window.
+    $brainArgs = @("-m", "`"$modelPath`"", "--host", "127.0.0.1", "--port", "$DrivePort", "-c", $BrainCtx, "-np", "2", "--kv-unified", "--cache-ram", $CacheRam, "-ngl", $ngl, "--batch-size", "2048", "--ubatch-size", "2048", "--jinja", "--reasoning", "off", "--reasoning-budget", "0", "--flash-attn", "on", "--metrics") + $moeArgs + $loraArgs
+    $brainCwd = if (Test-Path $AdaptersDir) { $AdaptersDir } else { $DataDir }
+    $bp = Start-Process -FilePath $LlamaServerExe -ArgumentList $brainArgs -WorkingDirectory $brainCwd -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput $LlamaLog -RedirectStandardError "$LlamaLog.err"
+    Set-Content -Path $LlamaPidFile -Value $bp.Id -Encoding ASCII
+    return $true
+}
+
 function Start-LlamaServer {
     if (-not (Test-Path $LlamaServerExe)) { return }   # not installed; nothing to start
+    # Serving profile single-sparse: one model on the drive port instead of the drive +
+    # voice pair. A node that cannot run it falls through to the pair below.
+    if ((Get-ServingProfile) -eq 'single-sparse' -and (Start-BrainServer)) { return }
     $model = Resolve-ModelPath
     if (-not $model) { Write-Warn2 "No model in $ModelsDir — run 'wyrd inference install'. Skipping local inference."; return }
 
@@ -1972,6 +2428,14 @@ function Invoke-Inference {
         }
         "start" { Import-ConfEnv; Start-LlamaServer }
         "stop"  { Stop-LlamaServer; Write-Ok "Local inference stopped." }
+        "restart" {
+            # Stop and start the model servers so a new model, context size or flag takes effect.
+            Write-Info (_T 'inference.restart.stopping')
+            Stop-LlamaServer
+            Start-Sleep -Seconds 1
+            Import-ConfEnv; Start-LlamaServer
+            Write-Ok (_T 'inference.restart.done')
+        }
         "remote" {
             # wyrd inference remote <url> - point companions at another node's llama-server
             # or an Ollama. Probed first; saved under the key the server reads
@@ -2036,8 +2500,58 @@ function Invoke-Inference {
                 }
             }
         }
-        default { Write-Err2 "usage: wyrd inference [status|install [cpu|vulkan|cuda] [--skip-model]|start|stop|remote <url>|pause [dur] [reason]|resume|share [on|off|status]]"; exit 2 }
+        default { Write-Err2 "usage: wyrd inference [status|install [cpu|vulkan|cuda] [--skip-model]|start|stop|restart|remote <url>|pause [dur] [reason]|resume|share [on|off|status]]"; exit 2 }
     }
+}
+
+# W2 (parity with bin/wyrd doctor): HTTPS on :7443 with the household
+# certificate and its expiry, the household bus's TLS and login, and every setting that keeps an old
+# plain door open during the transition.
+function Invoke-DoctorHouseholdTls {
+    param($ServerPid)
+    Write-Host (_T 'doctor.tls_header')
+    $conf = Get-Conf
+    $tlsDir = Join-Path $DataDir "tls"
+    $caPem = Join-Path $tlsDir "household-ca.pem"
+    if (-not (Test-Path $caPem)) {
+        Write-Warn2 ((_T 'doctor.tls_no_ca' $tlsDir).Trim())
+    } else {
+        $ca = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList $caPem
+        $fp = ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($ca.RawData))).Replace('-', '').ToLower()
+        Write-Host (_T 'doctor.tls_ca' $fp)
+        $tlsPort = if ($conf['WYRDSEKAI_TLS_PORT']) { $conf['WYRDSEKAI_TLS_PORT'] } else { '7443' }
+        $leafPem = Join-Path $tlsDir "household-leaf.pem"
+        if ($conf['WYRDSEKAI_TLS_ENABLED'] -eq 'false') {
+            Write-Warn2 ((_T 'doctor.tls_https_off').Trim())
+        } elseif ($ServerPid -and (Test-Path $leafPem)) {
+            $probe = Test-HubHttps -Fingerprint $fp -Port ([int]$tlsPort)
+            if ($probe -like 'OK *') {
+                $days = [int]$probe.Substring(3)
+                if ($days -lt 30) { Write-Warn2 ((_T 'doctor.tls_https_expiring' $tlsPort $days).Trim()) }
+                else { Write-Host (_T 'doctor.tls_https_ok' $tlsPort $days) }
+            } elseif ($probe -like 'BADCERT *') {
+                Write-Warn2 ((_T 'doctor.tls_https_badcert' $tlsPort $probe.Substring(8)).Trim())
+            } else {
+                Write-Warn2 ((_T 'doctor.tls_https_down' $tlsPort).Trim())
+            }
+        }
+    }
+    try {
+        $v = Invoke-RestMethod -Uri "http://127.0.0.1:8222/varz" -TimeoutSec 3
+        if ($v.auth_required) { Write-Host (_T 'doctor.tls_bus_auth_on') } else { Write-Err2 ((_T 'doctor.tls_bus_auth_off').Trim()) }
+        if ($v.tls_required) { Write-Host (_T 'doctor.tls_bus_tls_on') } else { Write-Warn2 ((_T 'doctor.tls_bus_tls_off').Trim()) }
+    } catch { }
+    $plain = [ordered]@{
+        'WYRDSEKAI_HTTP_LAN_PLAINTEXT' = 'doctor.tls_plain_http'
+        'WYRDSEKAI_NATS_LAN_PLAINTEXT' = 'doctor.tls_plain_bus'
+        'WYRDSEKAI_TUNNEL_ALLOW_PLAINTEXT' = 'doctor.tls_plain_tunnel'
+        'WYRDSEKAI_RELAY_ALLOW_PLAINTEXT_REQUESTS' = 'doctor.tls_plain_requests'
+    }
+    foreach ($k in $plain.Keys) {
+        if ($conf[$k] -eq 'true') { Write-Warn2 ((_T 'doctor.tls_plain_setting' $k (_T $plain[$k])).Trim()) }
+    }
+    $hb = $conf['WYRDSEKAI_HTTP_BIND']
+    if ($hb -and $hb -notmatch '^(127\.|localhost$|::1$)') { Write-Warn2 ((_T 'doctor.tls_plain_setting' 'WYRDSEKAI_HTTP_BIND' (_T 'doctor.tls_plain_http')).Trim()) }
 }
 
 function Invoke-Doctor {
@@ -2076,6 +2590,7 @@ function Invoke-Doctor {
         } catch { }
     }
     Write-Host ("  port $RestPort   : {0}" -f $(if (Test-PortListening) { "listening" } else { "free" }))
+    Invoke-DoctorHouseholdTls $serverPid
     # Releases: this node, and the two programs it leans on
     if ((Get-UpdateMode) -ne 'off') {
         $inst = Get-InstalledRelease; $lat = Get-LatestRelease $ReleaseRepo
@@ -2096,6 +2611,13 @@ function Invoke-Doctor {
             else { Write-Host ("  researchzosho: {0}" -f (_T 'doctor.sibling' 'researchzosho' $(if ($rzv) { $rzv } else { '?' }) $(if ($rzl) { $rzl } else { '?' }))) }
         }
     }
+    # The library's model: sharing the companions' brain is the default. Said as information, with the
+    # command that gives it a model of its own; never a warning.
+    $rzg = Get-ResearchZoshoCmd
+    if ($rzg) {
+        $sugg = @(Get-RzGpuSuggestion $rzg)
+        for ($i = 0; $i -lt $sugg.Count; $i++) { Write-Host ("{0}{1}" -f $(if ($i -eq 0) { "  library      : " } else { "                 " }), $sugg[$i]) }
+    }
 }
 
 function Invoke-Help {
@@ -2110,7 +2632,7 @@ Lifecycle:
   stop                  stop the server
   restart               stop then start
   status                process + REST health + config summary
-  log                   tail -f the server log
+  log | logs            tail -f the server log
   version [--mesh]      installed build (from the jar); --mesh = peers too
   update [status]       this release, the latest, the mode (WYRDSEKAI_UPDATE = check|auto|off)
   update now [VER] [--yes]  download the latest (or VER) .msi from the GitHub release, verify, install
@@ -2129,6 +2651,8 @@ Data:
   recover <key> <pass>  reset the steward password via the recovery key
   soul list | rename <old> <new> | archive <name> [why]
                         the souls this node keeps (rename/archive with the server stopped)
+  seed generate [<companion>] [--out <file>] | verify <file> | restore <file>
+                        the Recovery Seed: a sealed copy that brings a companion back (steward only)
 
 Visitors (the MCP door):
   visitors [list]                      who is in, as what, through which door
@@ -2145,12 +2669,14 @@ Rooms (steward):
 Inference:
   inference status                     show backend + local llama state
   inference install [cpu|vulkan|cuda]  GPU-detect, fetch llama.cpp + model, enable local
-  inference start | stop               manage the local llama-server(s)
+  inference start | stop | restart     manage the local llama-server(s)
   inference remote <url>               point companions at a remote llama-server or Ollama (probed first)
   inference pause [90s|30m|2h|1d] [why] borrow the GPU: companions are told once and hold still
   inference resume                     give it back early
   model [status|verify|update <id>|rollback <id>|check|history]
                                        release-index model lifecycle (models-index.json)
+  brain status|plan|setup|enable|disable
+                                       single-model serving profile: one large sparse model on the drive port (opt-in)
 
 Coding:
   coding status                        show default backend + goose state
@@ -2160,6 +2686,7 @@ Researcher (ResearchZosho, the research librarian):
   researcher link [url] [--token T]    connect to a librarian already running (default http://127.0.0.1:4649);
                  [--wait MIN]          without a token it asks the owner to be let in and waits for the answer
   researcher status                    what is installed, registered, and answering
+  researcher gpu [<machine>|shared]    where the library's model runs; a model on another machine, or the brain again
   researcher update                    the librarian's own updater: latest release, verified, restarted
 Items:
   items check [dir...]                 every item's world.* calls against the API this build serves
@@ -2181,6 +2708,8 @@ Household / federation:
   federate <propose|accept|revoke|status [--mesh]|list|join|code|household-key>
   invite | key | journal | recipes | library
   login | logout                       persist/clear a steward session token
+  phone invite [--relay <url>] [--fingerprint <fp>]
+                                       pair the mobile app: prints a QR and a wyrdphone:// link
 
 Housekeeping:
   doctor                prereqs, ports, health
@@ -2189,7 +2718,7 @@ Housekeeping:
 
 Not yet on Windows (use a Linux/macOS node or the REST API on :$RestPort):
   daemon  relay-server  rendezvous  web  reseed  embed-migrate  embedding-model
-  verify-release  residency  connect  phone  bond  issue  voice  reset  nuke
+  verify-release  residency  connect  bond  issue  voice  reset  nuke
 
 Data dir : $DataDir
 Config   : $ConfFile
@@ -2227,7 +2756,10 @@ function Invoke-Household {
                     return
                 }
             }
-            if ($resp -and $resp.key) { Write-Host $resp.key }
+            # The join key is <key>.<home_ca_fp>: the joining machine checks it reached this home
+            # (its certificate) before it sends the key ( W2).
+            if ($resp -and $resp.join_key) { Write-Host $resp.join_key }
+            elseif ($resp -and $resp.key) { Write-Host $resp.key }
             else { Write-Err2 "No household key in server response." }
         }
         "join" { $script:Rest = $Rest[1..($Rest.Count-1)]; Invoke-Join }
@@ -2294,7 +2826,7 @@ function Invoke-Backup {
         $p = Join-Path $DataDir $f
         if (Test-Path $p) { Copy-Item $p -Destination $backupPath -Force }
     }
-    foreach ($d in @("search", "lucene", "souls")) {
+    foreach ($d in @("search", "lucene", "souls", "tls", "nats")) {
         $p = Join-Path $DataDir $d
         if (Test-Path $p) {
             Copy-Item $p -Destination (Join-Path $backupPath $d) -Recurse -Force
@@ -2528,12 +3060,73 @@ function Install-ReleaseArtifact([string]$Path) {
     Write-Info (_T 'update.done'); return $true
 }
 
+# One sibling, by its own update contract (2026-09-28). Wyrdsekai asks; it never downloads a release,
+# never unpacks, moves or deletes anything in the sibling's folder, and holds none of its locks.
+#   update --json       status, changes nothing; ask only when newer and canUpdate, and not updating
+#   update now --json   one JSON document on stdout (progress on stderr); exit 0 updated or current,
+#                       75 another update is running, 3 cannot update here, 1 failed, 2 usage
+# A release from before the contract has no --json: its installed version against the latest release,
+# then a plain `update now` (exit 0 updated, 1 anything else).
+function Invoke-SiblingUpdate([string]$Name, [string]$Bin, [string]$Repo, [string]$VersionArg) {
+    $st = $null
+    try {
+        $raw = & $Bin update --json 2>$null
+        if ($LASTEXITCODE -eq 0) { $st = ($raw | Out-String) | ConvertFrom-Json }
+    } catch { $st = $null }
+    if ($st -and ($st.PSObject.Properties.Name -contains 'installed')) {
+        if ($st.updating -eq $true) { Write-Info (_T 'update.sibling.busy' $Name); return }
+        if ($st.newer -ne $true) { Write-Info (_T 'update.sibling.current' $Name $st.installed); return }
+        if ($st.canUpdate -ne $true) { Write-Warn2 (_T 'update.sibling.cannot' $Name $st.mode $st.root); return }
+        Write-Info (_T 'update.sibling.updating' $Name $st.installed $st.latest)
+        # Its progress goes to stderr: under "Stop", Windows PowerShell 5.1 can make that a
+        # terminating error once output is redirected, and the exit code would never be read.
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $out = & $Bin update now --json; $rc = $LASTEXITCODE } finally { $ErrorActionPreference = $prevEAP }
+        $res = $null; try { $res = ($out | Out-String) | ConvertFrom-Json } catch { }
+        $note = if ($res -and $res.note) { $res.note } else { "exit $rc" }
+        switch ($rc) {
+            0 {
+                if ($res -and $res.to -and ($res.to -ne $res.from)) {
+                    if ($res.finishesAfterExit -eq $true) { Write-Info (_T 'update.sibling.finishing' $Name $res.from $res.to) }
+                    else { Write-Ok (_T 'update.sibling.updated' $Name $res.from $res.to) }
+                } else { Write-Info (_T 'update.sibling.current' $Name $st.installed) }
+            }
+            75 { Write-Info (_T 'update.sibling.busy' $Name) }
+            3 { Write-Warn2 (_T 'update.sibling.cannot' $Name $st.mode $note) }
+            default { Write-Warn2 (_T 'update.sibling.failed' $Name $st.installed $note) }
+        }
+        return
+    }
+    # Before the contract.
+    $v = $null; try { $v = ((& $Bin $VersionArg 2>$null | Out-String) -replace '[^\d.]', ' ').Trim().Split(' ')[0] } catch { }
+    $l = Get-LatestRelease $Repo -Fresh
+    if (-not $v -or -not $l) { Write-Warn2 (_T 'update.sibling.unknown' $Name); return }
+    if (-not (Test-VersionNewer $l $v)) { Write-Info (_T 'update.sibling.current' $Name $v); return }
+    Write-Info (_T 'update.sibling.updating' $Name $v $l)
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & $Bin update now | Out-Host; $rc = $LASTEXITCODE } finally { $ErrorActionPreference = $prevEAP }
+    if ($rc -eq 0) { Write-Ok (_T 'update.sibling.updated' $Name $v $l) }
+    else { Write-Warn2 (_T 'update.sibling.failed' $Name $v '') }
+}
+
+# `wyrd update now` asks the siblings a household runs beside the node — CodeZaiku (the coding
+# backend) and ResearchZosho (the librarian) — whether they are behind, and asks each one's own
+# updater to update it. A person running it is the person asking; the node's automatic update on
+# Windows only stages Wyrdsekai. WYRDSEKAI_UPDATE_SIBLINGS=0 or --no-siblings leaves them alone.
+function Update-Siblings {
+    if ($env:WYRDSEKAI_UPDATE_SIBLINGS -eq '0') { Write-Info (_T 'update.sibling.skipped'); return }
+    if (Test-Path $CodeZaikuBat) { Invoke-SiblingUpdate 'CodeZaiku' $CodeZaikuBat 'Wyrdsekai/codezaiku' '--version' }
+    $rz = Get-ResearchZoshoCmd
+    if ($rz) { Invoke-SiblingUpdate 'ResearchZosho' $rz 'Wyrdsekai/researchzosho' 'version' }
+}
+
 function Invoke-Update {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
     $repoRoot = Join-Path $AppDir "..\.."
     $sourceMode = (Test-Path (Join-Path $repoRoot ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)
     switch ($sub) {
         "status" { Show-UpdateStatus; return }
+        "siblings" { Update-Siblings; return }
         "auto" {
             $on = if ($Rest.Count -ge 2) { $Rest[1] } else { "" }
             if ($on -eq 'on') { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null; Set-ConfKey -Key 'WYRDSEKAI_UPDATE' -Value 'auto'; Write-Ok (_T 'update.auto.on' (Get-UpdateWindow)) }
@@ -2563,7 +3156,7 @@ function Invoke-Update {
                 return
             }
             $want = $null; $yes = $false
-            foreach ($a in $Rest[1..($Rest.Count)]) { if ($a -eq '--yes' -or $a -eq '-y' -or $a -eq '-Yes') { $yes = $true } elseif ("$a" -match '^\d') { $want = "$a" } }
+            foreach ($a in $Rest[1..($Rest.Count)]) { if ($a -eq '--yes' -or $a -eq '-y' -or $a -eq '-Yes') { $yes = $true } elseif ($a -eq '--no-siblings') { $env:WYRDSEKAI_UPDATE_SIBLINGS = '0' } elseif ("$a" -match '^\d') { $want = "$a" } }
             $installed = Get-InstalledRelease
             if (-not $want) {
                 Write-Info (_T 'update.now.resolving')
@@ -2571,13 +3164,15 @@ function Invoke-Update {
                 if (-not $want) { Write-Err2 (_T 'update.now.no_latest'); exit 1 }
             }
             if (-not (Test-ReleaseVersion $want)) { Write-Err2 "not a release version: $want"; exit 1 }
-            if ((Test-ReleaseVersion $installed) -and $want -eq $installed) { Write-Info (_T 'update.now.already' $want); return }
+            if ((Test-ReleaseVersion $installed) -and $want -eq $installed) { Write-Info (_T 'update.now.already' $want); Update-Siblings; return }
             if (-not $yes) {
                 $ans = Read-Host ((_T 'update.now.confirm' $want $installed) + " [y/N]")
                 if ($ans -notmatch '^[Yy]') { Write-Info (_T 'update.now.cancelled'); return }
             }
             $f = Get-ReleaseArtifact $want; if (-not $f) { exit 1 }
             if (-not (Install-ReleaseArtifact $f)) { exit 1 }
+            # The siblings through the launcher just installed: its sibling step is the current one.
+            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $AppDir 'wyrd.ps1') update siblings
             return
         }
         default {
@@ -2586,7 +3181,7 @@ function Invoke-Update {
                 Write-Err2 (_T 'update.unknown_artifact' $sub); exit 1
             }
             if ($sourceMode) { $script:Rest = @('now'); Invoke-Update; return }
-            Write-Err2 "usage: wyrd update [status | now [VERSION] [--yes] | auto on|off | stage | <file.msi>]"; exit 2
+            Write-Err2 "usage: wyrd update [status | now [VERSION] [--yes] [--no-siblings] | siblings | auto on|off | stage | <file.msi>]"; exit 2
         }
     }
 }
@@ -2689,8 +3284,8 @@ function Invoke-Model {
                     Write-Host ("  {0,-24} {1,-28} (bundled/informational)" -f $mid, $ver)
                     continue
                 }
-                $path = Join-Path $ModelsDir $lf
-                if (-not (Test-Path $path)) {
+                $path = Get-ModelLocalPath $m
+                if (-not $path -or -not (Test-Path $path)) {
                     Write-Host ("  {0,-24} {1,-28} NOT INSTALLED" -f $mid, $ver)
                     continue
                 }
@@ -2716,7 +3311,7 @@ function Invoke-Model {
                 $lf  = [string](Get-JProp $m 'local_file')
                 $url = [string](Get-JProp $m 'url')
                 if (-not $url -or -not $lf) { continue }
-                $path = Join-Path $ModelsDir $lf
+                $path = Get-ModelLocalPath $m
                 if (-not (Test-Path $path)) { continue }
                 $digest = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
                 $known = [string](Get-JProp $m 'sha256')
@@ -2743,28 +3338,20 @@ function Invoke-Model {
             $ver = [string](Get-JProp $m 'version' '?')
             $lf  = [string](Get-JProp $m 'local_file')
             $sha = [string](Get-JProp $m 'sha256')
-            New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
-            $dest = Join-Path $ModelsDir $lf
+            $dest = Get-ModelLocalPath $m
+            if (-not $dest) { Write-Err2 "model '$arg' has no local file name in the index"; exit 1 }
+            New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
             Write-Info "Updating $arg -> $ver"
-            if (-not (Invoke-RobustDownload -Url $url -Dest "$dest.part")) {
-                Remove-Item "$dest.part" -ErrorAction SilentlyContinue
-                Write-Err2 "download failed"; exit 1
-            }
-            if ($sha) {
-                $got = (Get-FileHash "$dest.part" -Algorithm SHA256).Hash.ToLower()
-                if ($got -ne $sha.ToLower()) {
-                    Write-Err2 "sha256 mismatch (got $got, expected $sha) - NOT installing"
-                    Remove-Item "$dest.part" -ErrorAction SilentlyContinue
-                    exit 1
-                }
-                Write-Info "sha256 verified"
-            }
+            $src = Invoke-IndexDownload -Model $m -Part "$dest.part"
+            if (-not $src) { Write-Err2 "download failed (all mirrors)"; exit 1 }
+            if ($sha) { Write-Info "sha256 verified" }
             if (Test-Path $dest) {
                 Move-Item -Force $dest "$dest.prev"
                 Write-Info "previous kept at $(Split-Path $dest -Leaf).prev (wyrd model rollback $arg)"
             }
             Move-Item -Force "$dest.part" $dest
-            Add-ModelManifestRecord -File $dest -Id $arg -Version $ver -SourceUrl $url
+            Sync-WorkAdapter -New $dest -Old "$dest.prev"
+            Add-ModelManifestRecord -File $dest -Id $arg -Version $ver -SourceUrl $src
             Add-ModelHistory -Id $arg -Action "update" -Detail "-> $ver"
             Write-Info "$arg updated to $ver. Restart inference to load it: wyrd restart"
         }
@@ -2773,11 +3360,12 @@ function Invoke-Model {
             $m = Get-IndexModel -Id $arg
             $lf = [string](Get-JProp $m 'local_file')
             if (-not $lf) { Write-Err2 "model '$arg' not in index"; exit 1 }
-            $dest = Join-Path $ModelsDir $lf
+            $dest = Get-ModelLocalPath $m
             if (-not (Test-Path "$dest.prev")) { Write-Err2 "no previous version kept for $arg"; exit 1 }
             if (Test-Path $dest) { Move-Item -Force $dest "$dest.rolledback" }
             Move-Item -Force "$dest.prev" $dest
             if (Test-Path "$dest.rolledback") { Move-Item -Force "$dest.rolledback" "$dest.prev" }
+            Sync-WorkAdapter -New $dest -Old "$dest.prev"
             # Re-identify the restored file honestly: index version if the hash matches, else unknown.
             $rbsha = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
             $idxSha = [string](Get-JProp $m 'sha256')
@@ -2809,6 +3397,128 @@ function Invoke-Model {
         default {
             Write-Host "usage: wyrd model [status|verify|update <id>|rollback <id>|check|history]"
         }
+    }
+}
+
+# ── wyrd brain — the single-model serving profile (parity with bin/wyrd do_brain) ──
+# Opt-in. `enable` and `disable` only flip WYRDSEKAI_SERVING_PROFILE: both model sets, their
+# adapters and their settings stay on disk, so a household can move to the single model and
+# back. Windows serves the model; the nightly trainer (`setup --trainer`) is not ported.
+
+# Fetch one models-index.json entry to $Dest, verified against the index sha256 when it
+# has one (same steps as `wyrd model update`). Returns the source URL, or $null on failure.
+function Get-BrainIndexFile {
+    param([string]$Id, [string]$Dest)
+    $m = Get-IndexModel -Id $Id
+    if (-not [string](Get-JProp $m 'url')) { return $null }
+    New-Item -ItemType Directory -Force -Path (Split-Path $Dest -Parent) | Out-Null
+    $part = "$Dest.part"
+    $oldPP = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try { $src = Invoke-IndexDownload -Model $m -Part $part }
+    catch { Remove-Item $part -ErrorAction SilentlyContinue; return $null }
+    finally { $ProgressPreference = $oldPP }
+    if (-not $src) { return $null }
+    if ([string](Get-JProp $m 'sha256')) { Write-Ok "sha256 verified against models-index.json" }
+    Move-Item -Force $part $Dest
+    return $src
+}
+
+function Get-BrainPlanText {
+    param([string]$Plan)
+    switch ($Plan) {
+        'gpu-full'   { return (_T 'brain.status.plan_gpu_full') }
+        'all'        { return (_T 'brain.status.plan_all') }
+        'not-viable' { return (_T 'brain.status.plan_not_viable') }
+        default      { return (_T 'brain.status.plan_n' $Plan "$BrainLayers") }
+    }
+}
+
+function Invoke-Brain {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0].ToLower() } else { "status" }
+    Import-ConfEnv   # LLAMA_BRAIN_MODEL may live in the conf
+    $modelPath = Get-BrainModelPath
+    $modelName = Split-Path $modelPath -Leaf
+    $generic = Join-Path $AdaptersDir "brain\honesty.gguf"
+    $night   = Join-Path $AdaptersDir "brainwrite\current.gguf"
+    $vram = Get-BrainVramAvailableMb; $ram = Get-BrainRamMb
+    $plan = Get-BrainResidencyPlan -VramMb $vram -RamMb $ram
+
+    switch ($sub) {
+        { $_ -in @('status','plan') } {
+            Write-Host (_T 'brain.status.profile' (Get-ServingProfile))
+            Write-Host (_T 'brain.status.hardware' "$vram" "$ram")
+            Write-Host (_T 'brain.status.plan' (Get-BrainPlanText $plan))
+            if ($sub -eq 'plan') { return }
+            if (Test-Path $modelPath) { Write-Host (_T 'brain.status.model_present' $modelName) }
+            else { Write-Host (_T 'brain.status.model_missing' $modelName) }
+            if (Test-Path $generic) { Write-Host (_T 'brain.status.generic_present') }
+            else { Write-Host (_T 'brain.status.generic_missing') }
+            if (Test-Path $night) {
+                $nightAt = (Get-Item $night).LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+                Write-Host (_T 'brain.status.night_present' $nightAt)
+            } else { Write-Host (_T 'brain.status.night_missing') }
+            # Windows has no container; report the native server on the drive port.
+            $srv = if (Get-LlamaPid -File $LlamaPidFile) { "running (/health=$(Test-LlamaHealth -Port $DrivePort))" }
+                   elseif (Test-PortListening -Port $DrivePort) { "port in use by a process this CLI did not start" }
+                   else { "stopped" }
+            Write-Host "Server on :${DrivePort}: $srv"
+        }
+        "setup" {
+            if ($plan -eq 'not-viable') {
+                Write-Host (_T 'brain.status.hardware' "$vram" "$ram")
+                Write-Err2 (_T 'brain.setup.not_viable'); exit 1
+            }
+            Write-Host (_T 'brain.status.plan' (Get-BrainPlanText $plan))
+            New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
+            if (-not (Test-Path $modelPath)) {
+                $ans = Read-Host (_T 'brain.setup.confirm' $ModelsDir)
+                if (([string]$ans).Trim() -notin @('y','yes','s','si','sí')) { Write-Host (_T 'brain.setup.cancelled'); return }
+                Write-Info (_T 'brain.setup.downloading' $modelName)
+                $src = Get-BrainIndexFile -Id "base-3.6-35b-a3b" -Dest $modelPath
+                if (-not $src) { Write-Err2 (_T 'brain.setup.download_failed' $modelName); exit 1 }
+                $bm = Get-IndexModel -Id "base-3.6-35b-a3b"
+                Add-ModelManifestRecord -File $modelPath -Id "base-3.6-35b-a3b" -Version ([string](Get-JProp $bm 'version' '?')) -SourceUrl $src
+            }
+            # The adapters, each fetched by its index id when the index knows it: the honesty adapter
+            # (the floor on a node without the species floor; the working-turn adapter beside it), the
+            # species floor and the styled adapter (the register dial). A node that has a file keeps it.
+            $species = Join-Path $AdaptersDir "brain\species.gguf"
+            $styled  = Join-Path $AdaptersDir "brain\styled.gguf"
+            $work    = Join-Path $AdaptersDir "brain\work.gguf"
+            foreach ($pair in @(@("honesty-lora-35b-a3b", $generic), @("species-floor-35b-a3b", $species), @("styled-35b-a3b", $styled))) {
+                $aid = $pair[0]; $adst = $pair[1]
+                if (Test-Path $adst) { continue }
+                $am = Get-IndexModel -Id $aid
+                if ([string](Get-JProp $am 'url')) {
+                    Write-Info (_T 'brain.setup.downloading' ("brain\" + (Split-Path $adst -Leaf)))
+                    $asrc = Get-BrainIndexFile -Id $aid -Dest $adst
+                    if ($asrc) { Add-ModelManifestRecord -File $adst -Id $aid -Version ([string](Get-JProp $am 'version' '?')) -SourceUrl $asrc }
+                    else { Write-Warn2 (_T 'brain.setup.download_failed' ("brain\" + (Split-Path $adst -Leaf))) }
+                } else {
+                    Write-Warn2 (_T 'brain.setup.adapter_unpublished' $adst)
+                }
+            }
+            # With the species floor in slot 0 the honesty adapter serves the working turns as brain\work.gguf.
+            if ((Test-Path $species) -and (Test-Path $generic) -and -not (Test-Path $work)) {
+                Copy-Item -Force $generic $work
+                Write-Info (_T 'brain.setup.linked_work')
+            }
+            Write-Info "The nightly trainer is not supported on Windows in this release: this node serves the model only."
+            Write-Host (_T 'brain.setup.done')
+        }
+        "enable" {
+            if (-not (Test-Path $modelPath)) { Write-Err2 (_T 'brain.enable.needs_setup'); exit 1 }
+            if ($plan -eq 'not-viable') { Write-Err2 (_T 'brain.setup.not_viable'); exit 1 }
+            New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+            Set-ConfKey -Key "WYRDSEKAI_SERVING_PROFILE" -Value "single-sparse"
+            Write-Ok (_T 'brain.enable.done')
+        }
+        "disable" {
+            New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+            Set-ConfKey -Key "WYRDSEKAI_SERVING_PROFILE" -Value "two-model"
+            Write-Ok (_T 'brain.disable.done')
+        }
+        default { Write-Err2 (_T 'brain.usage'); exit 2 }
     }
 }
 
@@ -3166,7 +3876,11 @@ function Invoke-Journal {
             $url = "$api/api/familiar/journal?user=$([uri]::EscapeDataString($user))&limit=$limit"
             if ($tag) { $url += "&tag=$([uri]::EscapeDataString($tag))" }
             try { $d = Invoke-RestMethod -Uri $url -TimeoutSec 20 }
-            catch { Write-Err2 (_T 'journal.list_failed' $api); exit 1 }
+            catch {
+                $code = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+                if ($code -eq 401 -or $code -eq 403) { Write-Err2 (_T 'journal.needs_login'); exit 1 }
+                Write-Err2 (_T 'journal.list_failed' $api); exit 1
+            }
             $tagSuffix = if (Get-JProp $d 'tag') { " [tag=$(Get-JProp $d 'tag')]" } else { "" }
             Write-Host "$(Get-JProp $d 'count' 0) entries for $(Get-JProp $d 'user' $user)$tagSuffix"
             Write-Host ""
@@ -3179,7 +3893,11 @@ function Invoke-Journal {
             $limit = if ($Rest.Count -ge 4) { $Rest[3] } else { 20 }
             $url = "$api/api/familiar/journal/search?user=$([uri]::EscapeDataString($user))&q=$([uri]::EscapeDataString($query))&limit=$limit"
             try { $d = Invoke-RestMethod -Uri $url -TimeoutSec 30 }
-            catch { Write-Err2 (_T 'journal.search_failed' $api); exit 1 }
+            catch {
+                $code = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+                if ($code -eq 401 -or $code -eq 403) { Write-Err2 (_T 'journal.needs_login'); exit 1 }
+                Write-Err2 (_T 'journal.search_failed' $api); exit 1
+            }
             Write-Host "$(Get-JProp $d 'count' 0) matches for '$(Get-JProp $d 'query' $query)' (user $(Get-JProp $d 'user' $user))"
             Write-Host ""
             Write-JournalEntries (Get-JProp $d 'entries')
@@ -3402,6 +4120,16 @@ function Read-ResearcherAnswer { param($Question, $Default, [switch]$Yes)
     if ([string]::IsNullOrWhiteSpace($a)) { return $Default } else { return $a }
 }
 
+# Where ResearchZosho should find this home's brain: a value already in the environment, else the
+# node's brain address (WYRDSEKAI_LLAMA_URL) when it is http, else the brain on this machine.
+function Get-RzBrainUrl {
+    if ($env:RESEARCHZOSHO_DRIVE_DEFAULT) { return $env:RESEARCHZOSHO_DRIVE_DEFAULT }
+    $conf = Get-Conf
+    $u = if ($env:WYRDSEKAI_LLAMA_URL) { $env:WYRDSEKAI_LLAMA_URL } elseif ($conf.Contains('WYRDSEKAI_LLAMA_URL')) { [string]$conf['WYRDSEKAI_LLAMA_URL'] } else { "" }
+    if ($u -match '^https?://') { return ($u.TrimEnd('/') -replace '/v1$', '') }
+    return "http://127.0.0.1:$DrivePort"
+}
+
 function Install-ResearchZosho { param([switch]$Yes)
     $have = Get-ResearchZoshoCmd
     if ($have) { Write-Ok "ResearchZosho already installed: $have"; return $have }
@@ -3492,12 +4220,28 @@ function Request-ResearchZoshoAccess { param($Url, $Did, $Name, [switch]$Yes, [i
 # Subscribe this node's webhook door to the librarian's changes (contract 1.5). Best effort.
 function Subscribe-ResearchZosho { param($Url, $Token, [switch]$NoWebhook)
     if ($NoWebhook) { return }
-    $ip = Get-WyrdLanIp
-    if (-not $ip) { Write-Warn2 "No LAN address found for this node - the librarian's pushes are off; recall runs at sleep from the feed."; return }
+    # Loopback first for a librarian on this machine (a LAN address stops working when it changes);
+    # a librarian that refuses loopback is given the LAN address. The other form is dropped only
+    # after one is accepted.
+    $lan = Get-WyrdLanIp
+    $hosts = @()
+    if ($Url -match '^https?://(127\.|localhost[:/]|localhost$|\[::1\])') { $hosts += '127.0.0.1' }
+    if ($lan) { $hosts += $lan }
+    if ($hosts.Count -eq 0) { Write-Warn2 "No LAN address found for this node - the librarian's pushes are off; recall runs at sleep from the feed."; return }
     $port = if ($env:WYRDSEKAI_PORT) { $env:WYRDSEKAI_PORT } else { $RestPort }
-    $hook = "http://${ip}:${port}/api/library/webhook/$ResearchZoshoServiceId"
-    try { $r = Invoke-RestMethod -Method Post -Uri "$Url/v1/subscribe" -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json' -Body (@{ url = $hook } | ConvertTo-Json -Compress) -TimeoutSec 15 } catch { $r = $null }
-    if (-not ($r -and $r.secret)) { Write-Warn2 "The librarian did not accept a webhook to $hook (it may not reach this node) - recall runs at sleep from the feed."; return }
+    $headers = @{ Authorization = "Bearer $Token" }
+    $r = $null; $hook = $null; $used = $null
+    foreach ($ip in $hosts) {
+        $hook = "http://${ip}:${port}/api/library/webhook/$ResearchZoshoServiceId"
+        try { $r = Invoke-RestMethod -Method Post -Uri "$Url/v1/subscribe" -Headers $headers -ContentType 'application/json' -Body (@{ url = $hook } | ConvertTo-Json -Compress) -TimeoutSec 15 } catch { $r = $null }
+        if ($r -and $r.secret) { $used = $ip; break }
+    }
+    if (-not $used) { Write-Warn2 "The librarian did not accept a webhook to $hook (it may not reach this node) - recall runs at sleep from the feed."; return }
+    foreach ($ip in $hosts) {
+        if ($ip -eq $used) { continue }
+        $stale = "http://${ip}:${port}/api/library/webhook/$ResearchZoshoServiceId"
+        try { Invoke-RestMethod -Method Post -Uri "$Url/v1/unsubscribe" -Headers $headers -ContentType 'application/json' -Body (@{ url = $stale } | ConvertTo-Json -Compress) -TimeoutSec 10 | Out-Null } catch { }
+    }
     Set-ConfKey ("WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + $ResearchZoshoServiceId.ToUpper().Replace('-', '_')) $r.secret
     Write-Ok "The librarian will push its changes to $hook (signed): recalls apply on the spot, and a landed write-up is told to the companions."
 }
@@ -3541,7 +4285,6 @@ function Connect-ResearchZosho { param($Url, $Token, $Rz, $Stdio, [switch]$Yes, 
     $f = Write-ResearcherService -Entry $entry -Disable $disable
     Set-ConfKey 'WYRDSEKAI_LIBRARY_SERVICE' $ResearchZoshoServiceId
     Write-Ok "Registered '$ResearchZoshoServiceId' in $f and made it the library role."
-    if ($conf.Contains('WYRDSEKAI_MCP_STRICT_GRANTS') -and $conf['WYRDSEKAI_MCP_STRICT_GRANTS'] -eq 'true') { Write-Warn2 "Strict MCP grants are on: grant the companions the '$ResearchZoshoServiceId' service from the steward's Study." }
     $r = if ($NoRestart) { "n" } else { Read-ResearcherAnswer "Restart the node so the companions can reach the librarian? (Y/n)" "Y" -Yes:$Yes }
     if ($r -match '^[Yy]') { Invoke-Stop; Start-Sleep -Seconds 1; Invoke-Start; Write-Ok "Restarted." } else { Write-Info "Restart when convenient: wyrd restart" }
     Write-Host ""
@@ -3598,6 +4341,332 @@ function Invoke-Items {
     }
 }
 
+# -- The library's model: the companions' brain by default, or a model of its own --------------
+# `wyrd researcher setup` offers ResearchZosho this home's brain, and that stays the default. A
+# research run can hold that model for up to 90 minutes, so `wyrd researcher gpu` shows where the
+# library's model runs and moves it: to a model server on another household machine, or back to the
+# brain. Choosing a card of this machine (`researchzosho model install --own --gpu <n>`) is Linux
+# only. Every change goes through ResearchZosho's own commands; Wyrdsekai never writes its files.
+# ResearchZosho 0.5.1 switches its model while the service runs (`model use`); 0.5.0's service reads
+# the address only when it starts, so with 0.5.0 the service is restarted.
+
+# ResearchZosho's own `model status` (its first line says where its model is), or $null.
+function Get-RzModelStatus([string]$Rz) {
+    $out = $null; $rc = 1
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $out = & $Rz model status 2>$null; $rc = $LASTEXITCODE } catch { $out = $null } finally { $ErrorActionPreference = $prevEAP }
+    if ($rc -ne 0 -or -not $out) { return $null }
+    return (($out | Out-String).TrimEnd())
+}
+function Get-RzDriveOf([string]$Status) {
+    if (-not $Status) { return $null }
+    foreach ($l in ($Status -split "`r?`n")) { if ($l -match '^\s*drive:\s*(.+?)\s*$') { return $Matches[1] } }
+    return $null
+}
+function Test-RzHasOwnModel([string]$Status) {
+    return ([bool]$Status) -and ($Status -notmatch "no model server of this machine's own")
+}
+function Test-RzLocalHost([string]$HostName) {
+    if ($HostName -in @('localhost', '::1', '[::1]', '0.0.0.0') -or $HostName -like '127.*') { return $true }
+    $mine = @($env:COMPUTERNAME, $env:WYRDSEKAI_LAN_IP)
+    try { $mine += [System.Net.Dns]::GetHostName() } catch { }
+    try { $mine += @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) | ForEach-Object { $_.IPAddressToString }) } catch { }
+    foreach ($m in $mine) { if ($m -and ([string]$m).ToLower() -eq $HostName) { return $true } }
+    return $false
+}
+# A model server's address as "<host>:<port>" for comparing two of them; this machine reads as "local".
+function ConvertTo-RzUrlKey([string]$Url) {
+    if (-not $Url) { return $null }
+    $scheme = if ($Url -match '^https://') { 'https' } else { 'http' }
+    $hp = (($Url -replace '^[a-zA-Z]+://', '') -split '/')[0]
+    if (-not $hp) { return $null }
+    $h = $hp; $p = $null
+    if ($hp -match '^(\[[^\]]+\])(?::(\d+))?$') { $h = $Matches[1]; $p = $Matches[2] }
+    elseif ($hp -match '^([^:]+):(\d+)$') { $h = $Matches[1]; $p = $Matches[2] }
+    if (-not $p) { $p = if ($scheme -eq 'https') { '443' } else { '80' } }
+    $h = $h.ToLower()
+    if (Test-RzLocalHost $h) { $h = 'local' }
+    return "${h}:$p"
+}
+# Where the library's model runs, against this node's brain: shared | own (this machine) | other.
+function Get-RzWhere([string]$Drive, [string]$Brain) {
+    if (-not $Drive -or $Drive -eq '(unset)') { $Drive = 'http://localhost:8200' }   # ResearchZosho's own default
+    $dk = ConvertTo-RzUrlKey $Drive
+    if (-not $dk) { return 'other' }
+    $bk = ConvertTo-RzUrlKey $Brain
+    if ($bk -and ($dk -eq $bk -or $dk -eq (($bk -replace ':\d+$', '') + ":$VoicePort"))) { return 'shared' }
+    if ($dk -like 'local:*') { return 'own' }
+    return 'other'
+}
+# This machine's NVIDIA cards (index, name, MiB, MiB in use, who: brain, free or empty), or $null.
+function Get-RzGpuCards([string]$Brain) {
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { return $null }
+    $rows = @(); $apps = @()
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        # quoted: a comma in a bare argument makes an array
+        $rows = @(& nvidia-smi '--query-gpu=index,uuid,name,memory.total,memory.used' '--format=csv,noheader,nounits' 2>$null)
+        $apps = @(& nvidia-smi '--query-compute-apps=gpu_uuid,pid' '--format=csv,noheader' 2>$null)
+    } catch { } finally { $ErrorActionPreference = $prevEAP }
+    $brainPids = @()
+    if ((ConvertTo-RzUrlKey $Brain) -like 'local:*') {
+        foreach ($f in @($LlamaPidFile, $VoicePidFile)) { $p = Get-LlamaPid -File $f; if ($p) { $brainPids += [string]$p } }
+    }
+    $cards = @()
+    foreach ($r in $rows) {
+        $f = @(([string]$r) -split ',' | ForEach-Object { $_.Trim() })
+        if ($f.Count -lt 5 -or -not $f[0]) { continue }
+        $onBrain = $false; $n = 0
+        foreach ($a in $apps) {
+            $g = @(([string]$a) -split ',' | ForEach-Object { $_.Trim() })
+            if ($g.Count -lt 2 -or $g[0] -ne $f[1]) { continue }
+            $n++
+            if ($brainPids -contains $g[1]) { $onBrain = $true }
+        }
+        $total = 0; $used = 0
+        [void][int]::TryParse($f[3], [ref]$total); [void][int]::TryParse($f[4], [ref]$used)
+        $who = if ($onBrain) { 'brain' } elseif ($n -eq 0 -and $total -gt 0 -and ($used * 5) -lt $total) { 'free' } else { '' }
+        $cards += [pscustomobject]@{ Index = $f[0]; Name = $f[2]; Total = $f[3]; Used = $f[4]; Who = $who }
+    }
+    if ($cards.Count -eq 0) { return $null }
+    return ,$cards
+}
+
+# The suggestion, never automatic: when the library shares the companions' brain, what it is, why
+# it matters, and the command. Empty otherwise.
+function Get-RzGpuSuggestion([string]$Rz) {
+    $st = Get-RzModelStatus $Rz
+    if (-not $st) { return @() }
+    $brain = Get-RzBrainUrl
+    if ((Get-RzWhere (Get-RzDriveOf $st) $brain) -ne 'shared') { return @() }
+    return @((_T 'researcher.gpu.suggest_shares' $brain), (_T 'researcher.gpu.suggest_why'), (_T 'researcher.gpu.suggest_cmd'))
+}
+
+# `wyrd researcher gpu`: one screen, where the library's model runs and how to change it.
+function Show-RzGpu([string]$Rz) {
+    $brain = Get-RzBrainUrl
+    $st = Get-RzModelStatus $Rz
+    $where = ''
+    Write-Host (_T 'researcher.gpu.title')
+    if (-not $st) { Write-Host (_T 'researcher.gpu.now_unknown') }
+    else {
+        $d = Get-RzDriveOf $st; $where = Get-RzWhere $d $brain
+        if (-not $d -or $d -eq '(unset)') { $d = 'http://localhost:8200' }
+        switch ($where) {
+            'shared' { Write-Host (_T 'researcher.gpu.now_shared' $d) }
+            'own' { Write-Host (_T 'researcher.gpu.now_own' $d); Write-Host (_T 'researcher.gpu.brain' $brain) }
+            default { Write-Host (_T 'researcher.gpu.now_other' $d); Write-Host (_T 'researcher.gpu.brain' $brain) }
+        }
+    }
+    $cards = Get-RzGpuCards $brain
+    if ($cards) {
+        Write-Host (_T 'researcher.gpu.cards')
+        foreach ($c in $cards) {
+            $mark = switch ($c.Who) { 'brain' { _T 'researcher.gpu.card_brain' } 'free' { _T 'researcher.gpu.card_free' } default { '' } }
+            Write-Host (_T 'researcher.gpu.card' $c.Index $c.Name $c.Total $c.Used $mark)
+        }
+    } else { Write-Host (_T 'researcher.gpu.no_cards') }
+    Write-Host ""
+    if ($where -eq 'shared' -or -not $where) {
+        Write-Host (_T 'researcher.gpu.why')
+        Write-Host (_T 'researcher.gpu.linux_only')
+        Write-Host (_T 'researcher.gpu.cmd_host')
+    } else { Write-Host (_T 'researcher.gpu.cmd_shared') }
+}
+
+# ResearchZosho 0.5.0: restart the librarian's logon task so it reads its model address again (it reads it once, at start):
+# stop the server it recorded, start its task script, as ResearchZosho's own service install does.
+function Restart-RzService {
+    $state = Join-Path $env:USERPROFILE '.researchzosho'
+    if (-not (Test-Path $state) -and (Test-Path (Join-Path $env:USERPROFILE '.codezaiku'))) { $state = Join-Path $env:USERPROFILE '.codezaiku' }
+    $taskScript = Join-Path $state 'ResearchZosho.ps1'
+    if (-not (Test-Path $taskScript)) { Write-Info (_T 'researcher.gpu.no_service'); return }
+    $pidFile = Join-Path $state 'researchzosho.pid'
+    if (Test-Path $pidFile) {
+        try {
+            $p = Get-Process -Id ([int]((Get-Content $pidFile -Raw).Trim())) -ErrorAction Stop
+            if ($p.ProcessName -like 'java*') { Stop-Process -Id $p.Id -Force -ErrorAction Stop; Start-Sleep -Seconds 1 }
+        } catch { }
+    }
+    try {
+        Start-Process -FilePath powershell -ArgumentList ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $taskScript + '"') -WindowStyle Hidden -ErrorAction Stop
+        Write-Ok (_T 'researcher.gpu.restarted')
+    } catch { Write-Warn2 (_T 'researcher.gpu.restart_failed' 'schtasks /Run /TN ResearchZosho') }
+}
+
+# ResearchZosho 0.5.1 switches its model while its service runs (`model use`), after checking that the
+# server answers and the model replies; its service takes it for the next run and question. 0.5.0 has no
+# such command and its service reads the address only when it starts. Invoke-RzGpu sets this once.
+$script:RzLiveSwitch = $false
+
+function Get-RzVersion([string]$Rz) {
+    $v = $null
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $v = ((& $Rz version 2>$null | Out-String) -replace '[^\d.]', ' ').Trim().Split(' ')[0] } catch { } finally { $ErrorActionPreference = $prevEAP }
+    return $v
+}
+# The one chat model a server lists (an embeddings or rerank model left out), or $null. ResearchZosho's
+# own proxy lists its model and "embed", and `model use` needs the name when a server lists more than one.
+function Get-RzChatModel([string]$Url, [string]$Now) {
+    try { $r = Invoke-RestMethod -Uri ($Url.TrimEnd('/') + '/v1/models') -TimeoutSec 10 } catch { return $null }
+    $chat = @(@($r.data) | ForEach-Object { [string]$_.id } | Where-Object { $_ -and $_ -notmatch 'embed|rerank' })
+    # A server with several models keeps the one the library uses now.
+    if ($Now -and ($chat -contains $Now)) { return $Now }
+    if ($chat.Count -eq 1) { return $chat[0] }
+    return $null
+}
+# The model the library uses now (RESEARCHZOSHO_MODEL in its own settings file; nothing in it is changed), or $null.
+function Get-RzCurrentModel {
+    $dir = if ($env:RESEARCHZOSHO_HOME) { $env:RESEARCHZOSHO_HOME } else { Join-Path $env:USERPROFILE '.researchzosho' }
+    $f = Join-Path $dir 'config'
+    if (-not (Test-Path $f)) { return $null }
+    foreach ($line in (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*RESEARCHZOSHO_MODEL\s*=\s*"?([^"\s]+)"?\s*$') { return $Matches[1] }
+    }
+    return $null
+}
+# ResearchZosho's own `model use`; sets $script:RzUseRc (0 switched; otherwise nothing changed, 2 = name the
+# model). Called as a statement, so its words go straight to the console.
+function Invoke-RzModelUse([string]$Rz, [string]$Url, [string]$Model) {
+    if (-not $Model) { $Model = Get-RzChatModel $Url (Get-RzCurrentModel) }
+    $script:RzUseRc = 1
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        if ($Model) { & $Rz model use $Url $Model } else { & $Rz model use $Url }
+        $script:RzUseRc = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prevEAP }
+}
+
+# Point the library's model at <url>. With 0.5.1: `model use`. With 0.5.0, which has no command that sets
+# only that address, its own setup runs with the address (and a model named) in its environment for that
+# one run: it offers them and saves them (--no-service --no-claude keep it to the questions about the
+# library and the model); then what it kept is checked. Sets $script:RzDriveOk (and $script:RzUseRc).
+# Called as a statement: its setup's questions go straight to the console.
+function Set-RzDrive([string]$Rz, [string]$Url, [string]$Model, [switch]$Yes) {
+    $script:RzDriveOk = $false
+    if ($script:RzLiveSwitch) {
+        Invoke-RzModelUse $Rz $Url $Model
+        if ($script:RzUseRc -ne 0) { Write-Err2 (_T 'researcher.gpu.use_failed' $Url); return }
+        $script:RzDriveOk = $true; return
+    }
+    $had = Test-Path Env:RESEARCHZOSHO_DRIVE; $prev = $env:RESEARCHZOSHO_DRIVE
+    $hadM = Test-Path Env:RESEARCHZOSHO_MODEL; $prevM = $env:RESEARCHZOSHO_MODEL
+    $env:RESEARCHZOSHO_DRIVE = $Url
+    if ($Model) { $env:RESEARCHZOSHO_MODEL = $Model }
+    $rc = 1
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        if ($Yes) { & $Rz setup --yes --no-service --no-claude } else { & $Rz setup --no-service --no-claude }
+        $rc = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEAP
+        if ($had) { $env:RESEARCHZOSHO_DRIVE = $prev } else { Remove-Item Env:RESEARCHZOSHO_DRIVE -ErrorAction SilentlyContinue }
+        if ($hadM) { $env:RESEARCHZOSHO_MODEL = $prevM } else { Remove-Item Env:RESEARCHZOSHO_MODEL -ErrorAction SilentlyContinue }
+    }
+    $d = Get-RzDriveOf (Get-RzModelStatus $Rz)
+    if ($rc -ne 0 -or -not $d -or (ConvertTo-RzUrlKey $d) -ne (ConvertTo-RzUrlKey $Url)) {
+        Write-Err2 (_T 'researcher.gpu.drive_not_kept' $Url $(if ($d) { $d } else { '?' })); return
+    }
+    $script:RzDriveOk = $true
+}
+
+function Get-RzHostUrl([string]$Target) {
+    $scheme = 'http'; $rest = $Target
+    if ($rest -match '^(https?)://(.*)$') { $scheme = $Matches[1]; $rest = $Matches[2] }
+    $rest = ($rest -split '/')[0]
+    if ($rest -notmatch ':\d+$') { $rest = "${rest}:8211" }
+    return "${scheme}://$rest"
+}
+function Test-RzHostAnswers([string]$Url) {
+    try { $null = Invoke-WebRequest -Uri ($Url.TrimEnd('/') + '/v1/models') -UseBasicParsing -TimeoutSec 10; return $true } catch { return $false }
+}
+function Write-RzPlanAfter {
+    if ($script:RzLiveSwitch) { Write-Info (_T 'researcher.gpu.plan_use') } else { Write-Info (_T 'researcher.gpu.plan_restart') }
+}
+function Complete-RzGpu([string]$Rz) {
+    if (-not $script:RzLiveSwitch) { Restart-RzService }
+    $st = Get-RzModelStatus $Rz
+    if ($st) { Write-Info (_T 'researcher.gpu.done'); Write-Host $st }
+}
+
+function Invoke-RzGpuHost([string]$Rz, [string]$Target, [string]$Model, [bool]$Yes) {
+    $url = Get-RzHostUrl $Target
+    if (-not (Test-RzHostAnswers $url)) {
+        Write-Err2 (_T 'researcher.gpu.host_down' $url)
+        Write-Host (_T 'researcher.gpu.host_prepare')
+        Write-Host (_T 'researcher.gpu.host_again' $Target)
+        $script:RzGpuRc = 1; return
+    }
+    $st = Get-RzModelStatus $Rz
+    Write-Info (_T 'researcher.gpu.plan_host' $url)
+    if (-not $script:RzLiveSwitch) { Write-Info (_T 'researcher.gpu.plan_setup') }
+    Write-RzPlanAfter
+    $a = Read-ResearcherAnswer ((_T 'researcher.gpu.ask') + " (Y/n)") "Y" -Yes:$Yes
+    if ($a -notmatch '^[Yy]') { Write-Info (_T 'researcher.gpu.nothing'); return }
+    $script:RzUseRc = 0
+    Set-RzDrive $Rz $url $Model -Yes:$Yes
+    if (-not $script:RzDriveOk) {
+        if ($script:RzLiveSwitch -and $script:RzUseRc -eq 2) { Write-Host (_T 'researcher.gpu.use_name' $Target) }
+        $script:RzGpuRc = 1; return
+    }
+    if (Test-RzHasOwnModel $st) { Write-Info (_T 'researcher.gpu.own_stays') }
+    Complete-RzGpu $Rz
+}
+
+function Invoke-RzGpuShared([string]$Rz, [bool]$Yes) {
+    $brain = Get-RzBrainUrl
+    $st = Get-RzModelStatus $Rz
+    $d = Get-RzDriveOf $st
+    $own = Test-RzHasOwnModel $st
+    if (-not $own -and $st -and (Get-RzWhere $d $brain) -eq 'shared') { Write-Info (_T 'researcher.gpu.already_shared' $brain); return }
+    Write-Info (_T 'researcher.gpu.plan_shared' $brain)
+    if ($own) { Write-Info (_T 'researcher.gpu.plan_uninstall') }
+    elseif (-not $script:RzLiveSwitch) { Write-Info (_T 'researcher.gpu.plan_setup') }
+    Write-RzPlanAfter
+    $a = Read-ResearcherAnswer ((_T 'researcher.gpu.ask') + " (Y/n)") "Y" -Yes:$Yes
+    if ($a -notmatch '^[Yy]') { Write-Info (_T 'researcher.gpu.nothing'); return }
+    if ($own) {
+        $rc = 1
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { & $Rz model uninstall; $rc = $LASTEXITCODE } finally { $ErrorActionPreference = $prevEAP }
+        if ($rc -ne 0) { Write-Err2 (_T 'researcher.gpu.uninstall_failed'); $script:RzGpuRc = 1; return }
+        $st = Get-RzModelStatus $Rz; $d = Get-RzDriveOf $st
+    }
+    if (-not $st -or (Get-RzWhere $d $brain) -ne 'shared') {
+        if ($own -and -not $script:RzLiveSwitch) { Write-Info (_T 'researcher.gpu.plan_setup') }
+        Set-RzDrive $Rz $brain $null -Yes:$Yes
+        if (-not $script:RzDriveOk) { $script:RzGpuRc = 1; return }
+    }
+    Complete-RzGpu $Rz
+}
+
+# `wyrd researcher gpu [<machine> [<model>] | shared] [--yes]`; sets $script:RzGpuRc.
+function Invoke-RzGpu([string[]]$GpuArgs) {
+    $script:RzGpuRc = 0
+    $yes = $false; $target = $null; $model = $null
+    foreach ($a in @($GpuArgs)) {
+        if (-not $a) { continue }
+        if ($a -in @('--yes', '-y')) { $yes = $true }
+        elseif ($a -in @('help', '-h', '--help')) { Write-Host (_T 'researcher.gpu.usage'); return }
+        elseif ($a -like '-*' -or $model) { Write-Host (_T 'researcher.gpu.usage'); $script:RzGpuRc = 2; return }
+        elseif ($target) { $model = $a }
+        else { $target = $a }
+    }
+    if ($model -and ($target -eq 'shared' -or $target -match '^\d+$')) { Write-Host (_T 'researcher.gpu.usage'); $script:RzGpuRc = 2; return }
+    $rz = Get-ResearchZoshoCmd
+    if (-not $rz) { Write-Err2 (_T 'researcher.gpu.not_installed'); $script:RzGpuRc = 1; return }
+    if (-not $target) { Show-RzGpu $rz; return }
+    if ($target -match '^\d+$') {
+        Write-Warn2 (_T 'researcher.gpu.linux_only'); Write-Host (_T 'researcher.gpu.cmd_host')
+        $script:RzGpuRc = 1; return
+    }
+    $v = Get-RzVersion $rz
+    $script:RzLiveSwitch = $false
+    try { if ($v -and ([version]$v -ge [version]'0.5.1')) { $script:RzLiveSwitch = $true } } catch { }
+    if ($target -eq 'shared') { Invoke-RzGpuShared $rz $yes; return }
+    Invoke-RzGpuHost $rz $target $model $yes
+}
+
 function Invoke-Researcher {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
     $args2 = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count-1)]) } else { @() }
@@ -3607,6 +4676,10 @@ function Invoke-Researcher {
     $waitSeconds = 0
     for ($wi = 0; $wi -lt $args2.Count; $wi++) { if ($args2[$wi] -eq '--wait' -and ($wi + 1) -lt $args2.Count) { $waitSeconds = [int]$args2[$wi+1] * 60 } }
     switch ($sub) {
+        "gpu" {
+            Invoke-RzGpu $args2
+            if ($script:RzGpuRc -ne 0) { exit $script:RzGpuRc }
+        }
         "update" {
             # The librarian's own updater (researchzosho 0.1.2+): the latest release, verified, service restarted.
             $rz = Get-ResearchZoshoCmd
@@ -3639,7 +4712,7 @@ function Invoke-Researcher {
                       $st = Invoke-RestMethod -Uri "$url/v1/status" -Headers $h -TimeoutSec 6; Write-Host "  daemon    = answers: $($st.library_name), contract $($st.contract)" }
                 catch { Write-Host "  daemon    = not answering at $url" }
             }
-            Write-Host ("  grants    = {0}" -f $(if ($conf.Contains('WYRDSEKAI_MCP_STRICT_GRANTS') -and $conf['WYRDSEKAI_MCP_STRICT_GRANTS'] -eq 'true') { "strict (companions need a grant for the service)" } else { "open (every companion may use it)" }))
+            Write-Host "  grants    = none needed (the household's librarian; its own allow list decides)"
             $secretVar = "WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + $ResearchZoshoServiceId.ToUpper().Replace('-', '_')
             Write-Host ("  webhook   = {0}" -f $(if ($conf.Contains($secretVar)) { "subscribed (changes are pushed to this node)" } else { "none (recall reads the feed at sleep)" }))
             $rq = Join-Path $DataDir "researcher-request.json"
@@ -3663,7 +4736,18 @@ function Invoke-Researcher {
             Write-Host ""
             Write-Info "ResearchZosho's own setup asks where the library goes, which model reads, and whether it runs as a service."
             Write-Info "Say yes to the service: that is what the companions talk to."
-            if ($yes) { & $rz setup --yes } else { & $rz setup }
+            # Tell its setup where the brain is, so it does not take the first model server that answers
+            # on the usual ports (Ollama or LM Studio). A default only: a model the person already chose
+            # stays, and its setup saves the choice in its own config.
+            $brain = Get-RzBrainUrl
+            Write-Info "The librarian will be offered this home's brain: $brain"
+            $hadDefault = Test-Path Env:RESEARCHZOSHO_DRIVE_DEFAULT
+            $env:RESEARCHZOSHO_DRIVE_DEFAULT = $brain
+            try {
+                if ($yes) { & $rz setup --yes } else { & $rz setup }
+            } finally {
+                if (-not $hadDefault) { Remove-Item Env:RESEARCHZOSHO_DRIVE_DEFAULT -ErrorAction SilentlyContinue }
+            }
             if ($LASTEXITCODE -ne 0) { Write-Err2 "researchzosho setup failed"; exit 1 }
             Write-Host ""
             $st = $null
@@ -3681,6 +4765,8 @@ function Invoke-Researcher {
                 Write-Warn2 "No daemon at $url - connecting over stdio instead (no overnight asks until the service runs)."
                 if (-not (Connect-ResearchZosho -Url "" -Token $null -Rz $rz -Stdio "$rz mcp" -Yes:$yes -NoRestart:$noRestart -NoWebhook:$noWebhook)) { exit 1 }
             }
+            $sugg = @(Get-RzGpuSuggestion $rz)
+            if ($sugg.Count -gt 0) { Write-Host ""; foreach ($l in $sugg) { Write-Info $l } }
         }
         "link" {
             $url = ""; $token = $null; $stdio = $null
@@ -3703,12 +4789,15 @@ function Invoke-Researcher {
             Write-Ok "ResearchZosho is no longer the library role (entry disabled in $f). Restart to apply: wyrd restart"
         }
         default {
-            Write-Host "Usage: wyrd researcher <setup|install|link|status|unlink>"
+            Write-Host "Usage: wyrd researcher <setup|install|link|status|gpu|update|unlink>"
             Write-Host "  setup [--yes] [--url U|--port N]   install ResearchZosho if needed, run its setup, connect this node (the wizard)"
             Write-Host "  install [--yes]                    install ResearchZosho only (its checked one-line installer)"
             Write-Host "  link [url] [--token T]             connect to a librarian that already runs (default $ResearchZoshoDefaultUrl)"
             Write-Host "  link --stdio ""<command>""           connect to one reached as a child process"
             Write-Host "  status                             what is installed, registered, and answering"
+            Write-Host "  gpu                                where the library's model runs: the companions' brain (the default) or its own"
+            Write-Host "  gpu <machine> [<model>] | shared [--yes]"
+            Write-Host "                                     a model on another machine, or the brain again (choosing a card is Linux only)"
             Write-Host "  unlink                             stop using it as the library role"
             if ($sub -ne 'help') { exit 2 }
         }
@@ -3979,6 +5068,8 @@ function Invoke-Federate {
             try { $d = Invoke-RestMethod -Uri "$api/api/pair/code" -TimeoutSec 10 }
             catch { Write-Err2 (_T 'federate.code.none_pending'); exit 1 }
             Write-Host ("  code: {0}    expires-at: {1}" -f (Get-JProp $d 'code' '?'), (Get-JProp $d 'expiresAt' '?'))
+            $fp = Get-JProp $d 'home_ca_fp'
+            if ($fp) { Write-Host "  certificate fingerprint (the new machine checks it): $fp" }
         }
         "household-key" {
             $action = if ($Rest.Count -ge 2) { $Rest[1] } else { "show" }
@@ -3986,14 +5077,14 @@ function Invoke-Federate {
                 { $_ -in @("show","get") } {
                     try { $d = Invoke-RestMethod -Uri "$api/api/pair/household-key" -TimeoutSec 10 }
                     catch { Write-Err2 (_T 'federate.household_key.no_active'); exit 1 }
-                    Write-Host "  key: $(Get-JProp $d 'key' '?')"
+                    Write-Host "  key: $(Get-JProp $d 'join_key' (Get-JProp $d 'key' '?'))"
                     Write-Host "  created: $(Get-JProp $d 'createdAt' '?')"
                 }
                 { $_ -in @("generate","new") } {
                     try { $d = Invoke-RestMethod -Method Post -Uri "$api/api/pair/household-key/generate" -TimeoutSec 10 }
                     catch { Write-Err2 (_T 'federate.household_key.generate_failed'); exit 1 }
-                    Write-Host "  new key: $(Get-JProp $d 'key' '?')"
-                    Write-Host "  Share with new nodes via: wyrd federate join --request <host> --household-key <key>"
+                    Write-Host "  new key: $(Get-JProp $d 'join_key' (Get-JProp $d 'key' '?'))"
+                    Write-Host "  Share with new nodes via: wyrd join <host> --household-key <key>"
                 }
                 default { Write-Err2 (_T 'federate.household_key.usage'); exit 1 }
             }
@@ -4002,13 +5093,14 @@ function Invoke-Federate {
             # --lan discover | --request HOST[:PORT] [--name N] [--household-key K]
             # | direct --relay-url URL --user HH --token TOKEN. The request flow
             # rides the same /api/pair/* endpoints phone clients use.
-            $joinMode = ""; $rurl = ""; $ruser = ""; $rtoken = ""; $reqHost = ""; $reqName = ""; $hhKey = ""
+            $joinMode = ""; $rurl = ""; $ruser = ""; $rtoken = ""; $reqHost = ""; $reqName = ""; $hhKey = ""; $caFp = ""
             for ($i = 1; $i -lt $Rest.Count; $i++) {
                 switch ($Rest[$i]) {
                     "--lan"           { $joinMode = "lan" }
                     "--request"       { $joinMode = "request"; if (($i + 1) -lt $Rest.Count) { $reqHost = $Rest[$i+1]; $i++ } }
                     "--name"          { if (($i + 1) -lt $Rest.Count) { $reqName = $Rest[$i+1]; $i++ } }
                     "--household-key" { if (($i + 1) -lt $Rest.Count) { $hhKey = $Rest[$i+1]; $i++ } }
+                    "--ca-fp"         { if (($i + 1) -lt $Rest.Count) { $caFp = $Rest[$i+1]; $i++ } }
                     "--relay-url"     { if (($i + 1) -lt $Rest.Count) { $rurl = $Rest[$i+1]; $i++ } }
                     "--user"          { if (($i + 1) -lt $Rest.Count) { $ruser = $Rest[$i+1]; $i++ } }
                     "--token"         { if (($i + 1) -lt $Rest.Count) { $rtoken = $Rest[$i+1]; $i++ } }
@@ -4026,20 +5118,25 @@ function Invoke-Federate {
             }
             if ($joinMode -eq "request") {
                 if (-not $reqHost) { Write-Err2 (_T 'federate.join.request.needs_host'); exit 1 }
+# The hub answers the network over HTTPS only ( W2), its CA pinned:
+                # from the join key (<key>.<fingerprint>) or --ca-fp; the pairing-code path needs --ca-fp
+                # (shown by `wyrd federate code` on the hub).
                 $pairHost = $reqHost
-                if ($pairHost -notmatch ':') { $pairHost = "${pairHost}:7070" }
-                $pairUrl = "http://$pairHost"
+                if ($pairHost -notmatch ':') { $pairHost = "${pairHost}:7443" }
+                $pairUrl = "https://$pairHost"
+                if ($hhKey -match '^(.+)\.([0-9a-fA-F]{64})$') { $hhKey = $Matches[1]; if (-not $caFp) { $caFp = $Matches[2] } }
+                if (-not $caFp) { Write-Err2 (_T 'federate.join.request.needs_ca_fp'); exit 1 }
                 $nm = if ($reqName) { $reqName } else { $env:COMPUTERNAME.ToLower() }
                 $result = $null
                 if ($hhKey) {
                     Write-Info (_T 'federate.join.request.with_key' $reqHost)
                     $body = @{ deviceName = $nm; deviceType = "node"; key = $hhKey } | ConvertTo-Json -Compress
-                    try { $result = Invoke-RestMethod -Method Post -Uri "$pairUrl/api/pair/key" -ContentType 'application/json' -Body $body -TimeoutSec 20 }
+                    try { $result = Invoke-PinnedHubPost -Uri "$pairUrl/api/pair/key" -Body $body -Fingerprint $caFp }
                     catch { Write-Err2 (_T 'federate.join.request.key_failed'); exit 1 }
                 } else {
                     Write-Info (_T 'federate.join.request.requesting_code' $reqHost)
                     $body = @{ deviceName = $nm; deviceType = "node" } | ConvertTo-Json -Compress
-                    try { $reqResp = Invoke-RestMethod -Method Post -Uri "$pairUrl/api/pair/request" -ContentType 'application/json' -Body $body -TimeoutSec 20 }
+                    try { $reqResp = Invoke-PinnedHubPost -Uri "$pairUrl/api/pair/request" -Body $body -Fingerprint $caFp }
                     catch { Write-Err2 (_T 'federate.join.request.host_unreachable'); exit 1 }
                     $cid = [string](Get-JProp $reqResp 'challengeId')
                     if (-not $cid) { Write-Err2 (_T 'federate.join.request.no_challenge' ($reqResp | ConvertTo-Json -Compress -Depth 4)); exit 1 }
@@ -4048,7 +5145,7 @@ function Invoke-Federate {
                     $code = Read-Host (_T 'federate.join.request.code_prompt')
                     if (-not $code) { Write-Err2 (_T 'federate.join.request.no_code'); exit 1 }
                     $body = @{ challengeId = $cid; code = $code } | ConvertTo-Json -Compress
-                    try { $result = Invoke-RestMethod -Method Post -Uri "$pairUrl/api/pair/verify" -ContentType 'application/json' -Body $body -TimeoutSec 20 }
+                    try { $result = Invoke-PinnedHubPost -Uri "$pairUrl/api/pair/verify" -Body $body -Fingerprint $caFp }
                     catch { Write-Err2 (_T 'federate.join.request.verify_failed'); exit 1 }
                 }
                 $rurl = [string](Get-JProp $result 'relayUrl' '')
@@ -4247,11 +5344,189 @@ function Invoke-Purge {
     }
 }
 
+# ── Recovery Seed — parity with bin/wyrd do_seed ─────
+# `wyrd seed generate [<companion>] [--out <file>] | verify <file> | restore <file>`.
+# Steward only: the server checks (a steward session, or this node's operator token
+# from the machine itself). The passphrase is read without echo, sent only in the
+# request body, and never written to disk or log.
+function Get-SeedToken {
+    $t = Get-SessionToken
+    if ($t) { return $t }
+    $op = Join-Path $DataDir "operator.token"
+    if (Test-Path $op) {
+        $v = Get-Content $op -Raw -ErrorAction SilentlyContinue
+        if ($v) { return $v.Trim() }
+    }
+    return $null
+}
+
+function Read-SeedPassphrase([bool]$Confirm) {
+    if ([Console]::IsInputRedirected) { return [Console]::In.ReadLine() }
+    $plain = {
+        param($secure)
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    }
+    $p1 = & $plain (Read-Host -AsSecureString -Prompt ((_T 'seed.passphrase_prompt').TrimEnd().TrimEnd(':')))
+    if ($Confirm) {
+        $p2 = & $plain (Read-Host -AsSecureString -Prompt ((_T 'seed.passphrase_again').TrimEnd().TrimEnd(':')))
+        if ($p1 -ne $p2) { Write-Err2 (_T 'seed.passphrase_mismatch'); return $null }
+    }
+    return $p1
+}
+
+function Send-SeedRequest([string]$Sub, [string]$Token, [string]$Json) {
+    try {
+        $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$(Get-ApiBase)/api/seed/$Sub" `
+            -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json' `
+            -Body $Json -TimeoutSec 120
+        return @{ Code = [int]$r.StatusCode; Text = [string]$r.Content }
+    } catch {
+        $resp = $_.Exception.Response
+        if ($null -eq $resp) { return @{ Code = 0; Text = '' } }
+        $text = if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { '' }
+        return @{ Code = [int]$resp.StatusCode; Text = $text }
+    }
+}
+
+function Write-SeedRefusal([int]$Code, [string]$Text) {
+    if ($Code -eq 0) { Write-Err2 (_T 'seed.no_server' (Get-ApiBase)); return }
+    $d = $null
+    try { $d = $Text | ConvertFrom-Json } catch { $d = $null }
+    $error_ = if ($d -and $d.PSObject.Properties['error']) { [string]$d.error } else { '' }
+    if (($Code -eq 401 -or $Code -eq 403) -and $error_ -ne 'insecure_channel') { Write-Err2 (_T 'seed.err.forbidden'); return }
+    $names = if ($d -and $d.PSObject.Properties['names']) { (@($d.names) -join ', ') } else { '' }
+    $said = if ($error_) { _T "seed.err.$error_" $names } else { "seed.err." }
+    if ($said -eq "seed.err.$error_") {
+        $msg = if ($d -and $d.PSObject.Properties['message']) { [string]$d.message } else { "HTTP $Code" }
+        $said = _T 'seed.err.other' $msg
+    }
+    Write-Err2 $said
+}
+
+function Invoke-Seed {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "help" }
+    if ($sub -notin @('generate', 'verify', 'restore')) {
+        Write-Host (_T 'seed.help.title'); Write-Host ""
+        Write-Host (_T 'seed.help.generate'); Write-Host (_T 'seed.help.verify'); Write-Host (_T 'seed.help.restore')
+        if ($sub -eq 'help') { return 0 } else { return 64 }
+    }
+    $who = ''; $out = ''; $file = ''
+    for ($i = 1; $i -lt $Rest.Count; $i++) {
+        if ($Rest[$i] -in @('--out', '-o')) { if ($i + 1 -lt $Rest.Count) { $out = $Rest[$i + 1] }; $i++; continue }
+        if ($sub -eq 'generate') { if (-not $who) { $who = $Rest[$i] } } elseif (-not $file) { $file = $Rest[$i] }
+    }
+    if ($sub -ne 'generate') {
+        if (-not $file) { Write-Host (_T "seed.help.$sub"); return 64 }
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { Write-Err2 (_T 'seed.file_missing' $file); return 1 }
+    }
+    $token = Get-SeedToken
+    if (-not $token) { Write-Err2 (_T 'seed.no_token'); return 1 }
+    $pass = Read-SeedPassphrase ($sub -eq 'generate')
+    if ($null -eq $pass) { return 1 }
+    $body = if ($sub -eq 'generate') { [ordered]@{ companion = $who; passphrase = $pass } }
+            else { [ordered]@{ file = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $file).Path)); passphrase = $pass } }
+    $json = $body | ConvertTo-Json -Compress
+    $pass = $null; $body = $null
+    $r = Send-SeedRequest $sub $token $json
+    $json = $null
+    if ($r.Code -ne 200) { Write-SeedRefusal $r.Code $r.Text; return 1 }
+    $d = $r.Text | ConvertFrom-Json
+    switch ($sub) {
+        'generate' {
+            if (-not $out) {
+                $homeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+                $out = Join-Path $homeDir ("{0}-recovery-seed-{1}.wsrs" -f $d.entityId, (Get-Date -Format 'yyyyMMdd'))
+            }
+            # .NET resolves a relative path against its own current directory, not the shell's.
+            $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($out)
+            if (Test-Path -LiteralPath $out) { Write-Err2 (_T 'seed.out_exists' $out); return 1 }
+            $bytes = [Convert]::FromBase64String([string]$d.file)
+            $fs = [IO.File]::Open($out, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+            try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
+            Write-Ok (_T 'seed.made' $d.name $out)
+            if ($d.localCopy) { Write-Host ("  " + (_T 'seed.local_copy' $d.localCopy)) }
+            if (-not $d.carriesKey) { Write-Warn2 (_T 'seed.no_key_warn' $d.name) }
+            Write-Host ""
+            Write-Host ("  " + (_T 'seed.keep_offsite'))
+            Write-Host ("  " + (_T 'seed.keep_passphrase'))
+        }
+        'verify' {
+            $key = if ($d.carriesKey) { _T 'seed.key_included' } else { _T 'seed.key_missing' }
+            $made = if ($d.createdAt -is [datetime]) { $d.createdAt.ToUniversalTime().ToString('yyyy-MM-dd') } else { ([string]$d.createdAt).Substring(0, 10) }
+            Write-Ok (_T 'seed.verified' $d.name $made ([string]$d.bonds) $key)
+            if ($d.hereAlready) { Write-Host ("  " + (_T 'seed.verified_here' $d.name)) }
+        }
+        'restore' {
+            Write-Ok (_T 'seed.restored' $d.name)
+            if (-not $d.carriesKey) { Write-Warn2 (_T 'seed.no_key_warn' $d.name) }
+        }
+    }
+    return 0
+}
+
+# ── wyrd phone invite — parity with bin/wyrd do_phone ─────────────────────────
+# The relay mints the invite through RelayNkeyAdminMain phone-invite, the same class
+# the Linux/macOS launcher runs. That class also stamps this node's zone id and tunnel
+# key (zk) into it and refuses a zone-less invite (exit 3). This draws the QR with the
+# bundled Java, since Windows has no python3 by default.
+# Runs the relay's phone-invite; returns @{ Rc; Lines } (stdout lines, stderr to the console).
+function Get-PhoneInviteOutput([string[]]$JavaArgs) {
+    $res = @(Invoke-WyrdJavaClass -Class "org.wyrdsekai.server.RelayNkeyAdminMain" -JavaArgs $JavaArgs)
+    $rc = if ($res.Count -gt 0) { $res[-1] } else { 1 }
+    $lines = if ($res.Count -gt 1) { @($res[0..($res.Count - 2)] | ForEach-Object { "$_" }) } else { @() }
+    return @{ Rc = $rc; Lines = $lines }
+}
+
+function Show-InviteQr([string]$Url) {
+    $prev = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $rc = Invoke-WyrdJavaClassStream -Class "org.wyrdsekai.server.QrPrintMain" -JavaArgs @($Url)
+        return ($rc -eq 0)
+    } catch { return $false }
+    finally { [Console]::OutputEncoding = $prev }
+}
+
+function Invoke-Phone {
+    $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "help" }
+    if ($sub -ne 'invite') {
+        Write-Host (_T 'phone.help.title'); Write-Host ""
+        Write-Host (_T 'phone.help.cmd_invite'); Write-Host (_T 'phone.help.flag_relay'); Write-Host (_T 'phone.help.flag_fingerprint')
+        return 0
+    }
+    $fwd = @('phone-invite')
+    for ($i = 1; $i -lt $Rest.Count; $i++) {
+        $v = if ($i + 1 -lt $Rest.Count) { $Rest[$i + 1] } else { '' }
+        switch ($Rest[$i]) {
+            '--relay'       { $fwd += @('--registration-url', $v); $i++ }
+            '--fingerprint' { $fwd += @('--fingerprint', $v); $i++ }
+        }
+    }
+    $r = Get-PhoneInviteOutput $fwd
+    if ($r.Rc -eq 3) { Write-Err2 (_T 'phone.invite.no_zone'); return 1 }
+    if ($r.Rc -ne 0) { Write-Err2 (_T 'phone.invite.failed'); return 1 }
+    $jsonLine = @($r.Lines | Where-Object { "$_".StartsWith('{') }) | Select-Object -First 1
+    $url = ''
+    if ($jsonLine) { try { $url = [string](($jsonLine | ConvertFrom-Json).invite_url) } catch { $url = '' } }
+    if (-not $url) { Write-Err2 (_T 'phone.invite.no_url'); $r.Lines | ForEach-Object { Write-Host $_ }; return 1 }
+    Write-Host ""
+    Write-Info (_T 'phone.invite.scan')
+    Write-Host ""
+    if (-not (Show-InviteQr $url)) { Write-Warn2 (_T 'phone.invite.no_qr_tool') }
+    Write-Host ""
+    Write-Host "  $url"
+    Write-Host ""
+    Write-Host (_T 'phone.invite.paste_hint')
+    return 0
+}
+
 # Commands that are Linux/macOS-only by nature (systemd/docker/launchd, or not
 # yet ported). Honest stubs: say so, point at the working alternative, exit 3.
 $script:WindowsStubCommands = @(
     "daemon","relay-server","rendezvous","web","reseed","embed-migrate",
-    "embedding-model","verify-release","residency","connect","phone","bond",
+    "embedding-model","verify-release","residency","connect","bond",
     "issue","voice","reset","nuke"
 )
 
@@ -4272,10 +5547,12 @@ switch ($Command.ToLower()) {
     "restart"   { Invoke-Stop; Start-Sleep -Seconds 1; Invoke-Start }
     "status"    { Invoke-Status }
     "log"       { Invoke-Log }
+    "logs"      { Invoke-Log }
     "config"    { Invoke-Config }
     "cred"      { Invoke-Cred | Out-Null }
     "inference" { Invoke-Inference }
     "model"     { Invoke-Model }
+    "brain"     { Invoke-Brain }
     "relay"     { Invoke-Relay }
     "join"      { Invoke-Join }
     "household" { Invoke-Household }
@@ -4292,6 +5569,8 @@ switch ($Command.ToLower()) {
     "version"   { Invoke-Version }
     "state"     { Invoke-State }
     "soul"      { Invoke-Soul }
+    "seed"      { $rc = Invoke-Seed; if ($rc) { exit $rc } }
+    "phone"     { $rc = Invoke-Phone; if ($rc) { exit $rc } }
     "rooms"     { Invoke-Rooms }
     "mail"      { Invoke-Mail }
     "body"      { Invoke-Body }

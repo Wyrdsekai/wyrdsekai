@@ -52,7 +52,7 @@ class CompanionEngineEmoteTest {
         var lastMessages: List<ChatMessage>? = null
         var callCount = 0
 
-        override suspend fun complete(
+        override suspend fun send(
             baseUrl: String,
             messages: List<ChatMessage>,
             options: CompletionOptions,

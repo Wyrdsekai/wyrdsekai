@@ -108,4 +108,14 @@ class SummariseTheQuestionNotTheQueryTest {
             .as("never overwrite a value an item was given explicitly")
             .doesNotContain("params.put(\"askedFor\", userRequest)");
     }
+
+    /** What the sources hold is said first; the gap comes after, and briefly (2026-09-22). */
+    @Test
+    void the_library_summariser_says_what_it_found_before_what_is_missing() throws Exception {
+        var s = script("LIBRARY_CARD_SCRIPT");
+        int found = s.indexOf("Begin with what the sources DO say");
+        assertThat(found).as("the answer leads with what the sources hold").isPositive();
+        assertThat(s).doesNotContain("If the sources don't answer ");
+        assertThat(s.indexOf("part of the question they do not cover")).isGreaterThan(found);
+    }
 }

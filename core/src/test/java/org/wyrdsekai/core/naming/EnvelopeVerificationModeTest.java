@@ -57,13 +57,12 @@ class EnvelopeVerificationModeTest {
             EnvelopeVerificationMode.fromString("   ", EnvelopeVerificationMode.HARD));
     }
 
-    @Test void fromEnv_defaultsToSoft() {
-        // Phase-1 default per spec §7 — stays SOFT until operators flip.
-        // Env isn't set in CI, so this should return the documented default.
-        // (If WYRDSEKAI_ENVELOPE_VERIFY is set in a dev env, this test won't
-        // pass — that's expected; no way to unset env from a Java test.)
-        if (System.getenv("WYRDSEKAI_ENVELOPE_VERIFY") == null) {
-            assertEquals(EnvelopeVerificationMode.SOFT, EnvelopeVerificationMode.fromEnv());
+    @Test void fromEnv_defaultsToHard() {
+        // Since 2026-09-28 a bad envelope is dropped unless the transition setting says otherwise.
+        // (If WYRDSEKAI_ENVELOPE_VERIFY is set in a dev env this check is skipped.)
+        if (System.getenv("WYRDSEKAI_ENVELOPE_VERIFY") == null
+                && System.getProperty("WYRDSEKAI_ENVELOPE_VERIFY") == null) {
+            assertEquals(EnvelopeVerificationMode.HARD, EnvelopeVerificationMode.fromEnv());
         }
     }
 }

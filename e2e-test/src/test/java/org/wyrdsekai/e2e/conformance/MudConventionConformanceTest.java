@@ -164,11 +164,13 @@ class MudConventionConformanceTest {
         var body = "{\"username\":\"" + username + "\","
             + "\"displayName\":\"" + displayName + "\","
             + "\"description\":\"" + description + "\"}";
-        var resp = http.send(HttpRequest.newBuilder()
+        // An OPERATOR route: the embedded server's operator token, from loopback.
+        var req = HttpRequest.newBuilder()
             .uri(URI.create(restBaseUrl() + "/api/auth/test-reset"))
             .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build(), HttpResponse.BodyHandlers.ofString());
+            .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (server != null) req.header("Authorization", "Bearer " + TestServerBootstrap.operatorToken());
+        var resp = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() != 200) {
             // Endpoint not enabled — best-effort fall back to in-band rename.
             // (description can't be reset without the hook; tests guard their

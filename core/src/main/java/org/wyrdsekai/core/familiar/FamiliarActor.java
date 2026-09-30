@@ -11,6 +11,7 @@ import org.apache.pekko.actor.typed.javadsl.TimerScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.time.Duration;
@@ -228,7 +229,7 @@ public class FamiliarActor extends AbstractBehavior<FamiliarActor.Command> {
             requestId, null, List.copyOf(conversation),
             Math.min(familiar.tanks().tokens(), 1024),  // per-turn cap
             0.4,
-            inferenceAdapter));
+            inferenceAdapter).withNow(NowLine.date(summonedAt)));
     }
 
     private Behavior<Command> onInferenceCame(InferenceCame msg) {

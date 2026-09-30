@@ -5,9 +5,9 @@
  *
  * The invite carries the relay(s) + the zone id, but NOT your account name —
  * so the zone entry's `username` starts empty and the Servers screen prompts
- * for it (once) on first open. The TLS pin is installed TOFU on first connect
- * via the native HouseholdTrust layer; we carry `caFp` on the held relay for
- * that path.
+ * for it (once) on first open. The relay's TLS pins (`caFp`/`fp`) ride on the
+ * held relay; the home's own keys (`zk`, `home_ca_fp`, `lan_https`, `home_bus`) go to the
+ * zone's per-device trust (zoneBankStore.trust), never into the synced bank.
  */
 import { isPhoneInviteUrl, parsePhoneInvite } from '../network/phoneInvite';
 import { useZoneBankStore } from '../state/zoneBankStore';
@@ -56,6 +56,11 @@ export function addInviteToBank(
     displayName: opts?.displayName ?? existing?.displayName ?? zoneId,
     relayUrls: invite.relays.map((r) => r.wsUrl),
     username,
+  });
+
+  // The invite is this phone's trust decision for the home's own keys.
+  bank.setZoneTrust(zoneId, {
+    zk: invite.zk, homeCaFp: invite.homeCaFp, lanHttps: invite.lanHttps, homeBus: invite.homeBus,
   });
 
   return { zoneId, relayCount: invite.relays.length, hasUsername: !!username };

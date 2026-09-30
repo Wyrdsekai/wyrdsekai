@@ -233,8 +233,8 @@ class ItemWorldApiProviderImplPhaseDNTest {
     }
 
     @Test
-    void safe_get_returns_null_when_not_wired() {
-        assertThat(provider.safeGet("anything")).isNull();
+    void safe_secret_is_empty_when_no_credential_is_set() {
+        assertThat(provider.safeSecretForRequest("anything")).isEmpty();
     }
 
     // ─── §4.17 Hearth ────────────────────────────────────────────

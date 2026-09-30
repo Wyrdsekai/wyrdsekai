@@ -362,6 +362,11 @@ for m in json.load(open(idx)).get("models", []):
         urls.append(f"https://huggingface.co/{repo}/resolve/{rev}/{pf}")
     if m.get("url"):
         urls.append(m["url"])
+    # The entry's own mirror (wyrdsekai.org) last. The field had been in the index since the
+    # 9B/4B shipped and was read by nothing: those two fetches passed the address as a literal,
+    # and every later entry's mirror was a promise the fetch never tried.
+    if m.get("mirror_url"):
+        urls.append(m["mirror_url"])
     # Some entries list the pinned HF link as their `url` too. Retrying a URL
     # that just failed is not a fallback; it only makes the log read as though
     # a second source was tried.
@@ -428,6 +433,31 @@ for m in json.load(open(idx)).get("models", []):
         print(v if v is not None else "")
         break
 PY
+}
+
+# _model_local_path <model-id> — where this entry's file lives on the node. Adapters live
+# beside the brain (adapters/brain/<local_file>), everything else under models/. The model
+# verbs used models/ for every entry, so `wyrd model update species-floor-35b-a3b` wrote the
+# species floor where nothing would load it and `status` called the installed adapters absent.
+_model_local_path() {
+    local lf kind; lf=$(_index_field "$1" local_file 2>/dev/null); kind=$(_index_field "$1" kind 2>/dev/null)
+    [ -z "$lf" ] && return 1
+    case "$kind" in
+        adapter) echo "$DATA_DIR/adapters/brain/$lf" ;;
+        *) echo "$MODELS_DIR/$lf" ;;
+    esac
+}
+
+# _relink_work_adapter <new-honesty-file> <old-honesty-file> — brain/work.gguf is the honesty
+# adapter linked in under the working-turn name. When the honesty file is replaced and work.gguf
+# was that same file, follow it; a work.gguf someone put there themselves is left alone.
+_relink_work_adapter() {
+    local new="$1" old="$2" work="$DATA_DIR/adapters/brain/work.gguf"
+    [ -f "$work" ] && [ -f "$old" ] || return 0
+    [ "$work" -ef "$old" ] || return 0
+    rm -f "$work"
+    ln "$new" "$work" 2>/dev/null || cp "$new" "$work"
+    log "$(_t brain.setup.linked_work)"
 }
 
 _model_record() {  # _model_record <local_file> <id> <version> <url>
@@ -1078,6 +1108,244 @@ _export_brain_mem_limits() {
     return 0
 }
 
+# ── Serving profile `single-sparse`: one large sparse model serves every lane ──────────────
+# The two-model stack (9B drive + 4B voice) is the default and is untouched by any of this.
+BRAIN_MODEL_DEFAULT="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+BRAIN_CONTAINER="wyrdsekai-llama-brain"
+# Residency figures for the default brain model, measured on a 16 GB card (2026-09-18/20):
+# all routed experts in system RAM = 3.4 GB of VRAM; each layer's experts moved to the card
+# costs ~0.47 GB of VRAM and frees the same from RAM. 40 layers, 22 GB file.
+BRAIN_LAYERS=40; BRAIN_SPINE_VRAM_MB=3500; BRAIN_LAYER_MB=480; BRAIN_FILE_MB=22200
+BRAIN_VRAM_HEADROOM_MB=2300   # context, the adapters, the desktop
+BRAIN_RAM_FLOOR_MB=9000       # the server, the OS, the embedder
+
+_serving_profile() {
+    case "$(printf '%s' "${WYRDSEKAI_SERVING_PROFILE:-}" | tr 'A-Z' 'a-z')" in
+        single-sparse) echo single-sparse ;;
+        sparse-drive) echo sparse-drive ;;
+        *) echo two-model ;;
+    esac
+}
+
+# Profile `sparse-drive`: the large sparse model takes the DRIVE's place on :8200 and the voice
+# model keeps speaking on :8201 (polish, the conversation lane and the night's write all stay on
+# the voice model). For a companion whose voice already lives in a tuned voice model this gives
+# the larger mind without changing who speaks. The card has to hold both, so the planner is
+# asked about what is left after the voice model.
+BRAIN_VOICE_RESERVE_MB=4300   # the 4B at Q4 with a 16K window, plus its compute buffers
+
+# plan_for_profile <profile> <vram_mb> <ram_mb>
+plan_for_profile() {
+    local profile="$1" vram="${2:-0}" ram="${3:-0}"
+    [[ "$vram" =~ ^[0-9]+$ ]] || vram=0
+    if [[ "$profile" == "sparse-drive" ]]; then
+        (( vram > BRAIN_VOICE_RESERVE_MB )) && vram=$(( vram - BRAIN_VOICE_RESERVE_MB )) || vram=0
+    fi
+    plan_brain_residency "$vram" "$ram"
+}
+
+# plan_brain_residency <vram_mb> <ram_mb>  →  gpu-full | <N> | all | not-viable
+# N is the value for LLAMA_CPU_MOE / --n-cpu-moe: the routed experts of the first N layers stay
+# in system RAM. It decides; it does not advise. Pure arithmetic so it can be table-tested.
+plan_brain_residency() {
+    local vram="${1:-0}" ram="${2:-0}"
+    [[ "$vram" =~ ^[0-9]+$ && "$ram" =~ ^[0-9]+$ ]] || { echo not-viable; return; }
+    local room=$(( vram - BRAIN_SPINE_VRAM_MB - BRAIN_VRAM_HEADROOM_MB ))
+    (( room < 0 )) && { echo not-viable; return; }
+    local on_gpu=$(( room / BRAIN_LAYER_MB ))
+    (( on_gpu > BRAIN_LAYERS )) && on_gpu=$BRAIN_LAYERS
+    local in_ram_mb=$(( BRAIN_FILE_MB - BRAIN_SPINE_VRAM_MB - on_gpu * BRAIN_LAYER_MB ))
+    (( in_ram_mb < 0 )) && in_ram_mb=0
+    (( ram < in_ram_mb + BRAIN_RAM_FLOOR_MB )) && { echo not-viable; return; }
+    if (( on_gpu >= BRAIN_LAYERS )); then echo gpu-full
+    elif (( on_gpu == 0 )); then echo all
+    else echo $(( BRAIN_LAYERS - on_gpu )); fi
+}
+
+_brain_vram_mb() {   # the largest single card: the brain runs on one
+    # macOS: the GPU shares system memory, there is no card to measure. Report 0; the Darwin
+    # planner below decides from RAM alone.
+    if [[ "$(uname -s)" == "Darwin" ]]; then echo 0; return 0; fi
+    if command -v nvidia-smi &>/dev/null; then
+        nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1
+    else echo 0; fi
+}
+# What others hold on the card right now, in MB: the card's used memory less what our own
+# servers and the night's trainer hold. A game or a desktop on this card has no compute-apps
+# row, so the difference is the honest measure. 0 without nvidia-smi.
+_brain_vram_others_mb() {
+    command -v nvidia-smi &>/dev/null || { echo 0; return 0; }
+    local used ours=0 pid mem
+    used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1)"
+    [[ "$used" =~ ^[0-9]+$ ]] || { echo 0; return 0; }
+    local ourpids=" " c
+    for c in wyrdsekai-llama-brain wyrdsekai-llama wyrdsekai-llama-voice wyrdsekai-llama-embed; do
+        ourpids+="$(docker top "$c" -o pid 2>/dev/null | tail -n +2 | tr -s ' \n' ' ')"
+    done
+    ourpids+="$(pgrep -f 'sleepwrite/brain_write.py' 2>/dev/null | tr '\n' ' ') "
+    while IFS=, read -r pid mem; do
+        pid="${pid// /}"; mem="${mem// /}"
+        [[ "$pid" =~ ^[0-9]+$ && "$mem" =~ ^[0-9]+$ ]] || continue
+        [[ "$ourpids" == *" $pid "* ]] && ours=$(( ours + mem ))
+    done < <(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null)
+    local others=$(( used - ours )); (( others < 0 )) && others=0
+    echo "$others"
+}
+# The steward's ceiling for the card in MB (`wyrd brain vram <GB>`); 0 = none.
+_brain_vram_cap_mb() {
+    local v="${WYRDSEKAI_BRAIN_VRAM_CAP_MB:-}"
+    [[ -z "$v" && -f "$CONFIG_FILE" ]] && v="$(grep -E '^WYRDSEKAI_BRAIN_VRAM_CAP_MB=' "$CONFIG_FILE" | tail -1 | cut -d= -f2-)"
+    if [[ "$v" =~ ^[0-9]+$ ]]; then echo "$v"; else echo 0; fi
+}
+# The VRAM a plan may use now: the largest card, less what others hold on it, no more than the
+# steward's ceiling. Planning on the whole card put her on top of whatever was already running
+# and left the machine hers alone (2026-09-26). Pure given its three inputs; see the table test.
+_brain_vram_available_mb() {   # [total_mb others_mb cap_mb] — measured when not given
+    local total="${1:-$(_brain_vram_mb)}" others="${2:-$(_brain_vram_others_mb)}" cap="${3:-$(_brain_vram_cap_mb)}"
+    [[ "$total" =~ ^[0-9]+$ ]] || total=0; [[ "$others" =~ ^[0-9]+$ ]] || others=0; [[ "$cap" =~ ^[0-9]+$ ]] || cap=0
+    local avail=$(( total - others )); (( avail < 0 )) && avail=0
+    (( cap > 0 && avail > cap )) && avail=$cap
+    echo "$avail"
+}
+# The plan the running brain container was started with (its LLAMA_CPU_MOE), or "" when it is not up.
+_brain_current_plan() {
+    local v; v="$(docker inspect wyrdsekai-llama-brain --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -E '^LLAMA_CPU_MOE=' | cut -d= -f2)"
+    [[ -z "$v" ]] && { echo ""; return; }
+    case "$v" in 0|none) echo gpu-full ;; on) echo all ;; *) echo "$v" ;; esac
+}
+# The plan in a person's words: how much of the card she uses and what others hold there.
+_brain_plan_words() {   # <plan> <avail_mb> <others_mb> <cap_mb>
+    local plan="$1" avail="${2:-0}" others="${3:-0}" cap="${4:-0}" on_gpu use_mb
+    case "$plan" in gpu-full) on_gpu=$BRAIN_LAYERS ;; all) on_gpu=0 ;; not-viable) _t brain.plan.words_not_viable "$(( others / 1024 ))"; return ;; *) on_gpu=$(( BRAIN_LAYERS - plan )) ;; esac
+    use_mb=$(( BRAIN_SPINE_VRAM_MB + on_gpu * BRAIN_LAYER_MB ))
+    (( use_mb > avail && avail > 0 )) && use_mb=$avail
+    local free_mb=$(( avail - use_mb )); (( free_mb < 0 )) && free_mb=0
+    local line; line="$(_t brain.plan.words "$(( (use_mb + 512) / 1024 ))" "$on_gpu" "$BRAIN_LAYERS" "$(( (free_mb + 512) / 1024 ))" "$(( (others + 512) / 1024 ))")"
+    (( cap > 0 )) && line+=" $(_t brain.plan.words_cap "$(( cap / 1024 ))")"
+    echo "$line"
+}
+_brain_ram_mb() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        local bytes; bytes="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+        [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+        echo $(( bytes / 1048576 )); return 0
+    fi
+    awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0
+}
+
+# plan_brain_residency_darwin <ram_mb> [arch]  →  gpu-full | not-viable
+# Apple Silicon only. The 22 GB of weights plus context must fit under the default GPU wired
+# limit (about three quarters of unified memory), which a 48 GB Mac clears and a 32 GB Mac
+# does not. There is no partial residency on Metal: every layer is on the GPU or the profile
+# is not offered. Intel Macs are not viable. Pure arithmetic, like plan_brain_residency.
+BRAIN_DARWIN_RAM_MIN_MB=46000
+plan_brain_residency_darwin() {
+    local ram="${1:-0}" arch="${2:-$(uname -m)}"
+    [[ "$ram" =~ ^[0-9]+$ && "$arch" == "arm64" ]] || { echo not-viable; return; }
+    if (( ram >= BRAIN_DARWIN_RAM_MIN_MB )); then echo gpu-full; else echo not-viable; fi
+}
+
+# The cgroup cap for the brain container: what stays in RAM + prompt cache + 2 GiB.
+_brain_single_mem_limit() {   # <plan>
+    local plan="$1" on_gpu=0 cache="${LLAMA_CACHE_RAM:-1024}"
+    case "$plan" in gpu-full) on_gpu=$BRAIN_LAYERS ;; all) on_gpu=0 ;; *) on_gpu=$(( BRAIN_LAYERS - plan )) ;; esac
+    [[ "$cache" =~ ^[0-9]+$ ]] || cache=1024
+    # mlock pins the mapped file, so the whole file counts even when layers live on the card.
+    echo "$(( BRAIN_FILE_MB + cache + 2048 ))m"
+}
+
+# Start (or reconcile) the single brain through compose. Returns 0 when the container is up
+# or starting, 1 when this node cannot run it (the caller falls back to the two-model stack).
+_start_brain_compose() {
+    local model="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}"
+    if [[ ! -f "$DATA_DIR/models/$model" ]]; then
+        warn "$(_t brain.start.model_missing "$DATA_DIR/models/$model")"
+        return 1
+    fi
+    local plan="${LLAMA_CPU_MOE:-}"
+    if [[ -z "$plan" ]]; then
+        # Planned on what the card has FREE (less the steward's ceiling), not on the whole card.
+        plan="$(plan_for_profile "$(_serving_profile)" "$(_brain_vram_available_mb)" "$(_brain_ram_mb)")"
+        if [[ "$plan" == "not-viable" ]]; then
+            warn "$(_t brain.start.not_viable "$(_brain_vram_available_mb)" "$(_brain_ram_mb)")"
+            return 1
+        fi
+    fi
+    case "$plan" in gpu-full) export LLAMA_CPU_MOE=0 ;; *) export LLAMA_CPU_MOE="$plan" ;; esac
+    export LLAMA_BRAIN_MODEL="$model" WYRDSEKAI_DATA="$DATA_DIR"
+    [[ -z "${LLAMA_BRAIN_MEM_LIMIT:-}" ]] && export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit "$plan")"
+    [[ -f "$DATA_DIR/adapters/brain/honesty.gguf" ]] || warn "$(_t brain.start.no_generic_adapter "$DATA_DIR/adapters/brain/honesty.gguf")"
+    # The drive container holds the same port. The voice container is stopped only when this
+    # model is to be the voice as well.
+    docker stop wyrdsekai-llama >/dev/null 2>&1 || true
+    [[ "$(_serving_profile)" == "single-sparse" ]] && { docker stop wyrdsekai-llama-voice >/dev/null 2>&1 || true; }
+    _ensure_nvidia_container_runtime
+    log "$(_t brain.start.starting "$model" "$plan")"
+    if docker compose --profile brain up -d llama-brain 2>/dev/null; then return 0; fi
+    warn "$(_t brain.start.failed)"
+    return 1
+}
+
+# True when the process behind the drive server's PID file is the single model (loading or up).
+_brain_native_running() {
+    [[ -f "$DATA_DIR/.llama-server.pid" ]] || return 1
+    local pid; pid=$(<"$DATA_DIR/.llama-server.pid")
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || return 1
+    local args; args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    [[ "$args" == *"${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}"* ]]
+}
+# macOS: the single model as ONE native llama-server on the drive port. Metal with unified
+# memory puts every layer on the GPU, so there is no --cpu-moe; no --mlock either, the GPU
+# wired limit already governs what stays resident. Otherwise the flags are the llama-brain
+# compose service's, two slots on one shared context pool (-np 2 --kv-unified) and adapter
+# order included (id 0 generic, id 1 the night's write, and the night's write only when the
+# honesty adapter is there). It writes the drive server's PID and log files so stop and status
+# treat it as the drive. Returns 1 when this Mac cannot run it
+# (the caller falls back to the two-model start).
+_start_brain_native() {
+    local model="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}"
+    if [[ ! -f "$MODELS_DIR/$model" ]]; then
+        warn "$(_t brain.start.model_missing "$MODELS_DIR/$model")"
+        return 1
+    fi
+    local ram; ram="$(_brain_ram_mb)"
+    if [[ "$(plan_brain_residency_darwin "${ram:-0}")" == "not-viable" ]]; then
+        warn "$(_t brain.start.not_viable_mac "${ram:-0}")"
+        return 1
+    fi
+    local llama=""
+    llama=$(find_llama_server 2>/dev/null) || true
+    if [[ -z "$llama" ]]; then
+        warn "$(_t brain.start.failed)"
+        return 1
+    fi
+    # Adapter 0 is the floor: the species floor when the node has it, else the honesty adapter.
+    local generic="$DATA_DIR/adapters/brain/honesty.gguf"
+    [[ -f "$DATA_DIR/adapters/brain/species.gguf" ]] && generic="$DATA_DIR/adapters/brain/species.gguf"
+    local brain_args=(-m "$MODELS_DIR/$model" --port 8200 -c 32768 -np 2 --kv-unified
+        --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" -ngl 99
+        --batch-size 2048 --ubatch-size 2048 --host 0.0.0.0 --jinja
+        --reasoning off --reasoning-budget 0 --flash-attn on --metrics)
+    if [[ -f "$generic" ]]; then
+        brain_args+=(--lora-scaled "$generic:1.0")
+        # The styled species adapter, raised per turn by her state (the register dial); at 0 until asked.
+        [[ -f "$DATA_DIR/adapters/brain/styled.gguf" ]] && brain_args+=(--lora-scaled "$DATA_DIR/adapters/brain/styled.gguf:0.0")
+        # The working-turn adapter, raised on the turns that call tools and zeroed when she speaks; at 0 until asked.
+        [[ -f "$DATA_DIR/adapters/brain/work.gguf" ]] && brain_args+=(--lora-scaled "$DATA_DIR/adapters/brain/work.gguf:0.0")
+        # One night adapter per being, in name order, as the compose service loads them.
+        local _night
+        for _night in "$DATA_DIR"/adapters/brainwrite/*/current.gguf; do
+            [[ -f "$_night" ]] && brain_args+=(--lora-scaled "$_night:0.0")
+        done
+    else
+        warn "$(_t brain.start.no_generic_adapter "$generic")"
+    fi
+    log "$(_t brain.start.starting "$model" gpu-full)"
+    nohup "$llama" "${brain_args[@]}" > "$DATA_DIR/.llama-server.log" 2>&1 &
+    echo "$!" > "$DATA_DIR/.llama-server.pid"
+    return 0
+}
+
 _reconcile_container() {  # <profile> <service>
     local out
     _export_brain_mem_limits
@@ -1142,6 +1410,20 @@ start_inference() {
         drive_model="${model_path:-$(resolve_drive_model)}"
         voice_model="$(resolve_voice_model)"
 
+        # Serving profile single-sparse: one native llama-server on the drive port instead of
+        # the drive + voice pair. A Mac that cannot run it (model missing, too little memory,
+        # Intel) falls through to the pair below. Something else already answering on :8200 is
+        # left alone, as on every other start; `wyrd restart` is what moves between profiles.
+        local _single_brain=0
+        if [[ "$(_serving_profile)" == "single-sparse" ]]; then
+            if _brain_native_running; then
+                log "$(_t start_inference.already_running)"
+                _single_brain=1
+            elif ! is_inference_running && _start_brain_native; then
+                _single_brain=1
+            fi
+        fi
+
         # MoE residency + template knobs for the drive server. Mirrors the
         # docker-compose schema (LLAMA_CPU_MOE / LLAMA_CHAT_TEMPLATE_KWARGS /
         # LLAMA_SKILLS_EXTRA_ARGS) under the WYRDSEKAI_ env-file prefix.
@@ -1162,7 +1444,9 @@ start_inference() {
             drive_extra+=("${_extra_words[@]}")
         fi
 
-        if is_inference_running; then
+        if [[ "$_single_brain" == "1" ]]; then
+            : # the single model holds :8200 — no MLX drive, no two-model drive.
+        elif is_inference_running; then
             log "$(_t start_inference.already_running)"
         elif start_mlx_drive; then
             : # MLX drive path took :8200; log emitted inside helper.
@@ -1178,8 +1462,8 @@ start_inference() {
         fi
 
         # :8201 voice server. Skipped when WYRDSEKAI_LLAMA_VOICE_ENABLED=0
-        # (single-server tier).
-        if [[ "${WYRDSEKAI_LLAMA_VOICE_ENABLED:-1}" != "0" ]]; then
+        # (single-server tier), and in the single-model profile: every lane is on :8200.
+        if [[ "${WYRDSEKAI_LLAMA_VOICE_ENABLED:-1}" != "0" && "$_single_brain" != "1" ]]; then
             if is_voice_inference_running; then
                 log "voice :8201 already running"
             elif start_mlx_voice; then
@@ -1310,7 +1594,16 @@ start_inference() {
                 # false alarm that read as a broken install on every fresh run.
                 _export_brain_mem_limits
                 local _docker_started=0
-                if [[ "$_drive_was_running" == "1" ]]; then
+                # Serving profile single-sparse: one model on the drive port instead of the
+                # drive + voice pair. A node that cannot run it falls through to the pair.
+                local _single_brain=0 _brain_is_drive=0
+                case "$(_serving_profile)" in
+                    single-sparse) _start_brain_compose && { _single_brain=1; _brain_is_drive=1; } ;;
+                    sparse-drive)  _start_brain_compose && _brain_is_drive=1 ;;
+                esac
+                if [[ "$_brain_is_drive" == "1" ]]; then
+                    _docker_started=1
+                elif [[ "$_drive_was_running" == "1" ]]; then
                     _docker_started=1  # :8200 already serving — leave it be…
                     # …unless it is our compose container: reconcile it against
                     # the current docker-compose.yml (no-op when unchanged). The
@@ -1380,7 +1673,7 @@ start_inference() {
                 # up with only the 9B drive (1 backend, no voice pass).
                 # Skipped when WYRDSEKAI_LLAMA_VOICE_ENABLED=0 or when no
                 # 4B model exists in the same dir compose mounts at /models.
-                if [[ "${WYRDSEKAI_LLAMA_VOICE_ENABLED:-1}" != "0" ]]; then
+                if [[ "${WYRDSEKAI_LLAMA_VOICE_ENABLED:-1}" != "0" && "$_single_brain" != "1" ]]; then
                     local _vm_dir="${_sm_dir:-$DATA_DIR}"
                     local _voice_name="" _vn
                     for _vn in \
@@ -1537,7 +1830,7 @@ stop_inference() {
     # Docker not started hung for minutes on this line (0.2.2 first-install
     # test). Only talk to docker when a daemon socket exists.
     if command -v docker &>/dev/null && _docker_daemon_present; then
-        docker stop wyrdsekai-llama wyrdsekai-llama-voice wyrdsekai-llama-embed wyrdsekai-tei-embed 2>/dev/null || true
+        docker stop wyrdsekai-llama wyrdsekai-llama-voice wyrdsekai-llama-brain wyrdsekai-llama-embed wyrdsekai-tei-embed 2>/dev/null || true
     fi
 }
 
@@ -1657,6 +1950,9 @@ _doctor_process_inventory() {
             [[ -n "$lpid" && "$lpid" != "0" ]] && echo -e "launchd\t$lpid\t$label"
         done
     fi
+    # The last label usually has no pid, and its false `[[ … ]]` made this return 1: under
+    # `set -e` the caller's `inv=$(…)` then ended `wyrd doctor` on every Mac.
+    return 0
 }
 
 # F8: returns 0 if exactly 0 or 1 server process across all sources, 1 if conflict.
@@ -1874,28 +2170,29 @@ do_setup() {
 
     # ── External-tool access policy (MCP grants) ──
     # Ask once, interactively: may companions use configured external tools
-    # (web search, home controls, image generation, …) freely, or only after the
-    # steward approves each one via the Study's Tool Warden? Default is OPEN.
-    # Persists WYRDSEKAI_MCP_STRICT_GRANTS; the server reads it at boot. The -z
+    # (web search, home controls, image generation, …) only after the steward
+    # approves each one via the Study's Tool Warden, or freely? Default is LOCKED
+    # (the server treats an unset WYRDSEKAI_MCP_STRICT_GRANTS as strict). The -z
     # guard means we only ask when it hasn't been set yet (never nags on re-run).
+    # The household's own librarian needs no grant either way.
     # (i18n of this prompt is a follow-up — kept plain-English for now.)
     if [[ -t 0 ]] && [[ -z "${WYRDSEKAI_MCP_STRICT_GRANTS:-}" ]]; then
         echo
         echo "External tools (web search, home automation, image generation, …) reach"
         echo "outside your home. Who may use a configured tool?"
-        echo "  1) Any companion, freely       — open, simplest (default)"
-        echo "  2) Only after you approve it    — locked; you hand out keys in your Study"
+        echo "  1) Only after you approve it    — locked; you hand out keys in your Study (default)"
+        echo "  2) Any companion, freely       — open"
         # Same live countdown as the other setup asks: empty reply (timeout
         # or bare enter) takes the default shown in the prompt text, so an
         # unattended install never hangs here.
         _prompt_countdown "Choose [1]:" 30
         local _mcp_choice="$_PROMPT_REPLY"
         if [[ "$_mcp_choice" == "2" ]]; then
-            do_config set "WYRDSEKAI_MCP_STRICT_GRANTS=true" >/dev/null 2>&1 \
-                && info "External tools locked to your approval. Approve later with:  use tool-warden op=grant agent=<name|everyone> service=<id>"
-        else
             do_config set "WYRDSEKAI_MCP_STRICT_GRANTS=false" >/dev/null 2>&1 \
                 && info "External tools open to your companions by default."
+        else
+            do_config set "WYRDSEKAI_MCP_STRICT_GRANTS=true" >/dev/null 2>&1 \
+                && info "External tools locked to your approval. Approve later with:  use tool-warden op=grant agent=<name|everyone> service=<id>"
         fi
     fi
 
@@ -2952,7 +3249,7 @@ Targets:
   openhands        Install the OpenHands coding backend (Docker image
                    pull + config flip). Requires Docker or Podman.
   openclaw         Install the containerized OpenClaw skill gateway
-                   ( Option B): image pull, container
+                   (SPEC_SKILLS §12.3 Option B): image pull, container
                    start on :18789, config flip. Also: wyrd openclaw setup.
 
 Flags (full setup only):
@@ -3438,6 +3735,7 @@ _bootstrap_steward_invite() {
         echo "  $(_t start.hint.ssh "${WYRDSEKAI_SSH_PORT:-7022}")"
         echo "  $(_t start.hint.connect_cli)"
     fi
+    echo "  $(_t start.hint.seed)"
 }
 
 # Ensure inference is up — idempotent (start_inference no-ops if already
@@ -3733,6 +4031,7 @@ do_start() {
     # Start inference if not running (mode-aware: cloud/zone nodes skip the
     # local stack — WYRDSEKAI_INFERENCE_MODE).
     maybe_start_inference "${WYRDSEKAI_MODEL_PATH:-}"
+    _brain_hardware_notice || true
 
     # Bring the browser terminal back up if the steward enabled it
     if [[ -f "$DATA_DIR/.web-terminal-enabled" ]]; then
@@ -4163,6 +4462,10 @@ do_status() {
     if command -v docker &>/dev/null && _docker_daemon_present; then
         docker compose ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null || true
     fi
+
+    # A node started by its service manager never runs `wyrd start`, so the notice that the
+    # hardware now allows the large model (or changed under a set profile) is shown here too.
+    _brain_hardware_notice || true
 }
 
 # ── Other commands ──
@@ -4204,9 +4507,10 @@ do_version() {
         local resp
         resp=$(curl -sf "$api/api/version/mesh" 2>&1) \
             || { err "$(_t version.mesh_failed)"; return 1; }
-        echo "$resp" | python3 - <<'PY'
-import sys, json
-d = json.load(sys.stdin)
+        # The answer goes in by environment: a here-doc script takes python's stdin, so a pipe never reached it.
+        WYRD_MESH_JSON="$resp" python3 - <<'PY'
+import os, sys, json
+d = json.loads(os.environ["WYRD_MESH_JSON"])
 local = d.get("local", {})
 peers = d.get("peers", [])
 print(f"Local zone:  {local.get('zoneId','?')} build={local.get('buildHash','?')} ({local.get('appVersion','?')}, schema={local.get('federationSchema','?')})")
@@ -4394,9 +4698,140 @@ _install_deb() {   # <file.deb>
     sudo dpkg -i "$deb"
 }
 
-_update_now() {   # [VERSION] [--yes]
+# The two siblings a household may run beside the node: CodeZaiku (the coding backend, in the data
+# folder) and ResearchZosho (the librarian, installed per user). `wyrd update now` brings each one it
+# finds to its latest release through that project's own verified updater, whether or not the node
+# itself changed. WYRDSEKAI_UPDATE_SIBLINGS=0 or --no-siblings leaves them alone.
+_owner_of() {   # user:group of a path, portable (GNU and BSD)
+    ls -ld "$1" 2>/dev/null | awk '{print $3":"$4}'
+}
+_sibling_version() {   # the x.y.z a sibling's launcher prints
+    "$@" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+_rz_bin_for_update() {   # researchzosho's launcher and its owner: "<user> <path>", or nothing
+    local c u h
+    if [[ -n "${RESEARCHZOSHO_BIN:-}" && -x "${RESEARCHZOSHO_BIN}" ]]; then echo "$(id -un) $RESEARCHZOSHO_BIN"; return 0; fi
+    if [[ "${EUID:-$(id -u)}" != "0" ]]; then
+        c="$(_rz_bin 2>/dev/null || true)"; [[ -n "$c" ]] && { echo "$(id -un) $c"; return 0; }
+        return 1
+    fi
+    # As root (sudo, or the node's own automatic update): the person who ran sudo, then the owner of
+    # the data folder — the household's user, whose ~/.local/bin holds the librarian.
+    for u in "${SUDO_USER:-}" "$(_owner_of "$DATA_DIR" | cut -d: -f1)"; do
+        [[ -n "$u" && "$u" != "root" ]] || continue
+        h="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)"; [[ -n "$h" ]] || h="$(eval echo "~$u")"
+        for c in "$h/.local/bin/researchzosho" "$h/.local/share/researchzosho/bin/researchzosho"; do
+            [[ -x "$c" ]] && { echo "$u $c"; return 0; }
+        done
+    done
+    c="$(command -v researchzosho 2>/dev/null || true)"; [[ -n "$c" ]] && { echo "root $c"; return 0; }
+    return 1
+}
+# Runs a sibling's launcher as the user it belongs to — as root, that user, with their session bus for
+# `systemctl --user` (its updater restarts its own service) — otherwise as ourselves.
+_sibling_as() {   # <user> <launcher> <args...>
+    local u="$1" bin="$2"; shift 2
+    if [[ "${EUID:-$(id -u)}" == "0" && -n "$u" && "$u" != "root" ]]; then
+        sudo -u "$u" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$u" 2>/dev/null)" "$bin" "$@"
+    else
+        "$bin" "$@"
+    fi
+}
+
+# A sibling's JSON answer as J_<field>=<value> lines to eval (shell-quoted), only for the fields it
+# carries (the `update now` answer must not blank what the status said); fails when it is not JSON or
+# lacks the field that marks it.
+_sibling_json() {   # <required field>  (the JSON on stdin)
+    python3 -c 'import json, shlex, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(d, dict) or sys.argv[1] not in d:
+    sys.exit(1)
+for k in ("installed", "running", "latest", "newer", "mode", "root", "canUpdate", "updating",
+          "result", "code", "from", "to", "finishesAfterExit", "note"):
+    if k not in d:
+        continue
+    v = d[k]
+    v = ("true" if v else "false") if isinstance(v, bool) else ("" if v is None else str(v))
+    print("J_%s=%s" % (k, shlex.quote(v)))' "$1"
+}
+
+# One sibling, by its own update contract (2026-09-28). Wyrdsekai asks; it never downloads a release,
+# never unpacks, moves or deletes anything in the sibling's folder, and holds none of its locks.
+#   `update --json`      status, changes nothing; ask only when newer and canUpdate, and not updating
+#   `update now --json`  one JSON document on stdout (progress on stderr); exit 0 updated or current,
+#                        75 another update is running, 3 cannot update here, 1 failed, 2 usage
+# A release from before the contract has no --json: its installed version against the latest release,
+# then a plain `update now` (exit 0 updated, 1 anything else).
+_sibling_update() {   # <Name> <user> <launcher> <owner/repo> <version-args...>
+    local name="$1" u="$2" bin="$3" repo="$4"; shift 4
+    local J_installed="" J_running="" J_latest="" J_newer="" J_mode="" J_root="" J_canUpdate="" J_updating=""
+    local J_result="" J_code="" J_from="" J_to="" J_finishesAfterExit="" J_note="" st rc
+    # set -e: a sibling's non-zero answer must be read, not end this script (second-node, 2026-09-28: a
+    # CodeZaiku without --json answered 2 and `wyrd update siblings` stopped there, silently).
+    rc=0; st="$(_sibling_as "$u" "$bin" update --json </dev/null 2>/dev/null)" || rc=$?
+    local parsed=""
+    if [[ $rc -eq 0 ]]; then parsed="$(printf '%s' "$st" | _sibling_json installed)" || parsed=""; fi
+    if [[ -n "$parsed" ]]; then
+        eval "$parsed"
+        if [[ "$J_updating" == "true" ]]; then log "$(_t update.sibling.busy "$name")"; return 0; fi
+        if [[ "$J_newer" != "true" ]]; then log "$(_t update.sibling.current "$name" "$J_installed")"; return 0; fi
+        if [[ "$J_canUpdate" != "true" ]]; then warn "$(_t update.sibling.cannot "$name" "${J_mode:-?}" "$J_root")"; return 0; fi
+        log "$(_t update.sibling.updating "$name" "$J_installed" "$J_latest")"
+        rc=0; st="$(_sibling_as "$u" "$bin" update now --json </dev/null)" || rc=$?
+        parsed="$(printf '%s' "$st" | _sibling_json result)" || parsed=""
+        if [[ -n "$parsed" ]]; then eval "$parsed"; fi
+        case $rc in
+            0)  if [[ -n "$J_to" && "$J_to" != "$J_from" ]]; then
+                    if [[ "$J_finishesAfterExit" == "true" ]]; then log "$(_t update.sibling.finishing "$name" "$J_from" "$J_to")"
+                    else log "$(_t update.sibling.updated "$name" "$J_from" "$J_to")"; fi
+                else log "$(_t update.sibling.current "$name" "${J_to:-$J_installed}")"; fi ;;
+            75) log "$(_t update.sibling.busy "$name")" ;;
+            3)  warn "$(_t update.sibling.cannot "$name" "${J_mode:-?}" "$J_note")" ;;
+            *)  warn "$(_t update.sibling.failed "$name" "$J_installed" "${J_note:-exit $rc}")" ;;
+        esac
+        return 0
+    fi
+    # Before the contract.
+    local ver latest
+    ver="$(_sibling_version _sibling_as "$u" "$bin" "$@")" || ver=""
+    latest="$(_release_latest "$repo" --fresh)" || latest=""
+    if [[ -z "$ver" || -z "$latest" ]]; then warn "$(_t update.sibling.unknown "$name")"; return 0; fi
+    if ! _version_newer "$latest" "$ver"; then log "$(_t update.sibling.current "$name" "$ver")"; return 0; fi
+    log "$(_t update.sibling.updating "$name" "$ver" "$latest")"
+    if _sibling_as "$u" "$bin" update now </dev/null; then log "$(_t update.sibling.updated "$name" "$ver" "$latest")"
+    else warn "$(_t update.sibling.failed "$name" "$ver" "")"; fi
+    return 0
+}
+
+_cz_bin_for_update() {   # "<user> <launcher>": the CodeZaiku the node runs, and the user its folder belongs to
+    local c="$DATA_DIR/coding-cli-bundle/codezaiku/codezaiku/bin/codezaiku" u
+    if [[ -x "$c" ]]; then
+        u="$(_owner_of "$DATA_DIR/coding-cli-bundle/codezaiku" | cut -d: -f1)"
+        echo "${u:-$(id -un)} $c"; return 0
+    fi
+    c="$(command -v codezaiku 2>/dev/null || true)"; [[ -n "$c" ]] && { echo "$(id -un) $c"; return 0; }
+    return 1
+}
+
+# `wyrd update now` asks the siblings a household runs beside the node — CodeZaiku (the coding
+# backend) and ResearchZosho (the librarian) — whether they are behind, and asks each one's own
+# updater to update it. A person running it is the person asking; the node's automatic update passes
+# --no-siblings (each sibling updates on its own only by its own setting). WYRDSEKAI_UPDATE_SIBLINGS=0
+# or --no-siblings leaves them alone.
+_update_siblings() {
+    if [[ "${WYRDSEKAI_UPDATE_SIBLINGS:-1}" == "0" ]]; then log "$(_t update.sibling.skipped)"; return 0; fi
+    local found
+    found="$(_cz_bin_for_update)" && _sibling_update CodeZaiku "${found%% *}" "${found#* }" Wyrdsekai/codezaiku --version
+    found="$(_rz_bin_for_update)" && _sibling_update ResearchZosho "${found%% *}" "${found#* }" Wyrdsekai/researchzosho version
+    return 0
+}
+
+_update_now() {   # [VERSION] [--yes] [--no-siblings]
     local want="" yes=0 a
-    for a in "$@"; do case "$a" in --yes|-y) yes=1 ;; [0-9]*) want="$a" ;; esac; done
+    for a in "$@"; do case "$a" in --yes|-y) yes=1 ;; --no-siblings) WYRDSEKAI_UPDATE_SIBLINGS=0 ;; [0-9]*) want="$a" ;; esac; done
     if [[ "$MODE" == "source" ]]; then
         log "$(_t update.pulling)"
         cd "$PROJECT_ROOT"
@@ -4415,13 +4850,15 @@ _update_now() {   # [VERSION] [--yes]
         want="$latest"
     fi
     _is_release_version "$want" || { err "not a release version: $want"; return 1; }
-    if [[ "$want" == "${installed%%[~-]*}" ]] && _is_release_version "$installed"; then log "$(_t update.now.already "$want")"; return 0; fi
+    if [[ "$want" == "${installed%%[~-]*}" ]] && _is_release_version "$installed"; then log "$(_t update.now.already "$want")"; _update_siblings; return 0; fi
     if [[ "$yes" != "1" ]] && [[ -t 0 ]]; then
         local ans; _drain_stdin; read -r -p "$(_t update.now.confirm "$want" "$installed") [y/N] " ans
         [[ "$ans" =~ ^[Yy] ]] || { log "$(_t update.now.cancelled)"; return 0; }
     fi
     local file; file="$(_release_download_verify "$want")" || return 1
-    do_update "$file"
+    do_update "$file" || return 1
+    # The siblings through the launcher just installed: its sibling step is the current one.
+    WYRDSEKAI_UPDATE_SIBLINGS="${WYRDSEKAI_UPDATE_SIBLINGS:-1}" "$REAL_BIN/wyrd" update siblings
 }
 
 do_update() {
@@ -4436,6 +4873,7 @@ do_update() {
                 *)   err "$(_t update.auto.usage)"; return 2 ;;
             esac
             return 0 ;;
+        siblings) _update_siblings; return $? ;;
         stage)   # download + verify only (what the daemon does on Windows); the install is a person's step
             local v; v="$(_release_latest "$WYRDSEKAI_RELEASE_REPO" --fresh)"; [[ -n "$v" ]] || { err "$(_t update.now.no_latest)"; return 1; }
             local f; f="$(_release_download_verify "$v")" || return 1
@@ -4479,6 +4917,78 @@ do_update() {
     return 0
 }
 
+# Turbo boost as the kernel reports it: "on <file> <value that turns it off>", "off", or nothing
+# when the kernel does not say (amd-pstate / acpi-cpufreq expose boost, intel_pstate no_turbo).
+_cpu_boost_state() {
+    local f
+    f=/sys/devices/system/cpu/cpufreq/boost
+    if [[ -r "$f" ]]; then
+        if [[ "$(cat "$f" 2>/dev/null)" == "1" ]]; then echo "on $f 0"; else echo "off"; fi
+        return 0
+    fi
+    f=/sys/devices/system/cpu/intel_pstate/no_turbo
+    if [[ -r "$f" ]]; then
+        if [[ "$(cat "$f" 2>/dev/null)" == "0" ]]; then echo "on $f 1"; else echo "off"; fi
+    fi
+}
+
+# True when a running llama-server keeps routed experts on the CPU (--cpu-moe / --n-cpu-moe N).
+# The process NAME is matched, not the command line: a shell whose arguments merely mention the
+# flag is not a server.
+_experts_on_cpu() {
+    ps -eo comm=,args= 2>/dev/null | awk '$1 ~ /^llama-server/ && /--(n-)?cpu-moe/ { found = 1 } END { exit !found }'
+}
+
+# F14: build coherence (mesh-version drift) for `wyrd doctor`: this node's build against every
+# federated peer's. A peer on another federation schema or build is a warning (_wbump, do_doctor's
+# counter). The answer goes to python by environment: a here-doc script takes python's stdin, so
+# the pipe it used to come through never reached it, and every run printed "returned non-JSON".
+# Python's exit code is kept: 2 = drift, 1 = peers too old to say, 0 = in step.
+_doctor_build_coherence() {
+    echo ""
+    log "$(_t doctor.build_header)"
+    local mesh_resp mesh_summary mesh_rc=0
+    mesh_resp=$(curl -sf "http://localhost:${PORT:-7070}/api/version/mesh" 2>/dev/null || true)
+    if [[ -z "$mesh_resp" ]]; then
+        log "$(_t doctor.build_skipped)"
+        return 0
+    fi
+    mesh_summary=$(WYRD_MESH_JSON="$mesh_resp" python3 - <<'PY' 2>&1
+import os, sys, json
+try:
+    d = json.loads(os.environ["WYRD_MESH_JSON"])
+except Exception as e:
+    print(f"  /api/version/mesh returned non-JSON ({e})")
+    sys.exit(0)
+local = d.get("local", {})
+peers = d.get("peers", [])
+local_hash = local.get("buildHash", "?")
+local_schema = local.get("federationSchema")
+print(f"  local: build={local_hash} ({local.get('appVersion','?')}, schema={local_schema})")
+if not peers:
+    print("  no federation peers")
+    sys.exit(0)
+mismatch = unreachable = pre_f14 = 0
+for p in peers:
+    bv = p.get("buildVersion") or {}
+    if not bv:
+        pre_f14 += 1; continue
+    if bv.get("federationSchema") != local_schema:
+        mismatch += 1
+        print(f"  ✗ {p['zoneId']}: schema {bv.get('federationSchema')} != {local_schema}")
+    elif bv.get("buildHash") != local_hash:
+        mismatch += 1
+        print(f"  ⚠ {p['zoneId']}: build {bv.get('buildHash')} != {local_hash}")
+print(f"  {len(peers)} peer(s); drift={mismatch}, pre-F14={pre_f14}")
+sys.exit(2 if mismatch > 0 else (1 if pre_f14 > 0 else 0))
+PY
+) || mesh_rc=$?
+    [[ -n "$mesh_summary" ]] || mesh_summary="$(_t doctor.build_probe_failed)"
+    echo "$mesh_summary"
+    if [[ "$mesh_rc" -eq 2 ]]; then _wbump; fi
+    return 0
+}
+
 do_doctor() {
     log "$(_t doctor.running)"
     echo ""
@@ -4503,6 +5013,7 @@ do_doctor() {
         local _bk_size _bk_n; _bk_size="$(du -sh "$DATA_DIR/backups" 2>/dev/null | cut -f1 || true)"; _bk_n="$(ls -1 "$DATA_DIR/backups" 2>/dev/null | wc -l | tr -d ' ')"
         log "$(_t doctor.backups "${_bk_size:-?}" "$_bk_n" "$DATA_DIR/backups")"
     fi
+    _doctor_seed_line || _wbump
     if [[ "$(uname -s)" == "Linux" ]]; then
         local _sw_used _sw_total; _sw_used="$(free -m 2>/dev/null | awk '/Swap:/{print $3}')"; _sw_total="$(free -m 2>/dev/null | awk '/Swap:/{print $2}')"
         local _peak=""; if is_systemd_managed 2>/dev/null; then _peak="$(systemctl show wyrdsekai -p MemoryPeak --value 2>/dev/null | awk '{ if ($1+0 > 0) printf "%.1f GB", $1/1073741824 }' || true)"; fi
@@ -4571,6 +5082,17 @@ do_doctor() {
                 log "$(_t doctor.gpu_nvidia "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'NVIDIA')")"
             else
                 warn "$(_t doctor.gpu_none)"
+            fi
+            # Generation through CPU-resident experts is limited by memory speed, so turbo boost
+            # there is heat and fan noise for no tokens.
+            if _experts_on_cpu; then
+                local _boost; _boost="$(_cpu_boost_state)"
+                if [[ "$_boost" == on* ]]; then
+                    local _bf _bv; read -r _ _bf _bv <<< "$_boost"
+                    log "$(_t doctor.cpu_boost_on "$_bf" "$_bv")"
+                elif [[ "$_boost" == "off" ]]; then
+                    log "$(_t doctor.cpu_boost_off)"
+                fi
             fi ;;
     esac
 
@@ -4606,6 +5128,10 @@ do_doctor() {
             else log "$(_t doctor.sibling researchzosho "${_rz_ver:-?}" "${_rz_latest:-?}")"; fi
         fi
     fi
+    # The library's model: sharing the companions' brain is the default. Said as information, with
+    # the command that gives it a GPU of its own; never a warning.
+    local _rz_found
+    if _rz_found="$(_rz_bin_for_update 2>/dev/null)"; then _rz_gpu_suggest "${_rz_found%% *}" "${_rz_found#* }"; fi
 
     if curl -s http://localhost:${PORT:-7070}/health &>/dev/null; then
         log "$(_t doctor.server_running)"
@@ -4640,10 +5166,20 @@ except Exception:
         _wbump
     fi
 
+    # ── Encryption on this home's own ports ( W2) ──
+    echo ""
+    log "$(_t doctor.tls_header)"
+    local _tls_rc=0
+    _doctor_household_tls || _tls_rc=$?
+    if [[ "$_tls_rc" -eq 1 ]]; then _wbump; fi
+    if [[ "$_tls_rc" -eq 2 ]]; then _ebump; fi
+
     echo ""
     log "$(_t doctor.port_scan_header)"
-    for port in "${PORT:-7070}" 7071 7022 4222 8222 8888; do   # #9 2026-07-19 — API port honors WYRDSEKAI_PORT
-        if ss -tlnp 2>/dev/null | grep -q ":${port} " || lsof -i ":${port}" &>/dev/null 2>&1; then
+    for port in "${PORT:-7070}" "${WYRDSEKAI_TLS_PORT:-7443}" 7071 7022 4222 4223 8222 8888; do   # #9 2026-07-19 — API port honors WYRDSEKAI_PORT
+        # Where there is no `ss` (macOS), a local connect: `lsof` without sudo cannot see a port
+        # held by another user, and the Mac's server runs as root, so every port but one read free.
+        if ss -tlnp 2>/dev/null | grep -q ":${port} " || (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
             log "$(_t doctor.port_in_use "$port")"
         fi
     done
@@ -4764,54 +5300,7 @@ print(("WARN " if q>=5 else "OK ")+s)
         fi
     fi
 
-    # ── F14: Build coherence (mesh-version drift) ──
-    echo ""
-    log "$(_t doctor.build_header)"
-    local mesh_resp
-    mesh_resp=$(curl -sf "http://localhost:${PORT:-7070}/api/version/mesh" 2>/dev/null || true)
-    if [[ -z "$mesh_resp" ]]; then
-        log "$(_t doctor.build_skipped)"
-    else
-        local mesh_summary mesh_rc=0
-        # The Python here-doc tolerates malformed JSON (printed as a soft
-        # warning, exits 0 — treated as "unknown, not drift"). The whole
-        # pipeline is OR-trued so doctor under `set -e` survives even if
-        # python3 itself crashes for any reason. Drift detection still works:
-        # mismatch > 0 path explicitly calls sys.exit(2), which we capture.
-        mesh_summary=$(echo "$mesh_resp" | python3 - <<'PY' 2>&1
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception as e:
-    print(f"  /api/version/mesh returned non-JSON ({e})")
-    sys.exit(0)
-local = d.get("local", {})
-peers = d.get("peers", [])
-local_hash = local.get("buildHash", "?")
-local_schema = local.get("federationSchema")
-print(f"  local: build={local_hash} ({local.get('appVersion','?')}, schema={local_schema})")
-if not peers:
-    print("  no federation peers")
-    sys.exit(0)
-mismatch = unreachable = pre_f14 = 0
-for p in peers:
-    bv = p.get("buildVersion") or {}
-    if not bv:
-        pre_f14 += 1; continue
-    if bv.get("federationSchema") != local_schema:
-        mismatch += 1
-        print(f"  ✗ {p['zoneId']}: schema {bv.get('federationSchema')} != {local_schema}")
-    elif bv.get("buildHash") != local_hash:
-        mismatch += 1
-        print(f"  ⚠ {p['zoneId']}: build {bv.get('buildHash')} != {local_hash}")
-print(f"  {len(peers)} peer(s); drift={mismatch}, pre-F14={pre_f14}")
-sys.exit(2 if mismatch > 0 else (1 if pre_f14 > 0 else 0))
-PY
-) || mesh_summary="$(_t doctor.build_probe_failed)"
-        mesh_rc=$?
-        echo "$mesh_summary"
-        if [[ "$mesh_rc" -eq 2 ]]; then _wbump; fi
-    fi
+    _doctor_build_coherence
 
     # ── F8 §4: Identity coherence ──
     echo ""
@@ -4888,6 +5377,11 @@ PY
     if [[ "$_sub_rc" -eq 1 ]]; then _wbump; fi
     if [[ "$_sub_rc" -eq 2 ]]; then _ebump; fi
 
+    # ── Her own time: turns that never become acts ──
+    # The trail is the one instrument that sees own time; the live suites are a person asking.
+    _doctor_own_time
+    if [[ $? -eq 1 ]]; then _wbump; fi
+
     # ── Summary + exit code ──
     echo ""
     if [[ "$_doctor_errors" -gt 0 ]]; then
@@ -4900,6 +5394,92 @@ PY
         log "$(_t doctor.summary_healthy)"
         return 0
     fi
+}
+
+# W2 — HTTPS on :7443 with the household certificate and its expiry, the
+# household bus's TLS and login, private key files, and every setting that re-opens a plain door.
+# Returns 0 = fine, 1 = warnings, 2 = errors.
+_doctor_household_tls() {
+    local rc=0 tlsdir="$DATA_DIR/tls" tls_port="${WYRDSEKAI_TLS_PORT:-7443}"
+    # `tr`, not ${1,,}: macOS ships bash 3.2, where that is "bad substitution" and the doctor stopped here.
+    _is_on() { case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on) return 0 ;; *) return 1 ;; esac; }
+    _is_lan_bind() { case "$1" in ""|127.*|localhost|::1|lo) return 1 ;; *) return 0 ;; esac; }
+    if [[ ! -f "$tlsdir/household-ca.pem" ]]; then
+        warn "$(_t doctor.tls_no_ca "$tlsdir")"
+        rc=1
+    else
+        local fp
+        fp=$(python3 -c '
+import sys, base64, hashlib
+pem = open(sys.argv[1]).read()
+b64 = pem.split("-----BEGIN CERTIFICATE-----")[1].split("-----END CERTIFICATE-----")[0]
+print(hashlib.sha256(base64.b64decode("".join(b64.split()))).hexdigest())' "$tlsdir/household-ca.pem" 2>/dev/null)
+        log "$(_t doctor.tls_ca "$fp")"
+        if _is_on "${WYRDSEKAI_TLS_ENABLED:-true}"; then
+            local probe
+            probe=$(python3 -c '
+import ssl, socket, sys, time
+ctx = ssl.create_default_context(cafile=sys.argv[1])
+ctx.check_hostname = False
+try:
+    with socket.create_connection(("127.0.0.1", int(sys.argv[2])), timeout=3) as raw:
+        with ctx.wrap_socket(raw) as t:
+            end = ssl.cert_time_to_seconds(t.getpeercert()["notAfter"])
+            print("OK %d" % int((end - time.time()) // 86400))
+except ssl.SSLError as e:
+    print("BADCERT %s" % e.reason)
+except Exception as e:
+    print("DOWN %s" % e.__class__.__name__)' "$tlsdir/household-ca.pem" "$tls_port" 2>/dev/null)
+            case "$probe" in
+                OK*)
+                    local days="${probe#OK }"
+                    if [[ "$days" -lt 30 ]]; then
+                        warn "$(_t doctor.tls_https_expiring "$tls_port" "$days")"; rc=1
+                    else
+                        log "$(_t doctor.tls_https_ok "$tls_port" "$days")"
+                    fi ;;
+                BADCERT*)
+                    warn "$(_t doctor.tls_https_badcert "$tls_port" "${probe#BADCERT }")"; rc=1 ;;
+                *)
+                    warn "$(_t doctor.tls_https_down "$tls_port")"; rc=1 ;;
+            esac
+        else
+            warn "$(_t doctor.tls_https_off)"; rc=1
+        fi
+    fi
+    local varz
+    varz=$(curl -s --max-time 3 http://127.0.0.1:8222/varz 2>/dev/null)
+    if [[ -n "$varz" ]]; then
+        local bus
+        bus=$(printf '%s' "$varz" | python3 -c '
+import json, sys
+v = json.load(sys.stdin)
+ws = v.get("websocket") or {}
+ws_tls = (not ws) or (bool(ws.get("tls_cert_not_after")) and not ws.get("no_tls"))
+print("%s %s %s" % (bool(v.get("tls_required")), bool(v.get("auth_required")), ws_tls))' 2>/dev/null)
+        local b_tls b_auth b_ws
+        read -r b_tls b_auth b_ws <<< "$bus"
+        if [[ "$b_auth" == "True" ]]; then log "$(_t doctor.tls_bus_auth_on)"; else err "$(_t doctor.tls_bus_auth_off)"; rc=2; fi
+        if [[ "$b_tls" == "True" ]]; then log "$(_t doctor.tls_bus_tls_on)"; else warn "$(_t doctor.tls_bus_tls_off)"; [[ $rc -lt 1 ]] && rc=1; fi
+        if [[ "$b_ws" != "True" ]]; then warn "$(_t doctor.tls_bus_ws_plain)"; [[ $rc -lt 1 ]] && rc=1; fi
+    fi
+    local f
+    for f in "$DATA_DIR/node-identity.json" "$tlsdir/household-ca.key" "$tlsdir/household-leaf.key" \
+             "$tlsdir/keystore.pass" "$DATA_DIR/nats/bus-users.json" "$DATA_DIR/nats/hub.json"; do
+        [[ -f "$f" ]] || continue
+        local mode
+        mode=$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null)
+        case "$mode" in 600|640|400) ;; *) warn "$(_t doctor.tls_file_mode "$f" "$mode")"; [[ $rc -lt 1 ]] && rc=1 ;; esac
+    done
+    # Settings that keep an old plain door open during the transition. Each one is a warning.
+    if _is_on "${WYRDSEKAI_HTTP_LAN_PLAINTEXT:-}"; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_HTTP_LAN_PLAINTEXT "$(_t doctor.tls_plain_http)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    if _is_lan_bind "${WYRDSEKAI_HTTP_BIND:-}"; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_HTTP_BIND "$(_t doctor.tls_plain_http)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    if _is_on "${WYRDSEKAI_NATS_LAN_PLAINTEXT:-}"; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_NATS_LAN_PLAINTEXT "$(_t doctor.tls_plain_bus)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    if _is_on "${WYRDSEKAI_TELNET_ENABLED:-}" && _is_lan_bind "${WYRDSEKAI_TELNET_BIND:-}"; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_TELNET_BIND "$(_t doctor.tls_plain_telnet)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    if _is_lan_bind "${WYRDSEKAI_WEB_TERMINAL_BIND:-}" && [[ ! -r "$tlsdir/household-leaf.key" ]]; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_WEB_TERMINAL_BIND "$(_t doctor.tls_plain_web)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    if _is_on "${WYRDSEKAI_TUNNEL_ALLOW_PLAINTEXT:-}"; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_TUNNEL_ALLOW_PLAINTEXT "$(_t doctor.tls_plain_tunnel)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    if _is_on "${WYRDSEKAI_RELAY_ALLOW_PLAINTEXT_REQUESTS:-}"; then warn "$(_t doctor.tls_plain_setting WYRDSEKAI_RELAY_ALLOW_PLAINTEXT_REQUESTS "$(_t doctor.tls_plain_requests)")"; [[ $rc -lt 1 ]] && rc=1; fi
+    return $rc
 }
 
 # F24 Phase 3 — diagnose the NKey relay-auth flow. Returns:
@@ -5121,6 +5701,72 @@ _doctor_nostr() {
 #   1 = warning (stuck repair mode, long-open sanctuary, stale flag past decay)
 #   2 = error (CONFIRMED protection flag with no integration event for >30d)
 # Local-only — no server required. Pure JSON read.
+# Warn when a companion has had own-time turns in the last six hours and not one action of her
+# own: no move, no tool, no enactment. On the household node this held for twenty-one hours after
+# an adapter change (2026-09-26: every own-time turn ran with the speaking floor, and a floor
+# trained on her speech answers a tool request in prose) and nothing said so; the e2e suites read
+# 62/63 the same evening because every scene in them is a person asking. Pure local read of
+# data/agent-activity.jsonl; no server needed. Returns 1 on a warning.
+_doctor_own_time() {
+    local trail="$DATA_DIR/data/agent-activity.jsonl"
+    [[ -f "$trail" ]] || return 0
+    local summary
+    summary=$(_own_time_summary "$trail" "${WYRD_DOCTOR_OWN_TIME_HOURS:-6}" 2>&1)
+    [[ -z "$summary" ]] && return 0
+    echo ""
+    log "doctor.own-time: what each companion did with her own time in the last ${WYRD_DOCTOR_OWN_TIME_HOURS:-6} h"
+    echo "$summary" | grep -v "^WARN" | sed 's/^/    /'
+    if echo "$summary" | grep -q "^WARN"; then
+        warn "doctor.own-time: a companion's own time is not becoming acts"
+        echo "$summary" | grep "^WARN" | sed 's/^WARN /    /'
+        return 1
+    fi
+    return 0
+}
+
+# _own_time_summary <trail> <hours> — one line per companion with own-time turns in the window:
+# turns, acts (action + move + enacted rows), lines said; a WARN line when turns >= 3 and fewer than one act per ten turns.
+_own_time_summary() {
+    python3 - "$1" "$2" <<'PY'
+import sys, json, datetime, collections
+trail, hours = sys.argv[1], float(sys.argv[2])
+since = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+turns = collections.Counter(); acts = collections.Counter(); said = collections.Counter(); names = {}
+try:
+    f = open(trail, errors="ignore")
+except Exception:
+    sys.exit(0)
+for line in f:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    ts = str(d.get("ts") or "")
+    if ts < since:
+        continue
+    # One being writes under two ids (her entity id on speech and moves, her DID on enactments);
+    # the row's `agent` name joins them.
+    a = d.get("agent") or d.get("agentName") or d.get("agentId") or ""
+    if not a:
+        continue
+    names[a] = a
+    k = d.get("kind") or d.get("type") or ""
+    if k == "autonomy" and (d.get("decision") in ("idle_curiosity", "overdue_commitments") or d.get("decision") is None):
+        turns[a] += 1
+    elif k in ("action", "move", "enacted"):
+        acts[a] += 1
+    elif k == "speak":
+        said[a] += 1
+for a in sorted(set(turns) | set(acts)):
+    n = names.get(a, a)
+    print(f"{n}: {turns[a]} own-time turn(s), {acts[a]} act(s), {said[a]} line(s) said")
+    if turns[a] >= 3 and acts[a] * 10 < turns[a]:
+        what = "not one action of her own" if acts[a] == 0 else f"only {acts[a]} action(s) of her own"
+        print(f"WARN {n}: {turns[a]} own-time turns in the last {hours:g} h and {what} (a move, a tool, an enactment). "
+              "Her turns are becoming words only; check the serving profile's adapters (wyrd brain status) and the own-time log lines.")
+PY
+}
+
 _doctor_substrate_neglect() {
     local sub_dir="$DATA_DIR/substrate"
     [[ -d "$sub_dir" ]] || sub_dir=/var/lib/wyrdsekai/substrate
@@ -5509,9 +6155,9 @@ do_model() {
     case "$sub" in
         status|"")
             echo "Model status (index: $idx)"
-            python3 - "$idx" "$MODELS_DIR" <<'PY'
+            python3 - "$idx" "$MODELS_DIR" "$DATA_DIR/adapters/brain" <<'PY'
 import json, os, sys
-idx, mdir = sys.argv[1], sys.argv[2]
+idx, mdir, adir = sys.argv[1], sys.argv[2], sys.argv[3]
 manifest = {}
 mf = os.path.join(mdir, "models-manifest.jsonl")
 if os.path.exists(mf):
@@ -5524,7 +6170,7 @@ for m in json.load(open(idx)).get("models", []):
     if not m.get("url"):
         print(f"  {m['id']:<24} {m.get('version','?'):<28} (bundled/informational)")
         continue
-    path = os.path.join(mdir, lf)
+    path = os.path.join(adir if m.get("kind") == "adapter" else mdir, lf)
     if not os.path.exists(path):
         print(f"  {m['id']:<24} {m.get('version','?'):<28} NOT INSTALLED")
         continue
@@ -5539,9 +6185,9 @@ PY
             ;;
         verify)
             echo "Verifying local model files against the index (hashing — may take a minute)..."
-            python3 - "$idx" "$MODELS_DIR" <<'PY'
+            python3 - "$idx" "$MODELS_DIR" "$DATA_DIR/adapters/brain" <<'PY'
 import hashlib, json, os, sys, datetime
-idx, mdir = sys.argv[1], sys.argv[2]
+idx, mdir, adir = sys.argv[1], sys.argv[2], sys.argv[3]
 def sha(p):
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -5551,7 +6197,7 @@ mf = os.path.join(mdir, "models-manifest.jsonl")
 out = open(mf, "a")
 for m in json.load(open(idx)).get("models", []):
     lf = m.get("local_file") or ""
-    path = os.path.join(mdir, lf)
+    path = os.path.join(adir if m.get("kind") == "adapter" else mdir, lf)
     if not m.get("url") or not os.path.isfile(path): continue
     digest = sha(path)
     known = m.get("sha256")
@@ -5570,12 +6216,13 @@ PY
             url=$(_index_field "$arg" url); ver=$(_index_field "$arg" version)
             lf=$(_index_field "$arg" local_file); sha=$(_index_field "$arg" sha256)
             [ -z "$url" ] && { err "model '$arg' not in index or has no download url"; return 1; }
-            local dest="$MODELS_DIR/$lf"
+            local dest; dest=$(_model_local_path "$arg") || { err "model '$arg' has no local file name in the index"; return 1; }
+            mkdir -p "$(dirname "$dest")"
             log "Updating $arg → $ver"
             # _model_fetch walks HF then wyrdsekai.org and verifies sha256 per
             # mirror, so a stale mirror falls through to the next instead of
             # failing the update outright.
-            if ! _model_fetch "$arg" "$dest.part" "$url"; then rm -f "$dest.part"; err "download failed (all mirrors)"; return 1; fi
+            if ! _model_fetch "$arg" "$dest.part"; then rm -f "$dest.part"; err "download failed (all mirrors)"; return 1; fi
             if [ -n "$sha" ]; then
                 local got; got=$(sha256sum "$dest.part" | cut -d' ' -f1)
                 [ "$got" != "$sha" ] && { err "sha256 mismatch (got $got, expected $sha) — NOT installing"; rm -f "$dest.part"; return 1; }
@@ -5583,17 +6230,19 @@ PY
             fi
             [ -f "$dest" ] && mv "$dest" "$dest.prev" && log "previous kept at $(basename "$dest").prev (wyrd model rollback $arg)"
             mv "$dest.part" "$dest"
+            _relink_work_adapter "$dest" "$dest.prev"
             _model_record "$dest" "$arg" "$ver" "${WYRD_FETCH_URL:-$url}"
             _model_history "$arg" "update" "→ $ver"
             log "$arg updated to $ver. Restart inference to load it: wyrd restart"
             ;;
         rollback)
             [ -z "$arg" ] && { err "usage: wyrd model rollback <id>"; return 1; }
-            local lf2 dest2; lf2=$(_index_field "$arg" local_file); dest2="$MODELS_DIR/$lf2"
+            local dest2; dest2=$(_model_local_path "$arg") || { err "model '$arg' not in index"; return 1; }
             [ -f "$dest2.prev" ] || { err "no previous version kept for $arg"; return 1; }
             mv "$dest2" "$dest2.rolledback" 2>/dev/null
             mv "$dest2.prev" "$dest2"
             mv "$dest2.rolledback" "$dest2.prev" 2>/dev/null
+            _relink_work_adapter "$dest2" "$dest2.prev"
             # Re-identify the restored file honestly: index version if the hash matches, else unknown.
             local rbsha rbver
             rbsha=$(sha256sum "$dest2" | cut -d' ' -f1)
@@ -5650,6 +6299,14 @@ do_backup() {
 
     # Node identity (Ed25519 keys)
     [ -f "$DATA_DIR/node-identity.json" ] && cp "$DATA_DIR/node-identity.json" "$backup_path/"
+
+    # The household CA phones and machines pin, and the household bus's logins
+    # ( W2): without them every phone and machine pairs again.
+    for d in tls nats; do
+        if [ -d "$DATA_DIR/$d" ]; then
+            cp -rp "$DATA_DIR/$d" "$backup_path/$d" 2>/dev/null && echo "  $d/" || echo "  $d/ (not readable: run as the node's user)"
+        fi
+    done
 
     # Credential safe (2026-07-11): API-key slots, encrypted with a key derived
     # from node-identity — only restorable together with it, which this backup
@@ -6516,6 +7173,148 @@ do_soul() {
     _run_core_main org.wyrdsekai.core.soul.SoulAdminMain "$@"
 }
 
+# `wyrd seed generate [<companion>] [--out <file>] | verify <file> | restore <file>` — the
+# Recovery Seed: a sealed copy of a companion (her soul, her bonds
+# her signing key) that brings her back on a new machine. Steward only; the server checks
+# (a steward session, or this node's operator token from the machine itself). The passphrase
+# goes to curl on stdin, never on a command line, and nothing here writes it to disk or log.
+# `wyrd doctor`'s Recovery Seed line: a companion with no seed is
+# lost with the disk. Returns 1 (a warning) only when a companion lives here and no seed was made.
+_doctor_seed_line() {
+    local dir="$DATA_DIR/recovery-seed"
+    if [[ -d "$dir" && ! -r "$dir" ]]; then
+        log "$(_t doctor.seed_unreadable "$dir")"; return 0
+    fi
+    compgen -G "$DATA_DIR/souls/*.did" >/dev/null 2>&1 || return 0
+    local seeds; seeds="$(cd "$dir" 2>/dev/null && ls -1 -- *.wsrs 2>/dev/null | sed 's/\.wsrs$//' | tr '\n' ' ' || true)"
+    if [[ -n "${seeds// /}" ]]; then log "$(_t doctor.seed_ok "${seeds% }")"; return 0; fi
+    warn "$(_t doctor.seed_none)"
+    return 1
+}
+
+_seed_read_passphrase() {   # <confirm 0|1> → the passphrase on stdout
+    local p1="" p2=""
+    if [[ -t 0 ]]; then
+        read -rsp "$(_t seed.passphrase_prompt)" p1; echo >&2
+        if [[ "$1" == "1" ]]; then
+            read -rsp "$(_t seed.passphrase_again)" p2; echo >&2
+            [[ "$p1" == "$p2" ]] || { err "$(_t seed.passphrase_mismatch)"; return 1; }
+        fi
+    else
+        IFS= read -r p1 || true
+    fi
+    printf '%s' "$p1"
+}
+
+_seed_refused() {   # <http code> <response file>
+    local code="$1" resp="$2"
+    if [[ "$code" == "000" || -z "$code" ]]; then
+        err "$(_t seed.no_server "${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}")"; return 1
+    fi
+    if [[ "$code" == "401" || "$code" == "403" ]] && ! grep -q '"insecure_channel"' "$resp" 2>/dev/null; then
+        err "$(_t seed.err.forbidden)"; return 1
+    fi
+    local fields error message names
+    fields=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+print("\t".join([str(d.get("error", "")), str(d.get("message", "")).replace("\t", " "), ", ".join(d.get("names", []) or [])]))
+' "$resp" 2>/dev/null)
+    IFS=$'\t' read -r error message names <<<"$fields"
+    local said; said="$(_t "seed.err.${error:-other}" "$names")"
+    if [[ -z "$error" || "$said" == "seed.err.${error}" ]]; then said="$(_t seed.err.other "${message:-HTTP $code}")"; fi
+    err "$said"
+    return 1
+}
+
+do_seed() {
+    local sub="${1:-help}"; shift || true
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    case "$sub" in
+        generate|verify|restore) ;;
+        *)
+            echo "$(_t seed.help.title)"
+            echo ""
+            echo "$(_t seed.help.generate)"
+            echo "$(_t seed.help.verify)"
+            echo "$(_t seed.help.restore)"
+            [[ "$sub" == "help" ]] && return 0 || return 64 ;;
+    esac
+    local who="" out="" file=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --out|-o) out="${2:-}"; shift 2 || shift $# ;;
+            *) if [[ "$sub" == "generate" ]]; then [[ -z "$who" ]] && who="$1"; else [[ -z "$file" ]] && file="$1"; fi; shift ;;
+        esac
+    done
+    if [[ "$sub" != "generate" ]]; then
+        [[ -n "$file" ]] || { echo "$(_t seed.help."$sub")"; return 64; }
+        [[ -f "$file" ]] || { err "$(_t seed.file_missing "$file")"; return 1; }
+    fi
+    local token; token=$(wyrd_session_token)
+    [[ -n "$token" ]] || { err "$(_t seed.no_token)"; return 1; }
+    local pass
+    pass=$(_seed_read_passphrase "$([[ "$sub" == "generate" ]] && echo 1 || echo 0)") || return 1
+    local resp; resp=$(umask 077; mktemp "${TMPDIR:-/tmp}/wyrd-seed.XXXXXX")
+    local code
+    if [[ "$sub" == "generate" ]]; then
+        code=$(printf '%s' "$pass" | python3 -c 'import json, sys; print(json.dumps({"companion": sys.argv[1], "passphrase": sys.stdin.read()}))' "$who" \
+            | curl -s -m 120 -o "$resp" -w '%{http_code}' -X POST -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $token" --data-binary @- "$api/api/seed/generate" 2>/dev/null)
+    else
+        code=$(printf '%s' "$pass" | python3 -c 'import base64, json, sys; print(json.dumps({"file": base64.b64encode(open(sys.argv[1], "rb").read()).decode(), "passphrase": sys.stdin.read()}))' "$file" \
+            | curl -s -m 120 -o "$resp" -w '%{http_code}' -X POST -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $token" --data-binary @- "$api/api/seed/$sub" 2>/dev/null)
+    fi
+    pass=""
+    if [[ "$code" != "200" ]]; then
+        _seed_refused "$code" "$resp"; local rc=$?; rm -f "$resp"; return $rc
+    fi
+    local fields rc=0
+    fields=$(python3 -c '
+import base64, datetime, json, os, sys
+d = json.load(open(sys.argv[1])); sub, out = sys.argv[2], sys.argv[3]
+if sub == "generate":
+    if not out:
+        out = os.path.join(os.path.expanduser("~"), "%s-recovery-seed-%s.wsrs" % (d["entityId"], datetime.date.today().strftime("%Y%m%d")))
+    if os.path.exists(out):
+        print("EXISTS\t" + out); sys.exit(3)
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(base64.b64decode(d["file"]))
+    print("\t".join([d["name"], out, d.get("localCopy", ""), "1" if d.get("carriesKey") else "0"]))
+else:
+    print("\t".join([d["name"], d["createdAt"][:10], str(d.get("bonds", 0)), "1" if d.get("carriesKey") else "0", "1" if d.get("hereAlready") else "0"]))
+' "$resp" "$sub" "$out" 2>/dev/null) || rc=$?
+    rm -f "$resp"
+    local a b c d e
+    IFS=$'\t' read -r a b c d e <<<"$fields"
+    if [[ "$a" == "EXISTS" ]]; then err "$(_t seed.out_exists "$b")"; return 1; fi
+    [[ $rc -eq 0 && -n "$a" ]] || { err "$(_t seed.err.other "unreadable answer")"; return 1; }
+    case "$sub" in
+        generate)
+            log "$(_t seed.made "$a" "$b")"
+            [[ -n "$c" ]] && echo "  $(_t seed.local_copy "$c")"
+            [[ "$d" == "1" ]] || warn "$(_t seed.no_key_warn "$a")"
+            echo ""
+            echo "  $(_t seed.keep_offsite)"
+            echo "  $(_t seed.keep_passphrase)"
+            ;;
+        verify)
+            log "$(_t seed.verified "$a" "$b" "$c" "$([[ "$d" == "1" ]] && _t seed.key_included || _t seed.key_missing)")"
+            [[ "$e" == "1" ]] && echo "  $(_t seed.verified_here "$a")"
+            ;;
+        restore)
+            log "$(_t seed.restored "$a")"
+            [[ "$d" == "1" ]] || warn "$(_t seed.no_key_warn "$a")"
+            ;;
+    esac
+    return 0
+}
+
 # `wyrd visitors [list] | dismiss <username> | vouch <username> | unvouch <username>` —
 # who is in through the MCP door, and the steward's say over it. A vouched account enters
 # at the Nexus; anyone else lands at the Docks. Dismissing walks a visitor out mid-visit
@@ -7158,12 +7957,13 @@ _relay_leg_indexes() {
     local conffile="$1"
     [[ -f "$conffile" ]] || return 0
     # The trailing `:` keeps the group's exit status 0 even when no numbered
-    # legs exist (grep -oP returns 1) — important under `set -o pipefail` so a
-    # caller's `if _relay_leg_indexes | grep -q …` reads the match, not a
-    # pipefail false-negative.
+    # legs exist — important under `set -o pipefail` so a caller's
+    # `if _relay_leg_indexes | grep -q …` reads the match, not a pipefail
+    # false-negative. sed, not `grep -oP`: macOS grep has no -P, so there
+    # only leg 0 was ever found.
     {
         grep -q '^WYRDSEKAI_RELAY_URL=' "$conffile" 2>/dev/null && echo 0
-        grep -oP '^WYRDSEKAI_RELAY_URL_\K[0-9]+(?==)' "$conffile" 2>/dev/null
+        sed -n 's/^WYRDSEKAI_RELAY_URL_\([0-9][0-9]*\)=.*/\1/p' "$conffile" 2>/dev/null
         :
     } | sort -n -u
 }
@@ -7250,6 +8050,8 @@ _relay_write_leg() {
         [[ -n "$vis"   ]] && echo "$(_relay_key VISIBILITY "$idx")=${vis}"
         [[ -n "$reg"   ]] && echo "$(_relay_key REGISTRATION_URL "$idx")=${reg}"
     } >> "$conffile"
+    # The last `[[ -n … ]] &&` is false for a leg without that field; the write still succeeded.
+    return 0
 }
 
 # Read the zone privacy floor from a conf file (default "private").
@@ -7299,7 +8101,9 @@ _relay_leg_field() {
     local conffile="$1" field="$2" idx="$3" key
     key="$(_relay_key "$field" "$idx")"
     [[ -f "$conffile" ]] || return 0
-    grep "^${key}=" "$conffile" 2>/dev/null | head -n1 | cut -d= -f2-
+    # A leg without this field reads as empty, never as a failure: under `set -euo pipefail` grep's
+    # "no match" made `x="$(_relay_leg_field …)"` end the command (relay leave, removing a leg).
+    { grep "^${key}=" "$conffile" 2>/dev/null || true; } | head -n1 | cut -d= -f2-
 }
 
 # Remove the leg whose URL matches <url> from <conffile>, then COMPACT so the
@@ -7322,8 +8126,10 @@ _relay_remove_leg_by_url() {
     done < <(_relay_leg_urls "$conffile")
 
     # Capture each survivor's fields keyed by old index.
+    # Leg indexes are numbers (0, 2, 3…), so indexed arrays do: `declare -A` is bash 4 and
+    # macOS ships bash 3.2.
     local url user token fp vis reg
-    declare -A S_URL S_USER S_TOKEN S_FP S_VIS S_REG
+    local -a S_URL=() S_USER=() S_TOKEN=() S_FP=() S_VIS=() S_REG=()
     for idx in "${survivors[@]}"; do
         S_URL[$idx]="$(_relay_leg_field "$conffile" URL "$idx")"
         S_USER[$idx]="$(_relay_leg_field "$conffile" USER "$idx")"
@@ -7476,9 +8282,19 @@ _local_zone_id() {
 _stamp_invite_zone() {
     local url="$1" zone="$2"
     [[ -z "$zone" ]] && { printf '%s' "$url"; return 0; }
-    python3 - "$url" "$zone" <<'PY' 2>/dev/null || printf '%s' "$url"
-import sys, base64, json
+    # The home's public tunnel key (zk) rides along: the phone seals its tunnel to it
+    # ( W3). The node makes the key at boot.
+    # Warnings go to stderr: callers capture this function's output as the invite.
+    [[ -f "$DATA_DIR/tunnel-key.json" ]] || warn "No tunnel key yet ($DATA_DIR/tunnel-key.json): start the node once, then make the invite again, or the phone cannot seal its connection through the relay." >&2
+    # The household CA the phone pins (home_ca_fp) and this home's HTTPS address on the LAN
+    # (lan_https) ride along too ( W2, D1).
+    [[ -f "$DATA_DIR/tls/household-ca.pem" ]] || warn "$(_t phone.invite.no_home_ca "$DATA_DIR/tls/household-ca.pem")" >&2
+    WYRD_TLS_PORT="${WYRDSEKAI_TLS_PORT:-7443}" WYRD_TLS_ON="${WYRDSEKAI_TLS_ENABLED:-true}" \
+    python3 - "$url" "$zone" "$DATA_DIR/tunnel-key.json" "$DATA_DIR/tls/household-ca.pem" <<'PY' 2>/dev/null || printf '%s' "$url"
+import sys, base64, json, os, hashlib, socket
 url, zone = sys.argv[1], sys.argv[2]
+keyfile = sys.argv[3] if len(sys.argv) > 3 else ""
+cafile = sys.argv[4] if len(sys.argv) > 4 else ""
 scheme = "wyrdphone://"
 if not url.startswith(scheme):
     print(url); sys.exit(0)
@@ -7492,6 +8308,45 @@ except Exception:
 # Only stamp when the relay left it unset — never override an explicit zone.
 if payload.get("zone_id") in (None, "", "unspecified"):
     payload["zone_id"] = zone
+try:
+    if keyfile and os.path.isfile(keyfile):
+        pub = bytes.fromhex(json.load(open(keyfile))["pub"])
+        if len(pub) == 32:
+            payload["zk"] = base64.urlsafe_b64encode(pub).decode().rstrip("=")
+except Exception:
+    pass
+try:
+    if cafile and os.path.isfile(cafile):
+        pem = open(cafile).read()
+        b64 = pem.split("-----BEGIN CERTIFICATE-----")[1].split("-----END CERTIFICATE-----")[0]
+        payload["home_ca_fp"] = hashlib.sha256(base64.b64decode("".join(b64.split()))).hexdigest()
+except Exception:
+    pass
+if not payload.get("lan_https") and os.environ.get("WYRD_TLS_ON", "true").lower() not in ("false", "0", "no", "off"):
+    ip = os.environ.get("WYRDSEKAI_LAN_IP", "").strip()
+    if not ip:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("192.0.2.1", 9))
+            ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            ip = ""
+    if ip and not ip.startswith("127."):
+        payload["lan_https"] = "https://%s:%s" % (ip, os.environ.get("WYRD_TLS_PORT", "7443"))
+if not payload.get("home_bus"):
+    # The household bus as a phone reaches it: the websocket at the bus port + 1 (default 4223).
+    bus_ip = os.environ.get("WYRDSEKAI_LAN_IP", "").strip()
+    if not bus_ip and payload.get("lan_https"):
+        bus_ip = payload["lan_https"].split("//", 1)[1].rsplit(":", 1)[0]
+    try:
+        from urllib.parse import urlparse
+        bus_port = urlparse(os.environ.get("WYRDSEKAI_NATS_URL", "") or "nats://x:4222").port or 4222
+    except Exception:
+        bus_port = 4222
+    plain = os.environ.get("WYRDSEKAI_NATS_LAN_PLAINTEXT", "").lower() in ("true", "1", "yes")
+    if bus_ip and not bus_ip.startswith("127."):
+        payload["home_bus"] = "%s://%s:%d" % ("ws" if plain else "wss", bus_ip, bus_port + 1)
 nb = base64.urlsafe_b64encode(
     json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
 ).decode().rstrip("=")
@@ -7592,6 +8447,38 @@ do_phone() {
     esac
 }
 
+# A hub's household CA, fetched over TLS and pinned ( W2). $1 = host:port
+# $2 = the expected fingerprint (hex SHA-256; empty: show it and ask the person to compare it with
+# the hub's `wyrd federate code`). Prints a CA file for curl --cacert; fails on a mismatch or a no.
+_hub_ca_pinned() {
+    local hp="$1" want="${2:-}"
+    command -v openssl >/dev/null 2>&1 || { err "$(_t federate.join.request.no_openssl)"; return 1; }
+    local out fp
+    out=$(mktemp "${TMPDIR:-/tmp}/wyrd-hub-ca.XXXXXX") || return 1
+    fp=$(openssl s_client -connect "$hp" -showcerts </dev/null 2>/dev/null | WANT="$want" OUT="$out" python3 -c '
+import sys, os, re, base64, hashlib
+certs = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", sys.stdin.read(), re.S)
+want = os.environ.get("WANT", "").replace(":", "").lower()
+def fp(c): return hashlib.sha256(base64.b64decode("".join(c.split("-----")[2].split()))).hexdigest()
+pick = next((c for c in certs if fp(c) == want), None) if want else (certs[-1] if certs else None)
+if pick:
+    open(os.environ["OUT"], "w").write(pick + "\n")
+    print(fp(pick))
+' 2>/dev/null)
+    if [[ -z "$fp" ]]; then
+        rm -f "$out"
+        if [[ -n "$want" ]]; then err "$(_t federate.join.request.ca_mismatch "$hp")"; else err "$(_t federate.join.request.host_unreachable)"; fi
+        return 1
+    fi
+    if [[ -z "$want" ]]; then
+        info "$(_t federate.join.request.ca_check "$fp")" >&2
+        local ok=""
+        _drain_stdin; read -rp "$(_t federate.join.request.ca_confirm)" ok || true
+        [[ "$ok" =~ ^[Yy] ]] || { rm -f "$out"; return 1; }
+    fi
+    printf '%s' "$out"
+}
+
 # `wyrd join <host[:port]> --household-key <key>`.
 # Auto-add THIS node to a hub's home zone using the hub's pre-shared household
 # key. Delegates to RelayNkeyAdminMain so every platform shares the crypto /
@@ -7653,9 +8540,11 @@ do_household() {
                 err "Could not reach the local server on ${api} — is the zone running?"
                 return 1
             fi
+            # The join key is <key>.<home_ca_fp>: the joining machine checks it reached this home
+            # (its certificate) before it sends the key ( W2).
             local k
             k=$(printf '%s' "$resp" | python3 -c \
-                "import sys,json; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
+                "import sys,json; d=json.load(sys.stdin); print(d.get('join_key') or d.get('key',''))" 2>/dev/null)
             if [[ -z "$k" ]]; then
                 err "No household key in server response: $resp"
                 return 1
@@ -7838,8 +8727,11 @@ do_relay() {
                     local relay_host
                     relay_host=$(echo "$WYRDSEKAI_RELAY_URL" | sed 's|nats://||;s|:.*||')
                     local relay_port
-                    relay_port=$(echo "$WYRDSEKAI_RELAY_URL" | grep -oP ':\K[0-9]+$' || echo "4222")
-                    if timeout 3 bash -c "echo >/dev/tcp/$relay_host/$relay_port" 2>/dev/null; then
+                    relay_port="${WYRDSEKAI_RELAY_URL##*:}"
+                    [[ "$relay_port" =~ ^[0-9]+$ ]] || relay_port=4222
+                    # python3, not `timeout … /dev/tcp`: a stock Mac has no `timeout`.
+                    if python3 -c 'import socket, sys; socket.create_connection((sys.argv[1], int(sys.argv[2])), 3).close()' \
+                        "$relay_host" "$relay_port" 2>/dev/null; then
                         echo -e "$(_t relay.status.connectivity_reachable)"
                     else
                         echo -e "$(_t relay.status.connectivity_unreachable "$relay_host" "$relay_port")"
@@ -7957,7 +8849,7 @@ do_relay() {
             shift || true
             while [[ $# -gt 0 ]]; do
                 case "$1" in
-                    --replace|--allow-public-leg) jflags+=("$1"); shift;;
+                    --replace|--allow-public-leg|--password-mode) jflags+=("$1"); shift;;
                     --visibility)   jflags+=("$1" "${2:-private}"); shift 2;;
                     --visibility=*) jflags+=("$1"); shift;;
                     # Out-of-band CA fingerprint for the codeless (commons
@@ -8092,8 +8984,8 @@ print(p.get('ca_fp', '').replace(':', '').lower())
             # the tier system (found live 2026-07-30). NKey enrollment also
             # makes `wyrd relay leave`'s signed deregister actually match the
             # record it created — the pw path never round-tripped. Code/token
-            # joins keep the legacy register flow (multi-homing flags live
-            # there, and an operator invite is the vouch).
+            # joins go through `register`, which enrolls this node's NKey too (unless
+            # --password-mode) and applies the multi-homing flags.
             if [[ -z "$jcode" ]]; then
                 do_relay register-nkey "$jinvite" || return 1
             else
@@ -8125,7 +9017,7 @@ print(p.get('ca_fp', '').replace(':', '').lower())
             # is inferred from the invite payload (mode) below; explicit flag
             # overrides. --replace = clean reset to leg 0. --allow-public-leg
             # = permit a public leg under a private floor.
-            local r_replace="false" r_visibility="" r_allow_public="false"
+            local r_replace="false" r_visibility="" r_allow_public="false" r_password="false"
             local _rargs=("$@")
             local _ri=2
             while [[ $_ri -lt ${#_rargs[@]} ]]; do
@@ -8134,6 +9026,9 @@ print(p.get('ca_fp', '').replace(':', '').lower())
                     --visibility)       _ri=$((_ri + 1)); r_visibility="${_rargs[$_ri]:-}";;
                     --visibility=*)     r_visibility="${_rargs[$_ri]#--visibility=}";;
                     --allow-public-leg) r_allow_public="true";;
+                    # Password-mode registration (a shared relay password in the conf) only on request;
+                    # the default is this node's NKey (security review 2026-09-28).
+                    --password-mode)    r_password="true";;
                 esac
                 _ri=$((_ri + 1))
             done
@@ -8244,9 +9139,50 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
                 log "$(_t relay.register.cert_verified "${actual_fp:0:32}")"
             fi
 
-            # POST invite token to /register. v2 invites use the embedded CA
-            # for TLS verification (--cacert); v1 fingerprint-only fall back
-            # to -k (we've already verified the leaf fp above).
+            # The relay binds every registration to this zone's name and grants it only this
+            # zone's subjects; a name another household holds is refused.
+            local zone_id
+            zone_id=$(_local_zone_id)
+            if [[ -z "$zone_id" ]]; then
+                err "$(_t relay.register.no_zone)"
+                return 1
+            fi
+
+            if [[ "$r_password" != "true" ]]; then
+                # NKey registration (default): the node signs with its own key; no shared relay
+                # password is written anywhere. RelayNkeyAdminMain posts to /register-nkey pinned to
+                # the invite's fingerprint and records the relay's TLS pins from the reply.
+                _relay_check_public_leg "$ENV_FILE" "$r_visibility" "$r_allow_public" || return 1
+                local nk_out nk_rc
+                nk_out=$(do_relay register-nkey "$invite_url" --zone-id "$zone_id" 2>&1)
+                nk_rc=$?
+                printf '%s\n' "$nk_out"
+                if [[ $nk_rc -ne 0 ]]; then
+                    err "$(_t relay.register.failed "$(printf '%s\n' "$nk_out" | grep -m1 'relay rejected\|failed\|cannot' || echo "exit $nk_rc")")"
+                    return 1
+                fi
+                local nk_port
+                nk_port=$(printf '%s\n' "$nk_out" | sed -n 's/.*registered\. response=//p' | head -1 | python3 -c \
+                    "import sys,json,urllib.parse as u; url=json.load(sys.stdin).get('relay_url',''); print(u.urlsplit(url).port or 4222)" 2>/dev/null)
+                [[ "$nk_port" =~ ^[0-9]+$ ]] || nk_port=4222
+                local nk_idx
+                nk_idx=$(_relay_add_leg "nats://${relay_host}:${nk_port}" "" "" \
+                              "$actual_fp" "$r_visibility" \
+                              "https://${relay_host}:${relay_port}" \
+                              "$r_replace" "$r_allow_public") || return 1
+                echo ""
+                echo -e "$(_t relay.register.success)"
+                echo "$(_t relay.register.zone_bound "$zone_id")"
+                echo "$(_t relay.register.relay_label "nats://${relay_host}:${nk_port}")"
+                echo "$(_t relay.register.fingerprint_pinned "${actual_fp:0:32}")"
+                echo ""
+                echo "$(_t relay.register.restart_hint)"
+                return 0
+            fi
+
+            # Password mode (--password-mode): POST the invite to /register. v2 invites use the
+            # embedded CA for TLS verification (--cacert); v1 fingerprint-only fall back to -k
+            # (we've already verified the leaf fp above).
             local result
             local curl_tls_opt
             if [[ -n "$ca_tmp" ]]; then
@@ -8254,9 +9190,12 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
             else
                 curl_tls_opt="-k"
             fi
+            local reg_body
+            reg_body=$(python3 -c 'import json,sys; print(json.dumps({"invite_token": sys.argv[1], "zone_id": sys.argv[2]}))' \
+                "$token" "$zone_id")
             result=$(curl -sf $curl_tls_opt -X POST \
                 -H "Content-Type: application/json" \
-                -d "{\"invite_token\":\"${token}\"}" \
+                -d "$reg_body" \
                 "https://${relay_host}:${relay_port}/register" 2>&1)
             if [[ -z "$result" || "$result" == *"error"* ]]; then
                 err "$(_t relay.register.failed "${result:-$(_t relay.register.no_response)}")"
@@ -8369,6 +9308,26 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
             # deregister + full strip).
             local leave_url="${2:-}"
             if [[ -n "$leave_url" ]]; then
+                # Remove this leg's registration on the relay first (NKey-signed, or a password
+                # leg's token proof), while its settings are still on file.
+                local lv_t lv_idx lv_reg="" lv_fp=""
+                while IFS= read -r lv_t; do
+                    [[ -z "$lv_t" ]] && continue
+                    lv_idx="$(_relay_leg_index_for_url "$lv_t" "$leave_url")"
+                    [[ -z "$lv_idx" ]] && continue
+                    lv_reg="$(_relay_leg_field "$lv_t" REGISTRATION_URL "$lv_idx")"
+                    lv_fp="$(_relay_leg_field "$lv_t" FINGERPRINT "$lv_idx")"
+                    [[ -n "$lv_reg" ]] && break
+                done < <(_relay_write_targets)
+                if [[ -n "$lv_reg" ]]; then
+                    if do_relay deregister --registration-url "$lv_reg" ${lv_fp:+--fingerprint "$lv_fp"}; then
+                        log "$(_t relay.leave.deregistered "$lv_reg")"
+                    else
+                        warn "$(_t relay.leave.deregister_failed "$lv_reg")"
+                    fi
+                else
+                    warn "$(_t relay.leave.no_registration_url "$leave_url")"
+                fi
                 local removed_any="false" t
                 while IFS= read -r t; do
                     [[ -z "$t" ]] && continue
@@ -8423,11 +9382,28 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
                       "$DATA_DIR/ssh_tunnel_known_hosts" \
                       "$DATA_DIR/ssh-tunnel.pid" "$DATA_DIR/ssh-tunnel.log" 2>/dev/null
             fi
-            # 1. NKey deregister (best-effort). Don't abort on failure.
-            if do_relay deregister; then
-                log "Deregistered from relay."
-            else
-                warn "Relay deregister did not complete (relay unreachable or refused) — continuing to strip local config."
+            # 1. Deregister on every relay leg (best-effort; NKey-signed, and a password leg's
+            #    token proof). Don't abort on failure.
+            local lv_conf="$ENV_FILE" lv_i lv_u lv_reg lv_fp lv_any="false"
+            [[ -f /etc/wyrdsekai/wyrdsekai.conf ]] && lv_conf=/etc/wyrdsekai/wyrdsekai.conf
+            while IFS=$'\t' read -r lv_i lv_u; do
+                [[ -z "$lv_i" ]] && continue
+                lv_reg="$(_relay_leg_field "$lv_conf" REGISTRATION_URL "$lv_i")"
+                lv_fp="$(_relay_leg_field "$lv_conf" FINGERPRINT "$lv_i")"
+                [[ -z "$lv_reg" ]] && continue
+                lv_any="true"
+                if do_relay deregister --registration-url "$lv_reg" ${lv_fp:+--fingerprint "$lv_fp"}; then
+                    log "$(_t relay.leave.deregistered "$lv_reg")"
+                else
+                    warn "$(_t relay.leave.deregister_failed "$lv_reg")"
+                fi
+            done < <(_relay_leg_urls "$lv_conf")
+            if [[ "$lv_any" != "true" ]]; then
+                if do_relay deregister; then
+                    log "Deregistered from relay."
+                else
+                    warn "Relay deregister did not complete (relay unreachable or refused) — continuing to strip local config."
+                fi
             fi
             # 2. Strip local relay config so the node stops connecting — the
             #    tunnel knobs (WYRDSEKAI_SSH_TUNNEL_*) go with it: a tunnel to
@@ -8536,7 +9512,7 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
             echo "$resp" | python3 -m json.tool 2>/dev/null || echo "$resp"
             ;;
 
-        register-nkey|re-enroll|re-register-existing|deregister|nkey-pubkey|phone-invite|claim|ssh-enable|ssh-disable)
+        register-nkey|re-enroll|re-register-existing|deregister|nkey-pubkey|phone-invite|claim|ssh-enable|ssh-disable|bind-zone|zone-add)
             # NKey relay auth subcommands.
             #   register-nkey <wyrdrelay://...>      enroll this node's NKey via invite
             #   re-enroll <wyrdrelay://...>          alias for register-nkey (drift recovery)
@@ -8553,6 +9529,10 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
             #   claim <token>                        redeem an owner-claim token to become the
             # relay's admin owner (
             #                                        §4b; NKey-signed claim-owner challenge)
+            #   bind-zone                            bind this zone's relay registrations to the
+            #                                        zone name (the node also does it at start)
+            #   zone-add <U…|hh-…>                   let another node of this household register
+            #                                        the same zone on the relay
             # Delegates to RelayNkeyAdminMain so bash doesn't reimplement Ed25519 NKey encoding.
             local SERVER_LIB
             if [[ "$MODE" == "source" ]]; then
@@ -8924,6 +9904,8 @@ sys.stdout.buffer.write(base64.urlsafe_b64decode(s))
             echo "  peer-invite / peer-accept     Bilateral peer-relay agreements with another household"
             echo "  register-nkey / re-enroll / re-register-existing / deregister / nkey-pubkey"
             echo "                                Advanced: manage this zone's NKey auth on the relay"
+            echo "$(_t relay.help.cmd_bind_zone)"
+            echo "$(_t relay.help.cmd_zone_add)"
             ;;
     esac
 }
@@ -9387,8 +10369,10 @@ do_journal() {
             local url="$api/api/familiar/journal?user=$(printf '%s' "$user" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read()))')&limit=$limit"
             [[ -n "$tag" ]] && url+="&tag=$tag"
             local resp
-            resp=$(curl -sf "$url" 2>&1) \
-                || { err "$(_t journal.list_failed "$api")"; return 1; }
+            resp=$(curl -s -w '\n%{http_code}' "$url" 2>&1)
+            local code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == 401 || "$code" == 403 ]] && { err "$(_t journal.needs_login)"; return 1; }
+            [[ "$code" == 200 ]] || { err "$(_t journal.list_failed "$api")"; return 1; }
             echo "$resp" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -9412,8 +10396,10 @@ for e in d.get('entries', []):
             [[ -z "$user" || -z "$query" ]] && { err "$(_t journal.usage_search)"; return 1; }
             local url="$api/api/familiar/journal/search?user=$(printf '%s' "$user" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read()))')&q=$(printf '%s' "$query" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read()))')&limit=$limit"
             local resp
-            resp=$(curl -sf "$url" 2>&1) \
-                || { err "$(_t journal.search_failed "$api")"; return 1; }
+            resp=$(curl -s -w '\n%{http_code}' "$url" 2>&1)
+            local code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == 401 || "$code" == 403 ]] && { err "$(_t journal.needs_login)"; return 1; }
+            [[ "$code" == 200 ]] || { err "$(_t journal.search_failed "$api")"; return 1; }
             echo "$resp" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -10142,7 +11128,7 @@ _library_consent() {
         -d "{\"user\":\"$person\",\"companion\":\"$companion\",\"collection\":\"$shelf\"}" 2>/dev/null)
 
     if [[ -z "$resp" ]]; then
-        err "The server refused that — check the shelf name with: wyrd library status"
+        err "The server refused that. Check the shelf name with: wyrd library status. Another person's shelf is shared with their own login (wyrd login)."
         return 1
     fi
 
@@ -10243,6 +11229,15 @@ _rz_household_did() {   # the person who keeps this node — the patron the toke
     _json_str "$ctx" person
 }
 
+# Where ResearchZosho should find this home's brain: a value the person already exported, else the
+# node's own brain address (WYRDSEKAI_LLAMA_URL) when it is http, else the brain on this machine.
+_rz_brain_url() {
+    if [[ -n "${RESEARCHZOSHO_DRIVE_DEFAULT:-}" ]]; then echo "$RESEARCHZOSHO_DRIVE_DEFAULT"; return; fi
+    local u="${WYRDSEKAI_LLAMA_URL:-}"
+    if [[ "$u" == http://* || "$u" == https://* ]]; then u="${u%/}"; echo "${u%/v1}"; return; fi
+    echo "http://127.0.0.1:${LLAMA_DRIVE_PORT:-8200}"
+}
+
 _rz_install() {
     # stdout is the return value here (callers do rz="$(_rz_install)"), so every word
     # for the person goes to stderr — the "already installed" line used to be captured
@@ -10273,6 +11268,16 @@ _rz_lan_ip() {
     [[ -z "$ip" ]] && command -v ipconfig >/dev/null 2>&1 && ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
     [[ -z "$ip" ]] && ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1 || true)"
     echo "$ip"
+}
+
+# The address the librarian posts changes to. A librarian on this machine is given loopback: a LAN
+# address there stops working when the machine's address changes.
+_rz_hook_host() {
+    local host="${1#*://}"; host="${host%%/*}"
+    case "$host" in
+        127.*|localhost|localhost:*|"[::1]"*) echo "127.0.0.1" ;;
+        *) _rz_lan_ip ;;
+    esac
 }
 
 _rz_request_file() { echo "$DATA_DIR/researcher-request.json"; }
@@ -10334,22 +11339,45 @@ _rz_request_access() {
 _rz_subscribe() {
     local url="${1%/}" token="$2"
     [[ "${RZ_NO_WEBHOOK:-0}" == "1" ]] && return 0
-    local ip; ip="$(_rz_lan_ip)"
-    if [[ -z "$ip" ]]; then warn "No LAN address found for this node — the librarian's pushes are off; recall runs at sleep from the feed."; return 0; fi
-    local hook="http://$ip:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID"
-    local r; r="$(curl -sf -m 15 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"url\":\"$hook\"}" "$url/v1/subscribe" 2>/dev/null || true)"
-    local secret; secret="$(_json_str "$r" secret)"
+    local first; first="$(_rz_hook_host "$url")"
+    local lan; lan="$(_rz_lan_ip)"
+    if [[ -z "$first" && -z "$lan" ]]; then warn "No LAN address found for this node — the librarian's pushes are off; recall runs at sleep from the feed."; return 0; fi
+    # Linking again keeps the secret the running node already checks against.
+    local secvar; secvar="$(python3 -c 'import sys; print("WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + sys.argv[1].upper().replace("-", "_").replace(".", "_"))' "$RESEARCHZOSHO_SERVICE_ID")"
+    local have; have="$(grep -E "^$secvar=" "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+    # Loopback first for a librarian on this machine; a librarian that refuses it (one whose own
+    # services share that host) is given the LAN address. The other form is dropped only after
+    # one is accepted.
+    local ip hook="" secret="" tried=""
+    for ip in "$first" "$lan"; do
+        [[ -n "$ip" && " $tried " != *" $ip "* ]] || continue
+        tried="$tried $ip"
+        hook="http://$ip:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID"
+        local body; body="$(python3 -c 'import json,sys; d={"url": sys.argv[1]}; d.update({"secret": sys.argv[2]} if sys.argv[2] else {}); print(json.dumps(d))' "$hook" "$have")"
+        local r; r="$(curl -sf -m 15 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "$body" "$url/v1/subscribe" 2>/dev/null || true)"
+        secret="$(_json_str "$r" secret)"
+        [[ -n "$secret" ]] && break
+    done
     if [[ -z "$secret" ]]; then warn "The librarian did not accept a webhook to $hook (it may not reach this node) — recall runs at sleep from the feed."; return 0; fi
-    do_config set "$(python3 -c 'import sys; print("WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_" + sys.argv[1].upper().replace("-", "_").replace(".", "_"))' "$RESEARCHZOSHO_SERVICE_ID")=$secret" >/dev/null || { warn "Could not store the webhook secret."; return 0; }
+    local other
+    for other in $tried "$lan"; do
+        [[ -n "$other" && "$other" != "$ip" ]] || continue
+        curl -sf -m 10 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"url\":\"http://$other:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID\"}" "$url/v1/unsubscribe" >/dev/null 2>&1 || true
+    done
+    do_config set "$secvar=$secret" >/dev/null || { warn "Could not store the webhook secret."; return 0; }
     log "The librarian will push its changes to $hook (signed): recalls apply on the spot, and a landed write-up is told to the companions."
 }
 
 _rz_unsubscribe() {
     local ep="$1" token="$2"
-    local url="${ep%/rpc}"; local ip; ip="$(_rz_lan_ip)"
-    [[ -n "$token" && -n "$ip" && "$ep" == http* ]] || return 0
-    local hook="http://$ip:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID"
-    curl -sf -m 10 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"url\":\"$hook\"}" "$url/v1/unsubscribe" >/dev/null 2>&1 || true
+    local url="${ep%/rpc}"
+    [[ -n "$token" && "$ep" == http* ]] || return 0
+    local ip hook
+    for ip in "$(_rz_hook_host "$url")" "$(_rz_lan_ip)"; do
+        [[ -n "$ip" ]] || continue
+        hook="http://$ip:${WYRDSEKAI_PORT:-7070}/api/library/webhook/$RESEARCHZOSHO_SERVICE_ID"
+        curl -sf -m 10 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "{\"url\":\"$hook\"}" "$url/v1/unsubscribe" >/dev/null 2>&1 || true
+    done
 }
 
 # Connect this node to a librarian. Args: <url> and either a token or a local researchzosho to
@@ -10402,9 +11430,6 @@ _rz_connect() {
     _rz_register_service "$entry" "$disable" || { err "Could not write $(_rz_services_file)"; return 1; }
     do_config set "WYRDSEKAI_LIBRARY_SERVICE=$RESEARCHZOSHO_SERVICE_ID" >/dev/null || { err "Could not set WYRDSEKAI_LIBRARY_SERVICE in $CONFIG_FILE"; return 1; }
     log "Registered '$RESEARCHZOSHO_SERVICE_ID' in $(_rz_services_file) and made it the library role."
-    if grep -qE "^WYRDSEKAI_MCP_STRICT_GRANTS=true" "$CONFIG_FILE" 2>/dev/null; then
-        warn "Strict MCP grants are on: grant the companions the '$RESEARCHZOSHO_SERVICE_ID' service from the steward's Study before they can use it."
-    fi
     if [[ "${RZ_NO_RESTART:-0}" != "1" ]] && _rz_yesno "Restart the node so the companions can reach the librarian?" "Y"; then
         if is_systemd_managed; then sudo systemctl restart wyrdsekai; else do_stop; sleep 1; do_start; fi
         log "Restarted. The librarian's desk item and the sleep-time recall now use ResearchZosho."
@@ -10417,11 +11442,14 @@ _rz_connect() {
 }
 
 _rz_status() {
-    local rz; rz="$(_rz_bin 2>/dev/null || true)"
+    # As root, the household user's copy (the one `wyrd update siblings` finds): root's PATH has none,
+    # and `sudo wyrd researcher status` said "not installed" beside a running librarian (2026-09-28).
+    local rz rz_user found; rz="$(_rz_bin 2>/dev/null || true)"; rz_user="$(id -un)"
+    if [[ -z "$rz" ]] && found="$(_rz_bin_for_update 2>/dev/null)"; then rz_user="${found%% *}"; rz="${found#* }"; fi
     echo "ResearchZosho:"
-    if [[ -n "$rz" ]]; then echo "  command   = $rz ($("$rz" version 2>/dev/null | head -1 || echo '?'))"; else echo "  command   = not installed (wyrd researcher setup)"; fi
+    if [[ -n "$rz" ]]; then echo "  command   = $rz ($(_sibling_as "$rz_user" "$rz" version 2>/dev/null | head -1 || echo '?'))"; else echo "  command   = not installed (wyrd researcher setup)"; fi
     if [[ -n "$rz" && "$(_update_mode)" != "off" ]]; then
-        local _rzv _rzl; _rzv="$("$rz" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"; _rzl="$(_release_latest Wyrdsekai/researchzosho)"
+        local _rzv _rzl; _rzv="$(_sibling_as "$rz_user" "$rz" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"; _rzl="$(_release_latest Wyrdsekai/researchzosho || true)"
         if [[ -n "$_rzl" && -n "$_rzv" ]] && _version_newer "$_rzl" "$_rzv"; then echo "  latest    = $_rzl — newer than $_rzv (wyrd researcher update)"; elif [[ -n "$_rzl" ]]; then echo "  latest    = $_rzl"; fi
     fi
     local f; f="$(_rz_services_file)"
@@ -10442,15 +11470,436 @@ except Exception: pass' "$f" "$RESEARCHZOSHO_SERVICE_ID" 2>/dev/null)"
         local st; st="$(curl -sf -m 6 ${tok:+-H "Authorization: Bearer $tok"} "$url/v1/status" 2>/dev/null || true)"
         if [[ -n "$st" ]]; then echo "  daemon    = answers: $(_json_str "$st" library_name), contract $(_json_str "$st" contract)"; else echo "  daemon    = not answering at $url"; fi
     fi
-    if grep -qE "^WYRDSEKAI_MCP_STRICT_GRANTS=true" "$CONFIG_FILE" 2>/dev/null; then echo "  grants    = strict (companions need a grant for the service)"; else echo "  grants    = open (every companion may use it)"; fi
+    echo "  grants    = none needed (the household's librarian; its own allow list decides)"
     if grep -qE "^WYRDSEKAI_LIBRARY_WEBHOOK_SECRET_$(echo "$RESEARCHZOSHO_SERVICE_ID" | tr '[:lower:]-' '[:upper:]_')=" "$CONFIG_FILE" 2>/dev/null; then echo "  webhook   = subscribed (changes are pushed to this node)"; else echo "  webhook   = none (recall reads the feed at sleep)"; fi
     local rq; rq="$(_rz_request_file)"; [[ -f "$rq" ]] && echo "  pending   = access request $(_json_str "$(cat "$rq")" request_id) at $(_json_str "$(cat "$rq")" url) — link again once the owner approves"
+}
+
+# ── The library's model: the companions' brain by default, or a GPU of its own ──
+# `wyrd researcher setup` offers ResearchZosho this home's brain, and that stays the default. A
+# research run can hold that model for up to 90 minutes, so `wyrd researcher gpu` shows where the
+# library's model runs and moves it: to a card of this machine (`researchzosho model install --own
+# --gpu <n>`, Linux), to a model server on another household machine, or back to the brain. Every
+# change goes through ResearchZosho's own commands, as the user the library belongs to; Wyrdsekai
+# never writes its files. ResearchZosho 0.5.1 switches its model while the service runs (`model use`);
+# 0.5.0's service reads the address only when it starts, so with 0.5.0 the service is restarted.
+RZ_OWN_MODEL_URL="http://127.0.0.1:8211"   # ResearchZosho's model proxy (`researchzosho model install`)
+
+# ResearchZosho's own `model status` (its first line says where its model is), or fails: a release
+# before `model` (0.1.7) has none.
+_rz_model_status() {   # <user> <launcher>
+    local out rc=0
+    out="$(_sibling_as "$1" "$2" model status </dev/null 2>/dev/null)" || rc=$?
+    [[ $rc -eq 0 && -n "$out" ]] || return 1
+    printf '%s\n' "$out"
+}
+_rz_drive_of() {   # <model status text> → the drive it names ("(unset)" when none)
+    printf '%s\n' "$1" | sed -n 's/^[[:space:]]*drive:[[:space:]]*//p' | head -1
+}
+_rz_has_own_model() {   # <model status text>: the library has a model server of this machine's own
+    [[ -n "$1" ]] && ! grep -q "no model server of this machine's own" <<<"$1"
+}
+
+_rz_host_is_local() {   # <host, lower case>: a name or address of this machine
+    case "$1" in localhost|127.*|::1|"[::1]"|0.0.0.0) return 0 ;; esac
+    local me
+    for me in $(hostname 2>/dev/null || true) $(hostname -s 2>/dev/null || true) $(hostname -I 2>/dev/null || true) "$(_rz_lan_ip)"; do
+        me="$(printf '%s' "$me" | tr '[:upper:]' '[:lower:]')"
+        [[ -n "$me" && "$me" == "$1" ]] && return 0
+    done
+    return 1
+}
+# A model server's address as "<host>:<port>" for comparing two of them; this machine's names and
+# addresses all read as "local".
+_rz_url_key() {   # <url>
+    local u="$1" scheme=http hp host port
+    case "$u" in https://*) scheme=https ;; esac
+    hp="${u#*://}"; hp="${hp%%/*}"
+    [[ -n "$hp" ]] || return 1
+    case "$hp" in
+        \[*\]:*) host="${hp%%]*}]"; port="${hp##*]:}" ;;
+        \[*\]) host="$hp"; port="" ;;
+        *:*) host="${hp%%:*}"; port="${hp#*:}" ;;
+        *) host="$hp"; port="" ;;
+    esac
+    if [[ -z "$port" ]]; then if [[ "$scheme" == https ]]; then port=443; else port=80; fi; fi
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    if _rz_host_is_local "$host"; then host=local; fi
+    echo "$host:$port"
+}
+# Where the library's model runs, against this node's brain: shared | own (this machine) | other.
+_rz_where() {   # <library drive> <brain url>
+    local d="${1:-}" dk bk
+    [[ -n "$d" && "$d" != "(unset)" ]] || d="http://localhost:8200"   # ResearchZosho's own default
+    dk="$(_rz_url_key "$d")" || { echo other; return 0; }
+    bk="$(_rz_url_key "$2")" || bk=""
+    if [[ -n "$bk" && ( "$dk" == "$bk" || "$dk" == "${bk%:*}:${LLAMA_VOICE_PORT:-8201}" ) ]]; then echo shared
+    elif [[ "${dk%:*}" == local ]]; then echo own
+    else echo other; fi
+}
+
+_rz_brain_pids() {   # the processes of this node's model servers
+    local c
+    for c in wyrdsekai-llama-brain wyrdsekai-llama wyrdsekai-llama-voice; do
+        docker top "$c" -o pid 2>/dev/null | tail -n +2 | tr -s ' \n' ' ' || true
+    done
+    pgrep -f "llama-server.*--port[ =]${LLAMA_DRIVE_PORT:-8200}" 2>/dev/null | tr '\n' ' ' || true
+}
+_rz_library_pids() {   # the processes of ResearchZosho's own model server (its containers on Linux)
+    local c
+    for c in researchzosho-model researchzosho-model-embed; do
+        docker top "$c" -o pid 2>/dev/null | tail -n +2 | tr -s ' \n' ' ' || true
+    done
+}
+# This machine's NVIDIA cards, one line each: "<index>|<name>|<MiB>|<MiB in use>|<who>", who being
+# brain, library, both, free (nothing on it and under a fifth in use) or empty. Fails without nvidia-smi.
+_rz_gpu_cards() {   # <brain url>
+    command -v nvidia-smi >/dev/null 2>&1 || return 1
+    local cards apps bp=" " lp idx uuid name total used who auuid pid b l n
+    cards="$(nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.used --format=csv,noheader,nounits 2>/dev/null)" || cards=""
+    [[ -n "$cards" ]] || return 1
+    apps="$(nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader 2>/dev/null)" || apps=""
+    if [[ "$(_rz_url_key "$1" 2>/dev/null || true)" == local:* ]]; then bp=" $(_rz_brain_pids) "; fi
+    lp=" $(_rz_library_pids) "
+    while IFS=, read -r idx uuid name total used; do
+        idx="${idx// /}"; uuid="${uuid// /}"; total="${total// /}"; used="${used// /}"
+        name="$(printf '%s' "$name" | sed 's/^ *//;s/ *$//')"
+        [[ -n "$idx" ]] || continue
+        b=0; l=0; n=0
+        while IFS=, read -r auuid pid; do
+            auuid="${auuid// /}"; pid="${pid// /}"
+            [[ -n "$pid" && "$auuid" == "$uuid" ]] || continue
+            n=$((n + 1))
+            if [[ "$bp" == *" $pid "* ]]; then b=1; fi
+            if [[ "$lp" == *" $pid "* ]]; then l=1; fi
+        done <<<"$apps"
+        who=""
+        if [[ $b -eq 1 && $l -eq 1 ]]; then who=both
+        elif [[ $b -eq 1 ]]; then who=brain
+        elif [[ $l -eq 1 ]]; then who=library
+        elif [[ $n -eq 0 && "$used" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] && (( used * 5 < total )); then who=free
+        fi
+        echo "$idx|$name|$total|$used|$who"
+    done <<<"$cards"
+}
+# A card the library could have to itself: "<index>|<name>", or fails. With the brain on this machine
+# it has to be a second card; when the brain's card is not known (the brain is not running), card 0
+# is left to it.
+_rz_free_card() {   # <brain url> [the cards, as _rz_gpu_cards printed them]
+    local cards="${2:-}" brain_here=0 brain_known=0 count=0 idx name total used who
+    if [[ -z "$cards" ]]; then cards="$(_rz_gpu_cards "$1")" || return 1; fi
+    if [[ "$(_rz_url_key "$1" 2>/dev/null || true)" == local:* ]]; then brain_here=1; fi
+    while IFS='|' read -r idx name total used who; do
+        [[ -n "$idx" ]] || continue
+        count=$((count + 1))
+        if [[ "$who" == brain || "$who" == both ]]; then brain_known=1; fi
+    done <<<"$cards"
+    if [[ $brain_here -eq 1 && $count -lt 2 ]]; then return 1; fi
+    while IFS='|' read -r idx name total used who; do
+        [[ "$who" == free ]] || continue
+        if [[ $brain_here -eq 1 && $brain_known -eq 0 && "$idx" == 0 ]]; then continue; fi
+        echo "$idx|$name"; return 0
+    done <<<"$cards"
+    return 1
+}
+
+# The suggestion, never automatic: when the library shares the companions' brain, say so, why it
+# matters, and the one command (naming a free card when there is one). Nothing otherwise.
+_rz_gpu_suggest() {   # <user> <launcher>
+    local st d brain free
+    st="$(_rz_model_status "$1" "$2")" || return 0
+    d="$(_rz_drive_of "$st")"; brain="$(_rz_brain_url)"
+    [[ "$(_rz_where "$d" "$brain")" == shared ]] || return 0
+    info "$(_t researcher.gpu.suggest_shares "$brain")"
+    info "$(_t researcher.gpu.suggest_why)"
+    free="$(_rz_free_card "$brain")" || free=""
+    if [[ -n "$free" && "$(uname -s)" == Linux ]]; then info "$(_t researcher.gpu.suggest_card "${free%%|*}" "${free#*|}")"
+    else info "$(_t researcher.gpu.suggest_cmd)"; fi
+    return 0
+}
+
+# `wyrd researcher gpu`: one screen, where the library's model runs and how to change it.
+_rz_gpu_show() {   # <user> <launcher>
+    local st="" d="" brain where="" cards free="" idx name total used who mark
+    brain="$(_rz_brain_url)"
+    st="$(_rz_model_status "$1" "$2")" || st=""
+    echo "$(_t researcher.gpu.title)"
+    if [[ -z "$st" ]]; then
+        echo "$(_t researcher.gpu.now_unknown)"
+    else
+        d="$(_rz_drive_of "$st")"; where="$(_rz_where "$d" "$brain")"
+        [[ -n "$d" && "$d" != "(unset)" ]] || d="http://localhost:8200"
+        case "$where" in
+            shared) echo "$(_t researcher.gpu.now_shared "$d")" ;;
+            own)    echo "$(_t researcher.gpu.now_own "$d")"; echo "$(_t researcher.gpu.brain "$brain")" ;;
+            *)      echo "$(_t researcher.gpu.now_other "$d")"; echo "$(_t researcher.gpu.brain "$brain")" ;;
+        esac
+    fi
+    if cards="$(_rz_gpu_cards "$brain")"; then
+        echo "$(_t researcher.gpu.cards)"
+        while IFS='|' read -r idx name total used who; do
+            [[ -n "$idx" ]] || continue
+            case "$who" in
+                brain) mark="$(_t researcher.gpu.card_brain)" ;;
+                library) mark="$(_t researcher.gpu.card_library)" ;;
+                both) mark="$(_t researcher.gpu.card_both)" ;;
+                free) mark="$(_t researcher.gpu.card_free)" ;;
+                *) mark="" ;;
+            esac
+            echo "$(_t researcher.gpu.card "$idx" "$name" "$total" "$used" "$mark")"
+        done <<<"$cards"
+        free="$(_rz_free_card "$brain" "$cards")" || free=""
+    else
+        echo "$(_t researcher.gpu.no_cards)"
+    fi
+    echo
+    if [[ "$where" == shared || -z "$where" ]]; then
+        echo "$(_t researcher.gpu.why)"
+        if [[ "$(uname -s)" != Linux ]]; then echo "$(_t researcher.gpu.linux_only)"
+        elif [[ -n "$free" ]]; then echo "$(_t researcher.gpu.cmd_card "${free%%|*}")"; fi
+        echo "$(_t researcher.gpu.cmd_host)"
+    else
+        echo "$(_t researcher.gpu.cmd_shared)"
+    fi
+    return 0
+}
+
+# ResearchZosho 0.5.0: restart the librarian's service so it reads its model address again (it reads it
+# once, at start). The platform's own service manager, as its updater does; nothing of its files changes.
+_rz_restart_service() {   # <user>
+    local u="$1" uid
+    case "$(uname -s)" in
+        Darwin)
+            uid="$(id -u "$u" 2>/dev/null || id -u)"
+            if _sibling_as "$u" launchctl print "gui/$uid/org.researchzosho.librarian" >/dev/null 2>&1; then
+                if _sibling_as "$u" launchctl kickstart -k "gui/$uid/org.researchzosho.librarian" >/dev/null 2>&1; then log "$(_t researcher.gpu.restarted)"
+                else warn "$(_t researcher.gpu.restart_failed "launchctl kickstart -k gui/$uid/org.researchzosho.librarian")"; fi
+            else info "$(_t researcher.gpu.no_service)"; fi ;;
+        *)
+            if _sibling_as "$u" systemctl --user is-active --quiet researchzosho 2>/dev/null; then
+                if _sibling_as "$u" systemctl --user restart researchzosho; then log "$(_t researcher.gpu.restarted)"
+                else warn "$(_t researcher.gpu.restart_failed "systemctl --user restart researchzosho")"; fi
+            else info "$(_t researcher.gpu.no_service)"; fi ;;
+    esac
+    return 0
+}
+
+# ResearchZosho 0.5.1 switches its model while its service runs (`model use`), after checking that the
+# server answers and the model replies; its service takes it for the next run and question. 0.5.0 has
+# no such command and its service reads the address only when it starts. _rz_gpu sets this once.
+RZ_LIVE_SWITCH=0; RZ_VER=""
+
+# The one chat model a server lists (an embeddings or rerank model left out), or nothing. ResearchZosho's
+# own proxy lists its model and "embed", and `model use` needs the name when a server lists more than one.
+_rz_chat_model() {   # <url> [<the model the library uses now>]
+    local body
+    body="$(curl -sf -m 10 "${1%/}/v1/models" 2>/dev/null)" || return 0
+    printf '%s' "$body" | python3 -c 'import json, sys
+try:
+    ids = [m.get("id") for m in json.load(sys.stdin).get("data", []) if isinstance(m, dict) and m.get("id")]
+except Exception:
+    sys.exit(0)
+chat = [i for i in ids if "embed" not in i.lower() and "rerank" not in i.lower()]
+now = sys.argv[1] if len(sys.argv) > 1 else ""
+if now and now in chat:
+    print(now)          # a server with several models keeps the one the library uses now
+elif len(chat) == 1:
+    print(chat[0])' "${2:-}" 2>/dev/null || true
+}
+# The model the library uses now (RESEARCHZOSHO_MODEL in its own settings file, read as its user; nothing
+# in it is changed), or nothing.
+_rz_current_model() {   # <user>
+    local u="$1" h
+    h="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)" || h=""
+    [[ -n "$h" ]] || h="${HOME:-}"
+    _sibling_as "$u" cat "${RESEARCHZOSHO_HOME:-$h/.researchzosho}/config" 2>/dev/null \
+        | sed -n -E 's/^[[:space:]]*RESEARCHZOSHO_MODEL[[:space:]]*=[[:space:]]*"?([^"[:space:]]+)"?[[:space:]]*$/\1/p' \
+        | head -1 || true
+}
+# ResearchZosho's own `model use`: exit 0 switched; otherwise nothing changed (2 = name the model).
+_rz_model_use() {   # <user> <launcher> <url> [<model>]
+    local model="${4:-}" rc=0
+    [[ -n "$model" ]] || model="$(_rz_chat_model "$3" "$(_rz_current_model "$1")")"
+    if [[ -n "$model" ]]; then _sibling_as "$1" "$2" model use "$3" "$model" </dev/null || rc=$?
+    else _sibling_as "$1" "$2" model use "$3" </dev/null || rc=$?; fi
+    return $rc
+}
+
+# Point the library's model at <url>. With 0.5.1: `model use`. With 0.5.0, which has no command that
+# sets only that address, its own setup runs with the address (and a model named) in its environment for
+# that one run: it offers them and saves them (--no-service --no-claude keep it to the questions about the
+# library and the model); then what it kept is checked. Fails with `model use`'s code.
+_rz_point_drive() {   # <user> <launcher> <url> [<model>]
+    local u="$1" bin="$2" url="$3" model="${4:-}" rc=0 st d
+    if [[ "$RZ_LIVE_SWITCH" == 1 ]]; then
+        _rz_model_use "$u" "$bin" "$url" "$model" || rc=$?
+        if [[ $rc -ne 0 ]]; then err "$(_t researcher.gpu.use_failed "$url")"; fi
+        return $rc
+    fi
+    local envs=("RESEARCHZOSHO_DRIVE=$url")
+    [[ -z "$model" ]] || envs+=("RESEARCHZOSHO_MODEL=$model")
+    if [[ "${RZ_YES:-0}" == "1" ]]; then
+        _sibling_as "$u" env "${envs[@]}" "$bin" setup --yes --no-service --no-claude </dev/null || rc=$?
+    else
+        _sibling_as "$u" env "${envs[@]}" "$bin" setup --no-service --no-claude </dev/tty || rc=$?
+    fi
+    st="$(_rz_model_status "$u" "$bin")" || st=""
+    d="$(_rz_drive_of "$st")"
+    if [[ $rc -ne 0 || -z "$d" || "$(_rz_url_key "$d" 2>/dev/null || true)" != "$(_rz_url_key "$url")" ]]; then
+        err "$(_t researcher.gpu.drive_not_kept "$url" "${d:-?}")"; return 1
+    fi
+    return 0
+}
+
+_rz_host_answers() {   # <url>: a model server's list of models answers there
+    curl -sf -m 10 "${1%/}/v1/models" >/dev/null 2>&1
+}
+_rz_host_url() {   # <machine | machine:port | url> → the address of its model proxy (port 8211 unless named)
+    local a="$1" scheme=http rest
+    case "$a" in http://*) rest="${a#http://}" ;; https://*) scheme=https; rest="${a#https://}" ;; *) rest="$a" ;; esac
+    rest="${rest%%/*}"
+    case "$rest" in \[*\]) rest="$rest:8211" ;; \[*\]:*) ;; *:*) ;; *) rest="$rest:8211" ;; esac
+    echo "$scheme://$rest"
+}
+
+_rz_plan_after() {   # the line on what happens to the running service
+    if [[ "$RZ_LIVE_SWITCH" == 1 ]]; then log "$(_t researcher.gpu.plan_use)"; else log "$(_t researcher.gpu.plan_restart)"; fi
+}
+_rz_gpu_done() {   # <user> <launcher>: with 0.5.0 restart the service; then ResearchZosho's own account of it
+    local st
+    if [[ "$RZ_LIVE_SWITCH" != 1 ]]; then _rz_restart_service "$1"; fi
+    st="$(_rz_model_status "$1" "$2")" || st=""
+    if [[ -n "$st" ]]; then log "$(_t researcher.gpu.done)"; printf '%s\n' "$st"; fi
+    return 0
+}
+
+_rz_gpu_card() {   # <user> <launcher> <index>
+    local u="$1" bin="$2" want="$3" brain st cards idx name total used who have="" cardname="" onbrain=0 dflt m
+    if [[ "$(uname -s)" != Linux ]]; then
+        warn "$(_t researcher.gpu.linux_only)"; echo "$(_t researcher.gpu.cmd_host)"; return 1
+    fi
+    brain="$(_rz_brain_url)"
+    cards="$(_rz_gpu_cards "$brain")" || { err "$(_t researcher.gpu.no_nvidia)"; return 1; }
+    while IFS='|' read -r idx name total used who; do
+        [[ -n "$idx" ]] || continue
+        have="${have:+$have, }$idx"
+        if [[ "$idx" == "$want" ]]; then cardname="$name"; if [[ "$who" == brain || "$who" == both ]]; then onbrain=1; fi; fi
+    done <<<"$cards"
+    [[ -n "$cardname" ]] || { err "$(_t researcher.gpu.no_such_card "$want" "$have")"; return 1; }
+    if [[ -n "$RZ_VER" ]] && _version_newer 0.5.0 "$RZ_VER"; then err "$(_t researcher.gpu.too_old "$RZ_VER")"; return 1; fi
+    st="$(_rz_model_status "$u" "$bin")" || st=""
+    if [[ -n "$st" ]] && ! _rz_has_own_model "$st" && _rz_host_answers "$RZ_OWN_MODEL_URL"; then
+        err "$(_t researcher.gpu.proxy_other)"; return 1
+    fi
+    if _rz_has_own_model "$st"; then log "$(_t researcher.gpu.plan_move "$want" "$cardname")"
+    else log "$(_t researcher.gpu.plan_card "$want" "$cardname")"; fi
+    _rz_plan_after
+    dflt=Y
+    if [[ $onbrain -eq 1 ]]; then warn "$(_t researcher.gpu.card_is_brain "$want")"; dflt=N; fi
+    _rz_yesno "$(_t researcher.gpu.ask)" "$dflt" || { log "$(_t researcher.gpu.nothing)"; return 0; }
+    if _rz_has_own_model "$st"; then
+        _sibling_as "$u" "$bin" model uninstall </dev/null || { err "$(_t researcher.gpu.uninstall_failed)"; return 1; }
+    fi
+    if ! _sibling_as "$u" "$bin" model install --own --gpu "$want" </dev/null; then
+        st="$(_rz_model_status "$u" "$bin")" || st=""
+        err "$(_t researcher.gpu.install_failed "$(_rz_drive_of "$st")")"; return 1
+    fi
+    # The running service takes the new server through `model use`, which also checks the model replies.
+    if [[ "$RZ_LIVE_SWITCH" == 1 ]]; then
+        m="$(_rz_chat_model "$RZ_OWN_MODEL_URL")"
+        if ! _rz_model_use "$u" "$bin" "$RZ_OWN_MODEL_URL" "$m"; then
+            warn "$(_t researcher.gpu.use_failed "$RZ_OWN_MODEL_URL")"
+            echo "$(_t researcher.gpu.use_retry "$RZ_OWN_MODEL_URL${m:+ $m}")"
+            return 1
+        fi
+    fi
+    _rz_gpu_done "$u" "$bin"
+}
+
+_rz_gpu_host() {   # <user> <launcher> <machine> [<model>]
+    local u="$1" bin="$2" url st rc=0
+    url="$(_rz_host_url "$3")"
+    if ! _rz_host_answers "$url"; then
+        err "$(_t researcher.gpu.host_down "$url")"
+        echo "$(_t researcher.gpu.host_prepare)"
+        echo "$(_t researcher.gpu.host_again "$3")"
+        return 1
+    fi
+    st="$(_rz_model_status "$u" "$bin")" || st=""
+    log "$(_t researcher.gpu.plan_host "$url")"
+    if [[ "$RZ_LIVE_SWITCH" != 1 ]]; then log "$(_t researcher.gpu.plan_setup)"; fi
+    _rz_plan_after
+    _rz_yesno "$(_t researcher.gpu.ask)" Y || { log "$(_t researcher.gpu.nothing)"; return 0; }
+    _rz_point_drive "$u" "$bin" "$url" "${4:-}" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        if [[ $rc -eq 2 && "$RZ_LIVE_SWITCH" == 1 ]]; then echo "$(_t researcher.gpu.use_name "$3")"; fi
+        return 1
+    fi
+    if _rz_has_own_model "$st"; then info "$(_t researcher.gpu.own_stays)"; fi
+    _rz_gpu_done "$u" "$bin"
+}
+
+_rz_gpu_shared() {   # <user> <launcher>
+    local u="$1" bin="$2" brain st d own=0
+    brain="$(_rz_brain_url)"
+    st="$(_rz_model_status "$u" "$bin")" || st=""
+    d="$(_rz_drive_of "$st")"
+    if _rz_has_own_model "$st"; then own=1; fi
+    if [[ $own -eq 0 && -n "$st" && "$(_rz_where "$d" "$brain")" == shared ]]; then
+        log "$(_t researcher.gpu.already_shared "$brain")"; return 0
+    fi
+    log "$(_t researcher.gpu.plan_shared "$brain")"
+    if [[ $own -eq 1 ]]; then log "$(_t researcher.gpu.plan_uninstall)"
+    elif [[ "$RZ_LIVE_SWITCH" != 1 ]]; then log "$(_t researcher.gpu.plan_setup)"; fi
+    _rz_plan_after
+    _rz_yesno "$(_t researcher.gpu.ask)" Y || { log "$(_t researcher.gpu.nothing)"; return 0; }
+    if [[ $own -eq 1 ]]; then
+        _sibling_as "$u" "$bin" model uninstall </dev/null || { err "$(_t researcher.gpu.uninstall_failed)"; return 1; }
+        st="$(_rz_model_status "$u" "$bin")" || st=""
+        d="$(_rz_drive_of "$st")"
+    fi
+    if [[ -z "$st" || "$(_rz_where "$d" "$brain")" != shared ]]; then
+        if [[ $own -eq 1 && "$RZ_LIVE_SWITCH" != 1 ]]; then log "$(_t researcher.gpu.plan_setup)"; fi
+        _rz_point_drive "$u" "$bin" "$brain" || return 1
+    fi
+    _rz_gpu_done "$u" "$bin"
+}
+
+_rz_gpu() {   # [<card> | <machine> [<model>] | shared] [--yes]
+    local target="" model="" a found u bin
+    RZ_YES=0
+    for a in "$@"; do
+        case "$a" in
+            --yes|-y) RZ_YES=1 ;;
+            -h|--help|help) echo "$(_t researcher.gpu.usage)"; return 0 ;;
+            -*) err "$(_t researcher.gpu.usage)"; return 2 ;;
+            *) if [[ -z "$target" ]]; then target="$a"; elif [[ -z "$model" ]]; then model="$a"; else err "$(_t researcher.gpu.usage)"; return 2; fi ;;
+        esac
+    done
+    case "$target" in
+        ""|shared|*[!0-9]*) ;;
+        *) [[ -z "$model" ]] || { err "$(_t researcher.gpu.usage)"; return 2; } ;;
+    esac
+    if [[ -n "$model" && ( -z "$target" || "$target" == shared ) ]]; then err "$(_t researcher.gpu.usage)"; return 2; fi
+    found="$(_rz_bin_for_update 2>/dev/null)" || found=""
+    [[ -n "$found" ]] || { err "$(_t researcher.gpu.not_installed)"; return 1; }
+    u="${found%% *}"; bin="${found#* }"
+    [[ -n "$target" ]] || { _rz_gpu_show "$u" "$bin"; return $?; }
+    RZ_VER="$(_sibling_version _sibling_as "$u" "$bin" version)" || RZ_VER=""
+    RZ_LIVE_SWITCH=0
+    if [[ -n "$RZ_VER" ]] && ! _version_newer 0.5.1 "$RZ_VER"; then RZ_LIVE_SWITCH=1; fi
+    case "$target" in
+        shared) _rz_gpu_shared "$u" "$bin" ;;
+        *[!0-9]*) _rz_gpu_host "$u" "$bin" "$target" "$model" ;;
+        *) _rz_gpu_card "$u" "$bin" "$target" ;;
+    esac
 }
 
 do_researcher() {
     local sub="${1:-status}"; shift || true
     case "$sub" in
         status) _rz_status ;;
+        gpu) _rz_gpu "$@" ;;
         update)
             # The librarian's own updater (researchzosho 0.1.2+): the latest release, verified against its sums, service restarted.
             local rz; rz="$(_rz_bin 2>/dev/null || true)"
@@ -10484,8 +11933,13 @@ do_researcher() {
             echo
             log "ResearchZosho's own setup asks where the library goes, which model reads, and whether it runs as a service."
             log "Say yes to the service: that is what the companions talk to."
-            if [[ "$RZ_YES" == "1" ]]; then "$rz" setup --yes </dev/null || { err "researchzosho setup failed"; return 1; }
-            else "$rz" setup </dev/tty || { err "researchzosho setup failed"; return 1; }; fi
+            # Tell its setup where the brain is, so it does not take the first model server that
+            # answers on the usual ports (Ollama or LM Studio on the same machine). A default only:
+            # a model the person already chose stays, and its setup saves the choice in its own config.
+            local brain; brain="$(_rz_brain_url)"
+            log "The librarian will be offered this home's brain: $brain"
+            if [[ "$RZ_YES" == "1" ]]; then RESEARCHZOSHO_DRIVE_DEFAULT="$brain" "$rz" setup --yes </dev/null || { err "researchzosho setup failed"; return 1; }
+            else RESEARCHZOSHO_DRIVE_DEFAULT="$brain" "$rz" setup </dev/tty || { err "researchzosho setup failed"; return 1; }; fi
             echo
             local st; st="$(curl -sf -m 6 "${url%/}/v1/status" 2>/dev/null || true)"
             if [[ -z "$st" ]]; then
@@ -10496,11 +11950,13 @@ do_researcher() {
                 fi
             fi
             if [[ -n "$st" ]]; then
-                _rz_connect "$url" "" "$rz" ""
+                _rz_connect "$url" "" "$rz" "" || return 1
             else
                 warn "No daemon at $url — connecting over stdio instead (no overnight asks until the service runs)."
-                _rz_connect "" "" "$rz" "$rz mcp"
+                _rz_connect "" "" "$rz" "$rz mcp" || return 1
             fi
+            echo
+            _rz_gpu_suggest "$(id -un)" "$rz"
             ;;
         link)
             # Connect to a librarian that already exists: here, on another machine, or as a child process.
@@ -10538,7 +11994,7 @@ except Exception: pass' "$f" "$RESEARCHZOSHO_SERVICE_ID" 2>/dev/null || true)"
             log "ResearchZosho is no longer the library role (entry disabled in $f). Restart to apply: wyrd restart"
             ;;
         help|-h|--help|*)
-            echo "Usage: wyrd researcher <setup|install|link|status|update|unlink>"
+            echo "Usage: wyrd researcher <setup|install|link|status|gpu|update|unlink>"
             echo "  setup [--yes] [--url U|--port N]   install ResearchZosho if needed, run its setup, connect this node (the wizard)"
             echo "        [--no-restart]               (--yes takes every default; RESEARCHZOSHO_BIN points at a checkout)"
             echo "  install [--yes]                    install ResearchZosho only (its checked one-line installer)"
@@ -10546,6 +12002,9 @@ except Exception: pass' "$f" "$RESEARCHZOSHO_SERVICE_ID" 2>/dev/null || true)"
             echo "       [--wait MIN] [--no-webhook]     without a token it asks the owner to be let in and waits for the answer"
             echo "  link --stdio \"<command>\"           connect to one reached as a child process, e.g. \"ssh -T box researchzosho mcp\""
             echo "  status                             what is installed, registered, and answering"
+            echo "  gpu                                where the library's model runs: the companions' brain (the default) or its own"
+            echo "  gpu <card> | <machine> [<model>] | shared [--yes]"
+            echo "                                     give it a card of this machine (Linux), a model on another machine, or the brain again"
             echo "  unlink                             stop using it as the library role"
             [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 1
             ;;
@@ -11258,13 +12717,14 @@ PY
             #     Direct config — use this only when you already have the trio
             #     out-of-band (invite URL, etc).
             shift  # drop "join"
-            local mode="" rurl="" ruser="" rtoken="" req_host="" req_name="" hh_key=""
+            local mode="" rurl="" ruser="" rtoken="" req_host="" req_name="" hh_key="" ca_fp=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --lan)            mode="lan"; shift ;;
                     --request)        mode="request"; req_host="${2:-}"; shift 2 ;;
                     --name)           req_name="${2:-}"; shift 2 ;;
                     --household-key)  hh_key="${2:-}"; shift 2 ;;
+                    --ca-fp)          ca_fp="${2:-}"; shift 2 ;;
                     --relay-url)      rurl="${2:-}"; shift 2 ;;
                     --user)           ruser="${2:-}"; shift 2 ;;
                     --token)          rtoken="${2:-}"; shift 2 ;;
@@ -11284,22 +12744,35 @@ PY
                 # Pairing flow — leverages the existing /api/pair/* endpoints
                 # that phone clients use. Same backend, same consent gate.
                 [[ -z "$req_host" ]] && { err "$(_t federate.join.request.needs_host)"; return 1; }
-                # Default port 7070 if not specified
-                local pair_url="$req_host"
-                [[ "$pair_url" == *:* ]] || pair_url="${pair_url}:7070"
-                pair_url="http://${pair_url}"
+                # The hub answers the network over HTTPS only ( W2). Its CA is
+                # pinned: from the join key (<key>.<fingerprint>) or --ca-fp, else shown for the
+                # person to compare with `wyrd federate code` on the hub.
+                local pair_host="$req_host"
+                [[ "$pair_host" == *:* ]] || pair_host="${pair_host}:7443"
+                local pair_url="https://${pair_host}"
+                if [[ "$hh_key" =~ ^(.+)\.([0-9a-fA-F]{64})$ ]]; then
+                    hh_key="${BASH_REMATCH[1]}"
+                    [[ -z "$ca_fp" ]] && ca_fp="${BASH_REMATCH[2]}"
+                fi
+                # The household key is never sent to a hub that is not pinned.
+                if [[ -n "$hh_key" && -z "$ca_fp" ]]; then
+                    err "$(_t federate.join.request.needs_ca_fp)"
+                    return 1
+                fi
+                local hub_ca
+                hub_ca=$(_hub_ca_pinned "$pair_host" "$ca_fp") || return 1
                 local nm="${req_name:-$(hostname -s 2>/dev/null || echo node)}"
                 local result
                 if [[ -n "$hh_key" ]]; then
                     log "$(_t federate.join.request.with_key "$req_host")"
-                    result=$(curl -sf -X POST "$pair_url/api/pair/key" \
+                    result=$(curl -sf --cacert "$hub_ca" -X POST "$pair_url/api/pair/key" \
                         -H "Content-Type: application/json" \
                         -d "{\"deviceName\":\"$nm\",\"deviceType\":\"node\",\"key\":\"$hh_key\"}" 2>&1) \
                         || { err "$(_t federate.join.request.key_failed)"; echo "$result"; return 1; }
                 else
                     log "$(_t federate.join.request.requesting_code "$req_host")"
                     local req_resp
-                    req_resp=$(curl -sf -X POST "$pair_url/api/pair/request" \
+                    req_resp=$(curl -sf --cacert "$hub_ca" -X POST "$pair_url/api/pair/request" \
                         -H "Content-Type: application/json" \
                         -d "{\"deviceName\":\"$nm\",\"deviceType\":\"node\"}" 2>&1) \
                         || { err "$(_t federate.join.request.host_unreachable)"; echo "$req_resp"; return 1; }
@@ -11310,7 +12783,7 @@ PY
                     info "$(_t federate.join.request.ask_admin)"
                     _drain_stdin; read -rp "$(_t federate.join.request.code_prompt)" code
                     [[ -z "$code" ]] && { err "$(_t federate.join.request.no_code)"; return 1; }
-                    result=$(curl -sf -X POST "$pair_url/api/pair/verify" \
+                    result=$(curl -sf --cacert "$hub_ca" -X POST "$pair_url/api/pair/verify" \
                         -H "Content-Type: application/json" \
                         -d "{\"challengeId\":\"$cid\",\"code\":\"$code\"}" 2>&1) \
                         || { err "$(_t federate.join.request.verify_failed)"; echo "$result"; return 1; }
@@ -11373,6 +12846,8 @@ PY
 import sys, json
 d = json.load(sys.stdin)
 print(f'  code: {d.get(\"code\",\"?\")}    expires-at: {d.get(\"expiresAt\",\"?\")}')
+if d.get('home_ca_fp'):
+    print(f'  certificate fingerprint (the new machine checks it): {d[\"home_ca_fp\"]}')
 " 2>/dev/null || echo "$resp"
             ;;
         household-key)
@@ -11387,7 +12862,7 @@ print(f'  code: {d.get(\"code\",\"?\")}    expires-at: {d.get(\"expiresAt\",\"?\
                     echo "$resp" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print(f'  key: {d.get(\"key\",\"?\")}')
+print(f'  key: {d.get(\"join_key\") or d.get(\"key\",\"?\")}')
 print(f'  created: {d.get(\"createdAt\",\"?\")}')
 " 2>/dev/null || echo "$resp"
                     ;;
@@ -11397,8 +12872,8 @@ print(f'  created: {d.get(\"createdAt\",\"?\")}')
                     echo "$resp" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print(f'  new key: {d.get(\"key\",\"?\")}')
-print('  Share with new nodes via: wyrd federate join --request <host> --household-key <key>')
+print(f'  new key: {d.get(\"join_key\") or d.get(\"key\",\"?\")}')
+print('  Share with new nodes via: wyrd join <host> --household-key <key>')
 " 2>/dev/null || echo "$resp"
                     ;;
                 *) err "$(_t federate.household_key.usage)"; return 1 ;;
@@ -11477,7 +12952,17 @@ wyrd_session_token() {
         return
     fi
     local f; f=$(wyrd_session_token_file)
+    local op="${WYRDSEKAI_DATA_DIR:-/var/lib/wyrdsekai}/operator.token"
     if [[ -r "$f" ]]; then
+        # A login from days ago leaves a session token the server no longer honours, and it was
+        # preferred over the node's operator token for ever after: every steward verb answered
+        # 401 and said the node might not be running. When both exist the session token is asked
+        # once whether it still stands; one the server refuses gives way to the operator token.
+        if [[ -r "$op" ]]; then
+            local _code; _code=$(curl -s -o /dev/null -w '%{http_code}' -m 3 -H "Authorization: Bearer $(cat "$f")" \
+                "${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}/api/repair" 2>/dev/null || true)
+            if [[ "$_code" == "401" || "$_code" == "403" ]]; then cat "$op"; return; fi
+        fi
         cat "$f"
         return
     fi
@@ -11488,8 +12973,31 @@ wyrd_session_token() {
     # writes this file at startup, 0600, owned by the service user, and only honours
     # it from loopback. Reading it already implies the ability to read world.db and
     # stop the service, so it grants nothing new.
-    local op="${WYRDSEKAI_DATA_DIR:-/var/lib/wyrdsekai}/operator.token"
     [[ -r "$op" ]] && cat "$op" || true
+}
+
+# Every call to this node's /api carries a login (2026-09-28: the node refuses /api calls
+# without one; see ApiAuth). A call that already sends an Authorization or admin header keeps
+# it; otherwise the session token, or the operator token on the node itself, goes along. Only
+# this node's own address gets a token, never another service.
+curl() {
+    local a local_api=0 has_auth=0 api_base="${WYRDSEKAI_API_URL:-}" p="${WYRDSEKAI_PORT:-7070}"
+    for a in "$@"; do
+        case "$a" in
+            Authorization:*|authorization:*|X-Wyrdsekai-Admin-Token:*) has_auth=1 ;;
+            http://localhost:"$p"/api/*|http://127.0.0.1:"$p"/api/*|http://localhost:"$p"/metrics|http://127.0.0.1:"$p"/metrics) local_api=1 ;;
+            https://localhost:7443/api/*|https://127.0.0.1:7443/api/*) local_api=1 ;;
+            *) [[ -n "$api_base" && "$a" == "$api_base"/api/* ]] && local_api=1 ;;
+        esac
+    done
+    if (( local_api && ! has_auth )); then
+        local t; t=$(wyrd_session_token 2>/dev/null || true)
+        if [[ -n "$t" ]]; then
+            command curl -H "Authorization: Bearer $t" "$@"
+            return
+        fi
+    fi
+    command curl "$@"
 }
 
 do_login() {
@@ -12062,7 +13570,7 @@ for e in d.get("enrollments", []):
 }
 
 # ── Room wards (W4 — /api/wards consumers; ward_keyring's terminal twin) ─
-# `wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]` — the steward's view
+# `wyrd rooms [list] | demolish <room> [--with-objects] | prune [--duplicates] [--stale <days>] [--with-objects] [--yes]` — the steward's view
 # of the zone's rooms and the way to take a made room down. Founding rooms, Homes and occupied
 # rooms are refused by the server. Prune lists first; --yes carries it out (2026-09-14).
 # `wyrd mail` — the steward's view of household mail: who wrote to whom and when. Never a
@@ -12279,47 +13787,60 @@ print("%d room(s)" % len(rows))
 '
             ;;
         demolish)
-            local room="${2:-}"
-            [[ -n "$room" ]] || { err "Usage: wyrd rooms demolish <room-id-or-name>"; return 2; }
+            local room="${2:-}" withobj=false
+            for a in "${@:3}"; do case "$a" in --with-objects) withobj=true ;; esac; done
+            [[ -n "$room" && "$room" != "--with-objects" ]] || { err "Usage: wyrd rooms demolish <room-id-or-name> [--with-objects]"; return 2; }
             local token; token=$(wyrd_session_token)
             [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
             local resp code
-            resp=$(curl -s -w '\n%{http_code}' -X DELETE -H "Authorization: Bearer $token" "$api/api/rooms/$room") \
+            resp=$(curl -s -w '\n%{http_code}' -X DELETE -H "Authorization: Bearer $token" "$api/api/rooms/$room?with_objects=$withobj") \
                 || { err "The server did not answer at $api — is it running?"; return 1; }
             code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
             [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
             printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
             ;;
         prune)
-            local dup=false yes=false
-            for a in "${@:2}"; do case "$a" in --duplicates) dup=true ;; --yes|-y) yes=true ;; esac; done
+            # --stale <days>: made rooms with nobody in them and no event for that long; --with-objects lets a
+            # room's things go down with it (otherwise such a room is listed but kept, and says so).
+            local dup=false yes=false withobj=false stale=0 prev=""
+            for a in "${@:2}"; do
+                case "$a" in
+                    --duplicates) dup=true ;; --yes|-y) yes=true ;; --with-objects) withobj=true ;;
+                    --stale=*) stale="${a#--stale=}" ;;
+                    *) [[ "$prev" == "--stale" ]] && stale="$a" ;;
+                esac; prev="$a"
+            done
+            stale="${stale%d}"; [[ "$stale" =~ ^[0-9]+$ ]] || { err "Usage: wyrd rooms prune [--duplicates] [--stale <days>] [--with-objects] [--yes]"; return 2; }
             local token; token=$(wyrd_session_token)
             [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
-            local plan code
-            plan=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/rooms/prune?dry=true&duplicates=$dup") \
+            local q="dry=true&duplicates=$dup&stale_days=$stale&with_objects=$withobj" plan code
+            plan=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/rooms/prune?$q") \
                 || { err "The server did not answer at $api — is it running?"; return 1; }
             code="${plan##*$'\n'}"; plan="${plan%$'\n'*}"
             [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
             [[ "$code" == "403" ]] && { err "Only the steward prunes rooms."; return 1; }
             [[ "$code" == "200" ]] || { err "The server answered $code: $plan"; return 1; }
             printf '%s' "$plan" | python3 -c '
-import json,sys
-rooms=json.load(sys.stdin).get("rooms",[])
+import json,sys,time
+d=json.load(sys.stdin); rooms=d.get("rooms",[]); now=d.get("now") or int(time.time()*1000)
 if not rooms: print("Nothing to prune."); sys.exit(3)
 print("Would demolish %d room(s):" % len(rooms))
-for r in rooms: print("  %s — %s" % (r["roomId"][:70], r.get("name") or ""))
+for r in rooms:
+    la=r.get("lastActivityAt") or 0
+    quiet=("  (quiet %d d, made by %s)" % ((now-la)//86400000, r.get("madeBy") or "?")) if la else ""
+    print("  %s — %s%s" % (r["roomId"][:60], r.get("name") or "", quiet))
 ' || { local rc=$?; [[ $rc -eq 3 ]] && return 0; return $rc; }
             if [[ "$yes" != true ]]; then
-                echo "Run again with --yes to demolish them (add --duplicates to include later copies of a name)."
+                echo "Run again with --yes to demolish them (--duplicates adds later copies of a name; --stale <days> adds made rooms nobody has been in for that long; a room that holds objects is kept unless --with-objects)."
                 return 0
             fi
-            curl -sf -X POST -H "Authorization: Bearer $token" "$api/api/rooms/prune?dry=false&duplicates=$dup" \
+            curl -sf -X POST -H "Authorization: Bearer $token" "$api/api/rooms/prune?dry=false&duplicates=$dup&stale_days=$stale&with_objects=$withobj" \
                 | python3 -c '
 import json,sys
 for r in json.load(sys.stdin).get("results",[]): print(("ok   " if r["ok"] else "kept ") + (r.get("name") or r["roomId"]) + " — " + r["message"])
 '
             ;;
-        *) echo "Usage: wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]"; return 64 ;;
+        *) echo "Usage: wyrd rooms [list] | demolish <room> [--with-objects] | prune [--duplicates] [--stale <days>] [--with-objects] [--yes]"; return 64 ;;
     esac
 }
 
@@ -13239,6 +14760,27 @@ EOF
             log "On next restart, the conf line will reload it from $ENV_FILE."
             ;;
 
+        restart)
+            # Stop the model servers and start them again the way `wyrd start` does, so a new
+            # memory cap, model or flag takes effect (docker applies a cap only to a container
+            # it creates). Companions are told once, as for a stop.
+            _quiesce_notice "an inference restart"
+            log "$(_t inference.restart.stopping)"
+            stop_inference
+            sleep 1
+            ensure_inference
+            log "$(_t inference.restart.done)"
+            ;;
+        start)
+            # The desktop app's and the menu-bar's "start inference" (they called a verb that
+            # did not exist and got this help text back).
+            ensure_inference
+            ;;
+        stop)
+            stop_inference
+            log "$(_t inference.stop.done)"
+            ;;
+
         voice-restart)
             # Dual-inference: restart ONLY the voice backend, leaving 9B
             # skills untouched. Used by DeepSleepTrainer after the voice
@@ -13296,6 +14838,8 @@ EOF
             echo "$(_t inference.help.cmd_zone)"
             echo "$(_t inference.help.cmd_status)"
             echo "$(_t inference.help.cmd_disable)"
+            echo "$(_t inference.help.cmd_restart)"
+            echo "$(_t inference.help.cmd_start_stop)"
             echo "  share [on|off|status]                       Offer this node's GPU to household members (auto-share)"
             echo ""
             echo "$(_t inference.help.dual_header)"
@@ -13331,7 +14875,463 @@ EOF
 # night's write passes its gates; the voice container serves it via the
 # existing LLAMA_VOICE_ADAPTER path. Everything here is detachable: rollback
 # removes one file and the base voice is back.
+# wyrd brain — the single-model serving profile (one large sparse model serves every lane).
+# Opt-in. `enable` and `disable` only flip WYRDSEKAI_SERVING_PROFILE: both model sets, their
+# adapters and their settings stay on disk, so a household can move to the single model and back.
+# Tell the steward, once, when this machine has become able to run the large model (new card,
+# more RAM, the data moved to another box) — or when the hardware under a set profile changed.
+# It never switches profiles: moving a companion to another model is a person's decision. The
+# fingerprint lives in the data dir, so it travels with the companion and a different machine
+# reads as a change.
+_brain_hardware_notice() {
+    [[ "$(uname -s)" == "Darwin" ]] && return 0
+    local vram ram gpu fp file="$DATA_DIR/hardware-seen.json" prev="" offered=""
+    vram="$(_brain_vram_mb)"; ram="$(_brain_ram_mb)"
+    gpu="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sort | tr '\n' '+' | sed 's/+$//' || true)"
+    fp="${vram:-0}|${ram:-0}|${gpu}"
+    if [[ -f "$file" ]]; then
+        prev="$(sed -n 's/.*"fingerprint": *"\([^"]*\)".*/\1/p' "$file" | head -1)"
+        offered="$(sed -n 's/.*"offered": *"\([^"]*\)".*/\1/p' "$file" | head -1)"
+    fi
+    local single drive best=""
+    single="$(plan_for_profile single-sparse "${vram:-0}" "${ram:-0}")"
+    drive="$(plan_for_profile sparse-drive "${vram:-0}" "${ram:-0}")"
+    [[ "$single" != "not-viable" ]] && best=single-sparse
+    [[ "$drive" != "not-viable" ]] && best=sparse-drive
+    if [[ "$(_serving_profile)" == "two-model" && -n "$best" && ( "$fp" != "$prev" || "$offered" != "$best" ) ]]; then
+        echo ""
+        echo "$(_t brain.notice.now_possible "${vram:-0}" "${ram:-0}")"
+        [[ "$drive" != "not-viable" ]] && echo "$(_t brain.notice.option_drive)"
+        [[ "$single" != "not-viable" ]] && echo "$(_t brain.notice.option_single)"
+        echo "$(_t brain.notice.how)"
+        echo ""
+    elif [[ "$(_serving_profile)" != "two-model" && -n "$prev" && "$fp" != "$prev" ]]; then
+        echo "$(_t brain.notice.hardware_changed "$prev" "$fp")"
+    fi
+    mkdir -p "$DATA_DIR" 2>/dev/null || true
+    printf '{\n  "fingerprint": "%s",\n  "offered": "%s",\n  "seen": "%s"\n}\n' "$fp" "$best" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$file" 2>/dev/null || true
+}
+
+do_brain() {
+    local sub="${1:-status}"
+    local model="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}"
+    local model_path="$DATA_DIR/models/$model"
+    local generic="$DATA_DIR/adapters/brain/honesty.gguf"
+    local species="$DATA_DIR/adapters/brain/species.gguf" styled="$DATA_DIR/adapters/brain/styled.gguf" work="$DATA_DIR/adapters/brain/work.gguf"
+    [[ -f "$species" ]] && generic="$species"
+    local vram ram plan avail others cap; vram="$(_brain_vram_mb)"; ram="$(_brain_ram_mb)"
+    others="$(_brain_vram_others_mb)"; cap="$(_brain_vram_cap_mb)"; avail="$(_brain_vram_available_mb "$vram" "$others" "$cap")"
+    plan="$(plan_brain_residency "${avail:-0}" "${ram:-0}")"
+    # macOS: unified memory, no card — the Darwin planner decides from RAM (Apple Silicon only).
+    if [[ "$(uname -s)" == "Darwin" ]]; then plan="$(plan_brain_residency_darwin "${ram:-0}")"; fi
+    _brain_plan_text() {
+        case "$1" in
+            gpu-full) _t brain.status.plan_gpu_full ;;
+            all) _t brain.status.plan_all ;;
+            not-viable) _t brain.status.plan_not_viable ;;
+            *) _t brain.status.plan_n "$1" "$BRAIN_LAYERS" ;;
+        esac
+    }
+    case "$sub" in
+        status|plan)
+            echo "$(_t brain.status.profile "$(_serving_profile)")"
+            echo "$(_t brain.status.hardware "${vram:-0}" "${ram:-0}")"
+            echo "$(_t brain.status.plan "$(_brain_plan_text "$plan")")"
+            [[ "$(uname -s)" != "Darwin" ]] && echo "$(_brain_plan_words "$plan" "$avail" "$others" "$cap")"
+            if [[ "$(uname -s)" != "Darwin" ]]; then
+                echo "$(_t brain.status.plan_drive "$(_brain_plan_text "$(plan_for_profile sparse-drive "${avail:-0}" "${ram:-0}")")")"
+                local running; running="$(_brain_current_plan)"
+                [[ -n "$running" && "$running" != "$plan" ]] && echo "$(_t brain.status.running_plan "$(_brain_plan_text "$running")")"
+            fi
+            [[ "$sub" == "plan" ]] && return 0
+            if [[ -f "$model_path" ]]; then echo "$(_t brain.status.model_present "$model")"
+            else echo "$(_t brain.status.model_missing "$model")"; fi
+            if [[ -f "$generic" ]]; then echo "$(_t brain.status.generic_present)"
+            else echo "$(_t brain.status.generic_missing)"; fi
+            # One night adapter per companion (brainwrite/<entity>/current.gguf, since 2026-09-21). The
+            # single `$night` this read was removed then, and `brain status` stopped here under `set -u`.
+            local any_night=false _n
+            for _n in "$DATA_DIR"/adapters/brainwrite/*/current.gguf; do
+                [[ -f "$_n" ]] || continue
+                any_night=true
+                echo "$(_t brain.status.night_present "$(basename "$(dirname "$_n")"), $(date -r "$_n" '+%Y-%m-%d %H:%M' 2>/dev/null)")"
+            done
+            [[ "$any_night" == true ]] || echo "$(_t brain.status.night_missing)"
+            if command -v docker &>/dev/null && _docker_daemon_present; then
+                local st; st="$(docker inspect -f '{{.State.Status}}' "$BRAIN_CONTAINER" 2>/dev/null || echo absent)"
+                echo "$(_t brain.status.container "$BRAIN_CONTAINER" "$st")"
+            fi
+            ;;
+        setup)
+            if [[ "$plan" == "not-viable" ]]; then
+                echo "$(_t brain.status.hardware "${vram:-0}" "${ram:-0}")"
+                err "$(_t brain.setup.not_viable)"; return 1
+            fi
+            echo "$(_t brain.status.plan "$(_brain_plan_text "$plan")")"
+            mkdir -p "$DATA_DIR/models" "$DATA_DIR/adapters/brain"
+            # Nightly learning is on by default (0.5.0): setup brings its trainer too, unless --no-trainer.
+            local _with_trainer=1; [[ " ${*:2} " == *" --no-trainer "* ]] && _with_trainer=0
+            if [[ ! -f "$model_path" ]]; then
+                if [[ "$_with_trainer" == "1" && "$(uname -s)" != "Darwin" ]]; then
+                    _prompt_wait "$(_t brain.setup.confirm_trainer "$DATA_DIR/models")" 120
+                else
+                    _prompt_wait "$(_t brain.setup.confirm "$DATA_DIR/models")" 120
+                fi
+                case "${_PROMPT_REPLY:-}" in
+                    y|Y|yes|s|S|si|sí) : ;;
+                    *) echo "$(_t brain.setup.cancelled)"; return 0 ;;
+                esac
+                log "$(_t brain.setup.downloading "$model")"
+                if _model_fetch base-3.6-35b-a3b "$model_path.part"; then
+                    mv "$model_path.part" "$model_path"
+                    _model_record "$model_path" base-3.6-35b-a3b "$(_index_field base-3.6-35b-a3b version 2>/dev/null)" "${WYRD_FETCH_URL:-$(_index_field base-3.6-35b-a3b url 2>/dev/null)}"
+                else
+                    rm -f "$model_path.part"; err "$(_t brain.setup.download_failed "$model")"; return 1
+                fi
+            fi
+            # The adapters, each fetched by its index id when the index knows it: the honesty adapter
+            # (the floor on a node without the species floor; the working-turn adapter beside it), the
+            # species floor and the styled adapter (the register dial). A node that has a file keeps it.
+            local _honesty="$DATA_DIR/adapters/brain/honesty.gguf" _id _dst
+            for _id in honesty-lora-35b-a3b:"$_honesty" species-floor-35b-a3b:"$species" styled-35b-a3b:"$styled"; do
+                _dst="${_id#*:}"; _id="${_id%%:*}"
+                [[ -f "$_dst" ]] && continue
+                if [[ -n "$(_index_field "$_id" sha256 2>/dev/null)" ]]; then
+                    log "$(_t brain.setup.downloading "brain/$(basename "$_dst")")"
+                    if _model_fetch "$_id" "$_dst.part"; then
+                        mv "$_dst.part" "$_dst"
+                        _model_record "$_dst" "$_id" "$(_index_field "$_id" version 2>/dev/null)" "${WYRD_FETCH_URL:-}"
+                    else rm -f "$_dst.part"; warn "$(_t brain.setup.download_failed "brain/$(basename "$_dst")")"; fi
+                else
+                    warn "$(_t brain.setup.adapter_unpublished "$_dst")"
+                fi
+            done
+            # With the species floor in slot 0 the honesty adapter serves the working turns as brain/work.gguf.
+            if [[ -f "$species" && -f "$_honesty" && ! -f "$work" ]]; then
+                ln "$_honesty" "$work" 2>/dev/null || cp "$_honesty" "$work"
+                log "$(_t brain.setup.linked_work)"
+            fi
+            # --trainer: what the night's write on this model needs — its Python environment, the
+            # adapter converter's llama.cpp checkout, and the pre-quantised training bundle.
+            if [[ "$_with_trainer" == "1" && "$(uname -s)" == "Darwin" ]]; then
+                # The night's trainer on Apple Silicon is brain_write_mlx.py. It needs an MLX
+                # environment, an MLX 4-bit conversion of the same base model, and (for the
+                # adapter converter) torch + transformers + the bundle's hf/config.json.
+                echo "$(_t brain.setup.trainer_mac "$HOME/.wyrdsekai/mlx-venv" "$DATA_DIR/models/brain-mlx" "$DATA_DIR/models/brain-bundle/hf/config.json")"
+            elif [[ "$_with_trainer" == "1" ]]; then
+                local bvenv="${WYRDSEKAI_BRAIN_WRITE_VENV:-$DATA_DIR/brainwrite-venv}"
+                if [[ ! -x "$bvenv/bin/python" ]]; then
+                    log "$(_t brain.setup.trainer_venv "$bvenv")"
+                    python3 -m venv "$bvenv" || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+                    "$bvenv/bin/pip" install -q --upgrade pip
+                    "$bvenv/bin/pip" install -q "torch==2.11.0" --index-url https://download.pytorch.org/whl/cu130 \
+                        || "$bvenv/bin/pip" install -q "torch==2.11.0"
+                    "$bvenv/bin/pip" install -q "transformers==5.15.0" "peft==0.20.0" "bitsandbytes==0.50.0" \
+                        "accelerate==1.14.0" safetensors gguf sentencepiece \
+                        "flash-linear-attention==0.5.2" "fla-core==0.5.2" \
+                        || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+                fi
+                if [[ ! -d "$DATA_DIR/sleepwrite/llama.cpp/gguf-py" ]]; then
+                    mkdir -p "$DATA_DIR/sleepwrite"
+                    git clone -q --depth 1 https://github.com/ggml-org/llama.cpp "$DATA_DIR/sleepwrite/llama.cpp" \
+                        || warn "$(_t brain.setup.download_failed "llama.cpp")"
+                fi
+                local bundle="$DATA_DIR/models/brain-bundle"
+                if [[ ! -f "$bundle/bundle.json" ]]; then
+                    if [[ -n "$(_index_field train-spine-35b-a3b sha256 2>/dev/null)" ]]; then
+                        log "$(_t brain.setup.downloading "brain-bundle (4.9 GB)")"
+                        mkdir -p "$bundle"
+                        if _model_fetch train-spine-35b-a3b "$bundle.tar.part"; then
+                            tar -xf "$bundle.tar.part" -C "$bundle" --strip-components=1 && rm -f "$bundle.tar.part"
+                        else rm -f "$bundle.tar.part"; warn "$(_t brain.setup.download_failed "brain-bundle")"; fi
+                    else
+                        warn "$(_t brain.setup.bundle_unpublished "$bundle")"
+                    fi
+                fi
+            fi
+            echo "$(_t brain.setup.done)"
+            ;;
+        enable)
+            if [[ ! -f "$model_path" ]]; then err "$(_t brain.enable.needs_setup)"; return 1; fi
+            # Which profile: --drive keeps the voice model speaking (the large model replaces only
+            # the drive); --single makes the large model the voice as well. With neither flag, a
+            # companion whose voice already has nights written into it keeps that voice.
+            local want=""
+            case " ${*:2} " in *" --drive "*) want=sparse-drive ;; *" --single "*) want=single-sparse ;; esac
+            if [[ -z "$want" ]]; then
+                if [[ -f "$DATA_DIR/adapters/sleepwrite/state.json" || -f "$DATA_DIR/adapters/sleepwrite/current.gguf" ]]; then
+                    want=sparse-drive; echo "$(_t brain.enable.keeps_voice)"
+                else want=single-sparse; fi
+            fi
+            local want_plan; want_plan="$(plan_for_profile "$want" "${avail:-0}" "${ram:-0}")"
+            [[ "$(uname -s)" == "Darwin" ]] && want_plan="$plan"
+            if [[ "$want_plan" == "not-viable" ]]; then
+                echo "$(_t brain.status.hardware "${vram:-0}" "${ram:-0}")"
+                err "$(_t brain.enable.profile_not_viable "$want")"; return 1
+            fi
+            do_config set "WYRDSEKAI_SERVING_PROFILE=$want" >/dev/null
+            if [[ "$want" == "sparse-drive" ]]; then echo "$(_t brain.enable.done_drive)"
+            else echo "$(_t brain.enable.done)"; fi
+            ;;
+        disable)
+            do_config set "WYRDSEKAI_SERVING_PROFILE=two-model" >/dev/null
+            echo "$(_t brain.disable.done)"
+            ;;
+        vram)
+            # `wyrd brain vram 8` — she may use up to 8 GB of the card; `auto` lifts the ceiling.
+            local gb="${2:-}"
+            if [[ -z "$gb" ]]; then echo "$(_brain_plan_words "$plan" "$avail" "$others" "$cap")"; return 0; fi
+            if [[ "$gb" == "auto" || "$gb" == "0" ]]; then
+                do_config unset WYRDSEKAI_BRAIN_VRAM_CAP_MB >/dev/null 2>&1 || true
+                cap=0; echo "$(_t brain.vram.auto)"
+            elif [[ "$gb" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+                cap="$(awk -v g="$gb" 'BEGIN{printf "%d", g*1024}')"
+                local floor_mb=$(( BRAIN_SPINE_VRAM_MB + BRAIN_VRAM_HEADROOM_MB ))
+                if (( cap < floor_mb )); then err "$(_t brain.vram.too_low "$gb" "$(( (floor_mb + 1023) / 1024 ))")"; return 1; fi
+                do_config set "WYRDSEKAI_BRAIN_VRAM_CAP_MB=$cap" >/dev/null
+                echo "$(_t brain.vram.set "$gb")"
+            else
+                err "$(_t brain.vram.usage)"; return 1
+            fi
+            avail="$(_brain_vram_available_mb "$vram" "$others" "$cap")"; plan="$(plan_brain_residency "${avail:-0}" "${ram:-0}")"
+            echo "$(_brain_plan_words "$plan" "$avail" "$others" "$cap")"
+            [[ -n "$(_brain_current_plan)" ]] && echo "$(_t brain.vram.takes_effect)"
+            ;;
+        others-mb) echo "$others" ;;
+        plan-value) echo "$plan" ;;
+        reshape)
+            # Re-plan on what the card has free now and move the running brain to it when the plan
+            # changed (the brainstem's card-share pass, or a steward by hand). The move is a container
+            # recreate: a minute or two in which she does not answer. Exit 3 = nothing to change.
+            local running; running="$(_brain_current_plan)"
+            [[ -z "$running" ]] && { echo "$(_t brain.reshape.not_running)"; return 3; }
+            [[ "$plan" == "not-viable" ]] && plan=all
+            [[ "$running" == "$plan" ]] && { echo "$(_t brain.reshape.unchanged "$(_brain_plan_text "$plan")")"; return 3; }
+            log "$(_t brain.reshape.moving "$(_brain_plan_text "$running")" "$(_brain_plan_text "$plan")" "$(( (others + 512) / 1024 ))")"
+            ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
+              case "$plan" in gpu-full) export LLAMA_CPU_MOE=0 ;; *) export LLAMA_CPU_MOE="$plan" ;; esac
+              _start_brain_compose >/dev/null 2>&1 || true
+              docker compose --profile brain up -d --force-recreate llama-brain >/dev/null 2>&1 )
+            echo "$(_t brain.reshape.moved "$(_brain_plan_text "$plan")")"
+            ;;
+        serve)
+            # Start only the single model's server (the night's trainer on macOS calls this after
+            # its write; docker nodes restart their container themselves).
+            if [[ "$(uname -s)" == "Darwin" ]]; then _brain_native_running || _start_brain_native
+            else ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; _start_brain_compose ); fi
+            ;;
+        stop-server)
+            # Stop only the single model's server, by its PID file (macOS) or container (docker).
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                local _bp; _bp="$(cat "$DATA_DIR/.llama-server.pid" 2>/dev/null || true)"
+                if [[ -n "$_bp" ]] && _brain_native_running; then
+                    kill "$_bp" 2>/dev/null || true
+                    for _ in $(seq 1 20); do kill -0 "$_bp" 2>/dev/null || break; sleep 0.5; done
+                fi
+            else docker stop "$BRAIN_CONTAINER" >/dev/null 2>&1 || true; fi
+            ;;
+        *) echo "$(_t brain.usage)"; return 1 ;;
+    esac
+}
+
+# The night's write for the single-model profile: status / apply / guard / rollback.
+# The adapter is loaded by the brain container at scale 0 and raised per request, so "apply" is a
+# recreate of that container followed by the same morning guard, aimed at adapter 1 with the
+# honesty adapter held on.
+# A rolled-back night's lines are learned again: the window goes back to where that night began.
+# Without this the next night started after the removed one, and its day was never learned (the
+# household node, 2026-09-29: an afternoon and an evening lost to a rollback). Only when the night
+# being removed is the last one written; prints the new start, or nothing.
+_sleepwrite_restore_window() {
+    local sw_dir="$1"
+    [[ -f "$sw_dir/current.gguf" && -f "$sw_dir/state.json" && -f "$sw_dir/last-result.json" ]] || return 0
+    python3 - "$sw_dir" <<'PY' 2>/dev/null || true
+import json, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+last = json.load(open(d / "last-result.json")); st = json.load(open(d / "state.json"))
+if last.get("window_since") and st.get("last_adapter") == last.get("adapter"):
+    st["last_success_ts"] = last["window_since"]
+    st["window_restored_from"] = last["adapter"]
+    (d / "state.json").write_text(json.dumps(st))
+    print(last["window_since"])
+PY
+}
+
+_do_sleepwrite_brain() {
+    # Each being has her own directory under adapters/brainwrite (window, results, adapter), and
+    # the served model loads each current.gguf under its own id. `--being <entityId>` names whose
+    # night a verb is for; with one being on the node it may be left out.
+    local sw_base="$DATA_DIR/adapters/brainwrite" port="${LLAMA_PORT:-8200}" being="" _bargs=() _b
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "--being" ]]; then being="${2:-}"; shift; [[ $# -gt 0 ]] && shift; else _bargs+=("$1"); shift; fi
+    done
+    set -- ${_bargs[@]+"${_bargs[@]}"}
+    if [[ -z "$being" ]]; then
+        local _found=() _d
+        for _d in "$sw_base"/*/; do [[ -d "$_d" && "$(basename "$_d")" != "rejected" ]] && _found+=("$(basename "$_d")"); done
+        [[ ${#_found[@]} -eq 1 ]] && being="${_found[0]}"
+        if [[ -z "$being" && "${1:-status}" == "status" ]]; then
+            if [[ ${#_found[@]} -eq 0 ]]; then log "$(_t sleepwrite.status.no_write)"; return 0; fi
+            for _b in "${_found[@]}"; do echo "== $_b"; _do_sleepwrite_brain status --being "$_b"; done
+            return 0
+        fi
+        if [[ -z "$being" ]]; then err "$(_t sleepwrite.being.needed "${_found[*]:-}")"; return 1; fi
+    fi
+    local sw_dir="$sw_base/$being"
+    local probe="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/morning_probe.py"
+    [[ -f "$probe" ]] || probe="$PROJECT_ROOT/scripts/training/sleepwrite/morning_probe.py"
+    _brain_recreate() {
+        # macOS has no container: stop the native drive-port server by its PID file and start
+        # the single model again, which picks up (or drops) brainwrite/current.gguf.
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            local pidfile="$DATA_DIR/.llama-server.pid" pid=""
+            # Nothing to restart into: say why and leave whatever is serving alone.
+            if [[ ! -f "$MODELS_DIR/${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}" ]]; then
+                _start_brain_native || true
+                return 0
+            fi
+            if [[ -f "$pidfile" ]]; then
+                pid=$(<"$pidfile")
+                if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                    kill "$pid" 2>/dev/null || true
+                    local _w
+                    for _w in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+                rm -f "$pidfile"
+            fi
+            _start_brain_native || true
+            return 0
+        fi
+        ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
+          LLAMA_CPU_MOE="${LLAMA_CPU_MOE:-}" _start_brain_compose >/dev/null 2>&1 || true
+          docker compose --profile brain up -d --force-recreate llama-brain )
+    }
+    _brain_guard() {
+        local scale="${WYRDSEKAI_CONVERSATION_ADAPTER_SCALE:-0.3}"
+        # Her adapter's id on the server: the one loaded from her own directory.
+        local aid; aid=$(curl -sf --max-time 5 "http://127.0.0.1:$port/lora-adapters" 2>/dev/null \
+            | python3 -c 'import json,sys
+m = "/brainwrite/" + sys.argv[1] + "/"
+print(next((a["id"] for a in json.load(sys.stdin) if m in a.get("path", "")), ""))' "$being" 2>/dev/null || true)
+        if [[ -z "$aid" ]]; then warn "$(_t sleepwrite.being.not_loaded "$being")"; return 3; fi
+        LLAMA_VOICE_PORT="$port" python3 "$probe" --out "$sw_dir/guard-last.json" \
+            --history "$sw_dir/guard-history.jsonl" --adapter-id "$aid" --keep 0:1.0 \
+            --night-scale "$scale" --restore-scale 0.0
+    }
+    case "${1:-status}" in
+        status)
+            if [[ -f "$sw_dir/last-result.json" ]]; then
+                log "$(_t sleepwrite.status.last_write)"; sed 's/^/    /' "$sw_dir/last-result.json"
+            else log "$(_t sleepwrite.status.no_write)"; fi
+            if [[ -f "$sw_dir/rehearsal-result.json" ]]; then
+                log "$(_t sleepwrite.status.rehearsal)"; sed 's/^/    /' "$sw_dir/rehearsal-result.json"
+            fi
+            if [[ -f "$sw_dir/current.gguf" ]]; then log "$(_t sleepwrite.status.staged "$sw_dir/current.gguf")"
+            else log "$(_t sleepwrite.status.none_staged)"; fi
+            ;;
+        apply)
+            if [[ ! -f "$sw_dir/current.gguf" ]]; then
+                err "$(_t sleepwrite.apply.nothing_staged "$sw_dir/current.gguf")"; return 1
+            fi
+            if [[ "${2:-}" == "--if-idle" ]]; then
+                local busy
+                for _ in 1 2; do
+                    busy=$(curl -sf --max-time 3 "http://127.0.0.1:$port/metrics" 2>/dev/null \
+                        | grep -E '^llamacpp:requests_processing' | awk '{print $2}' || true)
+                    if [[ -n "$busy" && "$busy" != "0" ]]; then log "$(_t sleepwrite.apply.busy)"; return 0; fi
+                    sleep 5
+                done
+            fi
+            log "$(_t sleepwrite.apply.restarting)"
+            _brain_recreate
+            log "$(_t sleepwrite.apply.applied)"
+            [[ "${WYRDSEKAI_SLEEP_GUARD:-true}" == "false" ]] && return 0
+            log "$(_t sleepwrite.guard.waiting)"
+            local healthy=""
+            for _ in $(seq 1 80); do
+                if curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$port/health" 2>/dev/null; then healthy=1; break; fi
+                sleep 3
+            done
+            if [[ -z "$healthy" ]]; then warn "$(_t sleepwrite.guard.unhealthy)"; return 0; fi
+            local grc=0; _brain_guard || grc=$?
+            if [[ "$grc" -eq 2 ]]; then
+                warn "$(_t sleepwrite.guard.failed)"
+                mkdir -p "$sw_dir/rejected"
+                mv "$sw_dir/current.gguf" "$sw_dir/rejected/rejected-$(date +%Y%m%d-%H%M%S).gguf"
+                log "$(_t sleepwrite.guard.quarantined "$sw_dir/rejected")"
+                _brain_recreate
+                log "$(_t sleepwrite.guard.back_on_base "$sw_dir/guard-last.json")"
+            elif [[ "$grc" -eq 0 ]]; then log "$(_t sleepwrite.guard.passed)"
+            else warn "$(_t sleepwrite.guard.unmeasured "$grc")"; fi
+            ;;
+        guard) _brain_guard; return $? ;;
+        watch)
+            # Judge the night by her real lines since it was applied (the guard's prompts do not
+            # carry her identity prompt, her drives or the room, and a tic lives in those turns).
+            # Exit 2 rolls the night back. `--since ISO` defaults to the last apply's time.
+            local since="${2:-}"; [[ "$since" == "--since" ]] && since="${3:-}"
+            [[ -n "$since" ]] || since="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ts",""))' "$sw_dir/guard-last.json" 2>/dev/null || true)"
+            [[ -n "$since" ]] || { err "$(_t sleepwrite.watch.no_apply "$being")"; return 3; }
+            local trail="$DATA_DIR/data/agent-activity.jsonl"; [[ -f "$trail" ]] || trail="$DATA_DIR/agent-activity.jsonl"
+            local wrc=0
+            python3 "$probe" --trail "$trail" --agent "$being" --since "$since" --out "$sw_dir/watch-last.json" || wrc=$?
+            if [[ "$wrc" -eq 2 && -f "$sw_dir/current.gguf" ]]; then
+                warn "$(_t sleepwrite.watch.failed "$being")"
+                mkdir -p "$sw_dir/rejected"
+                mv "$sw_dir/current.gguf" "$sw_dir/rejected/rejected-$(date +%Y%m%d-%H%M%S).gguf"
+                _brain_recreate
+                log "$(_t sleepwrite.guard.back_on_base "$sw_dir/watch-last.json")"
+            fi
+            return $wrc ;;
+        rollback)
+            local _from; _from=$(_sleepwrite_restore_window "$sw_dir")
+            rm -f "$sw_dir/current.gguf"; _brain_recreate
+            log "$(_t sleepwrite.guard.back_on_base "$sw_dir/guard-last.json")"
+            if [[ -n "$_from" ]]; then log "$(_t sleepwrite.rollback.relearn "$_from")"; fi
+            ;;
+        *) echo "Usage: wyrd sleepwrite [--brain] status|apply [--if-idle]|guard|watch [--since ISO]|rollback|rehearse <companion>  [--being <entityId>]"; return 1 ;;
+    esac
+}
+
+# Rehearse the night's write: one consolidation cycle through the companion's own sleep, in
+# which the write trains and measures its gate and keeps nothing. It goes through her sleep so
+# that, under the single-model profile, she is asleep while her model is stopped for it.
+_sleepwrite_rehearse() {
+    local target="${1:-}" sw_dir="$2"
+    if [[ -z "$target" ]]; then err "$(_t sleepwrite.rehearse.usage)"; return 1; fi
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token)
+    [[ -z "$token" ]] && { err "$(_t sleepwrite.rehearse.needs_login)"; return 1; }
+    local reply code body
+    reply=$(curl -s -w '\n%{http_code}' -m 15 -X POST -H "Authorization: Bearer $token" "$api/api/forge/$target?rehearse=true" 2>/dev/null || true)
+    code="${reply##*$'\n'}"; body="${reply%$'\n'*}"
+    case "$code" in
+        200) ;;
+        404|409) err "$(_t sleepwrite.rehearse.not_present "$target")"; return 1 ;;
+        *) err "$(_t sleepwrite.rehearse.failed "$api" "$target")"; return 1 ;;
+    esac
+    # The large model's trainers keep one results directory per being, named by her entity id.
+    if [[ "$sw_dir" == */brainwrite ]]; then
+        local eid; eid="$(_json_str "$body" entityId 2>/dev/null || true)"
+        [[ -n "$eid" ]] && sw_dir="$sw_dir/$eid"
+    fi
+    log "$(_t sleepwrite.rehearse.started "$target" "$sw_dir/rehearsal-result.json")"
+}
+
 do_sleepwrite() {
+    # `--brain` anywhere in the arguments, or the single-model serving profile, aims the command
+    # at the one resident model: its results directory, its container, its adapter slot.
+    local _sw_args=() _a _sw_brain=0
+    for _a in "$@"; do if [[ "$_a" == "--brain" ]]; then _sw_brain=1; else _sw_args+=("$_a"); fi; done
+    [[ "$(_serving_profile)" == "single-sparse" ]] && _sw_brain=1
+    if [[ "${_sw_args[0]:-}" == "rehearse" ]]; then
+        local _sub="sleepwrite"; [[ "$_sw_brain" == "1" ]] && _sub="brainwrite"
+        _sleepwrite_rehearse "${_sw_args[1]:-}" "$DATA_DIR/adapters/$_sub"; return $?
+    fi
+    # ${arr[@]+...}: on the bash 3.2 that macOS ships, an empty array under `set -u` is "unbound".
+    if [[ "$_sw_brain" == "1" ]]; then _do_sleepwrite_brain ${_sw_args[@]+"${_sw_args[@]}"}; return $?; fi
+    set -- ${_sw_args[@]+"${_sw_args[@]}"}
     local sw_dir="$DATA_DIR/adapters/sleepwrite"
     local venv="${WYRDSEKAI_SLEEP_WRITE_VENV:-}"
     if [[ -z "$venv" && -f "$CONFIG_FILE" ]]; then
@@ -13343,6 +15343,9 @@ do_sleepwrite() {
                 log "$(_t sleepwrite.status.last_write)"; sed 's/^/    /' "$sw_dir/last-result.json"
             else
                 log "$(_t sleepwrite.status.no_write)"
+            fi
+            if [[ -f "$sw_dir/rehearsal-result.json" ]]; then
+                log "$(_t sleepwrite.status.rehearsal)"; sed 's/^/    /' "$sw_dir/rehearsal-result.json"
             fi
             if [[ -f "$sw_dir/current.gguf" ]]; then
                 log "$(_t sleepwrite.status.staged)"
@@ -13474,8 +15477,10 @@ do_sleepwrite() {
             esac
             ;;
         rollback)
+            local _from; _from=$(_sleepwrite_restore_window "$sw_dir")
             rm -f "$sw_dir/current.gguf"
             log "$(_t sleepwrite.rollback.removed)"
+            if [[ -n "$_from" ]]; then log "$(_t sleepwrite.rollback.relearn "$_from")"; fi
             ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
               export WYRDSEKAI_DATA="$DATA_DIR"; unset LLAMA_VOICE_ADAPTER
               _export_brain_mem_limits; docker compose --profile voice up -d --force-recreate llama-voice )
@@ -13931,6 +15936,12 @@ do_coding_use() {
 }
 
 do_coding() {
+    # CodeZaiku updates itself (its update contract): its own updater, never our installer over its folder.
+    if [[ "${1:-}" == "update" && "${2:-codezaiku}" == "codezaiku" && "${3:-}" != "--manifest" ]]; then
+        local found; found="$(_cz_bin_for_update)" || { err "CodeZaiku is not installed here (wyrd coding install codezaiku)"; return 1; }
+        _sibling_update CodeZaiku "${found%% *}" "${found#* }" Wyrdsekai/codezaiku --version
+        return $?
+    fi
     # `use` is a config-file operation: the conf path, systemd detection and
     # writability all live here, not in the Java CLI.
     if [[ "${1:-}" == "use" || "${1:-}" == "default" ]]; then
@@ -14020,17 +16031,35 @@ do_connect() {
 
 # ── Browser terminal (ttyd wrapping `wyrd connect`) ──
 #
-# Opt-in web terminal on :7071 (all interfaces): ttyd serves the built-in
-# TUI client over xterm.js, so a browser gets the full terminal experience
-# with no ssh anywhere in the chain. ttyd itself grants nothing — every
-# visitor lands in their own `wyrd connect` and must /login in-band.
-# `enable` leaves a marker so `wyrd start` brings it back up; `disable`
-# removes it. Traffic is plain HTTP — household/LAN trust, same caveat as
-# the :7070 surfaces.
+# Opt-in web terminal on :7071: ttyd serves the built-in TUI client over
+# xterm.js, so a browser gets the full terminal experience with no ssh
+# anywhere in the chain. ttyd itself grants nothing — every visitor lands in
+# their own `wyrd connect` and must /login in-band. `enable` leaves a marker so
+# `wyrd start` brings it back up; `disable` removes it.
+# People type their password into it, so it answers this machine only unless
+# WYRDSEKAI_WEB_TERMINAL_BIND opens it ( W2); then it is
+# HTTPS with the household certificate, or plain with a warning when there is none.
 WYRD_WEB_PORT="${WYRDSEKAI_WEB_TERMINAL_PORT:-7071}"
+WYRD_WEB_BIND="${WYRDSEKAI_WEB_TERMINAL_BIND:-127.0.0.1}"
+
+_web_on_lan() {
+    case "$WYRD_WEB_BIND" in 127.*|localhost|::1|lo) return 1 ;; *) return 0 ;; esac
+}
+
+_web_tls_ready() {
+    _web_on_lan && [[ -r "$DATA_DIR/tls/household-leaf.pem" && -r "$DATA_DIR/tls/household-leaf.key" ]]
+}
+
+_web_probe_host() {
+    case "$WYRD_WEB_BIND" in 0.0.0.0|::|127.*|localhost|::1|lo) echo 127.0.0.1 ;; *) echo "$WYRD_WEB_BIND" ;; esac
+}
 
 ttyd_running() {
-    curl -sf "http://127.0.0.1:${WYRD_WEB_PORT}/" >/dev/null 2>&1
+    if _web_tls_ready; then
+        command curl -sf --cacert "$DATA_DIR/tls/household-ca.pem" "https://$(_web_probe_host):${WYRD_WEB_PORT}/" >/dev/null 2>&1
+    else
+        command curl -sf "http://$(_web_probe_host):${WYRD_WEB_PORT}/" >/dev/null 2>&1
+    fi
 }
 
 start_web_terminal() {
@@ -14040,7 +16069,14 @@ start_web_terminal() {
         return 0
     fi
     mkdir -p "$DATA_DIR"
-    nohup ttyd -p "$WYRD_WEB_PORT" -i 0.0.0.0 -W "$SELF" connect \
+    local tls_args=()
+    if _web_tls_ready; then
+        tls_args=(-S -C "$DATA_DIR/tls/household-leaf.pem" -K "$DATA_DIR/tls/household-leaf.key")
+        warn "$(_t web.lan_tls "$WYRD_WEB_BIND" "$WYRD_WEB_PORT")"
+    elif _web_on_lan; then
+        warn "$(_t web.lan_plain "$WYRD_WEB_BIND" "$WYRD_WEB_PORT" "$DATA_DIR/tls/household-leaf.pem")"
+    fi
+    nohup ttyd -p "$WYRD_WEB_PORT" -i "$WYRD_WEB_BIND" ${tls_args[@]+"${tls_args[@]}"} -W "$SELF" connect \
         >"$DATA_DIR/.ttyd.log" 2>&1 &
     echo "$!" > "$DATA_DIR/.ttyd.pid"
     sleep 1
@@ -14068,7 +16104,13 @@ do_web() {
         enable|start)
             start_web_terminal || return 1
             touch "$marker"
-            echo "  $(_t web.url "$WYRD_WEB_PORT")"
+            if _web_tls_ready; then
+                echo "  $(_t web.url_lan_tls "$WYRD_WEB_PORT")"
+            elif _web_on_lan; then
+                echo "  $(_t web.url "$WYRD_WEB_PORT")"
+            else
+                echo "  $(_t web.url_local "$WYRD_WEB_PORT")"
+            fi
             ;;
         disable|stop)
             stop_web_terminal
@@ -14132,7 +16174,7 @@ case "${1:-help}" in
     stop)       do_stop ;;
     restart)    do_stop; sleep 1; do_start ;;
     status)     do_status ;;
-    log)        do_log ;;
+    log|logs)   do_log ;;
     backup)     do_backup ;;
     vault)      do_vault "${@:2}" ;;
     model)      do_model "${2:-}" "${3:-}" ;;
@@ -14145,6 +16187,7 @@ case "${1:-help}" in
     coding)     do_coding "${@:2}" ;;
     voice)      do_voice "${@:2}" ;;
     sleepwrite) do_sleepwrite "${@:2}" ;;
+    brain)      do_brain "${@:2}" ;;
     feed)       do_feed "${@:2}" ;;
     invite)     do_invite "${@:2}" ;;
     key)        do_key "${@:2}" ;;
@@ -14198,6 +16241,7 @@ case "${1:-help}" in
     discover)   do_discover "${@:2}" ;;
     state)      do_state "${@:2}" ;;
     soul)       do_soul "${@:2}" ;;
+    seed)       do_seed "${@:2}" ;;
     visitors)   do_visitors "${@:2}" ;;
     embed-migrate) do_embed_migrate "${@:2}" ;;
     embedding-model) do_embedding_model "${@:2}" ;;
@@ -14233,7 +16277,7 @@ case "${1:-help}" in
         echo "  embedding-model   Manage which embedding model is active (status/list/recommend/set/download)"
         echo "$(_t usage.cmd.inference)"
         echo "  coding       Manage coding-CLI backends: list/status/install/uninstall/update <backend>"
-        echo "  researcher   ResearchZosho, the research librarian: setup (the wizard) / install / link / status / update / unlink"
+        echo "  researcher   ResearchZosho, the research librarian: setup (the wizard) / install / link / status / gpu / update / unlink"
         echo "  items        Scripted items: check — every item's world.* calls against the API this build serves
   soul         Souls by name: list / rename <old> <new> (same soul, new name) / archive <name>
   visitors     The MCP door: list / vouch <user> (enters at the Nexus) / unvouch / dismiss <user>"
@@ -14241,6 +16285,7 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.invite_2)"
         echo "$(_t usage.cmd.cred)"
         echo "$(_t usage.cmd.bond)"
+        echo "$(_t usage.cmd.seed)"
         echo "$(_t usage.cmd.relay)"
         echo "$(_t usage.cmd.phone)"
         echo "$(_t usage.cmd.federate)"

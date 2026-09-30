@@ -48,6 +48,7 @@ import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.InventoryService;
 import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.persistence.WardService;
+import org.wyrdsekai.core.security.LoginRateLimiter;
 import org.wyrdsekai.core.room.ExamineLookup;
 import org.wyrdsekai.core.room.CallService;
 import org.wyrdsekai.core.room.RenameService;
@@ -60,6 +61,8 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.library.LibraryConsent;
+import org.wyrdsekai.core.soul.BondNaming;
 import org.wyrdsekai.core.mail.JournalSurface;
 import org.wyrdsekai.core.mail.MailComposer;
 import org.wyrdsekai.core.mail.MailSurface;
@@ -273,6 +276,8 @@ public class WyrdShellCommand implements Command {
      * can't race the steward to first-create on a fresh install.
      */
     private volatile boolean clientIsLoopback;
+    /** The client's address, for the login limiter's per-address count. */
+    private volatile String clientIp = "unknown";
 
     private void runSession(ChannelSession channel, Environment env) throws IOException {
         this.activeChannel = channel;
@@ -282,6 +287,7 @@ public class WyrdShellCommand implements Command {
             var addr = channel.getSession().getClientAddress();
             if (addr instanceof InetSocketAddress isa && isa.getAddress() != null) {
                 clientIsLoopback = isa.getAddress().isLoopbackAddress();
+                clientIp = isa.getAddress().getHostAddress();
             }
         } catch (Exception ignored) {
             // Default false — fail closed.
@@ -813,13 +819,18 @@ public class WyrdShellCommand implements Command {
             return false;
         }
 
-        var session = authService.register(username, pw1, null);
-        if (session.isEmpty()) {
+        // One transaction claims the household, checks no account exists and creates the
+        // steward, so a second first-registration at the same moment cannot also win.
+        var created = authService.registerFirstSteward(username, pw1, null);
+        if (created instanceof AuthService.Registration.Closed) {
+            sendLine(catalog.get("telnet.household_has_steward"));
+            return false;
+        }
+        if (!(created instanceof AuthService.Registration.Created c)) {
             sendLine("Registration failed (username taken or invalid).");
             return false;
         }
-        var s = session.get();
-        var user = authService.findUser(s.userId()).orElseThrow();
+        var user = authService.findUser(c.session().userId()).orElseThrow();
         this.playerId = user.id();
         this.playerName = user.displayName();
         this.playerRole = user.role();
@@ -837,9 +848,20 @@ public class WyrdShellCommand implements Command {
             user.username(), user.role());
         sendLine("");
         sendLine("Steward account created: " + user.username());
+        showRecoveryKey(catalog, c.recoveryKey());
         sendLine("Your SSH key remains trusted. Next login is keyless.");
         sendLine("");
         return true;
+    }
+
+    /** The founding steward's recovery key, shown this once; nothing when there is none. */
+    private void showRecoveryKey(ScriptMessageCatalog catalog, String recoveryKey) throws IOException {
+        if (recoveryKey == null) return;
+        sendLine("");
+        sendLine(catalog.get("telnet.recovery_key_header"));
+        sendLine("  " + recoveryKey);
+        sendLine(catalog.get("telnet.recovery_key_hint"));
+        sendLine("");
     }
 
     private boolean handleInviteRedemption(
@@ -886,18 +908,23 @@ public class WyrdShellCommand implements Command {
                 return false;
             }
         }
-        // Register the new account with the invite's intended role.
+        // Register the new account with the invite's intended role; the bootstrap invite
+        // founds the household and brings the recovery key.
         // #4-followup (adversarial review) — release the claim on a register()
         // THROW too, else a non-UNIQUE failure orphans the invite forever.
         AuthService.Session s;
+        String recoveryKey;
         try {
-            var session = authService.register(invite.intendedName(), pw1, null, invite.role());
-            if (session.isEmpty()) {
+            var created = authService.registerByInvite(invite, invite.intendedName(), pw1, null);
+            if (!(created instanceof AuthService.Registration.Created c)) {
                 if (inviteService != null) inviteService.releaseClaim(claimToken);
-                sendLine("Registration failed (username taken). Ask the steward to mint a new invite.");
+                sendLine(created instanceof AuthService.Registration.Closed
+                    ? catalog.get("telnet.household_has_steward")
+                    : "Registration failed (username taken). Ask the steward to mint a new invite.");
                 return false;
             }
-            s = session.get();
+            s = c.session();
+            recoveryKey = c.recoveryKey();
             if (inviteService != null) {
                 inviteService.rebindClaim(claimToken, s.userId());
             }
@@ -924,6 +951,7 @@ public class WyrdShellCommand implements Command {
         }
         sendLine("");
         sendLine("Account created: " + user.username() + " (role=" + user.role() + ")");
+        showRecoveryKey(catalog, recoveryKey);
 
         // Capture the SSH client's offered pubkey (if any) and BIND it to this
         // account so subsequent logins are keyless AND scoped to this user only
@@ -951,6 +979,8 @@ public class WyrdShellCommand implements Command {
      */
     private boolean authenticate() throws IOException {
         var catalog = ScriptMessageCatalog.forLang(locale);
+        var limiter = LoginRateLimiter.shared();
+        var ipKey = "ssh-ip:" + clientIp;
         for (int attempts = 0; attempts < 5; attempts++) {
             sendRaw("login> ");
             var line = readLine();
@@ -967,11 +997,20 @@ public class WyrdShellCommand implements Command {
                         sendLine(catalog.get("telnet.usage_connect"));
                         continue;
                     }
+                    var acctKey = "acct:" + parts[1].toLowerCase();
+                    if (limiter.anyLocked(ipKey, acctKey)) {
+                        log.warn("SSH shell login throttled for '{}' from {}: too many recent failures", parts[1], clientIp);
+                        sendLine(catalog.get("telnet.login_locked",
+                            Math.max(1, (limiter.lockRemainingMs(ipKey, acctKey) + 59_999) / 60_000)));
+                        return false;
+                    }
                     var session = authService.login(parts[1], parts[2]);
                     if (session.isEmpty()) {
+                        limiter.recordFailureAll(ipKey, acctKey);
                         sendLine(catalog.get("telnet.invalid_credentials"));
                         continue;
                     }
+                    limiter.recordSuccessAll(ipKey, acctKey);
                     var s = session.get();
                     var user = authService.findUser(s.userId()).orElseThrow();
                     playerId = user.id();
@@ -999,27 +1038,28 @@ public class WyrdShellCommand implements Command {
                         sendLine(catalog.get("telnet.usage_create"));
                         continue;
                     }
-                    var isFirst = authService.isFirstUser();
+                    if (!AuthService.passwordLongEnough(parts[2])) {
+                        sendLine(catalog.get("telnet.password_too_short", AuthService.MIN_PASSWORD_LENGTH));
+                        continue;
+                    }
                     var displayName = parts.length > 3 ? parts[3] : null;
-                    var session = authService.register(parts[1], parts[2], displayName);
-                    if (session.isEmpty()) {
+                    var created = authService.registerFirstSteward(parts[1], parts[2], displayName);
+                    if (created instanceof AuthService.Registration.Closed) {
+                        sendLine(catalog.get("telnet.household_has_steward"));
+                        continue;
+                    }
+                    if (!(created instanceof AuthService.Registration.Created c)) {
                         sendLine(catalog.get("telnet.username_taken"));
                         continue;
                     }
-                    var s = session.get();
-                    var user = authService.findUser(s.userId()).orElseThrow();
+                    var user = authService.findUser(c.session().userId()).orElseThrow();
                     playerId = user.id();
                     playerName = user.displayName();
                     playerRole = user.role();
-                    if (isFirst) {
-                        // No more setConfig(OPEN_REGISTRATION, false) — open
-                        // registration is now derived from "no users exist".
-                        // Once this user exists, isFirstUser() returns false
-                        // automatically, closing the door. F4.
-                        sendLine(catalog.get("telnet.steward_created"));
-                        sendLine(catalog.get("telnet.steward_invite_hint"));
-                        log.info("First user created via SSH: {} (steward)", user.username());
-                    }
+                    sendLine(catalog.get("telnet.steward_created"));
+                    showRecoveryKey(catalog, c.recoveryKey());
+                    sendLine(catalog.get("telnet.steward_invite_hint"));
+                    log.info("First user created via SSH: {} (steward)", user.username());
                     sendLine(catalog.get("telnet.account_created", playerName));
                     return true;
                 }
@@ -1035,6 +1075,10 @@ public class WyrdShellCommand implements Command {
                     var code = String.join(" ", parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]);
                     var username = parts[7];
                     var password = parts[8];
+                    if (!AuthService.passwordLongEnough(password)) {
+                        sendLine(catalog.get("telnet.password_too_short", AuthService.MIN_PASSWORD_LENGTH));
+                        continue;
+                    }
                     // #4 (2026-07-19 OSS hardening) — claim-before-create.
                     var claimToken = "claim:" + UUID.randomUUID();
                     var claimed = inviteService.claimInvite(code.toLowerCase(), claimToken);
@@ -1042,29 +1086,30 @@ public class WyrdShellCommand implements Command {
                         sendLine(catalog.get("telnet.invite_invalid"));
                         continue;
                     }
-                    var inviteRole = claimed.get().role();
                     // #4-followup — release the claim on a register() THROW too.
-                    AuthService.Session s;
+                    AuthService.Registration.Created c;
                     try {
-                        var session = authService.register(username, password, null, inviteRole);
-                        if (session.isEmpty()) {
+                        var created = authService.registerByInvite(claimed.get(), username, password, null);
+                        if (!(created instanceof AuthService.Registration.Created ok)) {
                             inviteService.releaseClaim(claimToken);
-                            sendLine(catalog.get("telnet.username_taken"));
+                            sendLine(catalog.get(created instanceof AuthService.Registration.Closed
+                                ? "telnet.household_has_steward" : "telnet.username_taken"));
                             continue;
                         }
-                        s = session.get();
-                        inviteService.rebindClaim(claimToken, s.userId());
+                        c = ok;
+                        inviteService.rebindClaim(claimToken, c.session().userId());
                     } catch (RuntimeException e) {
                         inviteService.releaseClaim(claimToken);
-                        log.warn("telnet invite redeem failed after claim: {}", e.toString());
+                        log.warn("SSH shell invite redeem failed after claim: {}", e.toString());
                         sendLine(catalog.get("telnet.username_taken"));
                         continue;
                     }
-                    var user = authService.findUser(s.userId()).orElseThrow();
+                    var user = authService.findUser(c.session().userId()).orElseThrow();
                     playerId = user.id();
                     playerName = user.displayName();
                     playerRole = user.role();
                     sendLine(catalog.get("telnet.invite_accepted", playerName));
+                    showRecoveryKey(catalog, c.recoveryKey());
                     return true;
                 }
                 case "quit" -> { return false; }
@@ -1328,6 +1373,18 @@ public class WyrdShellCommand implements Command {
                     sendLine(line);
                 } catch (IOException ignored) { }
             });
+            // The person's own yes to a question the household library asked them about.
+            case ParsedCommand.ResearchYes r -> {
+                try {
+                    sendLine(LibraryConsent.researchYes(playerId, locale));
+                } catch (IOException ignored) { }
+            }
+            // The person's bonds with this home's companions, and the naming ritual.
+            case ParsedCommand.Bond b -> {
+                try {
+                    sendLine(BondNaming.command(playerId, playerName, b.args(), locale));
+                } catch (IOException ignored) { }
+            }
             case ParsedCommand.Demolish d -> {
                 // A steward takes a made room down: doorways closed, actor stopped, record
                 // gone. Founding rooms, Homes and occupied rooms are refused by the service.
@@ -1894,6 +1951,12 @@ public class WyrdShellCommand implements Command {
                     var addArgs = sc.args();
                     if (addArgs == null || addArgs.size() < 2) {
                         sendLine("Usage: /adduser <username> <password> [displayName]");
+                        renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                        break;
+                    }
+                    if (!AuthService.passwordLongEnough(addArgs.get(1))) {
+                        sendLine(ScriptMessageCatalog.forLang(locale).get("telnet.password_too_short",
+                            AuthService.MIN_PASSWORD_LENGTH));
                         renderer.sendPrompt(currentRoomName, currentZoneLabel());
                         break;
                     }
@@ -2506,7 +2569,7 @@ public class WyrdShellCommand implements Command {
             CarriedItemUse.attachRoomVoice(provider, currentRoomId, playerId);
             CarriedItemUse.attachLocale(provider, locale);
             var params = CarriedItemUse.params(playerId, target, locale);
-            var itemCaps = CarriedItemUse.capabilitiesFor(item.objectId());
+            var itemCaps = CarriedItemUse.capabilitiesFor(item.objectId(), scriptSource);
             var result = itemScriptExecutor.execute(
                 item.objectId(), scriptSource, params, provider, itemCaps);
             var text = ItemScriptResponse.extractText(

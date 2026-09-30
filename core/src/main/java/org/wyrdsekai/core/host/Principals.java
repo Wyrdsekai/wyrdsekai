@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.UserPrincipal;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -82,6 +83,11 @@ public final class Principals {
             }
             log.info("Principals: per being (users {}-{}, cgroups under {})", UID_BASE, UID_BASE + UID_SPAN - 1, serviceCgroup);
         } else {
+            try {
+                closeToOthers();
+            } catch (IOException | RuntimeException e) {
+                log.warn("Principals: could not close the data directory to other users: {}", e.toString());
+            }
             log.info("Principals: hands are shared ({})", shared);
         }
     }
@@ -149,15 +155,103 @@ public final class Principals {
                 }
             }
         }
-        for (var name : List.of("coding-cli-bundle", "coding-workspaces", "beings")) Files.createDirectories(dataDir.resolve(name));
+        for (var name : List.of("coding-cli-bundle", "coding-workspaces", "beings")) {
+            var dir = dataDir.resolve(name);
+            Files.createDirectories(dir);
+            // Closed while the hands were shared (closeToOthers): open again to the beings.
+            try {
+                var perms = new HashSet<>(Files.getPosixFilePermissions(dir));
+                if (perms.addAll(Set.of(PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_EXECUTE))) {
+                    Files.setPosixFilePermissions(dir, perms);
+                }
+            } catch (UnsupportedOperationException ignored) { /* not posix */ }
+        }
+        searchOnly(dataDir);
+    }
+
+    /**
+     * The data directory with the hands shared (audit W4, 2026-09-28): no being needs to reach
+     * into it, so every top-level entry except the models loses all access for other users,
+     * and the directory itself is search-only (711) for the unprivileged llama units that load
+     * models from it. Before, it kept the package's 755 and the umask's 644 files: any local
+     * user could read the household's record, souls and backups. When the service runs as root
+     * and the directory belongs to the steward who installed the package, an entry the service
+     * created is handed to them (as the package does at every upgrade), so {@code wyrd}'s
+     * local commands keep reading what they read before.
+     */
+    /**
+     * The node's own log folder ({@code WYRDSEKAI_LOG_DIR}, else {@code logs} under the working
+     * directory: {@code /opt/wyrdsekai/logs} for the package) loses all access for other users, and
+     * its files lose read. Logback made it 755 with 644 files, outside the data directory closed in
+     * {@link #closeToOthers()}, and the log carries people's words at DEBUG (2026-09-29). The owner
+     * and the owner's group keep what they had; `wyrd log` reads the journal.
+     */
+    public static void closeLogFolder(Path dir) {
+        if (dir == null || !Files.isDirectory(dir)) return;
+        var others = Set.of(PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE,
+            PosixFilePermission.OTHERS_EXECUTE);
         try {
-            var perms = new HashSet<>(Files.getPosixFilePermissions(dataDir));
+            var perms = new HashSet<>(Files.getPosixFilePermissions(dir));
+            if (perms.removeAll(others)) Files.setPosixFilePermissions(dir, perms);
+            try (var files = Files.list(dir)) {
+                for (var f : files.toList()) {
+                    if (Files.isSymbolicLink(f) || !Files.isRegularFile(f)) continue;
+                    var fp = new HashSet<>(Files.getPosixFilePermissions(f));
+                    if (fp.removeAll(others)) Files.setPosixFilePermissions(f, fp);
+                }
+            }
+        } catch (UnsupportedOperationException ignored) {
+            // not posix
+        } catch (IOException | SecurityException e) {
+            log.warn("Principals: could not close the log folder {} to other users: {}", dir, e.toString());
+        }
+    }
+
+    static void closeToOthers() throws IOException {
+        if (dataDir == null || !Files.isDirectory(dataDir)) return;
+        var dirOwner = owner(dataDir);
+        boolean adopt = "root".equals(System.getProperty("user.name"))
+            && dirOwner != null && !"root".equals(dirOwner.getName());
+        try (var top = Files.list(dataDir)) {
+            for (var p : top.toList()) {
+                if (Files.isSymbolicLink(p) || "models".equals(p.getFileName().toString())) continue;
+                try {
+                    var perms = new HashSet<>(Files.getPosixFilePermissions(p));
+                    if (perms.removeAll(Set.of(PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE,
+                            PosixFilePermission.OTHERS_EXECUTE))) {
+                        Files.setPosixFilePermissions(p, perms);
+                    }
+                    if (adopt && "root".equals(nameOf(owner(p)))) Files.setOwner(p, dirOwner);
+                } catch (UnsupportedOperationException | IOException e) {
+                    log.debug("Principals: could not close {} to others: {}", p, e.getMessage());
+                }
+            }
+        }
+        searchOnly(dataDir);
+    }
+
+    /** Search permission only for group and others: reach a known path, list nothing. */
+    private static void searchOnly(Path dir) throws IOException {
+        try {
+            var perms = new HashSet<>(Files.getPosixFilePermissions(dir));
             perms.add(PosixFilePermission.GROUP_EXECUTE);
             perms.add(PosixFilePermission.OTHERS_EXECUTE);
             perms.removeAll(Set.of(PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE,
                 PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE));
-            Files.setPosixFilePermissions(dataDir, perms);
+            Files.setPosixFilePermissions(dir, perms);
         } catch (UnsupportedOperationException ignored) { /* not posix */ }
+    }
+
+    private static UserPrincipal owner(Path p) {
+        try {
+            return Files.getOwner(p);
+        } catch (IOException | UnsupportedOperationException e) {
+            return null;
+        }
+    }
+
+    private static String nameOf(UserPrincipal u) {
+        return u == null ? null : u.getName();
     }
 
     /**

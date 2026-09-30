@@ -97,6 +97,11 @@ class InferenceRouter(
      * rule falls out of the ordering — there is no separate mode test to keep in
      * sync.
      *
+     * The outgoing copy gets one leading system message here
+     * ([consolidateSystemMessages]) and is then stamped with what the request
+     * knows about today ([CompletionOptions.now], see [NowLine]), so the local
+     * path carries both too.
+     *
      * @param preferRemote Deprecated precursor of [role]; true is equivalent to
      *   DRIVE. Honoured so existing call sites keep working.
      * @throws IllegalStateException if no backend is available
@@ -107,14 +112,15 @@ class InferenceRouter(
         preferRemote: Boolean = false,
         role: ModelRole = ModelRole.VOICE,
     ): ChatResponse {
+        val stamped = NowLine.stampToday(options.now, consolidateSystemMessages(messages))
         val borrowFirst = preferRemote || role == ModelRole.DRIVE
         if (borrowFirst && canInferRemotely()) {
             return try {
-                completeRemote(messages, options)
+                completeRemote(stamped, options)
             } catch (e: Exception) {
                 // Fall back to local if remote fails
                 if (canInferLocally()) {
-                    localProvider.completeLocal(messages, options)
+                    localProvider.completeLocal(stamped, options)
                 } else {
                     throw e
                 }
@@ -123,11 +129,11 @@ class InferenceRouter(
 
         if (canInferLocally()) {
             return try {
-                localProvider.completeLocal(messages, options)
+                localProvider.completeLocal(stamped, options)
             } catch (e: Exception) {
                 // Fall back to remote if local fails
                 if (canInferRemotely()) {
-                    completeRemote(messages, options)
+                    completeRemote(stamped, options)
                 } else {
                     throw e
                 }
@@ -135,7 +141,7 @@ class InferenceRouter(
         }
 
         if (canInferRemotely()) {
-            return completeRemote(messages, options)
+            return completeRemote(stamped, options)
         }
 
         error("No inference backend available. Load a model or configure a remote endpoint.")

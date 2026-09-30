@@ -54,6 +54,12 @@ data class ZoneBankEntry(
     val homeZone: Boolean = false,
     val addedAt: Long,
     val lastUsedAt: Long? = null,
+    /**
+     * The zone's public tunnel key from its invite (base64url): requests to it
+     * are sealed to this key ( W3). Public, so it may
+     * sync; an entry without it (added before 0.5.0) needs a fresh invite.
+     */
+    val zk: String? = null,
 )
 
 class ZoneBank(
@@ -101,6 +107,8 @@ class ZoneBank(
                     relayUrls = merged,
                     addedAt = prev.addedAt,
                     lastUsedAt = zone.lastUsedAt ?: prev.lastUsedAt,
+                    // A synced entry from a client that does not know the key must not erase it.
+                    zk = zone.zk ?: prev.zk,
                 )
             }
         } else {

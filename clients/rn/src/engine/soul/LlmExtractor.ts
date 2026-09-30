@@ -12,6 +12,7 @@
 import type { PhoneFingerprint } from './PhoneFingerprint';
 import type { WorldEvent } from '../events/WorldEvent';
 import type { ChatMessage, ChatResponse, CompletionOptions } from '../../inference/types';
+import { NowLine } from '../../inference/NowLine';
 
 export interface LlmExtractionResult {
   topicAffinities: Record<string, number>;
@@ -47,7 +48,8 @@ export async function extractWithLlm(
 ): Promise<PhoneFingerprint> {
   const messages = buildExtractionPrompt(fingerprint, events, agentName);
   try {
-    const response = await infer(messages, { maxTokens: 500, temperature: 0.3 });
+    // An extractor: NONE, or the date leaks into the fingerprint it writes.
+    const response = await infer(messages, { maxTokens: 500, temperature: 0.3, now: NowLine.NONE });
     const result = parseExtractionResponse(response.content);
     return mergeWithHeuristic(fingerprint, result);
   } catch {

@@ -14,7 +14,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Bound household ledger — every member's name, role, and joining day; the steward's pen changes roles or strikes names.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["household.set_role", "household.remove_member"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

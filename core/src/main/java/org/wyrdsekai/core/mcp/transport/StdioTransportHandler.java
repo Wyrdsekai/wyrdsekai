@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.mcp.protocol.JsonRpcMessage;
+import org.wyrdsekai.core.security.SubprocessEnv;
 
 import java.io.*;
 import java.util.ArrayList;
@@ -20,6 +21,14 @@ public class StdioTransportHandler implements McpTransportHandler {
 
     private static final Logger log = LoggerFactory.getLogger(StdioTransportHandler.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
+
+    /**
+     * An MCP server started as a child gets a clean environment plus the names its
+     * service entry lists in {@code pass_env} (and the {@code env} this handler was given):
+     * the daemon's credentials never reach it by inheritance.
+     */
+    static final SubprocessEnv ENV = SubprocessEnv.of(
+        "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NODE_EXTRA_CA_CERTS", "JAVA_HOME");
 
     private final String command;
     private final List<String> args;
@@ -44,15 +53,21 @@ public class StdioTransportHandler implements McpTransportHandler {
         cmdList.add(command);
         cmdList.addAll(args);
 
-        var pb = new ProcessBuilder(cmdList);
-        pb.redirectErrorStream(false);
-        env.forEach((k, v) -> pb.environment().put(k, v));
+        var pb = processBuilder(cmdList, env);
 
         process = pb.start();
         stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
         stdout = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
         log.info("MCP stdio process started: {} (PID {})", command, process.pid());
+    }
+
+    /** The child's process builder: a clean environment, then this service's own {@code env}. */
+    static ProcessBuilder processBuilder(List<String> command, Map<String, String> env) {
+        var pb = ENV.builder(command);
+        pb.redirectErrorStream(false);
+        if (env != null) env.forEach((k, v) -> pb.environment().put(k, v));
+        return pb;
     }
 
     @Override
@@ -107,7 +122,7 @@ public class StdioTransportHandler implements McpTransportHandler {
         var response = sendRequest(request);
 
         if (response.isError()) {
-            throw new IOException("tools/call failed for '" + toolName + "': " + response.error().message());
+            throw McpToolException.fromRpcError(toolName, response.error());
         }
         return mapper.convertValue(response.result(), JsonRpcMessage.ToolCallResult.class);
     }

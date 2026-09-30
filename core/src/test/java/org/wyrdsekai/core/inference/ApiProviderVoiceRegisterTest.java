@@ -103,6 +103,28 @@ class ApiProviderVoiceRegisterTest {
             .isCloseTo(0.25, within(1e-9));
     }
 
+    // ── A lane's own adapter: the scale goes through as given ─────────────────
+
+    @Test
+    void llamaServer_carries_a_lane_adapter_scale_as_given() throws Exception {
+        var provider = new ApiProvider.OpenAI("llama-server");
+        var talk = bodyOf(provider.buildChatRequest("http://localhost:8211", null,
+            requestWithMix(Map.of("adapter:0", 0.5)), Duration.ofSeconds(20))).path("lora");
+        assertThat(talk.size()).isEqualTo(1);
+        assertThat(talk.get(0).path("id").asInt()).isEqualTo(0);
+        assertThat(talk.get(0).path("scale").asDouble()).isCloseTo(0.5, within(1e-9));
+
+        // A working turn asks for the adapter at zero, explicitly: a server started with the
+        // adapter applied would otherwise keep it on.
+        var work = bodyOf(provider.buildChatRequest("http://localhost:8211", null,
+            requestWithMix(Map.of("adapter:0", 0.0)), Duration.ofSeconds(20))).path("lora");
+        assertThat(work.get(0).path("scale").asDouble()).isCloseTo(0.0, within(1e-9));
+
+        var bad = bodyOf(provider.buildChatRequest("http://localhost:8211", null,
+            requestWithMix(Map.of("adapter:x", 0.5)), Duration.ofSeconds(20)));
+        assertThat(bad.has("lora")).isFalse();
+    }
+
     // ── llama-server: one-directional LoRA scales, neutral at 0.5 ──────────────
 
     @Test

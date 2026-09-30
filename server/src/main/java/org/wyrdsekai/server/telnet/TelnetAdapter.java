@@ -89,9 +89,13 @@ public class TelnetAdapter {
             acceptThread.setDaemon(true);
             acceptThread.start();
 
-            log.info("Telnet/GMCP adapter listening on {}:{}{}",
-                bindAddr, port,
-                "0.0.0.0".equals(bindAddr) ? " (EXPOSED — cleartext on LAN)" : "");
+            if (serverSocket.getInetAddress().isLoopbackAddress()) {
+                log.info("Telnet/GMCP adapter listening on {}:{} (this machine only)", bindAddr, port);
+            } else {
+                log.warn("Telnet/GMCP adapter listening on {}:{} (WYRDSEKAI_TELNET_BIND): logins and conversations "
+                    + "cross the network unencrypted. Leave it unset to answer this machine only; use ssh for "
+                    + "other machines.", bindAddr, port);
+            }
         } catch (IOException e) {
             log.error("Failed to start Telnet adapter on port {}: {}", port, e.getMessage());
         }

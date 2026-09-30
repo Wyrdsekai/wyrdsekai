@@ -6,8 +6,9 @@ import io.ktor.client.plugins.websocket.WebSockets
 import javax.net.ssl.SSLContext
 
 /**
- * Android actual: OkHttp engine with [HouseholdTrustManager] (system CAs +
- * TOFU/invite-pinned household certs), mirroring HouseholdHttpClient.
+ * Android actual: OkHttp engine with [HouseholdTrustManager] (system CAs, or
+ * the invite pin for a pinned host), mirroring HouseholdHttpClient, and no
+ * plain ws:// off the device.
  */
 actual fun createWsHttpClient(): HttpClient {
     val systemTm = HouseholdTrustManager.resolveSystemTrustManager()
@@ -22,5 +23,6 @@ actual fun createWsHttpClient(): HttpClient {
             }
         }
         install(WebSockets)
+        install(RefusePlaintextOffDevice)
     }
 }

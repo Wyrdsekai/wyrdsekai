@@ -19,13 +19,13 @@ exports.manifest = {
   version: "1.0.0",
   description: "Post a project status update to a Slack channel.",
   author: "did:wyrd:system",
-  capabilities: ["slack.post"],
+  capabilities: ["slack.post_message"],
   embodiment: {
     silent: true,
     reason: "outbound Slack message, no in-room body"
   },
   rate_limits: {
-    "slack.post": { per_minute: 5, per_hour: 30, per_day: 100 }
+    "slack.post_message": { per_minute: 5, per_hour: 30, per_day: 100 }
   },
   data_sensitivity: "medium",
   // Items-as-tools contract — invoke() reads structured params (channel,

@@ -28,8 +28,8 @@ import java.util.regex.Pattern;
 
 /**
  * Parental controls — per-member time limits, room restrictions, inference
- * quotas, and content filters (the promises of the Study's parental-controls
- * scroll, now enforced by the substrate).
+ * quotas, library research runs, and content filters (the promises of the
+ * Study's parental-controls scroll, now enforced by the substrate).
  * <p>
  * Uses the same JDBC pattern as {@link AuthService} / PairingService:
  * one table of steward-set controls ({@code parental_controls}) plus a
@@ -64,10 +64,14 @@ public final class ParentalControlService {
 
     /**
      * Steward-set controls for one member. {@code null} numeric limits mean
-     * unlimited; an empty {@code blockedRooms} list means no room is barred.
+     * unlimited, except {@code dailyResearch}: the library research runs the
+     * member may start per day, where {@code null} means the household's setting
+     * ({@code WYRDSEKAI_LIBRARY_RESEARCH_PER_DAY}) and 0 means none (LibraryConsent
+     * counts them). An empty {@code blockedRooms} list means no room is barred.
      */
     public record Controls(String memberUserId, Integer dailyMinutes,
                            List<String> blockedRooms, Integer dailyInference,
+                           Integer dailyResearch,
                            String contentFilter, String setBy, Instant updatedAt) {}
 
     /** One member's usage counters for a single day (YYYY-MM-DD). */
@@ -118,6 +122,7 @@ public final class ParentalControlService {
                 + "daily_minutes INTEGER, "
                 + "blocked_rooms TEXT NOT NULL DEFAULT '[]', "
                 + "daily_inference INTEGER, "
+                + "daily_research INTEGER, "
                 + "content_filter TEXT NOT NULL DEFAULT 'off', "
                 + "set_by TEXT, "
                 + "updated_at " + intType + " NOT NULL)");
@@ -136,12 +141,29 @@ public final class ParentalControlService {
     // ─── Controls CRUD (writes steward-gated) ────────────────────────────
 
     /**
-     * Create or replace a member's controls. Steward-only: returns false
-     * when {@code callerUserId} does not hold the steward role.
+     * Create or replace a member's controls, keeping their library research
+     * number as it is. Steward-only: returns false when {@code callerUserId}
+     * does not hold the steward role.
      */
     public boolean setControls(String callerUserId, String memberUserId,
                                Integer dailyMinutes, List<String> blockedRooms,
                                Integer dailyInference, String contentFilter) {
+        var research = memberUserId == null ? null
+            : loadControls(memberUserId).map(Controls::dailyResearch).orElse(null);
+        return setControls(callerUserId, memberUserId, dailyMinutes, blockedRooms,
+            dailyInference, research, contentFilter);
+    }
+
+    /**
+     * Create or replace a member's controls. {@code dailyResearch}: library
+     * research runs per day, null for the household's setting, 0 for none.
+     * Steward-only: returns false when {@code callerUserId} does not hold the
+     * steward role.
+     */
+    public boolean setControls(String callerUserId, String memberUserId,
+                               Integer dailyMinutes, List<String> blockedRooms,
+                               Integer dailyInference, Integer dailyResearch,
+                               String contentFilter) {
         if (!isSteward(callerUserId)) {
             log.warn("parental setControls denied — caller {} is not steward", callerUserId);
             return false;
@@ -151,11 +173,13 @@ public final class ParentalControlService {
         var rooms = blockedRooms == null ? List.<String>of() : List.copyOf(blockedRooms);
         try (var conn = getConnection()) {
             var sql = dialect.upsert("parental_controls",
-                "member_user_id, daily_minutes, blocked_rooms, daily_inference, content_filter, set_by, updated_at",
-                "?,?,?,?,?,?,?",
+                "member_user_id, daily_minutes, blocked_rooms, daily_inference, daily_research, "
+                    + "content_filter, set_by, updated_at",
+                "?,?,?,?,?,?,?,?",
                 "member_user_id",
                 "daily_minutes = EXCLUDED.daily_minutes, blocked_rooms = EXCLUDED.blocked_rooms, "
-                    + "daily_inference = EXCLUDED.daily_inference, content_filter = EXCLUDED.content_filter, "
+                    + "daily_inference = EXCLUDED.daily_inference, daily_research = EXCLUDED.daily_research, "
+                    + "content_filter = EXCLUDED.content_filter, "
                     + "set_by = EXCLUDED.set_by, updated_at = EXCLUDED.updated_at");
             try (var stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, memberUserId);
@@ -164,14 +188,17 @@ public final class ParentalControlService {
                 stmt.setString(3, Json.mapper().writeValueAsString(rooms));
                 if (dailyInference != null) stmt.setInt(4, Math.max(0, dailyInference));
                 else stmt.setNull(4, Types.INTEGER);
-                stmt.setString(5, filter);
-                stmt.setString(6, callerUserId);
-                stmt.setLong(7, Instant.now().getEpochSecond());
+                if (dailyResearch != null) stmt.setInt(5, Math.max(0, dailyResearch));
+                else stmt.setNull(5, Types.INTEGER);
+                stmt.setString(6, filter);
+                stmt.setString(7, callerUserId);
+                stmt.setLong(8, Instant.now().getEpochSecond());
                 stmt.executeUpdate();
             }
             cache.remove(memberUserId);
-            log.info("Parental controls set for {} by {} (minutes={}, inference={}, filter={}, blockedRooms={})",
-                memberUserId, callerUserId, dailyMinutes, dailyInference, filter, rooms);
+            log.info("Parental controls set for {} by {} (minutes={}, inference={}, research={}, filter={}, blockedRooms={})",
+                memberUserId, callerUserId, dailyMinutes, dailyInference,
+                dailyResearch == null ? "household setting" : dailyResearch, filter, rooms);
             return true;
         } catch (Exception e) {
             throw new RuntimeException("Failed to set parental controls for " + memberUserId, e);
@@ -215,7 +242,7 @@ public final class ParentalControlService {
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(
                  "SELECT member_user_id, daily_minutes, blocked_rooms, daily_inference,"
-                     + " content_filter, set_by, updated_at FROM parental_controls"
+                     + " daily_research, content_filter, set_by, updated_at FROM parental_controls"
                      + " ORDER BY member_user_id")) {
             var rs = stmt.executeQuery();
             while (rs.next()) out.add(readControls(rs));
@@ -229,7 +256,7 @@ public final class ParentalControlService {
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(
                  "SELECT member_user_id, daily_minutes, blocked_rooms, daily_inference,"
-                     + " content_filter, set_by, updated_at FROM parental_controls"
+                     + " daily_research, content_filter, set_by, updated_at FROM parental_controls"
                      + " WHERE member_user_id = ?")) {
             stmt.setString(1, userId);
             var rs = stmt.executeQuery();
@@ -247,11 +274,14 @@ public final class ParentalControlService {
         if (rs.wasNull()) minutes = null;
         Integer inference = rs.getInt("daily_inference");
         if (rs.wasNull()) inference = null;
+        Integer research = rs.getInt("daily_research");
+        if (rs.wasNull()) research = null;
         return new Controls(
             rs.getString("member_user_id"),
             minutes,
             parseRooms(rs.getString("blocked_rooms")),
             inference,
+            research,
             rs.getString("content_filter"),
             rs.getString("set_by"),
             Instant.ofEpochSecond(rs.getLong("updated_at")));

@@ -16,6 +16,7 @@ lifecycle = "2.8.7"
 activity-compose = "1.10.1"
 rhino = "1.8.0"
 security-crypto = "1.1.0-alpha07"
+bouncycastle-lts = "2.73.10"
 
 [libraries]
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
@@ -47,6 +48,7 @@ androidx-lifecycle-viewmodel = { module = "androidx.lifecycle:lifecycle-viewmode
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
+bouncycastle-lts = { module = "org.bouncycastle:bcprov-lts8on", version.ref = "bouncycastle-lts" }
 
 # Scripting
 rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }

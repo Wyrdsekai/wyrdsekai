@@ -255,10 +255,9 @@ class CrossZoneTellServiceTest {
     // ── Wave 7: handleIncomingTell scope enforcement (§6.9) ──────────
 
     @Test
-    void handleIncomingTell_withoutContractLookup_delivers() {
-        // Pre-Wave-7 behaviour — no contract lookup wired, tell flows through
-        // unimpeded. Protects existing deployments from a silent behaviour
-        // change when they upgrade but haven't yet opted into enforcement.
+    void handleIncomingTell_withoutContractLookup_refuses() {
+        // 2026-09-28: "neither side gets anything until both have said yes" — with no
+        // agreement lookup wired, no cross-zone tell is delivered (it used to be).
         var registry = EntityRegistry.get();
         AgentEventStream.init();
         registry.enter("target-id", "target", "agent", "nexus");
@@ -270,13 +269,31 @@ class CrossZoneTellServiceTest {
 
         var service = CrossZoneTellService.get();
         // Explicitly NOT calling setContractLookup.
-        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "hello");
+        service.setContractLookup(null);
+        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "hello", "beta");
 
-        awaitDelivered(delivered);
-        assertNotNull(delivered.get(),
-            "tell must have been delivered");
-        assertTrue(delivered.get().contains("hello"),
-            "tell must deliver when no contract lookup is wired (pre-Wave-7 compat)");
+        try { Thread.sleep(200); } catch (InterruptedException ignore) {}
+        assertNull(delivered.get(), "no agreement lookup, no cross-zone tell");
+    }
+
+    @Test
+    void handleIncomingTell_unsignedOrSpoofed_refused() {
+        var registry = EntityRegistry.get();
+        AgentEventStream.init();
+        registry.enter("target-id", "target", "agent", "nexus");
+
+        var delivered = new AtomicReference<String>();
+        AgentEventStream.get().subscribe("target-id", ev -> {
+            if (ev instanceof AgentEvent.AgentMessage am) delivered.set(am.message());
+        });
+
+        var service = CrossZoneTellService.get();
+        service.setContractLookup((sz, tz, te) -> true);
+        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "unsigned", null);
+        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "spoofed", "gamma");
+
+        try { Thread.sleep(200); } catch (InterruptedException ignore) {}
+        assertNull(delivered.get(), "an unsigned tell, or one naming a zone that did not sign it, is dropped");
     }
 
     @Test
@@ -293,7 +310,7 @@ class CrossZoneTellServiceTest {
         var service = CrossZoneTellService.get();
         // Allow lookup simulates an active bilateral agreement.
         service.setContractLookup((sz, tz, te) -> true);
-        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "hello");
+        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "hello", "beta");
 
         awaitDelivered(delivered);
         assertNotNull(delivered.get());
@@ -314,7 +331,7 @@ class CrossZoneTellServiceTest {
         var service = CrossZoneTellService.get();
         // Deny lookup — sender's zone has no contract with us.
         service.setContractLookup(TellScopeGate.DENY_ALL);
-        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "hello");
+        service.handleIncomingTell("stranger", "Stranger", "beta", "target", "hello", "beta");
 
         // Short wait before asserting null — the drain thread is async, so if
         // the deny check leaks through, we'd see a late delivery. 200ms is
@@ -325,11 +342,10 @@ class CrossZoneTellServiceTest {
     }
 
     @Test
-    void handleIncomingTell_intraZoneAlwaysAllowed() {
-        // A same-zone tell isn't really "cross-zone" — the intra-zone rule in
-        // TellScopeGate treats targetZone == senderZone as allowed. Guards
-        // against accidental rejection if the loopback path hits
-        // handleIncomingTell (e.g. during local testing).
+    void handleIncomingTell_claimingThisZoneIsRefused() {
+        // Audit 2026-09-28: a tell naming this zone as its origin used to pass as
+        // intra-zone. The inbound federation path now trusts only the zone whose
+        // key signed it, and a cross-zone tell never comes from this zone.
         var registry = EntityRegistry.get();
         AgentEventStream.init();
         registry.enter("target-id", "target", "agent", "nexus");
@@ -340,14 +356,14 @@ class CrossZoneTellServiceTest {
         });
 
         var service = CrossZoneTellService.get();
-        service.setContractLookup(TellScopeGate.DENY_ALL);
-        // fromZone = "alpha" (same as localZoneId set in @BeforeEach).
-        service.handleIncomingTell("buddy", "Buddy", "alpha", "target", "hi");
+        service.setContractLookup((sz, tz, te) -> true);
+        // fromZone = "alpha" (same as localZoneId set in @BeforeEach), signed by beta.
+        service.handleIncomingTell("buddy", "Buddy", "alpha", "target", "hi", "beta");
+        // ...or signed "as" this zone.
+        service.handleIncomingTell("buddy", "Buddy", "alpha", "target", "hi", "alpha");
 
-        awaitDelivered(delivered);
-        assertNotNull(delivered.get(),
-            "intra-zone tell must pass the gate regardless of contract lookup");
-        assertTrue(delivered.get().contains("hi"));
+        try { Thread.sleep(200); } catch (InterruptedException ignore) {}
+        assertNull(delivered.get(), "a cross-zone tell claiming this zone must be refused");
     }
 
     /**
@@ -407,7 +423,7 @@ class CrossZoneTellServiceTest {
     }
 
     @Test
-    void handleIncomingTell_sameRoomAlwaysAllowed() {
+    void handleIncomingTell_sameRoomClaimDoesNotBypassTheAgreement() {
         var registry = EntityRegistry.get();
         AgentEventStream.init();
         // Unique id to isolate from other suites that register "target-id"
@@ -425,11 +441,11 @@ class CrossZoneTellServiceTest {
 
         var service = CrossZoneTellService.get();
         service.setContractLookup(TellScopeGate.DENY_ALL);
-        service.handleIncomingTell("stranger-sr", "Stranger", "beta", "sr-target", "hi");
+        // The sender entity id in a cross-zone tell is only a claim; being "in the same room"
+        // cannot stand in for an agreement with the zone that signed it.
+        service.handleIncomingTell("stranger-sr", "Stranger", "beta", "sr-target", "hi", "beta");
 
-        awaitDelivered(delivered);
-        assertNotNull(delivered.get(),
-            "same-room tell must be delivered even when contract lookup denies");
-        assertTrue(delivered.get().contains("hi"));
+        try { Thread.sleep(200); } catch (InterruptedException ignore) {}
+        assertNull(delivered.get(), "no agreement with beta, no delivery");
     }
 }

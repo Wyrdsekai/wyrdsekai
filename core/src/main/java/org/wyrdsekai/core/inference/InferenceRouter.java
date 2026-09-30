@@ -52,6 +52,12 @@ import org.wyrdsekai.core.config.WyrdConfig;
  */
 public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
+    /** A connected MCP service's tool, as the companion is offered it: {@code mcp__<service>__<tool>}. */
+    public static final String MCP_TOOL_PREFIX = "mcp__";
+    /** Where an MCP tool call's arguments go when one of them is called {@code action}. */
+    public static final String MCP_ARGUMENTS = "arguments";
+
+
     private static final Logger log = LoggerFactory.getLogger(InferenceRouter.class);
     private static final String HEALTH_CHECK_TIMER = "health-check";
 
@@ -68,13 +74,25 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         int maxTokens,
         double temperature,
         ActorRef<InferResponse> replyTo,
-        String grammar          // GBNF grammar string (null = unconstrained)
+        String grammar,         // GBNF grammar string (null = unconstrained)
+        NowLine now             // what it knows about today (null = date and time when sent)
     ) implements Command {
         /** Backward-compatible constructor without grammar. */
         public InferRequest(String requestId, String model, String systemPrompt,
                             String userMessage, int maxTokens, double temperature,
                             ActorRef<InferResponse> replyTo) {
             this(requestId, model, systemPrompt, userMessage, maxTokens, temperature, replyTo, null);
+        }
+        public InferRequest(String requestId, String model, String systemPrompt,
+                            String userMessage, int maxTokens, double temperature,
+                            ActorRef<InferResponse> replyTo, String grammar) {
+            this(requestId, model, systemPrompt, userMessage, maxTokens, temperature, replyTo,
+                 grammar, null);
+        }
+        /** This request, saying what it knows about today (see {@link NowLine}). */
+        public InferRequest withNow(NowLine now) {
+            return new InferRequest(requestId, model, systemPrompt, userMessage, maxTokens,
+                temperature, replyTo, grammar, now);
         }
     }
 
@@ -96,11 +114,30 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         Double repetitionPenalty,  // nullable — drive-modulated (null = server default)
         boolean localOnly,         // if true, NatsRemote backends are excluded from selection
                                     // (used by cross-zone provider to prevent inference loops)
-        Map<String, Double> registerMix  // Individuality V2.4 — per-agent voice register
+        Map<String, Double> registerMix, // Individuality V2.4 — per-agent voice register
                                     // coefficients from the TemperamentSeed; threaded to the
                                     // local provider body (lora[]/register_mix{}). null = no
                                     // voice steering (every non-voice-pass call).
+        NowLine now                 // what it knows about today (null = date and time when sent)
     ) implements Command {
+        public ChatRequest(String requestId, String model,
+                          List<InferenceClient.ChatMessage> messages,
+                          int maxTokens, double temperature,
+                          ActorRef<InferResponse> replyTo, String preferredBackend,
+                          String grammar, Object format,
+                          List<InferenceClient.ToolDefinition> tools, String toolChoice,
+                          Double topP, Double presencePenalty, Double repetitionPenalty,
+                          boolean localOnly, Map<String, Double> registerMix) {
+            this(requestId, model, messages, maxTokens, temperature, replyTo,
+                 preferredBackend, grammar, format, tools, toolChoice,
+                 topP, presencePenalty, repetitionPenalty, localOnly, registerMix, null);
+        }
+        /** This request, saying what it knows about today (see {@link NowLine}). */
+        public ChatRequest withNow(NowLine now) {
+            return new ChatRequest(requestId, model, messages, maxTokens, temperature, replyTo,
+                preferredBackend, grammar, format, tools, toolChoice,
+                topP, presencePenalty, repetitionPenalty, localOnly, registerMix, now);
+        }
         /** Old canonical signature (pre-V2.4 register mix) — delegates with no voice steering. */
         public ChatRequest(String requestId, String model,
                           List<InferenceClient.ChatMessage> messages,
@@ -135,6 +172,22 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 prompt.messages(), maxTokens, temperature, replyTo,
                 prompt.backendId(), grammar, format, tools, toolChoice,
                 topP, presencePenalty, repetitionPenalty, false);
+        }
+
+        /** {@code fromPrompt} with a per-request adapter mix (see ApiProvider: {@code adapter:<id>}). */
+        public static ChatRequest fromPrompt(
+                String requestId,
+                AssembledPrompt prompt,
+                int maxTokens, double temperature,
+                ActorRef<InferResponse> replyTo,
+                String grammar, Object format,
+                List<InferenceClient.ToolDefinition> tools, String toolChoice,
+                Double topP, Double presencePenalty, Double repetitionPenalty,
+                Map<String, Double> registerMix) {
+            return new ChatRequest(requestId, prompt.backendId(),
+                prompt.messages(), maxTokens, temperature, replyTo,
+                prompt.backendId(), grammar, format, tools, toolChoice,
+                topP, presencePenalty, repetitionPenalty, false, registerMix);
         }
 
         /** F15: minimal {@code fromPrompt} for callers that don't need
@@ -236,7 +289,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         String prompt,          // the task prompt
         int maxTokens,
         String maxTier,         // nullable — "local", "household", or "cloud"
-        ActorRef<InferResponse> replyTo
+        ActorRef<InferResponse> replyTo,
+        NowLine now             // what it knows about today (null = date and time when sent)
     ) implements Command {
         /** Backward-compatible constructor without maxTier. */
         public ToolInferRequest(String requestId, String agentId, String capability,
@@ -244,6 +298,17 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                 int maxTokens, ActorRef<InferResponse> replyTo) {
             this(requestId, agentId, capability, model, systemPrompt, prompt,
                  maxTokens, null, replyTo);
+        }
+        public ToolInferRequest(String requestId, String agentId, String capability,
+                                String model, String systemPrompt, String prompt,
+                                int maxTokens, String maxTier, ActorRef<InferResponse> replyTo) {
+            this(requestId, agentId, capability, model, systemPrompt, prompt,
+                 maxTokens, maxTier, replyTo, null);
+        }
+        /** This request, saying what it knows about today (see {@link NowLine}). */
+        public ToolInferRequest withNow(NowLine now) {
+            return new ToolInferRequest(requestId, agentId, capability, model, systemPrompt,
+                prompt, maxTokens, maxTier, replyTo, now);
         }
     }
 
@@ -361,7 +426,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         ActorRef<StreamEvent> streamRef,        // per-token chunks + terminal event
         ActorRef<InferResponse> replyTo,        // final ok/error after stream completes
         String preferredBackend,                // nullable
-        boolean localOnly                        // exclude NatsRemote from selection (loop prevention)
+        boolean localOnly,                       // exclude NatsRemote from selection (loop prevention)
+        NowLine now                              // what it knows about today (null = date and time when sent)
     ) implements Command {
         /** Backward-compatible constructor. */
         public StreamingChatRequest(String requestId, String model,
@@ -371,6 +437,20 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                      ActorRef<InferResponse> replyTo) {
             this(requestId, model, messages, maxTokens, temperature,
                  streamRef, replyTo, null, false);
+        }
+        public StreamingChatRequest(String requestId, String model,
+                                     List<InferenceClient.ChatMessage> messages,
+                                     int maxTokens, double temperature,
+                                     ActorRef<StreamEvent> streamRef,
+                                     ActorRef<InferResponse> replyTo,
+                                     String preferredBackend, boolean localOnly) {
+            this(requestId, model, messages, maxTokens, temperature,
+                 streamRef, replyTo, preferredBackend, localOnly, null);
+        }
+        /** This request, saying what it knows about today (see {@link NowLine}). */
+        public StreamingChatRequest withNow(NowLine now) {
+            return new StreamingChatRequest(requestId, model, messages, maxTokens, temperature,
+                streamRef, replyTo, preferredBackend, localOnly, now);
         }
     }
 
@@ -414,8 +494,16 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 var argsJson = toolCall.function().arguments() instanceof String str
                         ? str : Json.mapper().writeValueAsString(toolCall.function().arguments());
                 var actionNode = Json.mapper().createObjectNode();
-                actionNode.put("action", toolCall.function().name());
-                actionNode.setAll((ObjectNode) Json.mapper().readTree(argsJson));
+                var toolName = toolCall.function().name();
+                var args = (ObjectNode) Json.mapper().readTree(argsJson);
+                actionNode.put("action", toolName);
+                if (toolName.startsWith(MCP_TOOL_PREFIX) && args.has("action")) {
+                    // A connected service's tool may take an argument called "action": spread into
+                    // the call, it replaced the tool's name (2026-09-29). Kept apart instead.
+                    actionNode.set(MCP_ARGUMENTS, args);
+                } else {
+                    actionNode.setAll(args);
+                }
                 var toolJson = Json.mapper().writeValueAsString(actionNode);
                 content = content.isEmpty() ? toolJson
                         : content + "\n```json\n" + toolJson + "\n```";
@@ -833,7 +921,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             messages.add(new InferenceClient.ChatMessage("system", req.systemPrompt()));
         }
         messages.add(new InferenceClient.ChatMessage("user", req.userMessage()));
-        var chatReq = new InferenceClient.ChatRequest(effectiveModel, messages,
+        var chatReq = new InferenceClient.ChatRequest(effectiveModel,
+                stampToday(req.now(), messages),
                 req.maxTokens(), req.temperature(), null, null, req.grammar());
         var self = getContext().getSelf();
 
@@ -881,7 +970,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         beginRequest(req.requestId());
         var effectiveModel = resolveModel(model, backend);
         var chatReq = new InferenceClient.ChatRequest(effectiveModel,
-            consolidateSystemMessages(req.messages()),
+            stampToday(req.now(), consolidateSystemMessages(req.messages())),
             req.maxTokens(), req.temperature());
 
         var self = getContext().getSelf();
@@ -995,10 +1084,13 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             // Qwen3.5 chat template requires single system message at position 0.
             // Consolidate multiple system messages into one.
             messages = consolidateSystemMessages(messages);
+            // A trailing assistant message would be continued, not answered.
+            messages = endOnATurnToAnswer(messages);
             // ...and it raises if there is NO user turn at all, which is the
             // natural shape of a tool-result follow-up. See ensureUserTurn.
             messages = ensureUserTurn(messages);
         }
+        messages = stampToday(req.now(), messages);
 
         var chatReq = new InferenceClient.ChatRequest(effectiveModel, messages,
                 req.maxTokens(), req.temperature(), req.topP(), null, grammar, format,
@@ -1138,7 +1230,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         messages.add(new InferenceClient.ChatMessage("user", req.prompt()));
 
         var chatReq = new InferenceClient.ChatRequest(
-                effectiveModel, messages, req.maxTokens(), 0.3);
+                effectiveModel, stampToday(req.now(), messages), req.maxTokens(), 0.3);
         var self = getContext().getSelf();
         final String modelForCost = effectiveModel;
 
@@ -1285,7 +1377,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                     parseRequestTokens(failure.error()), compactMarginMultiplier(round));
                 if (compacted != null && backend instanceof InferenceBackend.LlamaServer) {
                     // The retry bypasses the shaping in dispatch; keep the template's contract.
-                    compacted = withMessages(compacted, ensureUserTurn(compacted.messages()));
+                    compacted = withMessages(compacted,
+                        ensureUserTurn(endOnATurnToAnswer(compacted.messages())));
                 }
                 if (compacted == null) {
                     log.warn("Context overflow on '{}' — nothing left to compact after round {} of {}: {} (requestId={})",
@@ -1861,6 +1954,45 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * Required for chat templates (e.g., Qwen3.5) that enforce "system must be first."
      */
     /**
+     * The outgoing messages, saying what the request knows about today. Applied
+     * to the copy that leaves for the backend, after the template's own reshaping,
+     * so the stored history, the loop's messages and the night's corpus never hold
+     * the line. A request that declared nothing gets the date and time as sent.
+     */
+    static List<InferenceClient.ChatMessage> stampToday(
+            NowLine now, List<InferenceClient.ChatMessage> messages) {
+        return (now != null ? now : NowLine.dateTime()).stamp(messages, NowLine.zone());
+    }
+
+    /** The user turn the product adds where the template needs one: it invites her own words. */
+    static final String SYNTHETIC_USER_TURN = "Given what you just found, answer in your own words.";
+
+    /**
+     * Never send a list that ends on a plain assistant message. llama-server treats a trailing
+     * assistant message as a prefill (prefill_assistant is on by default): it continues that
+     * message and returns the prefix inside the reply. The turn after her own library read ended
+     * on her own lines, and they came back as a new line of 3,000 characters with the answer in it
+     * twice (household node, 2026-09-23 04:57 and 07:21). No caller wants a continuation; a
+     * tool call or a tool result at the end is left as it is. Runs before {@link #ensureUserTurn},
+     * which then finds the turn this adds.
+     */
+    static List<InferenceClient.ChatMessage> endOnATurnToAnswer(
+            List<InferenceClient.ChatMessage> messages) {
+        if (messages == null || messages.isEmpty()) return messages;
+        var last = messages.get(messages.size() - 1);
+        if (last == null || !"assistant".equals(last.role())
+                || last.toolCalls() != null || last.toolCallId() != null) {
+            return messages;
+        }
+        var out = new ArrayList<InferenceClient.ChatMessage>(messages.size() + 1);
+        out.addAll(messages);
+        out.add(new InferenceClient.ChatMessage("user", SYNTHETIC_USER_TURN));
+        log.debug("Added a user turn after a trailing assistant message — llama-server would "
+            + "continue it ({} messages)", messages.size());
+        return out;
+    }
+
+    /**
      * Guarantee at least one user-role message.
      *
      * <p>The Qwen chat template scans backwards for the last user turn to decide
@@ -1890,8 +2022,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         int insertAt = (!messages.isEmpty() && messages.get(0) != null
             && "system".equals(messages.get(0).role())) ? 1 : 0;
         out.addAll(messages.subList(0, insertAt));
-        out.add(new InferenceClient.ChatMessage("user",
-            "Given what you just found, answer in your own words."));
+        out.add(new InferenceClient.ChatMessage("user", SYNTHETIC_USER_TURN));
         out.addAll(messages.subList(insertAt, messages.size()));
         log.debug("Inserted a synthetic user turn — the chat template rejects "
             + "message lists without one ({} messages)", messages.size());

@@ -1,5 +1,9 @@
 package org.wyrdsekai.app.inference
 
+import kotlin.time.Clock
+import org.wyrdsekai.app.platform.AppFiles
+import org.wyrdsekai.app.platform.AppProps
+
 /**
  * InferenceClient that routes through local JNI (LlamaServerManager) when
  * a model is loaded, falling back to HTTP when not.
@@ -8,28 +12,41 @@ package org.wyrdsekai.app.inference
  * and on-device inference (which uses LlamaServerManager JNI).
  *
  * Usage: pass this instead of plain InferenceClient to PhoneNode.
+ *
+ * Overrides [send], not [complete], so the JNI path formats the copy that
+ * [complete] has already given one leading system message and stamped with what
+ * the request knows about today.
  */
 class LocalFirstInferenceClient(
     private val llamaServerManager: LlamaServerManager,
 ) : InferenceClient() {
 
-    override suspend fun complete(
+    override suspend fun send(
         baseUrl: String,
         messages: List<ChatMessage>,
         options: CompletionOptions,
     ): ChatResponse {
-        val lsmState = llamaServerManager.state.value
-        val logFile = java.io.File(System.getProperty("wyrdsekai.data.dir") ?: "/tmp", "wyrd-companion.log")
-        try { logFile.appendText("${java.util.Date()}: LocalFirstInferenceClient: lsmState=$lsmState\n") } catch (_: Exception) {}
-
         // If local model is loaded, use JNI directly (no HTTP)
-        if (lsmState == "running") {
-            try { logFile.appendText("${java.util.Date()}: LocalFirstInferenceClient: routing to JNI\n") } catch (_: Exception) {}
+        if (llamaServerManager.state.value == "running") {
+            log("routing to JNI")
             return llamaServerManager.completeLocal(messages, options)
         }
 
         // Fall back to HTTP (remote Ollama, cloud, etc.)
-        try { logFile.appendText("${java.util.Date()}: LocalFirstInferenceClient: falling back to HTTP baseUrl=$baseUrl\n") } catch (_: Exception) {}
-        return super.complete(baseUrl, messages, options)
+        log("falling back to HTTP baseUrl=$baseUrl")
+        return super.send(baseUrl, messages, options)
+    }
+
+    /**
+     * One line per request in the companion's log, written as
+     * CompanionEngine.debugLog writes it. This wrote two lines per request with
+     * java.util.Date stamps, and into /tmp when wyrdsekai.data.dir was unset; with
+     * no data dir it now writes nothing.
+     */
+    private fun log(msg: String) {
+        try {
+            val dir = AppProps.get("wyrdsekai.data.dir") ?: return
+            AppFiles.appendText("$dir/wyrd-companion.log", "${Clock.System.now()}: LocalFirstInferenceClient: $msg\n")
+        } catch (_: Exception) {}
     }
 }

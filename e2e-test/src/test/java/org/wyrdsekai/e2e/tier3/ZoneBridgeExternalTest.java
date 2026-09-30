@@ -267,10 +267,10 @@ class ZoneBridgeExternalTest {
         waitForCodeZaikuRegistration();
 
         var httpClient = HttpClient.newHttpClient();
-        var req = HttpRequest.newBuilder()
+        var req = withLogin(HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + "/api/zone/namespaces"))
             .timeout(Duration.ofSeconds(5))
-            .GET().build();
+            .GET()).build();
         var resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
 
         assertEquals(200, resp.statusCode());
@@ -495,16 +495,25 @@ class ZoneBridgeExternalTest {
      * Wait for CodeZaiku to register its "codezaiku" namespace on the zone bridge.
      * Polls the REST endpoint GET /api/zone/namespaces — no namespace interference.
      */
+    /**
+     * /api needs a login (0.5.0). Against the local server that is the machine's operator
+     * token from loopback; a remote server (WYRDSEKAI_URL) takes WYRDSEKAI_TOKEN when set.
+     */
+    private static HttpRequest.Builder withLogin(HttpRequest.Builder b) {
+        var token = localServer != null ? TestServerBootstrap.operatorToken() : System.getenv("WYRDSEKAI_TOKEN");
+        return token == null || token.isBlank() ? b : b.header("Authorization", "Bearer " + token);
+    }
+
     private static void waitForCodeZaikuRegistration() throws Exception {
         var httpClient = HttpClient.newHttpClient();
         var namespacesUrl = baseUrl + "/api/zone/namespaces";
 
         for (int i = 0; i < 60; i++) {
             try {
-                var req = HttpRequest.newBuilder()
+                var req = withLogin(HttpRequest.newBuilder()
                     .uri(URI.create(namespacesUrl))
                     .timeout(Duration.ofSeconds(3))
-                    .GET().build();
+                    .GET()).build();
                 var resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
                 if (resp.statusCode() == 200) {
                     var json = mapper.readTree(resp.body());

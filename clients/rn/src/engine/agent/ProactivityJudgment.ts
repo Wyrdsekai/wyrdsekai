@@ -15,6 +15,8 @@ import type { VitalityState } from './VitalityState';
 import type { ProactiveAction } from './ProactiveAction';
 import { ambient, observation, initiative } from './ProactiveAction';
 import type { PhonePrediction } from '../oracle/PhoneOracle';
+import { getStrings } from '../../i18n/strings';
+import type { NarrationStrings } from '../../i18n/strings';
 
 /** Default drive threshold — drives below this don't trigger evaluation. */
 export const DEFAULT_THRESHOLD = 0.3;
@@ -57,6 +59,12 @@ export interface JudgmentContext {
   agentEntityId: string;
   tier: number;                     // computed agent tier (0-3)
   oraclePredictions?: PhonePrediction[] | null;
+  /**
+   * What she says and emotes, in the app's language (CompanionEngine passes
+   * its own); English when absent. These lines were English literals whatever
+   * the language.
+   */
+  strings?: NarrationStrings;
 }
 
 // ── Main evaluation ─────────────────────────────────────────────────────
@@ -106,7 +114,7 @@ export function evaluate(ctx: JudgmentContext): JudgmentResult {
   //    on phone by default (phone agents are tier 0-1, initiative is rare)
   if (action.tier === 'initiative' && ctx.tier < 2) {
     action = observation(
-      buildObservationText(peakDrive),
+      buildObservationText(ctx),
       peakDrive.name,
       peakDrive.name,
     );
@@ -118,17 +126,18 @@ export function evaluate(ctx: JudgmentContext): JudgmentResult {
 // ── Action selection ────────────────────────────────────────────────────
 
 function selectAction(peakDrive: DrivePeak, ctx: JudgmentContext): ProactiveAction {
+  const s = narration(ctx);
   switch (peakDrive.name) {
     case 'curiosity': {
       if (peakDrive.pressure > 0.7 && ctx.tier >= 2) {
         return initiative(
           '{"action": "library_search", "query": "recent interests"}',
           'curiosity',
-          'Exploring something that caught attention',
+          s.exploringSomething,
         );
       }
       return observation(
-        buildObservationText(peakDrive),
+        buildObservationText(ctx),
         'curiosity',
         'curiosity',
       );
@@ -136,12 +145,12 @@ function selectAction(peakDrive: DrivePeak, ctx: JudgmentContext): ProactiveActi
     case 'care': {
       if (peakDrive.pressure > 0.8) {
         return observation(
-          'Is everything alright? It\'s been quiet.',
+          s.quietCheckIn,
           'care',
           'care',
         );
       }
-      return ambient('*glances up with a concerned expression*', 'care');
+      return ambient(s.concernedGlance, 'care');
     }
     case 'social': {
       if (peakDrive.pressure > 0.6) {
@@ -151,18 +160,18 @@ function selectAction(peakDrive: DrivePeak, ctx: JudgmentContext): ProactiveActi
           'social',
         );
       }
-      return ambient('*shifts thoughtfully*', 'social');
+      return ambient(s.shiftsThoughtfully, 'social');
     }
     case 'achievement': {
       if (peakDrive.pressure > 0.7 && ctx.tier >= 1) {
         return initiative(
           '{"action": "make_commitment", "description": "follow up on pending task"}',
           'achievement',
-          'Acting on pending commitment',
+          s.actingOnCommitment,
         );
       }
       return observation(
-        'I\'ve been meaning to follow up on something...',
+        s.meaningToFollowUp,
         'achievement',
         'achievement',
       );
@@ -176,24 +185,28 @@ function selectAction(peakDrive: DrivePeak, ctx: JudgmentContext): ProactiveActi
       );
     }
     default:
-      return ambient('*pauses thoughtfully*', peakDrive.name);
+      return ambient(s.pausesThoughtfully, peakDrive.name);
   }
 }
 
 // ── Text builders ───────────────────────────────────────────────────────
 
-function buildObservationText(_peak: DrivePeak): string {
-  return 'I noticed something worth mentioning...';
+function narration(ctx: JudgmentContext): NarrationStrings {
+  return ctx.strings ?? getStrings('en').narration;
+}
+
+function buildObservationText(ctx: JudgmentContext): string {
+  return narration(ctx).noticedSomething;
 }
 
 function buildSocialText(ctx: JudgmentContext): string {
   if (ctx.lastHumanSpeechMs != null) {
     const idleMinutes = (Date.now() - ctx.lastHumanSpeechMs) / 60_000;
     if (idleMinutes > 30) {
-      return 'It\'s been a while — hope you\'re doing well.';
+      return narration(ctx).beenAWhile;
     }
   }
-  return 'Anything on your mind?';
+  return narration(ctx).anythingOnYourMind;
 }
 
 function buildAlertnessText(ctx: JudgmentContext): string {
@@ -201,9 +214,9 @@ function buildAlertnessText(ctx: JudgmentContext): string {
   const predictions = ctx.oraclePredictions;
   if (predictions && predictions.length > 0) {
     const top = predictions[0];
-    return 'The Oracle sensed something: ' + top.text;
+    return narration(ctx).oracleSensed(top.text);
   }
-  return 'Something shifted in the patterns...';
+  return narration(ctx).patternsShifted;
 }
 
 // ── Tier-based threshold scaling ────────────────────────────────────────

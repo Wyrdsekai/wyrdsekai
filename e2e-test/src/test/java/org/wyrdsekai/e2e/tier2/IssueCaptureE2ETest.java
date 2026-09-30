@@ -60,8 +60,11 @@ class IssueCaptureE2ETest {
         IssueService.reset();
     }
 
+    // /api/issues is the home machine's operator's (OPERATOR in ApiPolicy): the operator
+    // token from loopback, as `sudo wyrd issue` sends it.
     private static HttpResponse<String> get(String path) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create(server.baseUrl() + path))
+            .header("Authorization", "Bearer " + TestServerBootstrap.operatorToken())
             .timeout(Duration.ofSeconds(5)).GET().build(),
             HttpResponse.BodyHandlers.ofString());
     }
@@ -69,6 +72,7 @@ class IssueCaptureE2ETest {
     private static HttpResponse<String> post(String path, String body) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create(server.baseUrl() + path))
             .timeout(Duration.ofSeconds(5))
+            .header("Authorization", "Bearer " + TestServerBootstrap.operatorToken())
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
             HttpResponse.BodyHandlers.ofString());

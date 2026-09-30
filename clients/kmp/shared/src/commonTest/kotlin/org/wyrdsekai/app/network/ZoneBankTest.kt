@@ -34,6 +34,18 @@ class ZoneBankTest {
     }
 
     @Test
+    fun aSyncedEntryWithoutTheZoneKeyKeepsTheOneFromTheInvite() {
+        val bank = ZoneBank()
+        bank.addOrUpdateZone(zone("home-server", listOf("wss://relay-node:4443"), now = 10).copy(zk = "KEY"))
+        // An older client (or the RN app) syncs the entry back without the field.
+        bank.addOrUpdateZone(zone("home-server", listOf("wss://relay-node:4443"), now = 20))
+        assertEquals("KEY", bank.getZone("home-server")!!.zk)
+        // A fresh invite replaces it.
+        bank.addOrUpdateZone(zone("home-server", listOf("wss://relay-node:4443"), now = 30).copy(zk = "NEW"))
+        assertEquals("NEW", bank.getZone("home-server")!!.zk)
+    }
+
+    @Test
     fun bumpRelay_movesToFront() {
         val bank = ZoneBank()
         bank.addOrUpdateZone(zone("home-server", listOf("wss://relay-node:4443", "wss://qf:4443")))

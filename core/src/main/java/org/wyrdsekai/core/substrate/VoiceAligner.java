@@ -5,10 +5,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.config.WyrdConfig;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,9 +48,10 @@ public class VoiceAligner {
     private static final int DEFAULT_ITERS = 2500;
 
     /** Timeout for the fine-tuning process (minutes). */
-    private static final int FINETUNE_TIMEOUT_MINUTES = 60;
 
     private final Path workDir;
+    /** Whose training the commands below belong to, so a deep-sleep deadline can stop it. */
+    private volatile String runningFor;
     private final String backend; // "mlx" or "unsloth"
 
     public VoiceAligner(Path workDir) {
@@ -83,6 +83,11 @@ public class VoiceAligner {
      */
     public Path align(String agentId, String agentName, String modelPath,
                       List<Map<String, String>> corpus, Integer maxIters) {
+        if (TrainingProcesses.isCancelled(agentId)) {
+            log.info("Voice alignment for '{}' not started: her deep sleep reached its deadline", agentName);
+            return null;
+        }
+        runningFor = agentId;
         if (corpus.size() < MIN_CORPUS_SIZE) {
             log.info("Voice alignment skipped for '{}' — only {} conversations (need {})",
                 agentName, corpus.size(), MIN_CORPUS_SIZE);
@@ -523,32 +528,28 @@ public class VoiceAligner {
             log.info("Running voice alignment: {}", String.join(" ", command));
             var pb = new ProcessBuilder(command);
             pb.directory(workDir.toFile());
-            pb.redirectErrorStream(true);
             if (!extraEnv.isEmpty()) pb.environment().putAll(extraEnv);
-            var process = pb.start();
-
-            // Stream output to log
-            try (var reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    log.debug("[voice-align] {}", line);
-                }
-            }
-
-            boolean finished = process.waitFor(FINETUNE_TIMEOUT_MINUTES, TimeUnit.MINUTES);
-            if (!finished) {
-                process.destroyForcibly();
-                log.error("Voice alignment timed out after {} minutes", FINETUNE_TIMEOUT_MINUTES);
+            int limitMinutes = WyrdConfig.get().voiceAlignTimeoutMinutes();
+            var outcome = TrainingProcesses.run(runningFor, pb, Duration.ofMinutes(limitMinutes),
+                line -> log.debug("[voice-align] {}", line));
+            if (outcome.cancelled()) {
+                log.warn("Voice alignment stopped: her deep sleep reached its deadline");
                 return false;
             }
-
-            int exitCode = process.exitValue();
-            if (exitCode != 0) {
-                log.error("Voice alignment failed with exit code {}", exitCode);
+            if (!outcome.finished()) {
+                log.error("Voice alignment timed out after {} minutes and was stopped", limitMinutes);
+                return false;
+            }
+            if (outcome.exitCode() != 0) {
+                log.error("Voice alignment failed with exit code {}", outcome.exitCode());
                 return false;
             }
             return true;
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Voice alignment interrupted");
+            return false;
         } catch (Exception e) {
             log.error("Voice alignment process error: {}", e.getMessage());
             return false;

@@ -14,6 +14,7 @@ class EntityResolverTest {
 
     private MemoryEntityStore store;
     private EntityResolver resolver;
+    private static final MemoryReader READER = MemoryReader.of("did:wyrd:bondholder", true);
     private static final String DID = "did:wyrd:alice";
 
     @BeforeEach
@@ -30,7 +31,7 @@ class EntityResolverTest {
                 DID, "mem-1", "pet", "name", "Mochi", t));
 
         var intent = new ProbeIntent("pet", "name", Temporal.ANY);
-        var hit = resolver.resolve(DID, intent);
+        var hit = resolver.resolve(DID, intent, READER);
 
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("Mochi");
@@ -46,7 +47,7 @@ class EntityResolverTest {
                 DID, "mem-2", "occupation", "current", "data engineer", t2));
 
         var hit = resolver.resolve(DID,
-                new ProbeIntent("occupation", "current", Temporal.LATEST));
+                new ProbeIntent("occupation", "current", Temporal.LATEST), READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("data engineer");
     }
@@ -59,7 +60,7 @@ class EntityResolverTest {
                 DID, "mem-1", "occupation", null, "data engineer", t));
 
         var hit = resolver.resolve(DID,
-                new ProbeIntent("occupation", "current", Temporal.LATEST));
+                new ProbeIntent("occupation", "current", Temporal.LATEST), READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("data engineer");
     }
@@ -67,13 +68,13 @@ class EntityResolverTest {
     @Test
     void resolve_miss_returns_empty() {
         var hit = resolver.resolve(DID,
-                new ProbeIntent("pet", "name", Temporal.ANY));
+                new ProbeIntent("pet", "name", Temporal.ANY), READER);
         assertThat(hit).isEmpty();
     }
 
     @Test
     void resolve_null_intent_returns_empty() {
-        assertThat(resolver.resolve(DID, null)).isEmpty();
+        assertThat(resolver.resolve(DID, null, READER)).isEmpty();
     }
 
     @Test
@@ -83,7 +84,7 @@ class EntityResolverTest {
                 "did:wyrd:bob", "mem-1", "pet", "name", "Rex", t));
 
         // Alice shouldn't see Bob's pet
-        var hit = resolver.resolve(DID, new ProbeIntent("pet", "name", Temporal.ANY));
+        var hit = resolver.resolve(DID, new ProbeIntent("pet", "name", Temporal.ANY), READER);
         assertThat(hit).isEmpty();
     }
 
@@ -97,7 +98,7 @@ class EntityResolverTest {
         var intent = ProbeClassifier.classify("where did I grow up");
         assertThat(intent).isNotNull();
 
-        var hit = resolver.resolve(DID, intent);
+        var hit = resolver.resolve(DID, intent, READER);
         assertThat(hit).isPresent();
         assertThat(hit.get().entityValue()).isEqualTo("Portland");
     }

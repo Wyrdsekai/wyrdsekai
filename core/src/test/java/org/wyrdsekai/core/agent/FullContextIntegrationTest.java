@@ -15,6 +15,7 @@ import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.room.RoomCommand;
 import org.wyrdsekai.core.room.RoomNotification;
 import org.wyrdsekai.core.room.RoomResponse;
+import org.wyrdsekai.core.search.EmbeddingService;
 import org.wyrdsekai.core.skill.SchedulerService;
 import org.wyrdsekai.core.skill.SkillContext;
 import org.wyrdsekai.core.skill.SkillRegistry;
@@ -72,6 +73,9 @@ class FullContextIntegrationTest {
 
     @BeforeAll
     static void setupClass() {
+        // The companion's first turn starts the voice classifier's encoder (seconds from a cold JVM,
+        // more on a loaded machine); the tests wait five seconds for a turn (2026-09-29).
+        EmbeddingService.classifierEncoder();
         // Initialize singletons before any actors try to use them
         AgentEventStream.init();
         EntityRegistry.init();

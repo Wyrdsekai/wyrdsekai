@@ -7,10 +7,9 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
- * Bridges native TLS trust events (pin mismatch on cert rotation) to JS.
- * The TLS layer can't synchronously prompt the user (it runs in an OkHttp
- * dispatcher), so we emit a DeviceEvent the RN app can listen for and
- * handle by showing an Alert + clearing the stored pin.
+ * Bridges native TLS trust events (pin mismatch) to JS. The connection has
+ * already been refused; the RN app shows a plain message telling the person to
+ * pair again. The pin is never cleared from here (D6: no trust-new-cert path).
  *
  */
 object TrustEventEmitter {

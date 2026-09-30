@@ -8,6 +8,7 @@ import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.io.BufferedReader;
@@ -233,7 +234,7 @@ public final class M2PlanScorer {
                 new InferenceRouter.ChatRequest(
                     requestId, MODEL_HINT, messages,
                     MAX_TOKENS, DEFAULT_TEMPERATURE, replyTo,
-                    null, JSON_GRAMMAR, null, null, null, null, null, null, true),
+                    null, JSON_GRAMMAR, null, null, null, null, null, null, true).withNow(NowLine.NONE),
             DEFAULT_TIMEOUT, scheduler);
 
         return future.handle((response, failure) -> {

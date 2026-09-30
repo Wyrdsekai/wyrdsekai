@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.recipe;
 
+import org.wyrdsekai.core.security.SubprocessEnv;
+
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -21,6 +23,18 @@ public final class ProcessCommandRunner implements CommandRunner {
     private static final int EXIT_START_FAIL = -1;
     private static final int EXIT_SIGKILL = 137;   // 128 + SIGKILL (9), typically OOM-killer
 
+    /**
+     * A recipe step gets the node's own settings (WYRDSEKAI_* whose names hold no secret:
+     * data dir, database URL, model paths), GPU selection, model caches and JAVA_HOME,
+     * and nothing else from the daemon's environment.
+     */
+    static final SubprocessEnv ENV = SubprocessEnv.of(
+            "JAVA_HOME", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES",
+            "ROCR_VISIBLE_DEVICES", "CUDA_HOME", "LD_LIBRARY_PATH", "HF_HOME", "HF_HUB_CACHE",
+            "HF_HUB_OFFLINE", "TRANSFORMERS_CACHE", "TRANSFORMERS_OFFLINE", "TORCH_HOME",
+            "XDG_CACHE_HOME", "OMP_NUM_THREADS", "PYTORCH_CUDA_ALLOC_CONF")
+        .withPrefix("WYRDSEKAI_");
+
     private final File workingDir;
     private final Duration defaultTimeout;
 
@@ -38,7 +52,7 @@ public final class ProcessCommandRunner implements CommandRunner {
     public CommandRunner.Result run(String command, Duration timeout) {
         Duration effective = timeout == null ? defaultTimeout : timeout;
         try {
-            ProcessBuilder pb = new ProcessBuilder("bash", "-c", command)
+            ProcessBuilder pb = ENV.builder("bash", "-c", command)
                     .directory(workingDir)
                     .redirectErrorStream(false);
             // Prepend the recipe venv bin dir to PATH so bare `python`/`python3`

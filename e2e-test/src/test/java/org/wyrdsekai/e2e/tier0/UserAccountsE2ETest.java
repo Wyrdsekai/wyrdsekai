@@ -109,7 +109,8 @@ class UserAccountsE2ETest {
         assertEquals(201, reqResp.statusCode());
         var challengeId = mapper.readTree(reqResp.body()).get("challengeId").asText();
 
-        var codeResp = get("/api/pair/code");
+        // The pending code is the steward's to read (logged in).
+        var codeResp = getWithBearer("/api/pair/code", stewardToken);
         assertEquals(200, codeResp.statusCode());
         var code = mapper.readTree(codeResp.body()).get("code").asText();
 

@@ -63,6 +63,31 @@ public final class NoveltyTracker {
     }
 
     /**
+     * {@link #signatureFor}, but null for her own act: her line, her emote, her own arrival
+     * or leaving. The room hands every event to every subscriber, the speaker included, and
+     * she did not predict against what she did herself. Read as perceptions, each fresh
+     * sentence of hers was fully novel: surprise +0.6 a second after she spoke, which the
+     * proactive gate answered with another line (household node, 2026-09-29).
+     */
+    public static String perceptionSignature(WorldEvent e, String selfId) {
+        if (e == null) return null;
+        if (selfId != null && selfId.equals(actorOf(e))) return null;
+        return signatureFor(e);
+    }
+
+    /** Who did it, for the event kinds that name a doer; null for the rest. */
+    static String actorOf(WorldEvent e) {
+        return switch (e) {
+            case WorldEvent.Said s -> s.entityId();
+            case WorldEvent.Told t -> t.fromEntityId();
+            case WorldEvent.Emoted em -> em.entityId();
+            case WorldEvent.EntityEntered en -> en.entityId();
+            case WorldEvent.EntityLeft el -> el.entityId();
+            default -> null;
+        };
+    }
+
+    /**
      * Signature for the agent's OWN output (a journal entry, reflection, search result it
      * surfaced). Distinct namespace ("produce|") from perception signatures, so feeding both
      * through one tracker never collides — yet shares the same "have I encountered this before"

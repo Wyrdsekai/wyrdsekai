@@ -58,10 +58,12 @@ class PairingE2ETest {
         return http.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    private HttpResponse<String> get(String path) throws Exception {
+    private HttpResponse<String> postWithBearer(String path, String body, String token) throws Exception {
         var request = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl() + path))
-            .GET()
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + token)
+            .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
         return http.send(request, HttpResponse.BodyHandlers.ofString());
     }
@@ -129,8 +131,8 @@ class PairingE2ETest {
         var challengeId = reqBody.get("challengeId").asText();
         assertNotNull(challengeId);
 
-        // Step 2: Get the pending code (steward reads it)
-        var codeResp = get("/api/pair/code");
+        // Step 2: Get the pending code (steward reads it, logged in)
+        var codeResp = getWithBearer("/api/pair/code", getStewardToken());
         assertEquals(200, codeResp.statusCode(), "Should have a pending code");
         var codeBody = mapper.readTree(codeResp.body());
         var code = codeBody.get("code").asText();
@@ -176,8 +178,8 @@ class PairingE2ETest {
      */
     @Test
     void household_key_pairing() throws Exception {
-        // Step 1: Generate a household key
-        var genResp = post("/api/pair/household-key/generate", "");
+        // Step 1: Generate a household key (the steward's)
+        var genResp = postWithBearer("/api/pair/household-key/generate", "", getStewardToken());
         assertEquals(201, genResp.statusCode(), "Key generation should return 201");
         var genBody = mapper.readTree(genResp.body());
         var key = genBody.get("key").asText();
@@ -211,7 +213,7 @@ class PairingE2ETest {
             """);
         var challengeId = mapper.readTree(reqResp.body()).get("challengeId").asText();
 
-        var codeResp = get("/api/pair/code");
+        var codeResp = getWithBearer("/api/pair/code", stewardToken);
         var code = mapper.readTree(codeResp.body()).get("code").asText();
 
         var verifyResp = post("/api/pair/verify",

@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.agent.ConversationChannel;
 import org.wyrdsekai.core.agent.EntityRegistry;
+import org.wyrdsekai.core.skill.impl.SignalSkillExecutor;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -78,7 +79,7 @@ public class SignalChannel implements ConversationChannel {
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                var pb = new ProcessBuilder(
+                var pb = SignalSkillExecutor.ENV.builder(
                     "signal-cli", "-u", accountNumber, "send",
                     "-m", messageText, recipient);
                 pb.redirectErrorStream(true);
@@ -138,7 +139,7 @@ public class SignalChannel implements ConversationChannel {
         while (listening.get()) {
             Process proc = null;
             try {
-                var pb = new ProcessBuilder(
+                var pb = SignalSkillExecutor.ENV.builder(
                     "signal-cli", "-u", accountNumber, "--output=json", "daemon");
                 pb.redirectErrorStream(false);
                 proc = pb.start();

@@ -140,12 +140,8 @@ public final class CrossZoneTellService {
     }
 
     /**
-     * Optional tell-scope gate. When set, {@link #handleIncomingTell} uses it
-     * to enforce (cross-zone tells only deliver if the
-     * target is in-room with sender or if the sender's zone holds a
-     * bilateral contract with tell-scope). When unset, pre-Wave-7 behaviour
-     * is preserved (all incoming tells delivered) — this lets deployments
-     * adopt enforcement incrementally. See {@code TellScopeGate.ContractLookup}.
+     * Tell-scope gate: does this zone hold an active agreement with the other
+     * zone. {@link #handleIncomingTell} refuses every cross-zone tell while it is unset.
      */
     public void setContractLookup(TellScopeGate.ContractLookup lookup) {
         this.contractLookup = lookup;
@@ -306,36 +302,20 @@ public final class CrossZoneTellService {
 
     /**
      * Handle an incoming cross-zone tell from the relay.
-     * Called by FederationActor when it receives a federation.{localZone}.tell message.
+     *
+     * @param verifiedZone the zone whose pinned key signed the tell (null when it was not verified).
+     *                     Delivery needs it to equal {@code fromZone} and an active agreement with it
+     *                     ({@link TellScopeGate#checkInbound}).
      */
     public void handleIncomingTell(String fromEntityId, String fromEntityName,
-                                    String fromZone, String targetName, String text) {
+                                    String fromZone, String targetName, String text, String verifiedZone) {
         log.info("Incoming cross-zone tell from {}@{} to '{}'", fromEntityName, fromZone, targetName);
 
-        // tell-scope enforcement. Only runs when a
-        // contractLookup is wired — deployments opt-in by calling
-        // setContractLookup(...) at init. Without it, we preserve pre-Wave-7
-        // behaviour (no gating) so an upgrade doesn't silently drop tells
-        // that were working yesterday.
-        if (contractLookup != null) {
-            var registry = EntityRegistry.get();
-            if (registry != null) {
-                // Resolve the target to an entity id — needed for the gate.
-                // If the target can't be found we'll fail through to
-                // deliverLocal's own lookup (same semantics as before).
-                var targetId = registry.findByName(targetName).orElse(null);
-                if (targetId != null) {
-                    var decision = TellScopeGate.check(
-                        fromEntityId, fromZone,
-                        targetId, localZoneId,
-                        registry, contractLookup);
-                    if (decision instanceof TellScopeGate.Decision.Deny deny) {
-                        log.warn("Cross-zone tell REJECTED by scope gate: from={}@{} to='{}' reason='{}'",
-                            fromEntityName, fromZone, targetName, deny.reason());
-                        return;
-                    }
-                }
-            }
+        var decision = TellScopeGate.checkInbound(fromZone, verifiedZone, localZoneId, targetName, contractLookup);
+        if (decision instanceof TellScopeGate.Decision.Deny deny) {
+            log.warn("Cross-zone tell REJECTED: from={}@{} to='{}' reason='{}'",
+                fromEntityName, fromZone, targetName, deny.reason());
+            return;
         }
 
         var result = deliverLocal(fromEntityId, fromEntityName, targetName, text);

@@ -2,10 +2,17 @@
 
 A relay is the public meeting point for your household: zones connect out
 to it, phones connect in through it, and federation traffic between zones
-rides it. It is a dumb pipe — NATS routes subjects, Caddy terminates TLS,
-nothing is inspected or stored. Between envelopes stay Ed25519-signed
-end-to-end; the relay operator sees subjects and traffic metadata, not
-content (payload privacy is the argot/X25519 layer's job).
+rides it. It is a dumb pipe: NATS routes subjects, Caddy terminates the phones' TLS,
+nothing is inspected or stored. Between envelopes are Ed25519-signed, so they
+cannot be forged or changed on the way, but they are not encrypted. Since
+Wyrdsekai 0.5.0 the zones' link on the NATS port is TLS too (this relay's own
+certificate, pinned by each household when it joins; `allow_non_tls` keeps
+older zones connecting in the clear while they update, and
+`RELAY_ALLOW_NON_TLS=false` turns it off). The network between a zone and the
+relay cannot read the traffic; the relay operator still can, because both the
+phones' and the zones' encryption end at the relay. Households cannot read
+each other's traffic: every registration is bound to one zone name and may use
+only that zone's subjects and its own reply inbox (see "Zone binding" below).
 
 Run your own. A relay you control is
 the right trust boundary — nobody else's outage or policy can cut your
@@ -143,10 +150,12 @@ Caddy is the only TLS ingress. One routing table: registration paths
 (`/join`, `/register*`, `/phone-invite`, `/status`, …) go to the Python
 registration sidecar; everything else — including the WebSocket upgrade
 phones use — goes to NATS (plaintext, docker-internal only). NATS
-native :4222 is also published: the zone leg dials it directly with
-NKey challenge-signature auth (no secret crosses the wire; envelopes
-are Ed25519-signed end-to-end). Migrating the zone leg onto the wss
-listener — then closing :4222 — is a named follow-up.
+native :4222 is also published, TLS-terminated by nats-server itself
+with the relay certificate: the zone leg dials it directly with NKey
+challenge-signature auth (no secret crosses the wire), or, for zones
+joined with `--password-mode` or before 0.5.0, the zone's relay
+password. Migrating the zone leg onto the wss listener — then closing
+:4222 — is a named follow-up.
 
 ### Joining a zone
 
@@ -154,9 +163,13 @@ listener — then closing :4222 — is a named follow-up.
 `/join` (codes are 8-char, single-use, TTL-bound, per-IP rate-limited),
 receives the full invite payload (relay URL + embedded CA + NKey
 challenge), **verifies the invite's CA fingerprint against the token**,
-enrolls, persists `WYRDSEKAI_RELAY_*`, and offers to restart a running
-zone so the relay leg comes up. A fingerprint mismatch aborts hard —
-that is the on-path-attacker case. Legacy forms still work:
+enrolls the zone's NKey for its zone name (`/register-nkey` with
+`zone_id` and a signature over `register-nkey:{ts}:{pubkey}:{zone_id}`),
+persists `WYRDSEKAI_RELAY_*` plus the zone-leg pins from the reply
+(`nats_tls_fp`, `ca_fp`), and offers to restart a running zone so the
+relay leg comes up. A fingerprint mismatch aborts hard — that is the
+on-path-attacker case. A zone name another registration holds is
+refused with 409 before the invite is spent. Legacy forms still work:
 `wyrd relay join <host>[:port] <code>` and
 `wyrd relay register '<wyrdrelay://…>'`. In-session, stewards can run
 `/relay join <token>` over SSH/telnet.
@@ -216,14 +229,64 @@ or `uninstall` destroys it.
   compromised-relay recovery is redeploy (`--reset`) + re-invite.
 - Join codes and invites are single-use / TTL-bound; the NKey enrollment
   underneath is unchanged.
-- `/phone-invite` requires a registered zone's signature or token — the
-  phone credential is invite material a steward hands out, not a constant
-  baked into the app. Both internal NATS credentials are randomized
-  per-deploy.
+- `/phone-invite` requires a registered zone's NKey signature, or for a
+  password-mode zone an HMAC of its token over a timestamped challenge
+  (the bare token only with `RELAY_ALLOW_PLAIN_TOKEN_PROOF=true`) — the
+  phone credential is invite material a steward hands out, not a
+  constant baked into the app. Both internal NATS credentials are
+  randomized per-deploy.
+- Zone names, household tags and NKeys are validated before they are
+  written into relay.conf (plain tokens only), so a registration cannot
+  inject configuration.
 - Rate limits key on the X-Forwarded-For client (Caddy fronts the HTTP
   surface); localhost-only gates deliberately keep the socket address.
-- :4222 (zone leg) is NKey-only for households; the firewall line is
-  "open RELAY_PORT and 4222".
+- :4222 (zone leg) takes NKey households, and password households joined
+  with `--password-mode` or before 0.5.0; the firewall line is "open
+  RELAY_PORT and 4222".
+
+### Zone binding (0.5.0)
+
+Every registration is bound to one zone name. The relay grants it only
+that zone's subjects (`between.{zone}.>`, what is addressed to
+`federation.{zone}…`, `wyrd.zone.{zone}.>`, `wyrd.tunnel.{zone}.>`), the
+answers to its own cross-zone requests (`….{zone}.{id}`), and its own
+reply inbox `_INBOX.{its user}.>`; replies it sends go out through
+`allow_responses`. Its phones get `phone-{tag}`, scoped to the same zone
+and to `_INBOX.phone-{tag}.>`. On one relay a zone name belongs to the
+first registration that claims it; a holder vouches for another node of
+its household with `wyrd relay zone-add <NKey|hh-id>` (`/zone-member`).
+
+Relay endpoints (all signed by the registration: an NKey signature, or
+for a password registration `mac` = base64 HMAC-SHA256 of its token):
+
+| Endpoint | Proof over |
+|---|---|
+| `/register-nkey` (+ invite) | `register-nkey:{ts}:{pubkey}:{zone_id}` |
+| `/bind-zone` | `bind-zone:{ts}:{pubkey or hh-id}:{zone_id}` |
+| `/zone-member` | `zone-member:{ts}:{key}:{zone_id}:{member}` |
+| `/deregister` (password) | `deregister:{ts}:{hh-id}` |
+| `/phone-invite` (password) | `phone-invite:{ts}:{hh-id}` |
+
+**Upgrading a relay.** At start the sidecar migrates `registrations.json`
+(`[zones]` lines in its log): stored zone labels stay bound; unusable
+labels are dropped; NKey registrations get a relay-assigned household
+tag (`nk-…`), so their phones need a fresh `wyrd phone invite`; and
+registrations with no zone name are listed. Those keep the old wide
+grant until their zone runs 0.5.0, which binds its name at every start.
+While any keeps it, it can read other households' traffic.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `RELAY_ALLOW_NON_TLS` | `true` | `false`: the zone leg refuses clients without TLS. Turn off when every household runs 0.5.0+ (their log says "Relay link to … is encrypted"). |
+| `RELAY_LEGACY_GRANT` | `true` | `false`: registrations with no zone name get no NATS user at all. Set once the `[zones] unbound:` list is empty. |
+| `RELAY_SHARED_PHONE_ACCOUNT` | `false` | `true`: keep the shared `relay_phone` user of old phone invites (reads every household's tunnel traffic). |
+| `RELAY_LEGACY_INBOX` | `false` | `true`: zone-bound users may subscribe `_INBOX.>` again (pre-0.5.0 apps). |
+| `RELAY_ALLOW_PLAIN_TOKEN_PROOF` | `false` | `true`: `/phone-invite` accepts a password zone's bare token. |
+| `RELAY_RESPONSE_WINDOW` | `10m` | How long a responder may take to answer one request. |
+
+Pass them to `relay.sh` in the environment
+(`sudo RELAY_LEGACY_GRANT=false sh relay.sh update`); it records them for
+later updates.
 
 ### Files
 

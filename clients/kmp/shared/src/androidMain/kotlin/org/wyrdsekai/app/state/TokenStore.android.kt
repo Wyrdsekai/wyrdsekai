@@ -293,6 +293,21 @@ actual class TokenStore actual constructor() {
             .apply()
     }
 
+    actual fun saveZoneKey(zk: String) { prefs.edit().putString(KEY_ZONE_KEY, zk).apply() }
+    actual fun loadZoneKey(): String? = prefs.getString(KEY_ZONE_KEY, null)
+    actual fun saveHomeCaFp(fp: String) { prefs.edit().putString(KEY_HOME_CA_FP, fp).apply() }
+    actual fun loadHomeCaFp(): String? = prefs.getString(KEY_HOME_CA_FP, null)
+    actual fun saveLanHttps(url: String) { prefs.edit().putString(KEY_LAN_HTTPS, url).apply() }
+    actual fun loadLanHttps(): String? = prefs.getString(KEY_LAN_HTTPS, null)
+    actual fun saveHomeNatsUser(user: String) { prefs.edit().putString(KEY_HOME_NATS_USER, user).apply() }
+    actual fun loadHomeNatsUser(): String? = prefs.getString(KEY_HOME_NATS_USER, null)
+    actual fun saveHomeNatsPassword(password: String) { prefs.edit().putString(KEY_HOME_NATS_PASSWORD, password).apply() }
+    actual fun loadHomeNatsPassword(): String? = prefs.getString(KEY_HOME_NATS_PASSWORD, null)
+    actual fun saveHomeBusUrl(url: String) { prefs.edit().putString(KEY_HOME_BUS_URL, url).apply() }
+    actual fun loadHomeBusUrl(): String? = prefs.getString(KEY_HOME_BUS_URL, null)
+    actual fun saveLanRepairNoticed(noticed: Boolean) { prefs.edit().putBoolean(KEY_LAN_REPAIR_NOTICED, noticed).apply() }
+    actual fun loadLanRepairNoticed(): Boolean = prefs.getBoolean(KEY_LAN_REPAIR_NOTICED, false)
+
     actual fun disconnectHomeZone() {
         // Drop only the home-zone relay leg; keep the local Study (the last-synced
         // mirror), soul, and everything else. The phone runs local-only afterwards.
@@ -313,6 +328,12 @@ actual class TokenStore actual constructor() {
 
         @Volatile
         private var cachedPrefs: SharedPreferences? = null
+
+        /** JVM tests only: an in-memory [store] in place of the Keystore-backed one. */
+        internal fun initForTests(context: Context, store: SharedPreferences) {
+            appContext = context
+            cachedPrefs = store
+        }
 
         fun init(context: Context) {
             val app = context.applicationContext
@@ -471,5 +492,12 @@ actual class TokenStore actual constructor() {
         private const val KEY_API_BASE_URL = "wyrd_api_base_url"
         private const val KEY_DEBUG_MODE = "wyrd_debug_mode"
         private const val KEY_HERMOD_CONSENT = "wyrd_hermod_consent"
+        private const val KEY_ZONE_KEY = "wyrd_zone_key"
+        private const val KEY_HOME_CA_FP = "wyrd_home_ca_fp"
+        private const val KEY_LAN_HTTPS = "wyrd_lan_https"
+        private const val KEY_HOME_NATS_USER = "wyrd_home_nats_user"
+        private const val KEY_HOME_NATS_PASSWORD = "wyrd_home_nats_password"
+        private const val KEY_HOME_BUS_URL = "wyrd_home_bus_url"
+        private const val KEY_LAN_REPAIR_NOTICED = "wyrd_lan_repair_noticed"
     }
 }

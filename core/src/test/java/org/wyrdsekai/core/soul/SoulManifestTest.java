@@ -189,7 +189,7 @@ class SoulManifestTest {
         state.put("valence", 0.15);
         state.put("energy", 0.9);
         var desc = GenomeProfile.describeState(state);
-        assertThat(desc).contains("heavy");
+        assertThat(desc).contains("very sad");
         assertThat(desc).contains("energetic");
     }
 

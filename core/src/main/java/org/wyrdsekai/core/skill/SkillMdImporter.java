@@ -2,6 +2,7 @@ package org.wyrdsekai.core.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.wyrdsekai.core.library.OutputSanitizer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,6 +44,23 @@ public class SkillMdImporter {
         "\\A---\\s*\\n(.*?)\\n---\\s*\\n?(.*)", Pattern.DOTALL);
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
+    /** A SKILL.md becomes instructions a model follows: scanned before it is parsed. */
+    private final OutputSanitizer sanitizer;
+
+    public SkillMdImporter() {
+        this(OutputSanitizer.builtin(OutputSanitizer.SanitizationMode.BLOCK));
+    }
+
+    public SkillMdImporter(OutputSanitizer sanitizer) {
+        this.sanitizer = sanitizer;
+    }
+
+    private String scanned(String name, String content) {
+        if (sanitizer == null || content == null) return content;
+        var result = sanitizer.sanitize("SKILL.md:" + name, content);
+        return result.sanitizedResponse();
+    }
+
     /**
      * A modern frontmatter SKILL.md, parsed. {@code definition} is for the
      * {@link SkillRegistry}; {@code instructions} is the markdown body to
@@ -62,6 +80,7 @@ public class SkillMdImporter {
     @SuppressWarnings("unchecked")
     public Optional<ModernSkill> importModern(String content, String room) {
         if (content == null) return Optional.empty();
+        content = scanned(room, content);
         var matcher = FRONTMATTER.matcher(content);
         if (!matcher.matches()) return Optional.empty();
 
@@ -150,7 +169,7 @@ public class SkillMdImporter {
      */
     public List<SkillDefinition> importFromMarkdown(Path skillMdPath, String cliName, String room)
             throws IOException {
-        String content = Files.readString(skillMdPath);
+        String content = scanned(cliName, Files.readString(skillMdPath));
 
         // Modern frontmatter format first — contemporary ClawHub /
         // agentskills.io skills have no structured tool tables and would

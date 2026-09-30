@@ -12,6 +12,7 @@ import org.wyrdsekai.common.model.Entity;
 import org.wyrdsekai.common.model.Hint;
 import org.wyrdsekai.common.model.RoomSnapshot;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.persistence.WorldDnaService;
 import org.wyrdsekai.core.room.RoomCommand;
 import org.wyrdsekai.core.room.RoomNotification;
@@ -298,7 +299,7 @@ public class ChiefEngineerActor extends AbstractBehavior<ChiefEngineerActor.Comm
         inferenceRouter.tell(InferenceRouter.ChatRequest.fromPrompt(
             requestId, prompt,
             modulation.maxResponseTokens(), modulation.temperature(),
-            inferenceResponseAdapter));
+            inferenceResponseAdapter).withNow(NowLine.dateTime()));
 
         log.debug("Chief Engineer thinking (trigger: {} said '{}')",
             pendingTrigger.entityName(), truncate(pendingTrigger.text(), 50));
@@ -335,7 +336,7 @@ public class ChiefEngineerActor extends AbstractBehavior<ChiefEngineerActor.Comm
         inferenceRouter.tell(InferenceRouter.ChatRequest.fromPrompt(
             requestId, prompt,
             modulation.maxResponseTokens(), modulation.temperature(),
-            inferenceResponseAdapter));
+            inferenceResponseAdapter).withNow(NowLine.dateTime()));
 
         log.debug("Chief Engineer greeting player '{}'", msg.playerName());
         return this;

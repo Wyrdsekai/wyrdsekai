@@ -138,11 +138,16 @@ class TheContractIsGeneratedFromTheWorldTest {
         var offenders = new java.util.ArrayList<String>();
         try (var files = java.nio.file.Files.list(dir)) {
             for (var f : files.filter(p -> p.getFileName().toString().endsWith("Backend.java"))
-                    .filter(p -> !p.getFileName().toString().equals("OpenHandsBackend.java"))
                     .toList()) {
+                boolean home = f.getFileName().toString().equals("OpenHandsBackend.java");
                 for (var line : java.nio.file.Files.readAllLines(f)) {
                     var code = line.strip();
                     if (code.startsWith("*") || code.startsWith("//")) continue;
+                    // The constant's own home: its declarations and the two helpers built from it.
+                    // Its own dispatch once sent the raw constant, without the generated surface or
+                    // the date (2026-09-23), so the rest of that file is held to the rule too.
+                    if (home && (code.startsWith("static final String ITEMS_AS_TOOLS_PREAMBLE")
+                            || code.startsWith("return ITEMS_AS_TOOLS_PREAMBLE"))) continue;
                     if (code.contains("ITEMS_AS_TOOLS_PREAMBLE")) {
                         offenders.add(f.getFileName() + ": " + code);
                     }

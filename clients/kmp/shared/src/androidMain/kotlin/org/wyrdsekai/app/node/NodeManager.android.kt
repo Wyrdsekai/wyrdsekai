@@ -1,9 +1,12 @@
 package org.wyrdsekai.app.node
 
+import org.wyrdsekai.app.i18n.currentUiStrings
+import org.wyrdsekai.app.engine.between.HomeBusLink
+import org.wyrdsekai.app.engine.between.NatsBetweenClient
+import org.wyrdsekai.app.state.TokenStore
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.wyrdsekai.app.engine.PhoneNode
 import org.wyrdsekai.app.engine.agent.CompanionCapabilityBridge
@@ -14,7 +17,6 @@ import org.wyrdsekai.app.engine.persistence.AndroidEventJournal
 import org.wyrdsekai.app.engine.persistence.AndroidVitalityStore
 import org.wyrdsekai.app.engine.persistence.AndroidSoulManifestStore
 import org.wyrdsekai.app.engine.persistence.FileBackedItemStore
-import org.wyrdsekai.app.engine.discovery.InferenceDiscovery
 import org.wyrdsekai.app.engine.soul.BootstrapSoulManifest
 import org.wyrdsekai.app.engine.soul.NamedBootstrapManifest
 import org.wyrdsekai.app.engine.soul.SoulSyncManager
@@ -23,6 +25,7 @@ import org.wyrdsekai.app.engine.tier.ResourceProbe
 import org.wyrdsekai.app.engine.tier.ResourceSnapshot
 import org.wyrdsekai.app.engine.tier.ThermalState
 import org.wyrdsekai.app.engine.tier.TierManager
+import org.wyrdsekai.app.hermod.ConsentMint
 import org.wyrdsekai.app.hermod.HermodDoorman
 import org.wyrdsekai.app.hermod.HermodListener
 import org.wyrdsekai.app.inference.ChatMessage
@@ -35,7 +38,15 @@ import org.wyrdsekai.app.inference.ModelCatalog
 import org.wyrdsekai.app.inference.ModelManager
 import org.wyrdsekai.app.inference.RemoteAuthType
 import org.wyrdsekai.app.engine.study.SqliteStudyStore
+import org.wyrdsekai.app.crypto.decodeZoneKey
+import org.wyrdsekai.app.network.HomeLink
 import org.wyrdsekai.app.network.HouseholdTrustStore
+import org.wyrdsekai.app.network.InviteSecurity
+import org.wyrdsekai.app.network.SecurityNotice
+import org.wyrdsekai.app.network.SecurityNotices
+import org.wyrdsekai.app.network.homeBaseUrl
+import org.wyrdsekai.app.network.homeBusUrl
+import org.wyrdsekai.app.network.relayLegUrl
 import org.wyrdsekai.app.network.SoulClient
 import org.wyrdsekai.app.network.parseWsHostPort
 import org.wyrdsekai.app.network.pinRelayFromInviteFingerprints
@@ -76,6 +87,8 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
 
     private var llamaServerManager: LlamaServerManager? = null
     private var hermodDoorman: HermodDoorman? = null
+    private var homeBusLink: HomeBusLink? = null
+    private var pairingWatch: Job? = null
 
     actual fun start() {
         val logFile = java.io.File(System.getProperty("wyrdsekai.data.dir") ?: "/data/local/tmp", "wyrd-debug.log")
@@ -167,9 +180,22 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                 val homeName = System.getProperty("wyrdsekai.home.name") ?: "Home"
                 log("homeName=$homeName")
 
-                val pairedServerUrl = System.getProperty("wyrdsekai.server.url")
+                // The home's HTTP base: the invite's https address on the home
+                // network, or an encrypted / local one — never plain http off
+                // the device ( W2).
+                val homeStore = TokenStore()
+                val pairedServerUrl = HomeLink.homeBase(
+                    System.getProperty("wyrdsekai.server.url"), homeStore.loadLanHttps(), homeStore.loadHomeCaFp())
                 val pairingToken = System.getProperty("wyrdsekai.pairing.token")
                 log("pairedServerUrl=$pairedServerUrl, hasPairingToken=${pairingToken != null}")
+                if (HomeLink.needsRepairForLan(homeStore.loadServerUrl(), homeStore.loadLanHttps(), homeStore.loadHomeCaFp())
+                    && !homeStore.loadLanRepairNoticed()) {
+                    // Paired before home TLS: the plain http address is not used;
+                    // the relay carries everything. Say so once.
+                    SecurityNotices.publish(SecurityNotice.RepairForHomeNetwork)
+                    homeStore.saveLanRepairNoticed(true)
+                    log("home address is plain http from before home TLS — not used; relay only, re-pair notice shown")
+                }
 
                 val selectedModelTier = System.getProperty("wyrdsekai.model.tier") ?: "tiny"
                 log("modelTier=$selectedModelTier")
@@ -237,11 +263,11 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                         doors = {
                             HermodDoorman.Doors(
                                 deviceToken = store.loadPairingToken(),
-                                serverUrl = store.loadServerUrl() ?: pairedServerUrl,
+                                serverUrl = store.homeBaseUrl() ?: pairedServerUrl,
                                 tunnel = org.wyrdsekai.app.engine.transit.RelayTunnelHolder.get()
                                     ?.let { bc ->
                                         store.loadZoneId()?.let { z ->
-                                            HermodDoorman.TunnelDoor(bc, z)
+                                            HermodDoorman.TunnelDoor(bc, z, decodeZoneKey(store.loadZoneKey()))
                                         }
                                     },
                             )
@@ -259,7 +285,7 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                 // process-global holder for LocalRoomScreen to consume.
                 scope.launch {
                     setupNatsServerClient(
-                        scope, pairedServerUrl, inferenceUrl, companionName,
+                        scope, companionName,
                         log = { log(it) },
                         onHomeZoneUnreachable = { reason ->
                             log("home zone unreachable — $reason")
@@ -273,7 +299,6 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                             _phoneNode?.emitSystemProse(msg)
                         },
                         onAccountUserId = { uid, tok -> _phoneNode?.setStudyAccount(uid, tok) },
-                        onBetweenReady = { bc -> _phoneNode?.attachBetweenClient(bc) },
                     )
                 }
 
@@ -319,12 +344,13 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
 
                 // --- Soul Sync: pull latest manifest from server ---
                 // Non-fatal: standalone works without server sync.
-                val householdHost = System.getProperty("wyrdsekai.household.host")
-                val serverUrl = System.getProperty("wyrdsekai.server.url")
-                    ?: householdHost?.let { "http://$it:8080" }
+                val serverUrl = pairedServerUrl
                 if (serverUrl != null && comp != null) {
                     try {
-                        val token = System.getProperty("wyrdsekai.token") ?: ""
+                        // /api/soul/* needs a login (ApiAuth): the session token,
+                        // or this phone's device token when it is linked to a person.
+                        val token = System.getProperty("wyrdsekai.auth.token")
+                            ?: pairingToken ?: ""
                         val soulClient = SoulClient(serverUrl)
                         val syncManager = SoulSyncManager(
                             soulClient = soulClient,
@@ -366,8 +392,7 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                                 // not a thin terminal — household errands run on ITS
                                 // model. Consent overrides the skip, home zone or not.
                                 val lendsCompute = homeZoneTs.loadHermodConsent()
-                                if (!lendsCompute
-                                    && (homeZoneTs.loadRelayUrl() != null || homeZoneTs.loadNatsUrl() != null)) {
+                                if (!lendsCompute && homeZoneTs.relayLegUrl() != null) {
                                     _modelStatus.value = "remote"
                                     _modelStatusText.value = "Using your home zone"
                                     log("Home zone configured — skipping local model (inference over the relay)")
@@ -434,80 +459,68 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
                             }
                         }
 
-                        // --- Background household discovery (local mode) ---
-                        // If PhoneNode was started without a Between client (no pairing),
-                        // scan the LAN periodically for a Wyrdsekai server and auto-connect.
-                        // The Between connection is additive — enhances standalone with
-                        // household awareness (headlines, sync, delegation).
-                        if (node.headlineSyncClient == null && node.budDelegation == null) {
-                            scope.launch {
-                                log("Starting background household discovery...")
-                                while (isActive && _state.value == "running") {
-                                    try {
-                                        val servers = InferenceDiscovery.discover()
-                                        val server = servers.firstOrNull { it.natsUrl != null }
-                                        if (server != null && node.state.value == PhoneNode.State.RUNNING) {
-                                            val discoveredNatsUrl = server.natsUrl!!
-                                            // Convert nats:// to ws:// for WebSocket transport
-                                            val wsNatsUrl = discoveredNatsUrl
-                                                .replace("nats://", "ws://")
-                                            log("Auto-discovered household: ${server.name} at ${server.url}, NATS=$discoveredNatsUrl")
-
-                                            val between = org.wyrdsekai.app.engine.between.NatsBetweenClient(scope)
-                                            between.autoReconnect = true
-                                            between.connect(wsNatsUrl)
-
-                                            if (between.isConnected) {
-                                                // Re-create PhoneNode with Between wired in.
-                                                // PhoneNode takes betweenClient as constructor param,
-                                                // so we trigger Between sync via the existing node's
-                                                // internal method by setting the field and calling sync.
-                                                // Since PhoneNode.betweenClient is a constructor val,
-                                                // we call startBetweenSync indirectly by notifying.
-                                                // The simplest approach: save the NATS URL for next
-                                                // launch and wire BudDelegation now via HTTP.
-                                                log("Between connected! Saving NATS URL for next launch.")
-                                                System.setProperty("wyrdsekai.nats.url", discoveredNatsUrl)
-                                                // Wired-but-dead audit: attach NOW so presence +
-                                                // study-sync come up this session, not next launch.
-                                                node.attachBetweenClient(between)
-
-                                                // Wire HTTP-based BudDelegation with discovered server
-                                                val comp = node.companion
-                                                if (comp != null && comp.budDelegation == null) {
-                                                    val delegation = org.wyrdsekai.app.engine.between.BudDelegation(
-                                                        between = between,
-                                                        nodeId = node.nodeId,
-                                                        familyId = node.familyId,
-                                                        serverUrl = server.url,
-                                                        deviceToken = pairingToken,
-                                                    )
-                                                    delegation.startListening()
-                                                    node.budDelegation = delegation
-                                                    comp.budDelegation = delegation
-                                                    log("BudDelegation wired via auto-discovered server")
-                                                }
-
-                                                // Auto-configure inference from server's advertised config
-                                                val infCfg = server.inferenceConfig
-                                                if (infCfg != null && infCfg.available) {
-                                                    val infUrl = infCfg.baseUrl ?: server.url
-                                                    System.setProperty("wyrdsekai.inference.url", infUrl)
-                                                    if (infCfg.companionModel != null) {
-                                                        System.setProperty("wyrdsekai.companion.model", infCfg.companionModel)
-                                                    }
-                                                    log("Inference auto-configured: provider=${infCfg.provider}, url=$infUrl, model=${infCfg.companionModel}")
-                                                }
-
-                                                break // Stop scanning — connected
-                                            } else {
-                                                log("Between connection failed, will retry")
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        log("Background discovery error: ${e.message}")
+                        // --- The home's own bus on the home network (W2) ---
+                        // Study sync runs only over an encrypted, authenticated
+                        // link: the home's NATS websocket at the address the home
+                        // named (the invite's home_bus or the pairing reply's
+                        // natsUrl; wss://<lan host>:4223 only when it named none),
+                        // pinned to the household CA, as this phone's own NATS
+                        // account from pairing (D3). Never plain ws://, never the
+                        // relay (its pub/sub is readable there). Retried every
+                        // minute while the phone is away from home. (Not keyed on
+                        // budDelegation: a paired phone always has the HTTPS one,
+                        // which kept this loop from ever starting.)
+                        // A pairing made while the app runs (the consent toggle, any
+                        // pairing door) starts the bus then, not at the next start.
+                        if (node.studySync == null && node.headlineSyncClient == null) {
+                            val link = HomeBusLink(
+                                scope = scope,
+                                target = {
+                                    val store = TokenStore()
+                                    val url = store.homeBusUrl()
+                                    val user = store.loadHomeNatsUser()
+                                    val pass = store.loadHomeNatsPassword()
+                                    if (url == null || store.loadHomeCaFp() == null || user.isNullOrBlank() || pass.isNullOrBlank()) null
+                                    else HomeBusLink.Target(url, user, pass)
+                                },
+                                open = { t ->
+                                    val store = TokenStore()
+                                    val busAt = parseWsHostPort(t.url)
+                                    if (busAt != null && HouseholdTrustStore.getExact(busAt.first, busAt.second) == null) {
+                                        val pinned = InviteSecurity.pinHome(store.loadLanHttps(), store.loadHomeCaFp(), store.loadHomeBusUrl())
+                                        log("home CA pin for ${busAt.first}:${busAt.second}: ${if (pinned) "OK" else "not reachable yet"}")
                                     }
-                                    delay(HOUSEHOLD_DISCOVERY_INTERVAL_MS)
+                                    NatsBetweenClient(scope).apply {
+                                        autoReconnect = true
+                                        setCredentials(t.user, t.pass)
+                                        connect(t.url)
+                                    }
+                                },
+                                // Study sync only, addressed by this phone's bus login
+                                // (the home lets a phone hear only frames addressed to it).
+                                attach = { bc, t -> node.attachHomeBus(bc, t.user) },
+                                onNotPaired = {
+                                    log("No home-network pairing (home_ca_fp + NATS account) — the home's bus is not used")
+                                    // A phone with a home zone (relay or home network) is told
+                                    // plainly when its Study sync waits; a standalone phone is not.
+                                    if (!TokenStore().loadZoneId().isNullOrBlank()) {
+                                        node.emitSystemProse(currentUiStrings().secSyncNeedsHomePairing)
+                                    }
+                                },
+                                onWaiting = {
+                                    if (!TokenStore().loadZoneId().isNullOrBlank()) {
+                                        node.emitSystemProse(currentUiStrings().secSyncWaitsForHome)
+                                    }
+                                },
+                                log = { log(it) },
+                                retryMs = HOUSEHOLD_DISCOVERY_INTERVAL_MS,
+                            )
+                            homeBusLink = link
+                            link.start()
+                            pairingWatch = scope.launch {
+                                ConsentMint.paired.collect {
+                                    log("Paired while running — joining the home's bus")
+                                    link.start()
                                 }
                             }
                         }
@@ -530,6 +543,10 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
     }
 
     actual fun stop() {
+        pairingWatch?.cancel()
+        pairingWatch = null
+        homeBusLink?.stop()
+        homeBusLink = null
         hermodDoorman?.stop()
         hermodDoorman = null
         _phoneNode?.stop()
@@ -559,8 +576,6 @@ actual class NodeManager actual constructor(private val scope: CoroutineScope) {
  */
 private suspend fun setupNatsServerClient(
     scope: CoroutineScope,
-    pairedServerUrl: String?,
-    inferenceUrl: String,
     companionName: String,
     log: (String) -> Unit,
     // Tier-1: reaching discovery/tunnel means a home-zone connection was intended;
@@ -570,31 +585,16 @@ private suspend fun setupNatsServerClient(
     // The authenticated account userId (owns the Study) — surfaced after mcp.login
     // so the phone syncs the Study under the account, not the companion soul DID.
     onAccountUserId: (String, String?) -> Unit = { _, _ -> },
-    // The connected relay-tunnel Between client — surfaced so PhoneNode can adopt
-    // it (attachBetweenClient) and bring up presence/study-sync on the relay leg;
-    // the ctor betweenClient is null on this path.
-    onBetweenReady: (org.wyrdsekai.app.engine.between.BetweenClient) -> Unit = {},
 ) {
     try {
-        // An explicit NATS URL — set by a wyrdphone:// invite (
-        // P5) or saved by a prior discovery — wins over derivation: invite-only
-        // phones have no server URL at all, so deriving from it would skip the
-        // relay leg entirely.
+        // The relay leg is the invite's relay, and only
+        // that: never an address derived from the home's own, never a pairing
+        // reply's natsUrl (that is the home's bus), never a loopback address.
         val explicitNatsUrl = System.getProperty("wyrdsekai.nats.url")
-        val wssUrl: String
-        if (!explicitNatsUrl.isNullOrBlank()) {
-            wssUrl = if (explicitNatsUrl.startsWith("nats://"))
-                explicitNatsUrl.replace("nats://", "ws://")
-            else explicitNatsUrl
-        } else {
-            // Same probe-URL precedence as before: prefer the paired server URL,
-            // fall back to inferenceUrl on legacy single-box dev setups.
-            val sUrl = pairedServerUrl?.takeIf { it.isNotBlank() } ?: inferenceUrl
-            if (sUrl.isBlank()) {
-                log("NATS setup skipped — no server URL configured")
-                return
-            }
-            wssUrl = deriveRelayWss(sUrl)
+        val wssUrl = HomeLink.usableRelayUrl(explicitNatsUrl) ?: run {
+            log(if (explicitNatsUrl.isNullOrBlank()) "No relay from an invite — the relay leg is not used"
+                else "Saved relay address is not usable ($explicitNatsUrl) — the relay leg is not used; scan the invite again")
+            return
         }
         log("NATS setup wss=$wssUrl")
 
@@ -609,7 +609,7 @@ private suspend fun setupNatsServerClient(
         if (fps.isNotEmpty()) {
             parseWsHostPort(wssUrl)?.let { (host, port) ->
                 PlatformContext.app?.let { HouseholdTrustStore.init(it) }
-                if (HouseholdTrustStore.get(host) == null) {
+                if (HouseholdTrustStore.getExact(host, port) == null) {
                     val pinned = pinRelayFromInviteFingerprints(host, port, fps)
                     log("NATS pre-connect pin for $host: ${if (pinned) "OK" else "FAILED"}")
                 }
@@ -632,6 +632,16 @@ private suspend fun setupNatsServerClient(
             android.util.Log.w("WyrdNode", "No relay credentials on this device — scan/paste the invite again")
             return
         }
+        // Everything on the relay is sealed to the home's key from the invite
+        // ( W3). A phone paired before 0.5.0 has none:
+        // nothing is sent, and the person is told to pair again.
+        val zoneKey = decodeZoneKey(natsCreds.loadZoneKey())
+        if (zoneKey == null) {
+            log("No home tunnel key (paired before 0.5.0) — the relay is not used until the phone is paired again")
+            SecurityNotices.publish(SecurityNotice.RepairForTunnel)
+            onHomeZoneUnreachable("no home tunnel key; pair the phone again")
+            return
+        }
 
         // We need a zoneId to scope subsequent subjects. Two paths:
         // 1. Cached from a prior auth — fast, deterministic, the common case.
@@ -648,6 +658,7 @@ private suspend fun setupNatsServerClient(
             zoneId = cachedZone ?: "_unknown",
             natsUser = natsUser,
             natsPassword = natsPass,
+            zoneKey = zoneKey,
         )
         val resolvedZone: String = if (cachedZone != null) {
             log("NATS zone=$cachedZone (cached — discovery skipped)")
@@ -736,10 +747,11 @@ private suspend fun setupNatsServerClient(
             tunnel.connectWithRetry(wssUrl)
             if (tunnel.isConnected) {
                 org.wyrdsekai.app.engine.transit.RelayTunnelHolder.set(tunnel)
-                log("Relay tunnel up — phone terminal tunnels full session over wyrd.tunnel.$resolvedZone.*")
-                // Hand the authenticated relay client to PhoneNode so the Between
-                // subsystems (incl. Study CRDT sync) come up on the relay leg.
-                onBetweenReady(tunnel)
+                log("Relay tunnel up — phone terminal tunnels full session over wyrd.tunnel.$resolvedZone.* (sealed)")
+                // The Between subsystems (presence, Study sync, …) do NOT come up
+                // on this leg: their pub/sub would cross the relay readable,
+                // session token included. They run on the home's own bus (see
+                // the home-bus loop in start()).
             } else {
                 org.wyrdsekai.app.engine.transit.RelayTunnelHolder.clear()
                 log("Relay tunnel BetweenClient failed to connect — terminal stays on offline node")
@@ -754,17 +766,4 @@ private suspend fun setupNatsServerClient(
         log("NATS setup failed: ${e.message} — staying local-only")
         onHomeZoneUnreachable("connection failed: ${e.message}")
     }
-}
-
-/**
- * Derive the relay's NATS WebSocket+TLS URL from the user's server URL.
- * Mirrors [StandaloneNodeContext.deriveRelayWss] in the RN client:
- * `https://relay-node` → `wss://relay-node:4443`, drop port + path, strip protocol.
- */
-private fun deriveRelayWss(serverUrl: String): String {
-    val stripped = serverUrl
-        .substringAfter("://")
-        .substringBefore("/")
-        .substringBefore(":")
-    return "wss://$stripped:4443"
 }

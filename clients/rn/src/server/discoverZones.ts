@@ -11,6 +11,7 @@
  */
 import { useZoneBankStore } from '../state/zoneBankStore';
 import type { NatsResult } from './NatsServerClient';
+import { decodePublicKey } from '../crypto/sealedTunnel';
 
 /** A zone surfaced by the directory, normalised for the UI. */
 export interface DiscoveredZone {
@@ -21,6 +22,9 @@ export interface DiscoveredZone {
   displayName?: string;
   tagline?: string;
   tags: string[];
+  /** The zone's public tunnel key, when its directory entry publishes one: a
+   * knock is sealed to it ( W3). */
+  zk?: string;
   /** True if this zone is already in the user's bank (don't re-request). */
   inBank: boolean;
 }
@@ -52,6 +56,7 @@ export function normalizeDiscovered(raw: Array<Record<string, unknown>>): Discov
       displayName: str(m.displayName),
       tagline: str(m.tagline),
       tags: Array.isArray(m.tags) ? (m.tags as unknown[]).filter((t): t is string => typeof t === 'string') : [],
+      zk: decodePublicKey(str(m.zk)) ? str(m.zk) : undefined,
       inBank: banked.has(zoneLabel),
     });
   }

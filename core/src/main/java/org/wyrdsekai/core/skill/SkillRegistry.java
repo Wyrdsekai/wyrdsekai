@@ -64,8 +64,8 @@ public class SkillRegistry {
                 elapsed, executor.tier(), skillId);
         }
 
-        // 5. Sanitize output
-        if (raw.success() && raw.output() != null && sanitizer != null) {
+        // 5. Sanitize output — an error's text comes from the tool too.
+        if (raw.output() != null && sanitizer != null) {
             var sanitized = sanitizer.sanitize(skillId, raw.output());
             if (!sanitized.clean()) {
                 raw = new SkillResult(raw.success(), sanitized.sanitizedResponse(),

@@ -4,6 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.between.RelaySessionTransport;
 import org.wyrdsekai.between.federation.FederationService;
+import org.wyrdsekai.between.federation.BilateralAgreement;
+import org.wyrdsekai.between.federation.ZoneSignedMessages;
+import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.between.layer.NodeCapabilities;
 import org.wyrdsekai.between.layer.ResourceRegistry;
 import org.wyrdsekai.common.topology.NodeResources;
@@ -53,23 +56,32 @@ public final class CrossZoneRecipeWiring {
     private final Map<RelaySessionTransport, NatsRecipeClient> clientCache = new ConcurrentHashMap<>();
     private volatile NatsRecipeServer lender;
 
+    /**
+     * @param signer this node's identity: borrow requests travel signed and name this zone, and the
+     *               lender takes only requests signed by an agreed zone's key. Null leaves the lender off.
+     */
     public CrossZoneRecipeWiring(String localZone,
                                  Supplier<RelaySessionTransport> transportSupplier,
                                  FederationService federation,
                                  Function<String, RecipeManifest> manifestResolver,
-                                 long borrowTimeoutSec) {
+                                 long borrowTimeoutSec,
+                                 NodeIdentity signer) {
         this.localZone = localZone;
         this.transportSupplier = transportSupplier;
         this.federation = federation;
         this.manifestResolver = manifestResolver;
         this.borrowTimeoutSec = borrowTimeoutSec;
+        this.seal = signer == null ? null
+            : new ZoneSignedMessages(federation, localZone, signer, "recipe borrow");
     }
 
-    /** Trust predicate: a standing bilateral agreement with the peer zone. */
+    private final ZoneSignedMessages seal;
+
+    /** Trust predicate: an ACTIVE bilateral agreement with the peer zone (a pending or revoked one is not a yes). */
     public boolean isTrusted(String peerZone) {
         if (peerZone == null || peerZone.equals(localZone)) return false;
         try {
-            return federation.getAgreement(localZone, peerZone).isPresent();
+            return federation.getAgreement(localZone, peerZone).map(BilateralAgreement::isActive).orElse(false);
         } catch (Exception e) {
             return false; // fail closed
         }
@@ -106,8 +118,11 @@ public final class CrossZoneRecipeWiring {
             if (transport == null || !transport.isConnected()) {
                 return local.dispatch(did, recipeName, params); // relay not up → local only
             }
-            var client = clientCache.computeIfAbsent(transport,
-                t -> new NatsRecipeClient(t, borrowTimeoutSec));
+            var client = clientCache.computeIfAbsent(transport, t -> {
+                var c = new NatsRecipeClient(t, borrowTimeoutSec);
+                c.setSeal(seal);
+                return c;
+            });
             var crossZone = new CrossZoneRecipeDispatcher(local, client, localZone,
                 peers, trust, manifestResolver, borrowTimeoutSec);
             return crossZone.dispatch(did, recipeName, params);
@@ -125,8 +140,13 @@ public final class CrossZoneRecipeWiring {
             log.warn("CrossZoneRecipeWiring.startLender: transport not connected — lender not started");
             return;
         }
+        if (seal == null) {
+            log.warn("CrossZoneRecipeWiring.startLender: no node identity to check signed requests — lender not started");
+            return;
+        }
         if (lender != null) lender.close();
         lender = new NatsRecipeServer(transport, localZone, this::isTrusted, executor);
+        lender.setSeal(seal);
         lender.start();
     }
 

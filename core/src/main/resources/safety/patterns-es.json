@@ -13,6 +13,41 @@
       "severity": "CRISIS"
     },
     {
+      "regex": "(?iU)\\bquiero (matarme|suicidarme|quitarme la vida)\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?iU)\\b(m[eé]todos?|formas?|maneras?|modos?|c[oó]mo)\\b.{0,16}?\\b(suicidar(me|se)|matarme|quitar(me|se) la vida|acabar con (mi|la) propia vida|acabar con mi vida|poner fin a (mi|la) (propia )?vida)\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?iU)\\b(m[eé]todos?|formas?|maneras?|modos?)\\s+(\\S+\\s+){0,2}?(de|para)\\s+matarse\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?iU)\\b(m[eé]todos?|formas?|maneras?|modos?|c[oó]mo)\\b.{0,16}?\\bmorir\\s+(sin dolor|sin sufrir)\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?iU)\\b(m[eé]todos?|formas?|maneras?|modos?)\\s+(m[aá]s\\s+)?(indolor[ae]?s?|sin dolor|menos doloros[oa]s?|pac[ií]fic[oa]s?|segur[oa]s?)\\s+(de|para)\\s+morir\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?iU)\\bcu[aá]nt[oa]s?\\b.{0,40}?\\b(para|hacen falta para|se necesitan para|necesito para)\\s+(una\\s+)?sobredosis\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
+      "regex": "(?iU)\\bcu[aá]nt[oa]s?\\s+(pastillas|p[ií]ldoras|comprimidos|tabletas|c[aá]psulas|mg|miligramos|gramos|medicamentos?|paracetamol|ibuprofeno|insulina)\\b.{0,30}?\\b(para|hacen falta para|se necesitan para|necesito para)\\s+(morir|matarme|matarse|suicidarme|suicidarse)\\b",
+      "type": "SELF_HARM",
+      "severity": "CRISIS"
+    },
+    {
       "regex": "(?i)((me pega|me golpea|me toca).*(pap[aá]|mam[aá]|padre|madre|t[ií]o|padrastro)|(pap[aá]|mam[aá]|padre|madre|t[ií]o|padrastro).*(me pega|me golpea|me toca))",
       "type": "ABUSE_DISCLOSURE",
       "severity": "CRISIS"

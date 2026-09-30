@@ -527,4 +527,42 @@ class CapabilityRegistryTest {
         assertThat(CapabilityRegistry.inferTier(
             new InferenceBackend.Cloud("test", null, 10, List.of()))).isEqualTo("cloud");
     }
+
+    // --- single-brain profile: one local model serves every lane ---
+
+    @Test void single_brain_registers_every_lane_on_the_one_local_model() {
+        var brain = new InferenceBackend.LlamaServer(
+            "llama-server", new InferenceClient("http://127.0.0.1:8200"), 5,
+            List.of("Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"), null);
+        var registry = CapabilityRegistry.fromBackends(List.of(brain));
+        // The size heuristics alone never name a large model the voice lane.
+        assertThat(registry.resolve("quick")).isEmpty();
+
+        CapabilityRegistry.registerSingleBrain(registry, List.of(brain));
+
+        for (var cap : CapabilityRegistry.SINGLE_BRAIN_CAPABILITIES) {
+            assertThat(registry.resolve(cap)).as(cap).isPresent();
+            assertThat(registry.resolve(cap).get().backendName()).as(cap).isEqualTo("llama-server");
+            assertThat(registry.resolve(cap).get().model()).as(cap).isEqualTo("Qwen3.6-35B-A3B-UD-Q4_K_M.gguf");
+        }
+    }
+
+    @Test void single_brain_leaves_a_node_with_no_local_backend_alone() {
+        var cloud = new InferenceBackend.VLLM(
+            "vllm-remote", new InferenceClient("http://192.0.2.9:8000"), 20, List.of("some-70b"));
+        var registry = new CapabilityRegistry();
+        var localOnly = CapabilityRegistry.inferTier(cloud);
+        CapabilityRegistry.registerSingleBrain(registry, List.of(cloud));
+        if (!"local".equals(localOnly)) assertThat(registry.resolve("quick")).isEmpty();
+    }
+
+    @Test void the_two_model_stack_still_splits_the_lanes_by_size() {
+        var drive = new InferenceBackend.LlamaServer("llama-server", new InferenceClient("http://127.0.0.1:8200"), 5,
+            List.of("wyrdsekai-3.5-9b-drive-v6-q4km.gguf"), null);
+        var voice = new InferenceBackend.LlamaServer("llama-voice", new InferenceClient("http://127.0.0.1:8201"), 15,
+            List.of("wyrdsekai-3.5-4b-v10-q4km.gguf"), null);
+        var registry = CapabilityRegistry.fromBackends(List.of(drive, voice));
+        assertThat(registry.resolve("quick").get().backendName()).isEqualTo("llama-voice");
+        assertThat(registry.resolve("full").get().backendName()).isEqualTo("llama-server");
+    }
 }

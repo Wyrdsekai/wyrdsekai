@@ -40,6 +40,10 @@ public final class InviteService {
         public boolean isValid() {
             return !isExpired() && !isConsumed();
         }
+        /** The one-time steward invite from {@link #createBootstrapInvite}: it founds the household. */
+        public boolean isBootstrap() {
+            return createdBy == null && "steward".equals(role);
+        }
     }
 
     public InviteService(String jdbcUrl) {
@@ -168,17 +172,19 @@ public final class InviteService {
                 + dialect.currentEpoch();
             try (var stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, code.trim().toLowerCase());
-                var rs = stmt.executeQuery();
-                if (!rs.next()) return Optional.empty();
-
-                var invite = new Invite(
-                    rs.getString("id"), rs.getString("code"),
-                    rs.getString("intended_name"), rs.getString("role"),
-                    rs.getString("created_by"),
-                    Instant.ofEpochSecond(rs.getLong("created_at")),
-                    Instant.ofEpochSecond(rs.getLong("expires_at")),
-                    null, null
-                );
+                Invite invite;
+                // The read ends before the write (see PairingService.verifyCode).
+                try (var rs = stmt.executeQuery()) {
+                    if (!rs.next()) return Optional.empty();
+                    invite = new Invite(
+                        rs.getString("id"), rs.getString("code"),
+                        rs.getString("intended_name"), rs.getString("role"),
+                        rs.getString("created_by"),
+                        Instant.ofEpochSecond(rs.getLong("created_at")),
+                        Instant.ofEpochSecond(rs.getLong("expires_at")),
+                        null, null
+                    );
+                }
 
                 // Consume the invite atomically
                 var consumeSql = "UPDATE invites SET consumed_by = ?, consumed_at = "
@@ -403,6 +409,22 @@ public final class InviteService {
                 return;
             }
             log.warn("Failed to replicate invite: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Mark an invite consumed because another household machine redeemed it (replication carries the
+     * invite id, never the code). No-op when it is already consumed or unknown here.
+     */
+    public void consumeReplicated(String inviteId, String consumedBy) {
+        try (var conn = getConnection();
+             var stmt = conn.prepareStatement("UPDATE invites SET consumed_by = ?, consumed_at = "
+                 + dialect.currentEpoch() + " WHERE id = ? AND consumed_by IS NULL")) {
+            stmt.setString(1, consumedBy);
+            stmt.setString(2, inviteId);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            log.warn("Failed to mark replicated invite {} consumed: {}", inviteId, e.getMessage());
         }
     }
 

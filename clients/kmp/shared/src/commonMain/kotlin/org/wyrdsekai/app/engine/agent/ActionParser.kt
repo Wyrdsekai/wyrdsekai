@@ -1166,13 +1166,34 @@ object ActionParser {
 
     /**
      * Extract the conversational prose from a response that contains an action block.
-     * Returns everything before the first ```json block.
+     * Returns everything before the first ```json block, without raw action JSON or
+     * a repeated date line ([stripNowLineEcho]).
      */
     fun extractProse(text: String?): String {
         if (text == null) return ""
         val jsonStart = text.indexOf("```json")
-        if (jsonStart <= 0) return stripRawActionJson(text.trim())
-        return stripRawActionJson(text.substring(0, jsonStart).trim())
+        if (jsonStart <= 0) return stripNowLineEcho(stripRawActionJson(text.trim()))
+        return stripNowLineEcho(stripRawActionJson(text.substring(0, jsonStart).trim()))
+    }
+
+    /**
+     * The date line a request carries ([org.wyrdsekai.app.inference.NowLine]: `[Now: …]`,
+     * and a replay's `[Asked: …]`) repeated at the start of a line of her reply. Port of
+     * core ActionParser.NOW_LINE_ECHO: anchored to a line start, the closing bracket
+     * optional (small models drop it). Her own words that open with "Now:" carry no
+     * bracket and stay.
+     */
+    private val NOW_LINE_ECHO = Regex("""(?m)^[ \t]*\[(?:Now|Asked):[^\]\n]*\]?[ \t]*(?:\n|$)""")
+
+    /**
+     * [text] without a date line the model repeated from its request. The phone had no
+     * such strip, so the line was said aloud, and in study mode written into her journal,
+     * as it came. Trimmed when a line was removed; otherwise [text] itself.
+     */
+    fun stripNowLineEcho(text: String): String {
+        if (!text.contains("[Now:") && !text.contains("[Asked:")) return text
+        val cleaned = NOW_LINE_ECHO.replace(text, "")
+        return if (cleaned == text) text else cleaned.trim()
     }
 
     /**

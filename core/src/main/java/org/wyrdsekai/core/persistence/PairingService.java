@@ -2,6 +2,7 @@ package org.wyrdsekai.core.persistence;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.crypto.HouseholdBus;
 
 import java.security.SecureRandom;
 import java.sql.Connection;
@@ -40,11 +41,31 @@ public final class PairingService {
     public record PairingChallenge(String challengeId, String code, Instant expiresAt) {}
     public record PairingResult(String token, String householdId, String householdName,
                                 String serverDid, String natsUrl, String serverUrl,
-                                String relayUrl, String relayToken) {
+                                String relayUrl, String relayToken,
+                                String natsUser, String natsPass) {
         /** Backward-compatible constructor without relay fields. */
         public PairingResult(String token, String householdId, String householdName,
                              String serverDid, String natsUrl, String serverUrl) {
             this(token, householdId, householdName, serverDid, natsUrl, serverUrl, null, null);
+        }
+
+        /** Without household-bus credentials. */
+        public PairingResult(String token, String householdId, String householdName,
+                             String serverDid, String natsUrl, String serverUrl,
+                             String relayUrl, String relayToken) {
+            this(token, householdId, householdName, serverDid, natsUrl, serverUrl, relayUrl, relayToken, null, null);
+        }
+
+        /**
+         * D3: the phone's own login for the home bus (wss://&lt;host&gt;:4223 on the LAN), as the
+         * pairing replies carry it: {@code nats_user}, {@code nats_pass}. Empty when none was issued.
+         */
+        public Map<String, String> natsCredentialFields() {
+            if (natsUser == null || natsPass == null) return Map.of();
+            var m = new LinkedHashMap<String, String>();
+            m.put("nats_user", natsUser);
+            m.put("nats_pass", natsPass);
+            return m;
         }
     }
     public record PairedDevice(String id, String name, String type, String publicKey,
@@ -190,19 +211,29 @@ public final class PairingService {
                 + " FROM pairing_challenges WHERE id = ?";
             try (var stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, challengeId);
-                var rs = stmt.executeQuery();
-                if (!rs.next()) {
-                    log.debug("Pairing challenge not found: {}", challengeId);
-                    return Optional.empty();
+                String storedCode;
+                String state;
+                int attempts;
+                long expiresAt;
+                String deviceName;
+                String deviceType;
+                String devicePublicKey;
+                // The read ends before any write: writing while it was open failed at once whenever
+                // another connection had written since the read began (SQLite in WAL mode,
+                // SQLITE_BUSY_SNAPSHOT; the same fault failed a phone's login, see AuthService.login).
+                try (var rs = stmt.executeQuery()) {
+                    if (!rs.next()) {
+                        log.debug("Pairing challenge not found: {}", challengeId);
+                        return Optional.empty();
+                    }
+                    storedCode = rs.getString("code");
+                    state = rs.getString("state");
+                    attempts = rs.getInt("attempts");
+                    expiresAt = rs.getLong("expires_at");
+                    deviceName = rs.getString("device_name");
+                    deviceType = rs.getString("device_type");
+                    devicePublicKey = rs.getString("device_public_key");
                 }
-
-                var storedCode = rs.getString("code");
-                var state = rs.getString("state");
-                var attempts = rs.getInt("attempts");
-                var expiresAt = rs.getLong("expires_at");
-                var deviceName = rs.getString("device_name");
-                var deviceType = rs.getString("device_type");
-                var devicePublicKey = rs.getString("device_public_key");
 
                 // Check state
                 if (!"pending".equals(state)) {
@@ -270,9 +301,10 @@ public final class PairingService {
                 }
 
                 log.info("Device paired: {} ({}) — token issued", deviceName, deviceType);
+                var login = issueBusLogin(deviceId);
                 return Optional.of(new PairingResult(
                     token, householdId, householdName, serverDid, natsUrl, serverUrl,
-                    relayUrl, relayToken));
+                    relayUrl, relayToken, login.user(), login.pass()));
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to verify pairing code", e);
@@ -347,6 +379,7 @@ public final class PairingService {
                 var rows = stmt.executeUpdate();
                 if (rows > 0) {
                     log.info("Device revoked: {}", deviceId);
+                    revokeBusLogin(deviceId);
                 } else {
                     log.debug("Device not found for revocation: {}", deviceId);
                 }
@@ -436,6 +469,57 @@ public final class PairingService {
         return out;
     }
 
+    // ── Household bus logins ( W2, D3) ──────────
+
+    private static final HouseholdBus.Credential NO_BUS_LOGIN = new HouseholdBus.Credential(null, null);
+    private volatile HouseholdBus bus;
+
+    /** The home bus whose logins paired devices receive (Main wires this node's own). */
+    public void useHouseholdBus(HouseholdBus bus) {
+        this.bus = bus;
+    }
+
+    /** The home bus wired by {@link #useHouseholdBus}, or null. */
+    public HouseholdBus householdBus() {
+        return bus;
+    }
+
+    /** A paired device's own login for the home bus; none (null fields) without a bus or when it fails. */
+    private HouseholdBus.Credential issueBusLogin(String deviceId) {
+        var b = bus;
+        if (b == null) return NO_BUS_LOGIN;
+        try {
+            return b.issue(HouseholdBus.Kind.PHONE, deviceId);
+        } catch (Exception e) {
+            log.warn("No household bus login for device {}: {} (it can still use the relay)", deviceId, e.getMessage());
+            return NO_BUS_LOGIN;
+        }
+    }
+
+    private void revokeBusLogin(String deviceId) {
+        var b = bus;
+        if (b == null) return;
+        try {
+            b.revoke(deviceId);
+        } catch (Exception e) {
+            log.warn("The household bus login of device {} could not be removed: {}", deviceId, e.getMessage());
+        }
+    }
+
+    /**
+     * The household key inside a join key. {@code wyrd household key} prints {@code <key>.<home_ca_fp>}
+     * so one paste carries both the secret and the fingerprint the joining machine pins.
+     */
+    public static String householdKeyPart(String joinKey) {
+        if (joinKey == null) return null;
+        var k = joinKey.trim();
+        var dot = k.lastIndexOf('.');
+        if (dot > 0 && k.substring(dot + 1).toLowerCase(Locale.ROOT).matches("[0-9a-f]{64}")) {
+            return k.substring(0, dot);
+        }
+        return k;
+    }
+
     // ── Household Key ─────────────────────────────────────────────────
 
     /**
@@ -497,9 +581,10 @@ public final class PairingService {
             }
 
             log.info("Device paired via household key: {} ({})", deviceName, deviceType);
+            var login = issueBusLogin(deviceId);
             return Optional.of(new PairingResult(
                 token, householdId, householdName, serverDid, natsUrl, serverUrl,
-                relayUrl, relayToken));
+                relayUrl, relayToken, login.user(), login.pass()));
         } catch (SQLException e) {
             throw new RuntimeException("Failed to pair with household key", e);
         }
@@ -517,16 +602,18 @@ public final class PairingService {
         var name = deviceName != null ? deviceName : "Unknown Device";
         var type = deviceType != null ? deviceType : "phone";
         try (var conn = getConnection()) {
-            var find = "SELECT token FROM paired_devices"
+            var find = "SELECT id, token FROM paired_devices"
                 + " WHERE user_id = ? AND name = ? AND revoked = 0 LIMIT 1";
             try (var sel = conn.prepareStatement(find)) {
                 sel.setString(1, userId);
                 sel.setString(2, name);
                 try (var rs = sel.executeQuery()) {
                     if (rs.next()) {
+                        // Only a hash of the bus password is kept: asking again issues a new one.
+                        var login = issueBusLogin(rs.getString("id"));
                         return new PairingResult(rs.getString("token"),
                             householdId, householdName, serverDid, natsUrl, serverUrl,
-                            relayUrl, relayToken);
+                            relayUrl, relayToken, login.user(), login.pass());
                     }
                 }
             }
@@ -547,8 +634,9 @@ public final class PairingService {
                 ins.executeUpdate();
             }
             log.info("Device identity minted for account {}: {} ({})", userId, name, type);
+            var login = issueBusLogin(deviceId);
             return new PairingResult(token, householdId, householdName,
-                serverDid, natsUrl, serverUrl, relayUrl, relayToken);
+                serverDid, natsUrl, serverUrl, relayUrl, relayToken, login.user(), login.pass());
         } catch (SQLException e) {
             throw new RuntimeException("Failed to mint device for user", e);
         }
@@ -563,6 +651,7 @@ public final class PairingService {
      * @return true if the key matches an active, non-revoked household key
      */
     public boolean validateHouseholdKey(String householdKey) {
+        householdKey = householdKeyPart(householdKey);
         if (householdKey == null || householdKey.isBlank()) return false;
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(

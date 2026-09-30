@@ -3,10 +3,11 @@ package org.wyrdsekai.between.recipe;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.between.RelayIds;
 import org.wyrdsekai.between.RelaySessionTransport;
+import org.wyrdsekai.between.federation.ZoneSignedMessages;
 
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -52,12 +53,19 @@ public final class NatsRecipeClient {
         this.timeoutSec = timeoutSec;
     }
 
+    /** Signs each borrow request with this node's key, naming this zone; a lender refuses unsigned ones. */
+    private volatile ZoneSignedMessages seal;
+
+    public void setSeal(ZoneSignedMessages seal) {
+        this.seal = seal;
+    }
+
     /** Build a borrow request for {@code recipeName}. */
     public static NatsRecipeProtocol.Request build(String sourceZone, String agentDid,
                                                    String recipeName, Map<String, Object> params,
                                                    String requisitesNote) {
         return new NatsRecipeProtocol.Request(
-            UUID.randomUUID().toString(), sourceZone, agentDid,
+            RelayIds.scopedId(sourceZone), sourceZone, agentDid,
             recipeName, params == null ? Map.of() : params, requisitesNote);
     }
 
@@ -68,7 +76,7 @@ public final class NatsRecipeClient {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("NATS relay transport not connected"));
         }
-        var requestId = req.requestId() != null ? req.requestId() : UUID.randomUUID().toString();
+        var requestId = req.requestId() != null ? req.requestId() : RelayIds.scopedId(req.sourceZone());
         var finalReq = requestId.equals(req.requestId())
             ? req
             : new NatsRecipeProtocol.Request(requestId, req.sourceZone(), req.agentDid(),
@@ -93,6 +101,9 @@ public final class NatsRecipeClient {
 
         try {
             var payload = MAPPER.writeValueAsBytes(finalReq);
+            var sealer = seal;
+            if (sealer != null) payload = sealer.seal(payload);
+            if (payload == null) throw new IllegalStateException("could not sign the borrow request");
             transport.publish(NatsRecipeProtocol.runSubject(targetZone), payload);
             log.info("Cross-zone recipe borrow: requestId={} '{}' → zone '{}' (agent={})",
                 requestId, req.recipeName(), targetZone, req.agentDid());

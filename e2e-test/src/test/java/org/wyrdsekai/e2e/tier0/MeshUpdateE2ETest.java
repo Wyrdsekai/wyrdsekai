@@ -67,9 +67,11 @@ class MeshUpdateE2ETest {
 
     // ---- helpers ----
 
+    /** As the home machine's operator (the update manifest and package are the steward's). */
     private HttpResponse<String> get(String path) throws Exception {
         return http.send(HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + path))
+            .header("Authorization", "Bearer " + TestServerBootstrap.operatorToken())
             .GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 

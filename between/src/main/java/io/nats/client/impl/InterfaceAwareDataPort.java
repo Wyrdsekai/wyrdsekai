@@ -17,6 +17,7 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.net.*;
+import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
@@ -36,6 +37,8 @@ public class InterfaceAwareDataPort implements DataPort {
     private static final Logger log = LoggerFactory.getLogger(InterfaceAwareDataPort.class);
 
     private Socket socket;
+    /** The connection's own TLS context (the household CA for the home's bus, a relay's pin). */
+    private volatile SSLContext sslContext;
     private InputStream in;
     private OutputStream out;
 
@@ -53,7 +56,9 @@ public class InterfaceAwareDataPort implements DataPort {
     private static volatile boolean ffmAvailable = true;
 
     @Override
-    public void afterConstruct(Options options) {}
+    public void afterConstruct(Options options) {
+        this.sslContext = options.getSslContext();
+    }
 
     @Override
     public void connect(String serverURI, NatsConnection conn, long timeoutNanos) throws IOException {
@@ -67,6 +72,7 @@ public class InterfaceAwareDataPort implements DataPort {
 
     @Override
     public void connect(NatsConnection conn, NatsUri natsUri, long timeoutNanos) throws IOException {
+        if (sslContext == null && conn != null) sslContext = conn.getOptions().getSslContext();
         var host = natsUri.getUri().getHost();
         var port = natsUri.getUri().getPort();
         if (port <= 0) port = 4222;
@@ -232,7 +238,10 @@ public class InterfaceAwareDataPort implements DataPort {
 
     @Override
     public void upgradeToSecure() throws IOException {
-        var factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+        // The connection's context, not the JVM default: with the default trust store the node
+        // refused its own household bus's certificate (found on a scratch boot, 2026-09-28).
+        var ctx = sslContext;
+        var factory = ctx != null ? ctx.getSocketFactory() : (SSLSocketFactory) SSLSocketFactory.getDefault();
         var sslSocket = (SSLSocket) factory.createSocket(
             socket, socket.getInetAddress().getHostAddress(), socket.getPort(), true);
         sslSocket.startHandshake();

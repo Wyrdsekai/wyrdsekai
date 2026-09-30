@@ -76,8 +76,13 @@ function onLook(ctx) {
 }
 ```
 
-Rooms get **11 hooks** and can emit **16 event types**. Scripts run under an
-enforced timeout — an infinite loop stops that room, not the world. Read
+Rooms get **11 hooks** and can emit **16 event types**. Each hook call has a
+limit: one million steps of script, and five seconds of processor time. A
+script that goes past either is stopped, so an infinite loop stops that room's
+script, not the world. A warning in the log names the room and the hook. Time
+spent waiting for another program to answer, such as an MCP server, does not
+count. The settings `WYRDSEKAI_ROOM_SCRIPT_STATEMENTS` and
+`WYRDSEKAI_ROOM_SCRIPT_CPU_MS` change the two limits. Read
 `scripts/rooms/library.js` and `scripts/rooms/study.js`; they are the best
 worked examples in the tree.
 
@@ -86,10 +91,17 @@ worked examples in the tree.
 Items declare a **capability manifest**, and this is the part to understand
 before writing one. You declare dotted capability names — `self.name`,
 `agent.mailbox.send`, `web.post` — and the tier is *inferred* from a catalogue
-of roughly 470 known names. You do not pick your own privilege level.
+of 634 known names. You do not pick your own privilege level.
 
-A name the catalogue does not recognise defaults to **tier 5**, so a typo lands
-you with *more* privilege than you meant, not less. Read the validator output.
+The manifest is enforced when the item runs. If the item calls something its
+manifest does not declare, the call is refused. That includes the raw web
+calls `http.get`, `http.post` and `http.fetch`: they need the same `web.*`
+capabilities and the same list of allowed sites (`external_domains`) as
+`world.web.*`. `wyrd items check` lists every undeclared call before anyone
+uses the item.
+
+A name the catalogue does not recognise is an error, and the item is not
+loaded. Read the validator output.
 
 [ROOMS.md](ROOMS.md) documents the full `world.*` surface, the hook list, the
 tier model and the emission types. Start there before writing anything real.

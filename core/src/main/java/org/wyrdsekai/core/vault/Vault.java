@@ -121,6 +121,15 @@ public final class Vault {
     private final VaultCipher cipher;
     /** Set when the store was sealed with a key other than ours; nothing is written or read until it is resolved. */
     private final String keyMismatch;
+    /** Transition setting {@value #ALLOW_UNSEALED_ENV}: read and reseal plain files in a sealed store. */
+    private final boolean allowUnsealed;
+    /**
+     * True once the store is known to be sealed throughout: a plain chunk or manifest in it was not
+     * written by this vault (anyone who can write the store could plant one), so it is refused.
+     */
+    private volatile boolean sealedOnly;
+    /** Set by {@link #resealPlain} when a plain file could not be sealed. */
+    private boolean plainLeft;
     private volatile Instant lastOk;
     private volatile String lastError;
     private boolean resealed;
@@ -131,9 +140,14 @@ public final class Vault {
     }
 
     public Vault(Path dataDir, Path vaultDir, Path keyFile) {
+        this(dataDir, vaultDir, keyFile, "true".equalsIgnoreCase(System.getenv(ALLOW_UNSEALED_ENV)));
+    }
+
+    Vault(Path dataDir, Path vaultDir, Path keyFile, boolean allowUnsealed) {
         this.dataDir = dataDir;
         this.vaultDir = vaultDir;
         this.keyFile = keyFile;
+        this.allowUnsealed = allowUnsealed;
         VaultCipher c;
         try {
             c = VaultCipher.load(keyFile);
@@ -143,10 +157,63 @@ public final class Vault {
         this.cipher = c;
         this.keyMismatch = checkKeyId();
         if (keyMismatch != null) { lastError = keyMismatch; log.error("Vault: {}", keyMismatch); }
+        this.sealedOnly = Files.exists(sealedMark()) || holdsSealedManifest();
+        if (allowUnsealed) {
+            log.warn("Vault: {} is set: plain (unsealed) files in {} are read and resealed as if this vault wrote them. "
+                + "Unset it once the store is resealed.", ALLOW_UNSEALED_ENV, vaultDir);
+        }
     }
 
     public static final String KEY_FILE = "vault.key";
     private static final String KEY_ID_FILE = "key.id";
+    /**
+     * Beside the key, never inside the store: written once every file in the store is sealed. It is
+     * outside the store so that someone who can write the store cannot make it look unsealed again.
+     */
+    public static final String SEALED_MARK = "vault.sealed";
+    public static final String ALLOW_UNSEALED_ENV = "WYRDSEKAI_VAULT_ALLOW_UNSEALED";
+
+    private Path sealedMark() {
+        return keyFile.resolveSibling(SEALED_MARK);
+    }
+
+    /** A store with any sealed manifest has been through sealing: nothing plain in it is ours. */
+    private boolean holdsSealedManifest() {
+        var dir = vaultDir.resolve("manifests");
+        if (!Files.isDirectory(dir)) return false;
+        try (var s = Files.list(dir)) {
+            for (var f : s.filter(p -> p.toString().endsWith(".json")).toList()) {
+                try (var in = Files.newInputStream(f)) {
+                    var head = in.readNBytes(VaultCipher.MAGIC.length);
+                    if (Arrays.equals(head, VaultCipher.MAGIC)) return true;
+                }
+            }
+        } catch (IOException e) {
+            log.warn("vault: could not look for sealed manifests: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private void markSealed() {
+        sealedOnly = true;
+        try {
+            if (!Files.exists(sealedMark())) Files.writeString(sealedMark(), cipher.id() + "\n");
+        } catch (IOException e) {
+            log.warn("vault: could not write {}: {}", sealedMark(), e.getMessage());
+        }
+    }
+
+    /** {@link VaultCipher#open}, refusing a plain file in a store that is sealed throughout. */
+    private byte[] open(byte[] data, Path file) throws IOException {
+        if (sealedOnly && !VaultCipher.sealed(data)) {
+            if (!allowUnsealed) {
+                throw new IOException(file.getFileName() + " is not sealed, and every file this vault writes is: refused. "
+                    + "If you copied in a store from 0.4.0 on purpose, set " + ALLOW_UNSEALED_ENV + "=true once to read it.");
+            }
+            log.warn("Vault: reading unsealed {} because {} is set", file, ALLOW_UNSEALED_ENV);
+        }
+        return cipher.open(data);
+    }
 
     /**
      * The store remembers the fingerprint of the key that sealed it. A different key means
@@ -192,11 +259,26 @@ public final class Vault {
         "agents", "classifiers", "souls", "substrate", "items", "recipes", "adapters",
         "data/story", "data/biography", "data/study", "study", "household",
         "chronicles", "coding-workspaces", "skills", "scripts", "sleepwrite", "training", "library",
-        "vault");   // the Vault room's shelf of scrolls, not this store
+        "vault",    // the Vault room's shelf of scrolls, not this store
+        "tls", "nats");   // the household CA phones and machines pin, and the bus's logins (W2)
+    /**
+     * Append-only trails: the companions' day-by-day record and the drive trace, each taken with
+     * what was rotated off it ({@code drive-trace.jsonl.1}; see {@link BackupOrchestrator#isTrailFile}).
+     * They grow only at the end, so after the first copy a pass stores the new tail chunk.
+     */
+    static final List<String> TRAILS = List.of("data/agent-activity.jsonl", "data/drive-trace.jsonl");
     /** Re-derived on restore: indexes, queues, caches, predictions, the bus's own state. */
     static final List<String> DERIVABLE = List.of("search", "data/search", "embeddings", "themed-descriptions.json",
         "manifest_audit.json", "logs", "brainstem/heartbeat", "oracle", "ingest", "jetstream",
         "library.db-wal", "library.db-shm", "world.db-wal", "world.db-shm");
+    /**
+     * Indexes that are dear: rebuilding the knowledge index took ten hours on four cards and would take
+     * days on a household node's one, so it is carried, not derived (2026-09-26). Lucene never rewrites
+     * a segment file, so after the first copy a pass stores only new segments; an unchanged file is
+     * reused from the previous copy by size and mtime without being read again.
+     */
+    static final List<String> DEAR_DIRS = List.of("search/search/knowledge", "search/search/study",
+        "data/search/knowledge", "data/search/study");
     /** Fetched again by hash: weights, bundles, knowledge packs, and the copies themselves. */
     static final List<String> REPLACEABLE = List.of("models", "coding-cli-bundle", "backups", "vault-store", "packs",
         "mlx-venv", "sleepwrite-venv", "venv", ".venv");   // trainer environments are rebuilt, never copied
@@ -218,15 +300,23 @@ public final class Vault {
         try {
             Files.createDirectories(vaultDir.resolve("chunks"));
             Files.createDirectories(vaultDir.resolve("manifests"));
-            if (!resealed) { resealPlain(); resealed = true; }
+            if (!resealed) {
+                // Sealing plain files is the one-time move from a 0.4.0 store. Once the store is
+                // sealed, a plain file was put there by someone else and is not adopted.
+                if (!sealedOnly || allowUnsealed) resealPlain();
+                if (!plainLeft) markSealed();
+                resealed = true;
+            }
             scratch = Files.createTempDirectory(vaultDir, ".snap-");
             var entries = new ArrayList<Entry>();
             var seenTop = new HashSet<String>();
             seenTop.add(KEY_FILE);   // the one file that must never ride inside the store
+            seenTop.add(SEALED_MARK);
 
             // Databases come from a consistent copy: VACUUM INTO captures the WAL. The record
             // must be there; a smaller database that is missing is skipped like any other file.
             var orchestrator = new BackupOrchestrator(scratch);
+            var previous = previousEntries();
             for (var rel : SELF_FILES) {
                 seenTop.add(rel.contains("/") ? rel.substring(0, rel.indexOf('/')) : rel);
                 var f = dataDir.resolve(rel);
@@ -240,7 +330,7 @@ public final class Vault {
                     }
                     entries.add(store(rel, copy));
                 } else {
-                    entries.add(store(rel, f));
+                    entries.add(store(rel, f, previous));
                 }
             }
             for (var rel : SELF_DIRS) {
@@ -250,15 +340,45 @@ public final class Vault {
                 Files.walkFileTree(d, new SimpleFileVisitor<>() {
                     @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                         if (attrs.isRegularFile()) {
-                            try { entries.add(store(dataDir.relativize(file).toString().replace('\\', '/'), file)); }
+                            try { entries.add(store(dataDir.relativize(file).toString().replace('\\', '/'), file, previous)); }
                             catch (IOException e) { log.warn("vault: skipped {}: {}", file, e.getMessage()); }
                         }
                         return FileVisitResult.CONTINUE;
                     }
                 });
             }
+            for (var rel : TRAILS) {
+                var trail = dataDir.resolve(rel);
+                seenTop.add(rel.substring(0, rel.indexOf('/')));
+                if (!Files.isDirectory(trail.getParent())) continue;
+                var name = trail.getFileName().toString();
+                List<Path> files;
+                try (var siblings = Files.list(trail.getParent())) {
+                    files = siblings.filter(f -> BackupOrchestrator.isTrailFile(name, f.getFileName().toString()))
+                        .filter(Files::isRegularFile).sorted().toList();
+                }
+                for (var f : files) {
+                    try { entries.add(store(dataDir.relativize(f).toString().replace('\\', '/'), f, previous)); }
+                    catch (IOException e) { log.warn("vault: skipped {}: {}", f, e.getMessage()); }
+                }
+            }
             // What was NOT vaulted, by class, so a restore knows what to re-derive or fetch,
             // and a steward can see what is unclassified.
+            var dear = new ArrayList<String>();
+            for (var rel : DEAR_DIRS) {
+                var d = dataDir.resolve(rel);
+                if (!Files.isDirectory(d)) continue;
+                dear.add(rel);
+                Files.walkFileTree(d, new SimpleFileVisitor<>() {
+                    @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        if (attrs.isRegularFile() && !"write.lock".equals(file.getFileName().toString())) {
+                            try { entries.add(store(dataDir.relativize(file).toString().replace('\\', '/'), file, previous)); }
+                            catch (IOException e) { log.warn("vault: skipped {}: {}", file, e.getMessage()); }
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+            }
             var classes = new LinkedHashMap<String, List<String>>();
             var derivable = new ArrayList<String>(); var replaceable = new ArrayList<String>(); var unclassified = new ArrayList<String>();
             try (var top = Files.list(dataDir)) {
@@ -271,6 +391,7 @@ public final class Vault {
                     }
                 }
             }
+            classes.put("dear", dear);
             classes.put("derivable", derivable);
             classes.put("replaceable", replaceable);
             classes.put("unclassified", unclassified);
@@ -317,6 +438,35 @@ public final class Vault {
         return new Entry(rel, size, Files.getLastModifiedTime(file).toMillis(), List.copyOf(chunks));
     }
 
+    /** The previous copy's entries by path, so an unchanged file costs a stat and not a read. */
+    private Map<String, Entry> previousEntries() {
+        var out = new HashMap<String, Entry>();
+        try {
+            latest().ifPresent(m -> { for (var e : m.files()) out.putIfAbsent(e.path(), e); });
+        } catch (Exception e) {
+            log.debug("vault: previous copy not read: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** {@link #store(String, Path)}, reusing the previous copy's entry when size and mtime are unchanged
+     *  and its chunks are still in the store. */
+    private Entry store(String rel, Path file, Map<String, Entry> previous) throws IOException {
+        var prev = previous == null ? null : previous.get(rel);
+        if (prev != null) {
+            var attrs = Files.readAttributes(file, BasicFileAttributes.class);
+            if (attrs.size() == prev.size() && attrs.lastModifiedTime().toMillis() == prev.mtime() && chunksPresent(prev)) {
+                return prev;
+            }
+        }
+        return store(rel, file);
+    }
+
+    private boolean chunksPresent(Entry e) {
+        for (var sha : e.chunks()) if (!Files.exists(chunkPath(sha))) return false;
+        return true;
+    }
+
     private static int readFully(InputStream in, byte[] buf, int from) throws IOException {
         int total = 0;
         while (from + total < buf.length) {
@@ -353,7 +503,7 @@ public final class Vault {
     }
 
     private Manifest readManifest(Path f) throws IOException {
-        return JSON.readValue(cipher.open(Files.readAllBytes(f)), Manifest.class);
+        return JSON.readValue(open(Files.readAllBytes(f), f), Manifest.class);
     }
 
     /**
@@ -362,6 +512,7 @@ public final class Vault {
      */
     synchronized int resealPlain() {
         int n = 0;
+        plainLeft = false;
         for (var sub : List.of("chunks", "manifests")) {
             var dir = vaultDir.resolve(sub);
             if (!Files.isDirectory(dir)) continue;
@@ -376,10 +527,12 @@ public final class Vault {
                         Files.move(tmp, f, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                         n++;
                     } catch (IOException e) {
+                        plainLeft = true;
                         log.warn("vault: could not seal {}: {}", f, e.getMessage());
                     }
                 }
             } catch (IOException e) {
+                plainLeft = true;
                 log.warn("vault: reseal walk failed: {}", e.getMessage());
             }
         }
@@ -416,20 +569,48 @@ public final class Vault {
     // ── restore ──
 
     /**
+     * The drill's rebuild: entries under the {@code verifyOnly} prefixes are read and hash-checked chunk
+     * by chunk and not written out. The knowledge index is 93 GB on the household node; the drill has to
+     * prove the copy comes up whole, not make a second copy of it on the disk to do so.
+     */
+    public List<String> restoreTo(Manifest m, Path target, List<String> verifyOnly) {
+        var failed = new ArrayList<String>();
+        var written = new ArrayList<Entry>();
+        for (var e : m.files()) {
+            boolean verify = verifyOnly != null && verifyOnly.stream().anyMatch(p -> e.path().startsWith(p + "/"));
+            if (!verify) { written.add(e); continue; }
+            try {
+                long seen = 0;
+                for (var sha : e.chunks()) {
+                    var bytes = open(Files.readAllBytes(chunkPath(sha)), chunkPath(sha));
+                    if (!sha256(bytes, bytes.length).equals(sha)) throw new IOException("chunk " + sha + " does not match its name");
+                    seen += bytes.length;
+                }
+                if (seen != e.size()) throw new IOException("size " + seen + " != " + e.size());
+            } catch (IOException ex) {
+                failed.add(e.path() + ": " + ex.getMessage());
+            }
+        }
+        failed.addAll(restoreTo(new Manifest(m.id(), m.at(), m.reason(), m.keep(), List.copyOf(written), m.classes(), m.drill()), target));
+        return failed;
+    }
+
+    /**
      * Reassemble every file of a manifest under {@code target}, verifying each chunk's hash.
      * Returns the files that could not be rebuilt; empty means the copy is whole.
      */
     public List<String> restoreTo(Manifest m, Path target) {
         var failed = new ArrayList<String>();
         for (var e : m.files()) {
-            var dest = target.resolve(e.path());
+            var dest = target.resolve(e.path()).normalize();
             try {
+                if (!dest.startsWith(target.normalize())) throw new IOException("path leaves the restore directory");
                 Files.createDirectories(dest.getParent());
                 var tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
                 long written = 0;
                 try (OutputStream out = Files.newOutputStream(tmp)) {
                     for (var sha : e.chunks()) {
-                        var bytes = cipher.open(Files.readAllBytes(chunkPath(sha)));
+                        var bytes = open(Files.readAllBytes(chunkPath(sha)), chunkPath(sha));
                         if (!sha256(bytes, bytes.length).equals(sha)) throw new IOException("chunk " + sha + " does not match its name");
                         out.write(bytes);
                         written += bytes.length;
@@ -459,7 +640,7 @@ public final class Vault {
         boolean ok = true;
         try {
             Files.createDirectories(scratch);
-            var failed = restoreTo(m, scratch);
+            var failed = restoreTo(m, scratch, DEAR_DIRS);
             if (!failed.isEmpty()) { ok = false; detail.append("could not rebuild: ").append(failed).append("; "); }
             var db = scratch.resolve("world.db");
             if (Files.exists(db)) {

@@ -316,6 +316,34 @@ public final class WyrdConfig {
         return v == null ? "" : v.trim();
     }
 
+    /** {@code WYRDSEKAI_FLAG_SUSPECTED_ESCALATE_DAYS} — days a SUSPECTED protection flag is held without
+     * rebuttal before continuing signs may confirm it. Default 14. */
+    public int flagSuspectedEscalateDays() {
+        return intOr("WYRDSEKAI_FLAG_SUSPECTED_ESCALATE_DAYS", "protection.suspected_escalate_days", 14);
+    }
+
+    /** {@code WYRDSEKAI_FLAG_SUSPECTED_LIFT_DAYS} — days with no new sign after which a SUSPECTED flag
+     * lifts. Default 90. */
+    public int flagSuspectedLiftDays() {
+        return intOr("WYRDSEKAI_FLAG_SUSPECTED_LIFT_DAYS", "protection.suspected_lift_days", 90);
+    }
+
+    /** {@code WYRDSEKAI_FLAG_NOTED_LIFT_DAYS} — days with no new sign after which a NOTED flag lifts. Default 60. */
+    public int flagNotedLiftDays() {
+        return intOr("WYRDSEKAI_FLAG_NOTED_LIFT_DAYS", "protection.noted_lift_days", 60);
+    }
+
+    /** {@code WYRDSEKAI_DEEP_SLEEP_DEADLINE_MINUTES} — the longest a companion stays in deep sleep; past it,
+     *  voice training is stopped and she wakes. Default 15. */
+    public int deepSleepDeadlineMinutes() {
+        return intOr("WYRDSEKAI_DEEP_SLEEP_DEADLINE_MINUTES", "sleep.deep_deadline_minutes", 15);
+    }
+
+    /** {@code WYRDSEKAI_VOICE_ALIGN_TIMEOUT_MINUTES} — the longest one voice-alignment run may take. Default 60. */
+    public int voiceAlignTimeoutMinutes() {
+        return intOr("WYRDSEKAI_VOICE_ALIGN_TIMEOUT_MINUTES", "sleep.voice_align_timeout_minutes", 60);
+    }
+
     /** {@code WYRDSEKAI_BODY_ACHE_HOURS} — how long a quiet part of ordinary weight stays in her felt line. */
     public int bodyAcheHours() { return intOr("WYRDSEKAI_BODY_ACHE_HOURS", "body.ache_hours", 6); }
 
@@ -392,6 +420,60 @@ public final class WyrdConfig {
      * household trust boundary (HouseholdStore) — public/federation peers are never
      * affected.
      */
+    /**
+     * Where the plain web port (:7070) listens. It carries logins and personal data unencrypted, so
+     * it answers only this machine unless a household opens it on purpose ( W2
+     * 2026-09-28: it had answered the whole network). The network uses HTTPS on :7443.
+     * {@link #httpLanPlaintext()} re-opens it for phone apps from before 0.5.0.
+     */
+    public String httpBind() {
+        return resolve("WYRDSEKAI_HTTP_BIND", "http.bind", () -> httpLanPlaintext() ? "0.0.0.0" : "127.0.0.1");
+    }
+
+    /** Transition: plain :7070 on the network next to HTTPS :7443, for phone apps from before 0.5.0. */
+    public boolean httpLanPlaintext() {
+        return resolveBool("WYRDSEKAI_HTTP_LAN_PLAINTEXT", "http.lan_plaintext", false);
+    }
+
+    /**
+     * Whether the household bus (NATS :4222, phones' websocket :4223) listens on every interface. It
+     * does by default: it is encrypted with the household certificate and every client logs in.
+     * {@code false} keeps it on this machine (no phones or household machines on the network).
+     */
+    public boolean natsBindAll() {
+        return resolveBool("WYRDSEKAI_NATS_BIND_ALL", "nats.bind_all", true);
+    }
+
+    /**
+     * Transition: the household bus also accepts clients with no login and no encryption, from the
+     * whole network, as before 0.5.0 (household machines not yet re-joined, phone apps without bus
+     * credentials). It re-opens what the login closed; off by default.
+     */
+    public boolean natsLanPlaintext() {
+        return resolveBool("WYRDSEKAI_NATS_LAN_PLAINTEXT", "nats.lan_plaintext", false);
+    }
+
+    /** Whether HTTPS/WSS is served, as tools outside the server see it (the server reads wyrdsekai.tls.enabled). */
+    public boolean tlsEnabled() {
+        return resolveBool("WYRDSEKAI_TLS_ENABLED", null, true);
+    }
+
+    /** The HTTPS/WSS port as tools outside the server see it (the server reads wyrdsekai.tls.port). */
+    public int tlsPort() {
+        return resolveInt("WYRDSEKAI_TLS_PORT", null, 7443);
+    }
+
+    /** The web pages allowed to call the web port from a browser: this machine's own, unless listed. */
+    public java.util.List<String> corsOrigins() {
+        var v = resolve("WYRDSEKAI_CORS_ORIGINS", "http.cors_origins", () -> null);
+        if (v == null || v.isBlank()) {
+            return java.util.List.of("http://localhost:7070", "http://127.0.0.1:7070",
+                "http://localhost:7071", "http://127.0.0.1:7071",
+                "https://localhost:7443", "https://127.0.0.1:7443");
+        }
+        return java.util.Arrays.stream(v.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
     public boolean inferenceHouseholdShare() {
         return resolveBool("WYRDSEKAI_INFERENCE_HOUSEHOLD_SHARE", "inference.household_share", false);
     }
@@ -750,6 +832,101 @@ public final class WyrdConfig {
      *  the Java backend is registered from {@link #voiceUrl()} / auto-probe. */
     public boolean voiceEnabled() {
         return resolveBool("WYRDSEKAI_VOICE_ENABLED", "voice.enabled", false);
+    }
+
+    /** Serving profile {@code two-model}: a drive model and a voice model on two servers. The default. */
+    public static final String PROFILE_TWO_MODEL = "two-model";
+    /** Serving profile {@code single-sparse}: one large sparse model on one server serves every lane. */
+    public static final String PROFILE_SINGLE_SPARSE = "single-sparse";
+    /** Serving profile {@code sparse-drive}: the large sparse model takes the drive's place and the
+     *  voice model keeps speaking. To this process it is the two-model stack with a larger drive:
+     *  polish stays on, the voice lanes and the night's write stay on the voice model, the prompt
+     *  ceiling stays at the voice server's window. Only the launcher treats it differently. */
+    public static final String PROFILE_SPARSE_DRIVE = "sparse-drive";
+
+    /** {@code WYRDSEKAI_SERVING_PROFILE} — which local serving profile this node runs. The
+     *  launchers read the same key to decide which model servers to start. Anything other than
+     *  {@link #PROFILE_SINGLE_SPARSE} is the two-model stack, so an existing install keeps its
+     *  behaviour without setting anything. */
+    public String servingProfile() {
+        var v = resolve("WYRDSEKAI_SERVING_PROFILE", "inference.serving_profile", () -> PROFILE_TWO_MODEL);
+        var profile = v == null ? "" : v.strip();
+        if (PROFILE_SINGLE_SPARSE.equalsIgnoreCase(profile)) return PROFILE_SINGLE_SPARSE;
+        if (PROFILE_SPARSE_DRIVE.equalsIgnoreCase(profile)) return PROFILE_SPARSE_DRIVE;
+        return PROFILE_TWO_MODEL;
+    }
+
+    /** True when one model serves every lane on this node. */
+    public boolean singleBrain() {
+        return PROFILE_SINGLE_SPARSE.equals(servingProfile());
+    }
+
+    /** {@code WYRDSEKAI_VOICE_POLISH} — whether a full-lane draft is finished by the voice model
+     *  before it is spoken. On by default for the two-model stack (the voice model is the
+     *  finisher). Off by default when one model serves every lane: the author already is the
+     *  voice, and a second pass would be the same model rewriting its own draft under guards
+     *  tuned for a smaller one. */
+    public boolean voicePolish() {
+        return resolveBool("WYRDSEKAI_VOICE_POLISH", "voice.polish", !singleBrain());
+    }
+
+    /** {@code WYRDSEKAI_VOICE_PASS} — whether a {@code tell_agent} line is re-voiced through the
+     *  voice model before it is sent. On by default where a distinct voice model is configured
+     *  ({@link #voiceEnabled()}); off by default when one model serves every lane, for the same
+     *  reason as {@link #voicePolish()}. The voice key alone cannot decide it: {@code wyrd brain
+     *  enable} changes only the profile key, so a node moved to {@code single-sparse} keeps
+     *  {@code WYRDSEKAI_VOICE_ENABLED=true} from its two-model install. On the household node
+     *  (2026-09-23) that sent a companion's "…you there?" to another companion back through the
+     *  one resident model, which answered it: "The morning is quiet, and I am here. You have my
+     *  attention." An explicit setting wins on any profile. */
+    public boolean voicePass() {
+        return resolveBool("WYRDSEKAI_VOICE_PASS", "voice.pass", voiceEnabled() && !singleBrain());
+    }
+
+    /** {@code WYRDSEKAI_CONVERSATION_FELT_LINE} — whether a conversation turn carries her drives line
+     *  ({@code [drives: … | energy=… …]}) and her state in plain words, as the full lane does. The
+     *  conversation lane carried neither, so what she felt shaped nothing she said to a person. On
+     *  by default when one model serves every lane: with its adapter the large model lets the state
+     *  show without saying it (measured blind 2026-09-24: 35% of replies matched to their state
+     *  against 17% by chance, none recited). Off by default on the two-model stack, where the voice
+     *  model measured no difference with it. An explicit setting wins. */
+    public boolean conversationFeltLine() {
+        return resolveBool("WYRDSEKAI_CONVERSATION_FELT_LINE", "conversation.felt_line", singleBrain());
+    }
+
+    /** {@code WYRDSEKAI_REGISTER_DIAL} — under {@code single-sparse}, whether the styled species adapter
+     *  ({@code adapters/brain/styled.gguf}, when loaded) is raised over the plain one by her state on the
+     *  turns she speaks as herself. See {@code RegisterDial}. */
+    public boolean registerDial() {
+        return resolveBool("WYRDSEKAI_REGISTER_DIAL", "register.dial", true);
+    }
+
+    /** {@code WYRDSEKAI_REGISTER_DIAL_MAX} — the dial's top: the styled adapter's scale when her state
+     *  lifts her all the way. 0.5 until the measurement picks the range (2026-09-24). */
+    public double registerDialMax() {
+        return resolveDouble("WYRDSEKAI_REGISTER_DIAL_MAX", "register.dial_max", 0.5);
+    }
+
+    /** {@code WYRDSEKAI_REGISTER_FLOOR_WORK} — under {@code single-sparse}, the plain species adapter's
+     *  scale on a working turn (the full lane's identity turn, every ReAct step). 1.0 = the floor on every
+     *  request, as before. A floor trained on her speech alone answered tool requests in prose at 1.0 on
+     *  those turns (2026-09-25: 9 tool dispatches over the live suites against 168 without it). */
+    public double registerFloorWork() {
+        return registerFloorWork(1.0);
+    }
+
+    /** The same, with the default the caller knows to be right for what slot 0 is: 0 for the species
+     *  floor (measured 2026-09-26: 53/63 with it on working turns, 58/63 without), 1 for the honesty
+     *  adapter (its tool use is the point of it there). An explicit setting wins. */
+    public double registerFloorWork(double defaultWhenUnset) {
+        return resolveDouble("WYRDSEKAI_REGISTER_FLOOR_WORK", "register.floor_work", defaultWhenUnset);
+    }
+
+    /** {@code WYRDSEKAI_REGISTER_WORK_SCALE} — under {@code single-sparse}, the working-turn adapter's scale
+     *  ({@code adapters/brain/work.gguf}, when loaded) on the turns that call tools; it is 0 whenever she
+     *  speaks as herself. Nothing is sent for it when the file is not served. */
+    public double registerWorkScale() {
+        return resolveDouble("WYRDSEKAI_REGISTER_WORK_SCALE", "register.work_scale", 1.0);
     }
 
     /** {@code WYRDSEKAI_THEMED_ROOM_DESCRIPTIONS} — when true (default), look
@@ -1199,6 +1376,32 @@ public final class WyrdConfig {
      */
     public boolean libraryServeFindings() {
         return resolveBool("WYRDSEKAI_LIBRARY_SERVE_FINDINGS", "library.serve_findings", true);
+    }
+
+    /**
+     * Research runs ({@code library_research}) each household member may hand the library per
+     * day, counted per person because the library cannot tell them apart (LibraryConsent). A
+     * member under parental controls has this number too unless the steward set their own.
+     * 0 = no library research for members.
+     */
+    public int libraryResearchPerDay() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_RESEARCH_PER_DAY", "library.research_per_day", 5));
+    }
+
+    /** Research runs each companion may hand the library per day on her own time. */
+    public int libraryOwnTimeResearchPerDay() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_PER_DAY",
+            "library.own_time_research_per_day", 3));
+    }
+
+    /**
+     * Research runs the whole household may hand the library per day, members and companions
+     * together: each run can hold the household's model for up to 90 minutes, and the library keeps
+     * no daily budget of its own. 0 = none.
+     */
+    public int libraryHouseholdResearchPerDay() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_RESEARCH_HOUSEHOLD_PER_DAY",
+            "library.research_household_per_day", 10));
     }
 
     // ── #1038 Library-compact prune knobs ─────────────────────────────────

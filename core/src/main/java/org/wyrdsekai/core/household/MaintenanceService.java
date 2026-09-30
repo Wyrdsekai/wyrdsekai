@@ -17,10 +17,12 @@ import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,7 +75,7 @@ public final class MaintenanceService {
     private final BackupOrchestrator backups;
     private final Path dataDir;
     private final Path worldDb;
-    private final Path searchDir;          // nullable — falls back to plain snapshot
+    private final Path searchDir;          // nullable — snapshotAll skips it
     private final Path nodeIdentityFile;   // nullable
     private final List<Path> extraBackupDirs;
 
@@ -274,11 +276,10 @@ public final class MaintenanceService {
 
     private Optional<BackupOrchestrator.BackupManifest> runBackup() {
         try {
-            if (searchDir != null && Files.isDirectory(searchDir)) {
-                return backups.snapshotAll(worldDb, searchDir, nodeIdentityFile,
-                    extraBackupDirs);
-            }
-            return backups.snapshot(worldDb);
+            // snapshotAll skips a missing search dir itself. The plain snapshot(worldDb) this
+            // fell back to on a node without one took world.db alone: no node identity, no
+            // souls, no story, no trail.
+            return backups.snapshotAll(worldDb, searchDir, nodeIdentityFile, extraBackupDirs);
         } catch (RuntimeException e) {
             log.error("maintenance backup failed: {}", e.getMessage());
             return Optional.empty();
@@ -307,9 +308,22 @@ public final class MaintenanceService {
             t.setDaemon(true);
             return t;
         });
-        exec.scheduleAtFixedRate(this::scheduledBackupTick, hours, hours, TimeUnit.HOURS);
+        var firstIn = firstScheduledRunIn(hours, Instant.now());
+        exec.scheduleAtFixedRate(this::scheduledBackupTick, firstIn.toMinutes(),
+            Duration.ofHours(hours).toMinutes(), TimeUnit.MINUTES);
         backupTicker = exec;
-        log.info("Maintenance backup schedule armed (every {}h)", hours);
+        log.info("Maintenance backup schedule armed (every {}h, next in {} min)", hours, firstIn.toMinutes());
+    }
+
+    /**
+     * How long until the schedule's next pass: {@code hours} from the newest backup on disk,
+     * whoever took it, not from this start (see {@link BackupOrchestrator#firstRunDelay}).
+     * Not from {@code last_scheduled_backup}: that is stamped even when the pass produced
+     * nothing, and it does not see the boot schedule's backups.
+     */
+    Duration firstScheduledRunIn(int hours, Instant now) {
+        var last = backups.latestSnapshotOf(worldDb).map(BackupOrchestrator.BackupManifest::timestamp).orElse(null);
+        return BackupOrchestrator.firstRunDelay(last, Duration.ofHours(hours), now);
     }
 
     /** Stop the schedule ticker (shutdown / tests / schedule=off). */
@@ -352,9 +366,13 @@ public final class MaintenanceService {
         if (snapshotId == null || snapshotId.isBlank()) {
             return Map.of("ok", false, "error", "snapshot id required");
         }
-        var match = backups.listSnapshots().stream()
+        // A database snapshot under that id (a full pass's, or the brainstem's or the vault's copy,
+        // the full pass's first): never the node-identity.<id>.bak a full pass writes under the
+        // same id, which, the newer of the two, used to be staged as world.db.
+        var match = backups.restorableSnapshotsOf(worldDb).stream()
             .filter(s -> snapshotId.equals(s.backupId()))
-            .findFirst();
+            .min(Comparator.comparingInt(s -> s.location().getFileName().toString()
+                .startsWith(worldDb.getFileName().toString() + ".") ? 0 : 1));
         if (match.isEmpty()) {
             return Map.of("ok", false, "error", "no such snapshot: " + snapshotId);
         }
@@ -421,7 +439,8 @@ public final class MaintenanceService {
      * the world db is opened / SchemaInitializer runs; the absence of the
      * marker costs one file-stat.
      * <p>
-     * Semantics: restore the snapshot to a TEMP file first; only when that
+     * Semantics: restore the snapshot to a TEMP file first (a brainstem
+     * copy's {@code -wal} sidecar is checkpointed into it); only when that
      * succeeds is the live db renamed to {@code <db>.pre-restore-<ts>} and
      * the temp file atomically moved into place (stale {@code -wal}/
      * {@code -shm} siblings are removed so the pre-restore WAL can't
@@ -441,6 +460,8 @@ public final class MaintenanceService {
         }
         var backupFile = Path.of(staged.get().backupFile());
         var tmp = worldDb.resolveSibling(worldDb.getFileName() + ".restore-tmp");
+        var tmpWal = tmp.resolveSibling(tmp.getFileName() + "-wal");
+        var tmpShm = tmp.resolveSibling(tmp.getFileName() + "-shm");
         log.warn("STAGED RESTORE FOUND: applying snapshot {} ({}) staged by {} at {}",
             staged.get().snapshotId(), backupFile,
             staged.get().stagedBy(), staged.get().stagedAt());
@@ -457,6 +478,22 @@ public final class MaintenanceService {
                 Files.deleteIfExists(tmp);
                 failStagedRestore(dataDir, marker, "restore copy failed: " + backupFile);
                 return;
+            }
+            // The brainstem's plain copy is the file plus its WAL beside it (<file>-wal), and the
+            // newest committed rows are only in the WAL. Checkpoint it into the temp copy so what
+            // is swapped in is one self-contained file.
+            var sidecar = backupFile.resolveSibling(backupFile.getFileName() + "-wal");
+            if (Files.isRegularFile(sidecar)) {
+                Files.copy(sidecar, tmpWal, StandardCopyOption.REPLACE_EXISTING);
+                try (var conn = DriverManager.getConnection("jdbc:sqlite:" + tmp.toAbsolutePath());
+                     var stmt = conn.createStatement();
+                     var rs = stmt.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)")) {
+                    if (!rs.next() || rs.getInt(1) != 0) {
+                        throw new IOException("checkpoint of " + sidecar + " did not complete");
+                    }
+                }
+                Files.deleteIfExists(tmpWal);
+                Files.deleteIfExists(tmpShm);
             }
             Path preRestore = null;
             if (Files.exists(worldDb)) {
@@ -485,7 +522,8 @@ public final class MaintenanceService {
                 return;
             }
             // Stale WAL/SHM from the displaced db would corrupt the restored
-            // copy on first open — the snapshot (VACUUM INTO) is self-contained.
+            // copy on first open. The restored copy is self-contained: a full
+            // pass's VACUUM INTO, or a brainstem copy with its WAL folded in.
             Files.deleteIfExists(worldDb.resolveSibling(worldDb.getFileName() + "-wal"));
             Files.deleteIfExists(worldDb.resolveSibling(worldDb.getFileName() + "-shm"));
             Files.deleteIfExists(marker);
@@ -494,6 +532,8 @@ public final class MaintenanceService {
         } catch (Exception e) {
             try {
                 Files.deleteIfExists(tmp);
+                Files.deleteIfExists(tmpWal);
+                Files.deleteIfExists(tmpShm);
             } catch (IOException ignored) {
                 // best-effort tmp cleanup; the failed marker below still lands
             }

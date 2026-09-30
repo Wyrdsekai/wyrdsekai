@@ -12,9 +12,17 @@ import androidx.compose.runtime.setValue
  * commonTest with stubs. The knock is REAL (records an access request the zone's
  * steward sees) — not theater.
  */
+/**
+ * What came of a knock: the id of the access request the zone recorded, or
+ * why nothing was recorded, in words for the person (null → a general one).
+ */
+data class KnockAnswer(val requestId: String?, val message: String? = null) {
+    val sent: Boolean get() = requestId != null
+}
+
 class FindZoneViewModel(
     private val discover: suspend (query: String, limit: Int) -> DiscoverResult,
-    private val requestAccessFn: suspend (zoneLabel: String, requesterName: String) -> Boolean,
+    private val requestAccessFn: suspend (zoneLabel: String, requesterName: String) -> KnockAnswer,
     private val requesterName: () -> String = { "a wyrdsekai user" },
 ) {
     var busy by mutableStateOf(false)
@@ -41,12 +49,13 @@ class FindZoneViewModel(
 
     /** Knock on a discovered zone's door — records a real access request. */
     suspend fun requestAccess(zone: DiscoveredZone) {
+        error = null
         knockState = knockState + (zone.zoneLabel to "asking")
-        val ok = requestAccessFn(zone.zoneLabel, requesterName())
-        knockState = if (ok) {
+        val answer = requestAccessFn(zone.zoneLabel, requesterName())
+        knockState = if (answer.sent) {
             knockState + (zone.zoneLabel to "sent")
         } else {
-            error = "Could not reach that zone's steward."
+            error = answer.message ?: "Could not reach that zone's steward."
             knockState - zone.zoneLabel
         }
     }

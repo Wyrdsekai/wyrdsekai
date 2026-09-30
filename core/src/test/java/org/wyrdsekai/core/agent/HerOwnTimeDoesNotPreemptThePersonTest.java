@@ -38,19 +38,22 @@ class HerOwnTimeDoesNotPreemptThePersonTest {
     void theGateChecksPendingTrigger() throws Exception {
         assertThat(actorSource())
             .as("IDLE is not 'nothing pending' — a debouncing human message leaves state IDLE")
-            .contains("if (state == State.IDLE && !isSleeping && pendingTrigger == null");
+            .contains("if (!aTurnIsInFlight() && !isSleeping");
     }
 
     @Test
-    @DisplayName("an own-time turn yields rather than overwrite a person's pending message")
+    @DisplayName("an own-time turn is held rather than overwrite a person's pending message")
     void theWriterYields() throws Exception {
         var src = actorSource();
-        var guard = src.indexOf("would have overwritten a pending message from");
-        var write = src.indexOf("pendingTrigger = autonomyEvent;");
-        assertThat(guard).isGreaterThan(0);
+        var start = src.indexOf("private boolean triggerAutonomousInference(String autonomyPrompt, String forcedTool, boolean planAdvance) {");
+        var guard = src.indexOf("if (held)", start);
+        var send = src.indexOf("inferenceRouter.tell(", start);
+        var write = src.indexOf("pendingTrigger = autonomyEvent;", start);
+        assertThat(start).isGreaterThan(0);
         assertThat(guard)
-            .as("the yield must come BEFORE the write, or it guards nothing")
-            .isLessThan(write);
+            .as("the hold must come BEFORE the request is sent and the trigger written: a yield after "
+                + "the send left her own-time request out, and its reply was taken as the person's")
+            .isGreaterThan(start).isLessThan(send).isLessThan(write);
     }
 
     /**
@@ -67,7 +70,8 @@ class HerOwnTimeDoesNotPreemptThePersonTest {
     @DisplayName("a promoted retry serves the pinned human request over the last stamped trigger")
     void thePromotionServesThePinnedRequest() throws Exception {
         var src = actorSource();
-        assertThat(src).contains("var pinnedForReact = pinnedTurnRequest();");
+        // The person a completion carries comes first (a workshop build's owed room), then the pin.
+        assertThat(src).contains("var pinnedForReact = requester != null && isHumanTrigger(requester) ? requester\n                : pinnedTurnRequest();");
         var pinned = src.indexOf("reactRequester = pinnedForReact != null ? pinnedForReact");
         var promote = src.indexOf("Promoting first-turn action into ReAct loop");
         assertThat(pinned).isGreaterThan(0);

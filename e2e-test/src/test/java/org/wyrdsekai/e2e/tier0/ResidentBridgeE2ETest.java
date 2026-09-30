@@ -146,11 +146,13 @@ class ResidentBridgeE2ETest {
     }
 
     // --- Helpers ---
+    // The bridge presents the configured resident token, as a real resident bridge does.
 
     private HttpResponse<String> get(String path) throws Exception {
         return HTTP.send(
             HttpRequest.newBuilder()
                 .uri(URI.create(server.baseUrl() + path))
+                .header("Authorization", "Bearer " + server.residentToken())
                 .timeout(Duration.ofSeconds(5))
                 .GET().build(),
             HttpResponse.BodyHandlers.ofString());
@@ -161,6 +163,7 @@ class ResidentBridgeE2ETest {
         return HTTP.send(
             HttpRequest.newBuilder()
                 .uri(URI.create(server.baseUrl() + path))
+                .header("Authorization", "Bearer " + server.residentToken())
                 .timeout(Duration.ofSeconds(5))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json))

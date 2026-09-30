@@ -23,7 +23,7 @@ class TriageClassifierTest {
     private class FakeInferenceClient(private val response: String = "SIMPLE") : InferenceClient() {
         var callCount = 0
 
-        override suspend fun complete(
+        override suspend fun send(
             baseUrl: String,
             messages: List<ChatMessage>,
             options: CompletionOptions,
@@ -148,7 +148,7 @@ class TriageClassifierTest {
     fun classify_defaults_to_simple_on_llm_failure() = runTest {
         // Use an inference client that always throws
         val failingClient = object : InferenceClient() {
-            override suspend fun complete(
+            override suspend fun send(
                 baseUrl: String,
                 messages: List<ChatMessage>,
                 options: CompletionOptions,

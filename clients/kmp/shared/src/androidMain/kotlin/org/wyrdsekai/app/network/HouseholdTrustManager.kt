@@ -12,30 +12,10 @@ import javax.net.ssl.X509ExtendedTrustManager
 import javax.net.ssl.X509TrustManager
 
 /**
- * Per-host TLS TrustManager for the KMP Android client: try system trust
- * first (Let's Encrypt / public CA path), fall back to a household-CA pin
- * for this hostname.
- *
- * Mirrors clients/rn/.../HouseholdTrustManager.kt — they share the same
- * spec + seed_relay_trust.sh fixture.
- *
- * Extends [X509ExtendedTrustManager] so OkHttp's SSL handshake routes
- * through the Socket/SSLEngine overloads, which expose the peer hostname.
- * Without that we cannot apply the per-host pin (the bare
- * [X509TrustManager] interface only sees the cert chain, not where it
- * came from).
- */
-/**
- * Thrown when a per-host pin EXISTS but the presented chain doesn't validate
- * against it. Distinct from a plain `CertificateException` so the
- * recovery UX can offer a re-TOFU prompt (rotation) instead of treating
- * this like a brand-new connect (which would log the user into TOFU as if
- * they'd never paired). Caller flow:
- *   1. catch PinMismatchException
- *   2. ask the user via UI: "trust new cert? fingerprint XXXX"
- *   3. on accept: HouseholdTrustStore.clear(host) + retry the request →
- *      the retry hits the no-pin path → TOFU flow → re-pins
- * (cert rotation).
+ * A pin EXISTS for the host but the presented chain does not validate against
+ * it. The connection is refused and the person is told to pair again
+ * ([SecurityNotices]); the app never offers to trust the new certificate
+ * (D6, ).
  */
 class PinMismatchException(
   val host: String,
@@ -44,8 +24,24 @@ class PinMismatchException(
   cause: Throwable? = null,
 ) : CertificateException("Pin mismatch for $host (new=$newFingerprint pinned=$pinnedFingerprint)", cause)
 
+/**
+ * Per-address TLS TrustManager for the KMP Android client.
+ * An address (host and port) with a pin (from an invite's fingerprint: the
+ * relay's `fp`/`ca_fp`, the home's `home_ca_fp`) is checked against that pin
+ * ONLY: its chain must validate to the pinned certificate. An address without a
+ * pin gets system trust (a relay on a public CA). There is no trust on first
+ * use. The port is part of the address, so a relay and a home on one machine
+ * are each held to their own CA.
+ *
+ * Extends [X509ExtendedTrustManager] so OkHttp's and jnats's SSL handshakes
+ * route through the Socket/SSLEngine overloads, which expose the peer host
+ * and port. Without that we cannot apply the pin (the bare
+ * [X509TrustManager] interface only sees the cert chain, not where it
+ * came from).
+ */
 class HouseholdTrustManager(
   private val systemTm: X509TrustManager,
+  private val pins: (host: String, port: Int) -> X509Certificate? = HouseholdTrustStore::get,
 ) : X509ExtendedTrustManager() {
 
   private val tag = "HouseholdTrustMgr"
@@ -61,7 +57,7 @@ class HouseholdTrustManager(
   override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String, engine: SSLEngine?) =
     systemTm.checkClientTrusted(chain, authType)
 
-  // ── server-cert path: system → per-host pin. ──
+  // ── server-cert path: the host's pin, or system trust when it has none. ──
 
   override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
     // Hostname unavailable in this overload: only system trust applies.
@@ -73,8 +69,8 @@ class HouseholdTrustManager(
     authType: String,
     socket: Socket?,
   ) {
-    val host = (socket as? SSLSocket)?.let { extractHost(it) }
-    verify(chain, authType, host)
+    val ssl = socket as? SSLSocket
+    verify(chain, authType, ssl?.let { extractHost(it) }, ssl?.let { extractPort(it) } ?: -1)
   }
 
   override fun checkServerTrusted(
@@ -82,46 +78,35 @@ class HouseholdTrustManager(
     authType: String,
     engine: SSLEngine?,
   ) {
-    val host = engine?.peerHost
-    verify(chain, authType, host)
+    verify(chain, authType, engine?.peerHost, engine?.peerPort ?: -1)
   }
 
   override fun getAcceptedIssuers(): Array<X509Certificate> = systemTm.acceptedIssuers
 
-  private fun verify(chain: Array<X509Certificate>, authType: String, host: String?) {
-    try {
+  internal fun verify(chain: Array<X509Certificate>, authType: String, host: String?, port: Int) {
+    val pinned = host?.takeIf { it.isNotBlank() }?.let { pins(it, port) }
+    if (pinned == null) {
       systemTm.checkServerTrusted(chain, authType)
       return
-    } catch (systemReject: CertificateException) {
-      if (host.isNullOrBlank()) throw systemReject
     }
 
-    val pinnedCa = HouseholdTrustStore.get(host!!)
-      ?: throw CertificateException(
-        "No pinned cert for host '$host' and system trust rejected the chain",
-      )
-
-    // Build a one-shot TrustManager seeded with just the pinned CA, run the
-    // chain through it. This validates path construction + signatures end
-    // to end — equivalent to bundling that CA at build time but per-host.
+    // Build a one-shot TrustManager seeded with just the pinned certificate and
+    // run the chain through it: path construction and signatures end to end,
+    // so a chain that merely CONTAINS the pinned CA next to someone else's leaf
+    // does not pass.
     val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
-    ks.setCertificateEntry("pinned-$host", pinnedCa)
+    ks.setCertificateEntry("pinned-$host", pinned)
     val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
       init(ks)
     }
     val pinnedTm = tmf.trustManagers.first { it is X509TrustManager } as X509TrustManager
     try {
       pinnedTm.checkServerTrusted(chain, authType)
-      Log.i(tag, "TLS chain for $host validated against pinned household CA")
     } catch (e: CertificateException) {
-      // Pinned CA EXISTS but doesn't match the chain root. This is the
-      // rotation case (operator ran `wyrd relay rotate-cert --ca`).
-      // Surface it as a distinct exception so the UI can prompt for
-      // re-TOFU instead of treating it as an opaque TLS failure.
       val newFp = chain.firstOrNull()?.let { sha256Fingerprint(it.encoded) }
-      val pinnedFp = sha256Fingerprint(pinnedCa.encoded)
-      Log.w(tag, "Pinned CA for $host did NOT match chain root — pin mismatch (new=$newFp pinned=$pinnedFp)")
-      TrustEventBus.publish(TrustEvent.PinMismatch(host, newFp ?: "", pinnedFp))
+      val pinnedFp = sha256Fingerprint(pinned.encoded)
+      Log.w(tag, "Pinned certificate for $host:$port did NOT validate the chain — refusing (new=$newFp pinned=$pinnedFp)")
+      SecurityNotices.publish(SecurityNotice.PinMismatch(host!!))
       throw PinMismatchException(host, newFp ?: "", pinnedFp, e)
     }
   }
@@ -142,6 +127,13 @@ class HouseholdTrustManager(
       socket.handshakeSession?.peerHost ?: socket.inetAddress?.hostName
     } catch (e: Throwable) {
       socket.inetAddress?.hostName
+    }
+
+  private fun extractPort(socket: SSLSocket): Int =
+    try {
+      socket.handshakeSession?.peerPort?.takeIf { it > 0 } ?: socket.port
+    } catch (e: Throwable) {
+      socket.port
     }
 
   companion object {

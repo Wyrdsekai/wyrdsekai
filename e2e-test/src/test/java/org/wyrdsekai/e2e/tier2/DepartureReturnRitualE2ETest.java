@@ -231,6 +231,10 @@ class DepartureReturnRitualE2ETest {
                 if (msg == null) continue;
                 var speaker = msg.path("speaker").asText("");
                 var text = msg.path("text").asText("");
+                // The echo of the test's own tell is not a reply: it must not open the quiet window
+                // or count as "the agent responded" (a backend slower than the window lost its answer).
+                if (("narrator".equals(speaker) || "system".equals(speaker)) && text.startsWith("You tell ")) continue;
+
                 if ("narrator".equals(speaker) || "system".equals(speaker)) {
                     if (text.contains("enters") || text.contains("arrives")
                         || text.contains("leaves")) continue;

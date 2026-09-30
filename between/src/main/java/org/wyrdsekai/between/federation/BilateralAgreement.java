@@ -53,6 +53,17 @@ public record BilateralAgreement(
             agreedAt, expiresAt, localQuota, remoteQuota, newEpoch, newEpochOwner);
     }
 
+    /** Return a copy carrying the remote zone's pinned public key. */
+    public BilateralAgreement withRemotePublicKey(String key) {
+        return new BilateralAgreement(localZoneId, remoteZoneId, key, status, trustLevel,
+            agreedAt, expiresAt, localQuota, remoteQuota, epoch, epochOwner);
+    }
+
+    /** True when a remote public key has been pinned on this agreement. */
+    public boolean hasPinnedKey() {
+        return remotePublicKey != null && !remotePublicKey.isBlank();
+    }
+
     /** Return a copy with a new status (epoch/owner preserved). */
     public BilateralAgreement toStatus(String newStatus) {
         return new BilateralAgreement(localZoneId, remoteZoneId, remotePublicKey, newStatus, trustLevel,

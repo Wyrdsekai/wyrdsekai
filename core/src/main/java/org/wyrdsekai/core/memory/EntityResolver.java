@@ -35,6 +35,9 @@ public final class EntityResolver {
     /**
      * Resolve a probe intent to an entity hit.
      *
+     * <p>The answer comes only from facts the reader told her themselves
+     * ({@link MemoryReader#told}); a turn that answers no one gets no answer.</p>
+     *
      * <p>Temporal semantics:
      * <ul>
      *   <li>{@link ProbeClassifier.Temporal#LATEST} — newest row wins</li>
@@ -44,10 +47,14 @@ public final class EntityResolver {
      *       falls through to LATEST</li>
      * </ul>
      */
-    public Optional<EntityHit> resolve(String did, ProbeClassifier.ProbeIntent intent) {
+    public Optional<EntityHit> resolve(String did, ProbeClassifier.ProbeIntent intent,
+                                       MemoryReader reader) {
         if (store == null || did == null || intent == null) return Optional.empty();
+        // Only what this person told her: "what am I allergic to?" asked by one person is never
+        // answered from another person's words (audit W4, 2026-09-28).
+        if (reader == null || !reader.isSomeone()) return Optional.empty();
 
-        var row = store.findLatest(did, intent.entityType(), intent.entityRole());
+        var row = store.findLatest(did, intent.entityType(), intent.entityRole(), reader);
         if (row.isPresent()) {
             var r = row.get();
             log.debug("EntityResolver hit: did={} type={} role={} value={}",
@@ -63,7 +70,7 @@ public final class EntityResolver {
         // Fallback: type without role constraint (useful when role was null in plant
         // but specific in probe, or vice versa)
         if (intent.entityRole() != null) {
-            var any = store.findLatest(did, intent.entityType(), null);
+            var any = store.findLatest(did, intent.entityType(), null, reader);
             if (any.isPresent()) {
                 var r = any.get();
                 log.debug("EntityResolver role-fallback hit: did={} type={} value={}",

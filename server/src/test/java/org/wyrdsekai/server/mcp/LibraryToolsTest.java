@@ -9,6 +9,7 @@ import org.wyrdsekai.core.library.LibraryProvider;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,6 +23,8 @@ class LibraryToolsTest {
     @TempDir Path dir;
     private WyrdLuceneStore store;
     private McpToolRegistry registry;
+    private static final McpToolRegistry.Caller READER = new McpToolRegistry.Caller("did:key:zLab", "the lab", false);
+    private static final McpToolRegistry.Caller WRITER = new McpToolRegistry.Caller("did:key:zAlice", "alice", true);
 
     @BeforeEach
     void setUp() {
@@ -48,7 +51,7 @@ class LibraryToolsTest {
 
     @Test
     void ask_returns_a_content_block_carrying_the_package() throws Exception {
-        var res = registry.call("library_ask", M.readTree("{\"question\":\"obsidian\",\"k\":3}"));
+        var res = registry.call("library_ask", M.readTree("{\"question\":\"obsidian\",\"k\":3}"), READER);
         assertFalse(res.path("isError").asBoolean(false));
         var text = res.path("content").get(0).path("text").asText();
         var pkg = M.readTree(text);
@@ -56,19 +59,39 @@ class LibraryToolsTest {
         assertEquals("1.0", pkg.path("contract").asText());
         assertEquals("wiki:1", pkg.path("entries").get(0).path("id").asText());
 
-        var nothing = M.readTree(registry.call("library_ask", M.readTree("{\"question\":\"private page steward\"}"))
+        var nothing = M.readTree(registry.call("library_ask", M.readTree("{\"question\":\"private page steward\"}"), READER)
             .path("content").get(0).path("text").asText());
         assertTrue(nothing.path("holds_nothing").asBoolean(), "the private shelf never answers outside");
     }
 
     @Test
-    void protocol_errors_are_mcp_errors_with_the_stable_code() throws Exception {
-        var res = registry.call("library_read", M.readTree("{\"locator\":\"shelf:1\"}"));
+    void no_tool_answers_without_a_proven_caller() throws Exception {
+        var res = registry.call("library_ask", M.readTree("{\"question\":\"obsidian\"}"));
         assertTrue(res.path("isError").asBoolean());
         assertEquals("forbidden", res.path("data").path("code").asText());
-        var bad = registry.call("library_search", M.readTree("{}"));
+    }
+
+    @Test
+    void the_patron_is_the_caller_and_a_reader_cannot_submit() throws Exception {
+        var other = registry.call("library_ask",
+            M.readTree("{\"question\":\"obsidian\",\"patron\":{\"did\":\"did:key:zSomeoneElse\"}}"), READER);
+        assertEquals("forbidden", other.path("data").path("code").asText(), "a body naming another did is refused");
+        var submit = registry.call("library_submit",
+            M.readTree("{\"claim\":\"x\",\"sources\":[{\"locator\":\"https://example.org\"}]}"), READER);
+        assertEquals("forbidden", submit.path("data").path("code").asText(), "reading is not writing");
+        var args = LibraryTools.asCaller("library_ask",
+            Map.of("question", "q", "patron", Map.of("runtime", "rz")), WRITER);
+        assertEquals(Map.of("did", "did:key:zAlice", "name", "alice", "runtime", "rz"), args.get("patron"));
+    }
+
+    @Test
+    void protocol_errors_are_mcp_errors_with_the_stable_code() throws Exception {
+        var res = registry.call("library_read", M.readTree("{\"locator\":\"shelf:1\"}"), READER);
+        assertTrue(res.path("isError").asBoolean());
+        assertEquals("forbidden", res.path("data").path("code").asText());
+        var bad = registry.call("library_search", M.readTree("{}"), READER);
         assertEquals("invalid_args", bad.path("data").path("code").asText());
-        var none = registry.call("library_submit", M.readTree("{\"claim\":\"x\",\"sources\":[]}"));
+        var none = registry.call("library_submit", M.readTree("{\"claim\":\"x\",\"sources\":[]}"), WRITER);
         assertEquals("unavailable", none.path("data").path("code").asText(), "no owner: this library takes no submissions");
     }
 }

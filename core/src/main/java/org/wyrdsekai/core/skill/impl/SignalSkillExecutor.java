@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.skill.impl;
 
 import org.wyrdsekai.common.i18n.I18n;
+import org.wyrdsekai.core.security.SubprocessEnv;
 import org.wyrdsekai.core.skill.*;
 
 import java.io.IOException;
@@ -18,6 +19,10 @@ import java.util.concurrent.TimeUnit;
  * and contact listing. Requires signal-cli installed and a registered phone number.
  */
 public class SignalSkillExecutor implements SkillExecutor {
+
+    /** signal-cli is a Java program with its data under XDG dirs; nothing else of the daemon's reaches it. */
+    public static final SubprocessEnv ENV = SubprocessEnv.of(
+        "JAVA_HOME", "JAVA_OPTS", "SIGNAL_CLI_OPTS", "XDG_DATA_HOME", "XDG_CONFIG_HOME");
 
     private static final int MAX_OUTPUT_BYTES = 64 * 1024;
     private static final SkillAuth AUTH = SkillAuth.localBridge("signal_account");
@@ -130,7 +135,7 @@ public class SignalSkillExecutor implements SkillExecutor {
     private SkillResult runCommand(List<String> cmd, long start, long timeoutMs,
                                     String skillId, ResultMapper mapper) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(cmd);
+            ProcessBuilder pb = ENV.builder(cmd);
             pb.redirectErrorStream(false);
             Process proc = pb.start();
             boolean finished = proc.waitFor(timeoutMs, TimeUnit.MILLISECONDS);

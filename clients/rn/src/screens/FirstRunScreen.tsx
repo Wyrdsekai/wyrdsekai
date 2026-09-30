@@ -38,6 +38,7 @@ import {
   verifyCode,
   type PairingCredentials,
 } from '../network/PairingClient';
+import { secureHomeAddress } from '../network/secureAddress';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FirstRun'>;
 
@@ -140,8 +141,16 @@ export function FirstRunScreen({ navigation }: Props) {
     setRequesting(true);
     setPairingError(null);
     (async () => {
+      // Pairing sends a code and returns this phone's credentials: never over
+      // a plain http:// address on the network ( W2).
+      const address = secureHomeAddress(selectedServerUrl);
+      if (!address.ok) {
+        setPairingError(address.error);
+        setRequesting(false);
+        return;
+      }
       const challenge = await requestPairing(
-        selectedServerUrl,
+        address.url,
         companionName.trim() || 'Wyrd',
         'phone',
       );
@@ -163,8 +172,14 @@ export function FirstRunScreen({ navigation }: Props) {
     setVerifying(true);
     setPairingError(null);
 
+    const address = secureHomeAddress(selectedServerUrl);
+    if (!address.ok) {
+      setPairingError(address.error);
+      setVerifying(false);
+      return;
+    }
     const credentials = await verifyCode(
-      selectedServerUrl,
+      address.url,
       challengeId,
       pairingCode,
     );
@@ -174,8 +189,8 @@ export function FirstRunScreen({ navigation }: Props) {
       return;
     }
 
-    // Save pairing credentials
-    setPairingCredentials(credentials);
+    // Save pairing credentials (never the relay: that comes from an invite)
+    await setPairingCredentials(credentials);
     setVerifying(false);
     await finishLocal(credentials.serverUrl, credentials.token);
   }, [selectedServerUrl, companionName, pairingCode, setPairingCredentials, finishLocal]);

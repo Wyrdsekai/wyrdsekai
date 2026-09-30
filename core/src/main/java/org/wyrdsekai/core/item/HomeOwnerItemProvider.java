@@ -12,6 +12,7 @@ import org.wyrdsekai.core.home.RelayGovernor;
 import org.wyrdsekai.core.home.RelayGovernance;
 import org.wyrdsekai.core.economy.CountingHouseGateway;
 import org.wyrdsekai.core.home.HomeClient;
+import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.library.StudyService;
 import org.wyrdsekai.core.home.HomeRegistryActor;
 import org.wyrdsekai.core.household.MaintenanceService;
@@ -619,11 +620,15 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
             if (target.isEmpty()) {
                 return Map.of("ok", false, "error", "no such member: " + username);
             }
-            // AuthService.setRole enforces caller-is-steward; ownerDid is the
-            // acting player's user id on this surface.
-            var ok = authService.setRole(ownerDid, target.get().id(), normalized);
-            if (!ok) return Map.of("ok", false, "error", "steward only");
-            return Map.of("ok", true, "username", username, "role", normalized);
+            // AuthService.changeRole enforces caller-is-steward and keeps the
+            // last steward; ownerDid is the acting player's user id on this surface.
+            return switch (authService.changeRole(ownerDid, target.get().id(), normalized)) {
+                case CHANGED -> Map.of("ok", true, "username", username, "role", normalized);
+                case LAST_STEWARD -> Map.of("ok", false,
+                    "error", "the household must keep at least one steward");
+                case NOT_FOUND -> Map.of("ok", false, "error", "no such member: " + username);
+                default -> Map.of("ok", false, "error", "steward only");
+            };
         } catch (Exception e) {
             log.warn("householdSetRole({}, {}): {}", ownerDid, username, e.getMessage());
             return Map.of("ok", false, "error", "role change failed: " + e.getMessage());
@@ -713,10 +718,11 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
             }
             var targetId = target.get().id();
             var cur = parentalService.controlsFor(targetId).orElse(
-                new ParentalControlService.Controls(targetId, null, List.of(), null,
+                new ParentalControlService.Controls(targetId, null, List.of(), null, null,
                     ParentalControlService.FILTER_OFF, null, null));
             Integer minutes = cur.dailyMinutes();
             Integer inference = cur.dailyInference();
+            Integer research = cur.dailyResearch();
             var filter = cur.contentFilter();
             var rooms = new ArrayList<>(cur.blockedRooms());
 
@@ -731,6 +737,21 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
                     var parsed = parseLimit(value);
                     if (parsed.isEmpty()) return badLimit(value);
                     inference = parsed.get().orElse(null) == null ? null : parsed.get().get();
+                }
+                case "research" -> {
+                    // Library research runs a day: a number (0 = none), or "default" for the
+                    // household's setting. Not "off": it would read as both "none" and "no limit".
+                    var v = value == null ? "" : String.valueOf(value).trim().toLowerCase();
+                    if (v.equals("default")) {
+                        research = null;
+                    } else {
+                        var parsed = parseLimit(value);
+                        if (parsed.isEmpty() || parsed.get().isEmpty()) {
+                            return Map.of("ok", false, "error", "research takes a number of research runs a day "
+                                + "(0 = no library research) or 'default' (the household's setting): " + value);
+                        }
+                        research = parsed.get().get();
+                    }
                 }
                 case "filter" -> {
                     var v = value == null ? "" : String.valueOf(value).trim().toLowerCase();
@@ -753,13 +774,13 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
                 }
                 default -> {
                     return Map.of("ok", false, "error", "unknown field '" + field
-                        + "' (minutes/inference/filter/block-room/unblock-room)");
+                        + "' (minutes/inference/research/filter/block-room/unblock-room)");
                 }
             }
 
             // ParentalControlService.setControls enforces caller-is-steward.
             var ok = parentalService.setControls(
-                ownerDid, targetId, minutes, rooms, inference, filter);
+                ownerDid, targetId, minutes, rooms, inference, research, filter);
             if (!ok) return Map.of("ok", false, "error", "steward only");
             var m = parentalView(parentalService.controlsFor(targetId).orElseThrow());
             m.put("ok", true);
@@ -810,6 +831,10 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
         m.put("displayName", displayName);
         m.put("dailyMinutes", c.dailyMinutes());
         m.put("dailyInference", c.dailyInference());
+        // The steward's own number (null = the household's setting) and what holds today.
+        m.put("dailyResearch", c.dailyResearch());
+        m.put("researchPerDay", c.dailyResearch() != null ? c.dailyResearch() : LibraryConsent.householdResearchPerDay());
+        m.put("researchAskedToday", LibraryConsent.researchAsksToday(c.memberUserId()));
         m.put("contentFilter", c.contentFilter());
         m.put("blockedRooms", List.copyOf(c.blockedRooms()));
         var usage = parentalService.usageToday(c.memberUserId());

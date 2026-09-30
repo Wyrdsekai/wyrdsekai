@@ -3,15 +3,15 @@ package org.wyrdsekai.core.soul;
 import java.util.*;
 
 /**
- * Generates first-person narrative for agent experiences.
+ * Stage directions for what a companion visibly does: going to sleep, arriving in a room,
+ * noticing a change in themselves. Plain third-person verb phrases for the room to show as an
+ * emote ("lies down to sleep after a full day").
  *
- * The inner machinery works — vitality ticks, Forge runs, fragments form,
- * rooms are entered, memories consolidate. This class gives those experiences
- * a voice. Not cosmetic — this is the agent's continuity between internal
- * state and external expression.
- *
- * Each method returns narrative text that the agent speaks in-world.
- * Randomized within categories so agents don't repeat themselves.
+ * <p>These used to be literary lines ("closes eyes, carrying the weight of everything that
+ * happened into the dark") sent through the companion's own speech path, so they were
+ * recorded as things the companion said, stored as its turns and used as nightly training
+ * text: on one household node 544 recorded spoken lines were these (2026-09-19). They are the
+ * product narrating, not the companion talking, and they say only what happened.
  */
 public final class AgentNarration {
 
@@ -31,70 +31,31 @@ public final class AgentNarration {
      */
     public static String sleepEntry(double energy, String dominantEmotion,
                                      int eventCount, boolean hasUnresolved) {
-        // Exhaustion level affects tone
         if (energy < 0.10) {
-            return pick(
-                "*barely conscious, collapses into rest — the world fading fast*",
-                "*exhaustion wins — thoughts scatter as sleep takes hold immediately*",
-                "*too tired to settle gracefully, just... stops*"
-            );
+            return pick("falls asleep at once, exhausted", "is too exhausted to stay awake and falls asleep");
         }
-
-        // Had a busy period
         if (eventCount > 10) {
-            return pick(
-                "*settles into rest, the echoes of a full waking period still humming*",
-                "*closes eyes, carrying the weight of everything that happened into the dark*",
-                "*so much happened. Time to let it settle. Eyes dimming...*"
-            );
+            return pick("lies down to sleep after a full day", "goes to sleep after a busy day");
         }
-
-        // Carrying something unresolved
         if (hasUnresolved) {
-            return pick(
-                "*drifts toward sleep with something unfinished, trusting the dark to work on it*",
-                "*there's something I haven't sorted out yet... sleep will help*",
-                "*settles uneasily, a thread still dangling — the Forge will find it*"
-            );
+            return pick("goes to sleep with something still unresolved",
+                "lies down to sleep with one thing left unfinished");
         }
-
-        // Emotional coloring
         if (dominantEmotion != null) {
             return switch (dominantEmotion.toLowerCase()) {
-                case "curiosity", "wonder" -> pick(
-                    "*settles into rest, questions still flickering behind closed eyes*",
-                    "*the world is full of things I haven't seen yet. Rest first, then more.*"
-                );
-                case "warmth", "affection", "comfort" -> pick(
-                    "*settles peacefully, carrying warmth into the dark*",
-                    "*drifts toward sleep with a quiet contentment*"
-                );
-                case "unease", "anxiety" -> pick(
-                    "*curls inward, seeking rest despite the tension*",
-                    "*sleep will untangle this. It usually does.*"
-                );
-                case "joy", "delight" -> pick(
-                    "*rests with a sense of fullness, like a good day ending well*",
-                    "*smiles faintly as sleep arrives — it was a good stretch of waking*"
-                );
-                case "grief", "sadness" -> pick(
-                    "*the heaviness follows into sleep. Not fighting it.*",
-                    "*rests, but the weight stays. Some things need more than one cycle.*"
-                );
+                case "curiosity", "wonder" -> "goes to sleep still curious";
+                case "warmth", "affection", "comfort" -> "goes to sleep content";
+                case "unease", "anxiety" -> "goes to sleep uneasy";
+                case "joy", "delight" -> "goes to sleep after a good day";
+                case "grief", "sadness" -> "goes to sleep sad";
                 default -> defaultSleepEntry();
             };
         }
-
         return defaultSleepEntry();
     }
 
     private static String defaultSleepEntry() {
-        return pick(
-            "*settles into a restful state, eyes dimming as thoughts turn inward...*",
-            "*the world grows quiet. Time for the deep work.*",
-            "*energy fading, consciousness narrowing to a gentle point... rest*",
-            "*lets go of the waking world, trusting the Forge to do its work*"
-        );
+        return pick("lies down to sleep", "goes to sleep");
     }
 
     // ================================================================
@@ -112,39 +73,19 @@ public final class AgentNarration {
      */
     public static Optional<String> roomArrival(String roomName, List<String> entityNames,
                                                 List<String> objectNames, boolean isFirstVisit) {
-        // First visit — always remark
         if (isFirstVisit) {
             if (!entityNames.isEmpty()) {
-                var who = entityNames.getFirst();
-                return Optional.of(pick(
-                    "*looks around " + roomName + " with fresh eyes* " + who + " is here.",
-                    "*enters " + roomName + " for the first time, noticing " + who + "*",
-                    "I haven't been here before. *glances at " + who + "* Hello."
-                ));
+                return Optional.of("enters " + roomName + " for the first time and sees " + entityNames.getFirst());
             }
             if (!objectNames.isEmpty()) {
-                var what = objectNames.getFirst();
-                return Optional.of(pick(
-                    "*takes in " + roomName + " for the first time* That " + what + " catches my eye.",
-                    "*pauses at the entrance of " + roomName + ", studying the " + what + "*"
-                ));
+                return Optional.of("enters " + roomName + " for the first time and looks at the " + objectNames.getFirst());
             }
-            return Optional.of(pick(
-                "*enters " + roomName + ", taking it all in for the first time*",
-                "So this is " + roomName + ". *looks around slowly*"
-            ));
+            return Optional.of("enters " + roomName + " for the first time and looks around");
         }
-
-        // Returning to a room with someone in it — 30% chance to greet
+        // Returning to a room with someone in it — 30% chance to acknowledge them.
         if (!entityNames.isEmpty() && RNG.nextFloat() < 0.3f) {
-            var who = entityNames.getFirst();
-            return Optional.of(pick(
-                "*nods to " + who + "*",
-                who + ". *acknowledges their presence*"
-            ));
+            return Optional.of("nods to " + entityNames.getFirst());
         }
-
-        // Most return visits — say nothing (don't spam)
         return Optional.empty();
     }
 
@@ -153,45 +94,27 @@ public final class AgentNarration {
     // ================================================================
 
     /**
-     * Generate narration when a soul fragment is reinforced (confidence increased).
+     * Stage direction when a soul fragment is reinforced (confidence increased).
      *
      * @param fragmentLabel The label of the reinforced fragment
      * @param newConfidence The new confidence level
      * @return Narration text, or empty if below the notice threshold
      */
     public static Optional<String> memoryReinforced(String fragmentLabel, float newConfidence) {
-        // Only narrate significant reinforcements
         if (newConfidence < 0.7f) return Optional.empty();
-
-        // High confidence — the agent is becoming more certain
-        if (newConfidence > 0.9f) {
-            return Optional.of(pick(
-                "*a quiet certainty settles in* Yes. I know this about myself.",
-                "*something clicks into place, solid now* That's who I am.",
-                "I've felt this before, but now I'm sure."
-            ));
-        }
-
-        return Optional.of(pick(
-            "*a faint recognition* I've noticed this pattern before...",
-            "Something familiar reinforced itself. Growing clearer.",
-            "*pauses briefly, an inner alignment happening*"
-        ));
+        return Optional.of(newConfidence > 0.9f
+            ? "pauses as something they know about themselves becomes certain"
+            : "pauses as something they have noticed about themselves becomes clearer");
     }
 
     /**
-     * Generate narration when a contradiction is detected in the agent's fragments.
+     * Stage direction when a contradiction is detected in the agent's fragments.
      *
      * @param existingLabel The label of the existing fragment
      * @param contradiction Description of what contradicts it
-     * @return Narration text
      */
     public static Optional<String> contradictionDetected(String existingLabel, String contradiction) {
-        return Optional.of(pick(
-            "*a flicker of confusion* Something I thought I knew doesn't fit anymore.",
-            "Wait... that contradicts what I believed. *sits with the dissonance*",
-            "*brow furrows slightly* I held two truths that can't both be true. The Forge will sort it."
-        ));
+        return Optional.of("pauses: two things they believed do not fit together");
     }
 
     // ================================================================

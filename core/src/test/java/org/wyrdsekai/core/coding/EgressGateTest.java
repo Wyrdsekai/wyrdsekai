@@ -106,13 +106,28 @@ final class EgressGateTest {
 
     @Test
     void backend_env_overrides_a_scrubbed_then_readded_key() {
-        // If a key is in BOTH the allowlist and the backend env, the backend
-        // value wins (it's layered last). OPENAI_API_KEY is allowlisted; the
-        // backend supplies the sentinel.
+        // A parent value is dropped (no credential is allowlisted) and the
+        // backend's own value is layered on: the backend supplies the sentinel.
         var env = parentEnv();
         env.put("OPENAI_API_KEY", "stale-parent-value");
         EgressGate.enforcing().applyEnv(env, backendEnv());
         assertEquals("not-required", env.get("OPENAI_API_KEY"));
+    }
+
+    @Test
+    void no_credential_is_on_the_shared_allowlist() {
+        // The shared list reached every backend and every CLI skill: a key on it was every
+        // backend's key (2026-09-28 audit). Default list and the shipped config alike.
+        for (var gate : List.of(EgressGate.enforcing(), EgressGate.fromConfig(ConfigFactory.load()))) {
+            var env = parentEnv();
+            env.put("OPENAI_API_KEY", "sk-ambient");
+            env.put("CODEZAIKU_AUTH_TOKEN", "cz-ambient");
+            env.put("CODEZAIKU_API_KEY", "cz-ambient");
+            gate.applyEnv(env, Map.of());
+            assertFalse(env.containsKey("OPENAI_API_KEY"), gate.toString());
+            assertFalse(env.containsKey("CODEZAIKU_AUTH_TOKEN"), gate.toString());
+            assertFalse(env.containsKey("CODEZAIKU_API_KEY"), gate.toString());
+        }
     }
 
     @Test

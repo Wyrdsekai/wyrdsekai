@@ -3,6 +3,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <objc/runtime.h>
 
 // The pin store + cert helpers (SHA-256 / PEM<->DER / leaf extraction) now live
 // in the shared WyrdTrustStore.{h,mm} so the WyrdRelaySocket WS delegate can
@@ -13,6 +14,84 @@
 // long-lived relay WebSocket is pinned by WyrdRelaySocket / NSURLSession
 // instead; this module's only remaining job is to populate the store
 // (addTrustedCert) and probe chains (fetchServerCertificates) for JS.)
+
+#pragma mark - The shared server-trust decision
+
+void WyrdHandleServerTrustChallenge(NSURLAuthenticationChallenge *challenge,
+                                    void (^completionHandler)(NSURLSessionAuthChallengeDisposition,
+                                                              NSURLCredential *_Nullable)) {
+  if (![challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+    return;
+  }
+  SecTrustRef trust = challenge.protectionSpace.serverTrust;
+  // Pins are per host:port: the same machine may serve a relay and a home.
+  NSString *host = WyrdPinKey(challenge.protectionSpace.host ?: @"", challenge.protectionSpace.port);
+  if (!trust) {
+    completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+    return;
+  }
+  switch ([WyrdTrustStore evaluateServerTrust:trust forHost:host]) {
+    case WyrdPinDecisionNoPins:
+      completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+      return;
+    case WyrdPinDecisionTrusted:
+      completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:trust]);
+      return;
+    case WyrdPinDecisionMismatch: {
+      SecCertificateRef leaf = WyrdCopyLeafCert(trust);
+      NSString *served = @"";
+      if (leaf) {
+        CFDataRef derRef = SecCertificateCopyData(leaf);
+        if (derRef) served = WyrdSha256ColonHex((__bridge_transfer NSData *)derRef);
+        CFRelease(leaf);
+      }
+      NSArray<NSString *> *pinned = [[WyrdTrustStore shared] caFingerprintsForHost:host];
+      if (pinned.count == 0) pinned = [[WyrdTrustStore shared] pinnedFingerprintsForHost:host];
+      NSLog(@"[WyrdHouseholdTrust] refused %@: served %@ does not satisfy its pins", host, served);
+      [WyrdHouseholdTrust emitPinMismatchForHost:host
+                                  newFingerprint:served
+                               pinnedFingerprint:pinned.firstObject ?: @""];
+      completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+      return;
+    }
+  }
+}
+
+#pragma mark - fetch() pinning
+
+// RN's fetch/XMLHttpRequest on iOS runs through RCTHTTPRequestHandler, the
+// delegate of its NSURLSession, which has no TLS challenge handler of its own
+// (checked against react-native 0.83.4) and no hook for one. At load time we
+// give it ours, so an https request to a pinned host (the home's lan_https,
+// pinned to home_ca_fp) is held to its pins, and every other host keeps the
+// system's default handling. If a future RN version implements the method,
+// class_addMethod leaves it alone and says so in the log.
+@interface WyrdFetchPinning : NSObject
+@end
+
+@implementation WyrdFetchPinning
+
++ (void)load {
+  Class handler = NSClassFromString(@"RCTHTTPRequestHandler");
+  SEL sel = @selector(URLSession:didReceiveChallenge:completionHandler:);
+  Method m = class_getInstanceMethod(self, sel);
+  if (!handler || !m) {
+    NSLog(@"[WyrdHouseholdTrust] RCTHTTPRequestHandler not found; fetch() is not pinned");
+    return;
+  }
+  if (!class_addMethod(handler, sel, method_getImplementation(m), method_getTypeEncoding(m))) {
+    NSLog(@"[WyrdHouseholdTrust] RCTHTTPRequestHandler already handles TLS challenges; fetch() is not pinned");
+  }
+}
+
+- (void)URLSession:(NSURLSession *)session
+    didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+      completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+  WyrdHandleServerTrustChallenge(challenge, completionHandler);
+}
+
+@end
 
 #pragma mark - Forward declarations
 
@@ -90,6 +169,7 @@ static __weak WyrdHouseholdTrust *sActiveInstance = nil;
  * Android addTrustedCert (which parses + persists the cert in
  * HouseholdTrustStore). Returns a JS boolean.
  */
+// `host` in the exported methods below is a pin key, "host:port" (HouseholdTrust.ts pinKey).
 RCT_EXPORT_METHOD(addTrustedCert:(NSString *)host
                   pem:(NSString *)pem
                   resolver:(RCTPromiseResolveBlock)resolve
@@ -130,6 +210,23 @@ RCT_EXPORT_METHOD(pinFingerprint:(NSString *)host
     return;
   }
   [[WyrdTrustStore shared] addFingerprint:fingerprint pem:nil forHost:host];
+  resolve(@YES);
+}
+
+/**
+ * Pin a host to its household CA by the CA certificate's SHA-256 (the invite's
+ * `home_ca_fp`, D1). From then on that host is
+ * accepted only with a chain that contains this CA and validates up to it.
+ */
+RCT_EXPORT_METHOD(pinCaFingerprint:(NSString *)host
+                  fingerprint:(NSString *)fingerprint
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+  if (host.length == 0 || WyrdPlainHex(fingerprint ?: @"").length != 64) {
+    reject(@"PIN_CA_FINGERPRINT_FAILED", @"host and a SHA-256 fingerprint are required", nil);
+    return;
+  }
+  [[WyrdTrustStore shared] addCaFingerprint:fingerprint forHost:host];
   resolve(@YES);
 }
 

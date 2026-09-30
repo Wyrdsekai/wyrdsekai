@@ -6,6 +6,7 @@ import org.wyrdsekai.common.model.RoomObject;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,9 +38,17 @@ class MuseAnchorTest {
         return new RoomObject(name, name, "a " + name, false, true, false, List.of(), Map.of());
     }
 
-    private static String pick(List<WorldEvent> events, String verb, List<RoomObject> objects,
-                               Set<String> used) {
-        return CompanionActor.selectMuseAnchor(events, SELF, verb, "The Nexus", objects, used, NOW);
+    private static CompanionActor.LastAct act(String verb, Duration ago, String outcome) {
+        return new CompanionActor.LastAct(verb, NOW.minus(ago), outcome);
+    }
+
+    private static final CompanionActor.LastAct SEARCHED = act("library_search", Duration.ofMinutes(3),
+        CompanionActor.searchOutcome("tide pools", List.of("The Edge of the Sea")));
+
+    private static String pick(List<WorldEvent> events, CompanionActor.LastAct act,
+                               List<RoomObject> objects, Set<String> used) {
+        var anchor = CompanionActor.selectMuseAnchor(events, SELF, act, "The Nexus", objects, used, NOW);
+        return anchor == null ? null : anchor.text();
     }
 
     @Test
@@ -52,8 +61,30 @@ class MuseAnchorTest {
     void what_a_person_said_is_the_strongest_anchor() {
         var events = List.<WorldEvent>of(
             said("bramble", "the greenhouse tomatoes came in heavy this year", NOW.minusSeconds(60)));
-        assertThat(pick(events, "wandered to the library", List.of(obj("crystal")), Set.of()))
+        assertThat(pick(events, SEARCHED, List.of(obj("crystal")), Set.of()))
             .contains("tomatoes came in heavy");
+    }
+
+    @Test
+    void one_unprompted_reaction_per_speaker_at_a_time() {
+        // Two companions alone answered each other's every line for nine minutes after a restart
+        // (27 lines, 2026-09-25). Under the hold a speaker's lines are not anchors; another
+        // speaker's are; with nothing else, silence.
+        var events = List.<WorldEvent>of(
+            said("companion-mia", "the hum's softer now", NOW.minusSeconds(40)),
+            said("companion-mia", "want to sit with that?", NOW.minusSeconds(20)));
+        var held = Set.of(CompanionActor.speakerHoldKey("companion-mia"));
+        assertThat(CompanionActor.selectMuseAnchor(events, SELF, null, null, List.of(), held, NOW)).isNull();
+        assertThat(CompanionActor.selectMuseAnchor(events, SELF, null, "the Nexus", List.of(obj("crystal")), held, NOW))
+            .as("a held speaker's newest line means silence, not a line about the crystal").isNull();
+        var taken = CompanionActor.selectMuseAnchor(events, SELF, null, null, List.of(), Set.of(), NOW);
+        assertThat(taken).isNotNull();
+        assertThat(taken.speakerId()).isEqualTo("companion-mia");
+        var two = List.<WorldEvent>of(
+            said("companion-mia", "the hum's softer now", NOW.minusSeconds(40)),
+            said("bramble", "the kettle's on", NOW.minusSeconds(10)));
+        assertThat(CompanionActor.selectMuseAnchor(two, SELF, null, null, List.of(), held, NOW).text())
+            .contains("bramble said");
     }
 
     @Test
@@ -73,8 +104,9 @@ class MuseAnchorTest {
 
     @Test
     void an_act_she_took_anchors_when_nobody_has_spoken() {
-        assertThat(pick(List.of(), "enacted:go_to_room", List.of(obj("crystal")), Set.of()))
-            .isEqualTo("you just did this: enacted:go_to_room");
+        assertThat(pick(List.of(), SEARCHED, List.of(obj("crystal")), Set.of()))
+            .isEqualTo("you did this 3 minutes ago: library_search — searched for \"tide pools\", "
+                + "found 1: The Edge of the Sea");
     }
 
     @Test
@@ -118,6 +150,90 @@ class MuseAnchorTest {
     @Test
     void blank_and_malformed_material_is_skipped_not_spoken() {
         var events = List.<WorldEvent>of(said("bramble", "   ", NOW.minusSeconds(10)));
-        assertThat(pick(events, "  ", List.of(), Set.of())).isNull();
+        assertThat(pick(events, act("  ", Duration.ofMinutes(1), "found nothing"), List.of(), Set.of()))
+            .isNull();
+    }
+
+    // ── her last act: how long ago, and what came of it (2026-09-22) ──────────────
+    // "you just did this: library_search", two hours after her only search, and she
+    // described a book that was in no result. "you just did this: tell_agent", for a
+    // tell that was never offered to her.
+
+    @Test
+    void an_act_with_no_known_outcome_is_not_an_anchor() {
+        // Handed only the verb, the model supplies the result: a book, a reply, an arrival.
+        for (var verb : List.of("library_search", "tell_agent", "go_to_room", "write_journal",
+                                "mcp__researchzosho__library_search")) {
+            assertThat(pick(List.of(), act(verb, Duration.ofMinutes(2), null), List.of(), Set.of()))
+                .as(verb).isNull();
+        }
+        // She still has the room to speak to.
+        assertThat(pick(List.of(), act("tell_agent", Duration.ofMinutes(2), null),
+                List.of(obj("crystal")), Set.of()))
+            .isEqualTo("the crystal here in The Nexus");
+    }
+
+    @Test
+    void an_act_older_than_the_window_is_not_in_front_of_her() {
+        var old = act("library_search", CompanionActor.MUSE_ACT_WINDOW.plusMinutes(1),
+            CompanionActor.searchOutcome("being alone", List.of("Library Essays")));
+        assertThat(pick(List.of(), old, List.of(), Set.of())).isNull();
+        var edge = act("library_search", CompanionActor.MUSE_ACT_WINDOW,
+            CompanionActor.searchOutcome("being alone", List.of("Library Essays")));
+        assertThat(pick(List.of(), edge, List.of(), Set.of())).startsWith("you did this 30 minutes ago: ");
+    }
+
+    @Test
+    void a_search_carries_what_it_found_and_how_long_ago() {
+        var found = CompanionActor.searchOutcome("being alone",
+            List.of("Papers and Proceedings", "Library Essays", "A Librarian's Open Shelf", "A Fourth"));
+        assertThat(pick(List.of(), act("library_search", Duration.ofMinutes(16), found), List.of(), Set.of()))
+            .isEqualTo("you did this 16 minutes ago: library_search — searched for \"being alone\", "
+                + "found 4, among them: Papers and Proceedings; Library Essays; A Librarian's Open Shelf");
+    }
+
+    @Test
+    void a_search_that_found_nothing_says_so() {
+        var none = CompanionActor.searchOutcome("being alone", List.of());
+        assertThat(none).isEqualTo("searched for \"being alone\", found nothing");
+        assertThat(pick(List.of(), act("web_search", Duration.ofSeconds(20), none), List.of(), Set.of()))
+            .isEqualTo("you did this a moment ago: web_search — searched for \"being alone\", found nothing");
+    }
+
+    @Test
+    void a_count_with_nothing_to_name_is_not_an_outcome() {
+        // "found 2" and no names: the model would name them.
+        assertThat(CompanionActor.searchOutcome("being alone", Arrays.asList(null, " ")))
+            .isNull();
+    }
+
+    @Test
+    void a_reading_names_what_it_found_or_where_she_looked() {
+        var found = new SubjectReading.Result(List.of(
+            new SubjectReading.Passage("", "Solitude is not loneliness, and the difference", SubjectReading.Source.LIBRARY)),
+            SubjectReading.Source.LIBRARY, null);
+        assertThat(CompanionActor.readingOutcome("solitude", found))
+            .isEqualTo("searched for \"solitude\", found 1: Solitude is not loneliness, and the difference");
+        var missed = new SubjectReading.Result(List.of(), null,
+            "neither the library nor the web had anything on it");
+        assertThat(CompanionActor.readingOutcome("solitude", missed))
+            .isEqualTo("searched for \"solitude\": neither the library nor the web had anything on it");
+    }
+
+    @Test
+    void an_act_a_gate_held_back_is_named_as_tried() {
+        assertThat(pick(List.of(), act("create_room", Duration.ofMinutes(1), CompanionActor.NOT_HERS_YET),
+                List.of(), Set.of()))
+            .isEqualTo("you tried this a minute ago: create_room — it was not yours to do on your own yet");
+    }
+
+    @Test
+    void an_act_is_spent_once_though_its_age_moves() {
+        var first = CompanionActor.selectMuseAnchor(List.of(), SELF, SEARCHED, "The Nexus", List.of(),
+            Set.of(), NOW);
+        assertThat(first).isNotNull();
+        var later = CompanionActor.selectMuseAnchor(List.of(), SELF, SEARCHED, "The Nexus", List.of(),
+            Set.of(first.key()), NOW.plus(Duration.ofMinutes(5)));
+        assertThat(later).isNull();
     }
 }

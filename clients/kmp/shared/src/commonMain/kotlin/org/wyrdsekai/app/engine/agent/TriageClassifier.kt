@@ -3,6 +3,7 @@ package org.wyrdsekai.app.engine.agent
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.InferenceClient
+import org.wyrdsekai.app.inference.NowLine
 
 /**
  * Classifies user input as SIMPLE or COMPLEX to route between fast local
@@ -145,7 +146,8 @@ Answer with one word only."""
         val response = inferenceClient.complete(
             baseUrl = inferenceBaseUrl,
             messages = messages,
-            options = CompletionOptions(maxTokens = 8, temperature = 0.1),
+            // A classifier: the date would only move its one-word answer.
+            options = CompletionOptions(maxTokens = 8, temperature = 0.1, now = NowLine.NONE),
         )
         val answer = response.content.trim().uppercase()
         return if (answer.contains("COMPLEX")) Tier.COMPLEX else Tier.SIMPLE

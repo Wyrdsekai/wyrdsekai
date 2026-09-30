@@ -113,7 +113,7 @@ public class WebSocketTransportHandler implements McpTransportHandler {
         var request = JsonRpcMessage.Request.create(nextId.getAndIncrement(), "tools/call",
             Map.of("name", toolName, "arguments", arguments != null ? arguments : Map.of()));
         var response = sendRequest(request);
-        if (response.isError()) throw new IOException("tools/call failed: " + response.error().message());
+        if (response.isError()) throw McpToolException.fromRpcError(toolName, response.error());
         return mapper.convertValue(response.result(), JsonRpcMessage.ToolCallResult.class);
     }
 

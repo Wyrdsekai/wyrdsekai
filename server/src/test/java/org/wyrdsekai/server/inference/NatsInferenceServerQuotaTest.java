@@ -94,13 +94,37 @@ class NatsInferenceServerQuotaTest {
         }
     }
 
+    /** The key zone "beta" agreed with: cross-zone requests must be signed by it (2026-09-28). */
+    private static final KeyPair BETA_ZONE_KEY;
+    static {
+        try {
+            BETA_ZONE_KEY = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private NatsInferenceServer newServer(FakeTransport transport) {
         var router = testKit.spawn(InferenceRouter.create(List.of(), "m", null));
         // Explicit 7-arg config: streaming ON + the stub backend URL, so the F25
         // health probe passes and start() subscribes deterministically —
         // independent of any ambient WYRDSEKAI_INFERENCE_URL / live :8200.
-        return new NatsInferenceServer(transport, "alpha", router,
+        var server = new NatsInferenceServer(transport, "alpha", router,
             testKit.system(), "llama-server", backendUrl, true);
+        var betaSpki = BETA_ZONE_KEY.getPublic().getEncoded();
+        server.setZoneVerifier((zone, data, sig) -> "beta".equals(zone)
+            && NodeIdentity.verify(data, Base64.getDecoder().decode(sig), betaSpki));
+        return server;
+    }
+
+    /** A request from zone "beta", signed by the key beta agreed with. */
+    private static NatsInferenceProtocol.Request betaRequest(String streamId, Integer maxTokens) throws Exception {
+        long ts = System.currentTimeMillis();
+        return new NatsInferenceProtocol.Request(
+            streamId, "beta", "agent-x", "m",
+            List.of(new NatsInferenceProtocol.Message("user", "hi")),
+            maxTokens, 0.0, false, "beta-node",
+            signClaim(BETA_ZONE_KEY.getPrivate(), streamId, "beta", "beta-node", ts), ts);
     }
 
     @Test void request_over_daily_quota_is_rejected_with_error_chunk() throws Exception {
@@ -112,10 +136,7 @@ class NatsInferenceServerQuotaTest {
             100L, 0, 0, true, true, true, 0, Map.of()));
         server.start();
 
-        var req = new NatsInferenceProtocol.Request(
-            "s-1", "beta", "agent-x", "m",
-            List.of(new NatsInferenceProtocol.Message("user", "hi")),
-            200, 0.0, false);
+        var req = betaRequest("s-1", 200);
 
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
             .accept(MAPPER.writeValueAsBytes(req));
@@ -146,10 +167,7 @@ class NatsInferenceServerQuotaTest {
             1_000_000L, 0, 0, true, true, true, 0, Map.of()));
         server.start();
 
-        var req = new NatsInferenceProtocol.Request(
-            "s-2", "beta", "agent-x", "m",
-            List.of(new NatsInferenceProtocol.Message("user", "hi")),
-            50, 0.0, false);
+        var req = betaRequest("s-2", 50);
 
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
             .accept(MAPPER.writeValueAsBytes(req));
@@ -181,10 +199,7 @@ class NatsInferenceServerQuotaTest {
         server.setQuotaResolver(zone -> QuotaPolicy.family());
         server.start();
 
-        var req = new NatsInferenceProtocol.Request(
-            "s-3", "beta", "agent-x", "m",
-            List.of(new NatsInferenceProtocol.Message("user", "hi")),
-            999_999_999, 0.0, false);
+        var req = betaRequest("s-3", 999_999_999);
 
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
             .accept(MAPPER.writeValueAsBytes(req));
@@ -205,32 +220,65 @@ class NatsInferenceServerQuotaTest {
         server.stop();
     }
 
-    @Test void no_resolver_means_no_enforcement() throws Exception {
+    @Test void no_resolver_means_no_other_zone_is_served() throws Exception {
+        // 2026-09-28: without an agreement lookup nothing outside the household is served
+        // (it used to be served with no limit).
         var transport = new FakeTransport();
         var server = newServer(transport);
-        // No setQuotaResolver call — preserves v0 behavior for clients that
-        // haven't wired FederationService yet.
         server.start();
 
-        var req = new NatsInferenceProtocol.Request(
-            "s-4", "beta", "agent-x", "m",
-            List.of(new NatsInferenceProtocol.Message("user", "hi")),
-            999_999, 0.0, false);
+        transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
+            .accept(MAPPER.writeValueAsBytes(betaRequest("s-4", 999_999)));
+
+        var chunk = transport.firstChunkOn(NatsInferenceProtocol.streamSubject("s-4"));
+        assertThat(chunk).isNotNull();
+        assertThat(chunk.done()).isTrue();
+        assertThat(chunk.error()).contains("NoAgreement");
+        server.stop();
+    }
+
+    @Test void zone_without_an_active_agreement_is_refused() throws Exception {
+        var transport = new FakeTransport();
+        var server = newServer(transport);
+        // The resolver answers only for ACTIVE agreements; "beta" has none.
+        server.setQuotaResolver(zone -> null);
+        server.start();
 
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
-            .accept(MAPPER.writeValueAsBytes(req));
+            .accept(MAPPER.writeValueAsBytes(betaRequest("s-na", 10)));
 
-        var streamSubject = NatsInferenceProtocol.streamSubject("s-4");
-        var deadline = System.currentTimeMillis() + 1500;
-        NatsInferenceProtocol.StreamChunk chunk = null;
-        while (System.currentTimeMillis() < deadline) {
-            chunk = transport.firstChunkOn(streamSubject);
-            if (chunk != null) break;
-            Thread.sleep(25);
-        }
-        if (chunk != null && chunk.error() != null) {
-            assertThat(chunk.error()).doesNotContain("QuotaExceeded");
-        }
+        var chunk = transport.firstChunkOn(NatsInferenceProtocol.streamSubject("s-na"));
+        assertThat(chunk).isNotNull();
+        assertThat(chunk.error()).contains("NoAgreement").contains("beta");
+        server.stop();
+    }
+
+    @Test void unsigned_or_forged_zone_request_is_refused() throws Exception {
+        var transport = new FakeTransport();
+        var server = newServer(transport);
+        server.setQuotaResolver(zone -> QuotaPolicy.family());
+        server.start();
+
+        // Unsigned: names beta, carries no signature.
+        var unsigned = new NatsInferenceProtocol.Request(
+            "s-u", "beta", "agent-x", "m",
+            List.of(new NatsInferenceProtocol.Message("user", "hi")), 10, 0.0, false);
+        transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
+            .accept(MAPPER.writeValueAsBytes(unsigned));
+        assertThat(transport.firstChunkOn(NatsInferenceProtocol.streamSubject("s-u")).error())
+            .contains("Unverified");
+
+        // Forged: names beta, signed by some other key.
+        var other = genEd25519();
+        long ts = System.currentTimeMillis();
+        var forged = new NatsInferenceProtocol.Request(
+            "s-f", "beta", "agent-x", "m",
+            List.of(new NatsInferenceProtocol.Message("user", "hi")), 10, 0.0, false, "beta-node",
+            signClaim(other.getPrivate(), "s-f", "beta", "beta-node", ts), ts);
+        transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
+            .accept(MAPPER.writeValueAsBytes(forged));
+        assertThat(transport.firstChunkOn(NatsInferenceProtocol.streamSubject("s-f")).error())
+            .contains("Unverified");
         server.stop();
     }
 
@@ -245,10 +293,7 @@ class NatsInferenceServerQuotaTest {
         server.start();
 
         // Null maxTokens → fall back to the server's internal estimate (512).
-        var req = new NatsInferenceProtocol.Request(
-            "s-5", "beta", "agent-x", "m",
-            List.of(new NatsInferenceProtocol.Message("user", "hi")),
-            null, null, false);
+        var req = betaRequest("s-5", null);
 
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
             .accept(MAPPER.writeValueAsBytes(req));
@@ -333,13 +378,13 @@ class NatsInferenceServerQuotaTest {
         server.setHouseholdGate(verifierFor("node-fam", kp.getPublic()), () -> true);
         server.start();
 
-        // sourceNode is a stranger (not the gated node) → no exemption → rejected.
+        // sourceNode is a stranger (not the gated node) → no exemption → the zone's quota applies.
         long ts = System.currentTimeMillis();
         var req = new NatsInferenceProtocol.Request(
             "s-h2", "beta", "agent-x", "m",
             List.of(new NatsInferenceProtocol.Message("user", "hi")),
             200, 0.0, false, "node-stranger",
-            signClaim(kp.getPrivate(), "s-h2", "beta", "node-stranger", ts), ts);
+            signClaim(BETA_ZONE_KEY.getPrivate(), "s-h2", "beta", "node-stranger", ts), ts);
         transport.subs.get(NatsInferenceProtocol.requestSubject("alpha"))
             .accept(MAPPER.writeValueAsBytes(req));
 
@@ -376,8 +421,8 @@ class NatsInferenceServerQuotaTest {
         assertThat(chunk).isNotNull();
         assertThat(chunk.done()).isTrue();
         assertThat(chunk.error())
-            .as("forged household signature must not bypass the quota")
-            .contains("QuotaExceeded").contains("beta");
+            .as("forged household signature gets no exemption, and is not beta's zone key either")
+            .contains("Unverified").contains("beta");
         server.stop();
     }
 
@@ -405,8 +450,8 @@ class NatsInferenceServerQuotaTest {
         assertThat(chunk).isNotNull();
         assertThat(chunk.done()).isTrue();
         assertThat(chunk.error())
-            .as("stale-timestamp household claim must not bypass the quota")
-            .contains("QuotaExceeded").contains("beta");
+            .as("stale-timestamp household claim must not bypass the checks")
+            .contains("Unverified").contains("beta");
         server.stop();
     }
 
@@ -432,7 +477,7 @@ class NatsInferenceServerQuotaTest {
         var chunk = transport.firstChunkOn(NatsInferenceProtocol.streamSubject("s-h3"));
         assertThat(chunk).isNotNull();
         assertThat(chunk.done()).isTrue();
-        assertThat(chunk.error()).contains("QuotaExceeded");
+        assertThat(chunk.error()).doesNotContain("QuotaExceeded").contains("Unverified");
         server.stop();
     }
 

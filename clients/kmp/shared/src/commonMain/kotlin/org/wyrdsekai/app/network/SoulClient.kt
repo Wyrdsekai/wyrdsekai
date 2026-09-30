@@ -41,13 +41,14 @@ data class SyncResponse(
  * - GET  /api/soul/{did}/version/{version} — specific version
  * - POST /api/soul/{did}                   — sync (upload) manifest
  *
- * Authentication is via query parameter `?token=...`.
+ * Authentication is the session or device token in the Authorization header
+ * (never in the URL, where it would end up in logs).
  *
  * Follows the same Ktor + ContentNegotiation pattern as [AuthClient].
  */
-class SoulClient(baseUrl: String) {
+class SoulClient(baseUrl: String, engine: HttpClient = createHouseholdHttpClient()) {
     private val normalizedUrl = normalizeHttpUrl(baseUrl)
-    private val http = HttpClient {
+    private val http = engine.config {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
         }
@@ -59,7 +60,7 @@ class SoulClient(baseUrl: String) {
     suspend fun getLatest(did: String, token: String): Result<ClientSoulManifest> =
         runCatching {
             http.get(soulUrl(did)) {
-                parameter("token", token)
+                header("Authorization", "Bearer $token")
             }.body()
         }
 
@@ -69,7 +70,7 @@ class SoulClient(baseUrl: String) {
     suspend fun getHistory(did: String, token: String): Result<List<VersionEntry>> =
         runCatching {
             http.get("${soulUrl(did)}/history") {
-                parameter("token", token)
+                header("Authorization", "Bearer $token")
             }.body()
         }
 
@@ -79,7 +80,7 @@ class SoulClient(baseUrl: String) {
     suspend fun getVersion(did: String, version: Int, token: String): Result<ClientSoulManifest> =
         runCatching {
             http.get("${soulUrl(did)}/version/$version") {
-                parameter("token", token)
+                header("Authorization", "Bearer $token")
             }.body()
         }
 
@@ -91,7 +92,7 @@ class SoulClient(baseUrl: String) {
         runCatching {
             http.post(soulUrl(did)) {
                 contentType(ContentType.Application.Json)
-                parameter("token", token)
+                header("Authorization", "Bearer $token")
                 setBody(manifest)
             }.body()
         }

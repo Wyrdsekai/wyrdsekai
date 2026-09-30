@@ -19,7 +19,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Daily forecast scroll for the bondholder's home location.",
   author: "did:wyrd:system",
-  capabilities: ["maps.read", "openweather.read"],
+  capabilities: ["maps.geocode", "openweather.current", "openweather.forecast"],
   embodiment: {
     silent: false,
     emits: ["ambient_shift"],

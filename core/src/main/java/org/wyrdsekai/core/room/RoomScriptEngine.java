@@ -12,10 +12,12 @@ import org.wyrdsekai.core.coding.BackendRegistry;
 import org.wyrdsekai.core.coding.CodeZaikuBackend;
 import org.wyrdsekai.core.coding.DefaultCodingBackendProvider;
 import org.wyrdsekai.core.coding.ScriptedCodingBackendProvider;
+import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.scripting.api.BridgeDataProvider;
 import org.wyrdsekai.scripting.api.McpGatewayProvider;
 import org.wyrdsekai.scripting.api.WorldApi;
 import org.wyrdsekai.scripting.loader.ScriptLoader;
+import org.wyrdsekai.scripting.sandbox.ResourceLimits;
 import org.wyrdsekai.scripting.sandbox.ScriptSandbox;
 
 import java.io.Closeable;
@@ -53,7 +55,7 @@ public class RoomScriptEngine implements Closeable {
                             BridgeDataProvider bridgeDataProvider,
                             McpGatewayProvider mcpGatewayProvider) {
         this.roomId = roomId;
-        this.sandbox = new ScriptSandbox(roomId);
+        this.sandbox = new ScriptSandbox(roomId, configuredLimits());
         this.loader = loader;
         this.worldApi = new WorldApi(roomId);
 
@@ -119,6 +121,24 @@ public class RoomScriptEngine implements Closeable {
 
         // Capture script emissions
         worldApi.onEvent((type, data) -> pendingEmissions.add(new ScriptEmission(type, data)));
+    }
+
+    /**
+     * The limits every hook of this room runs under: {@code WYRDSEKAI_ROOM_SCRIPT_STATEMENTS}
+     * statements and {@code WYRDSEKAI_ROOM_SCRIPT_CPU_MS} milliseconds of CPU time per call.
+     * A missing, unparseable or non-positive value keeps the default; a limit cannot be switched off.
+     */
+    static ResourceLimits configuredLimits() {
+        var cfg = WyrdConfig.get();
+        var d = ResourceLimits.ROOM_SCRIPT;
+        int statements = cfg.resolveInt("WYRDSEKAI_ROOM_SCRIPT_STATEMENTS",
+            "scripts.room_statements", (int) d.statementLimit());
+        int cpuMs = cfg.resolveInt("WYRDSEKAI_ROOM_SCRIPT_CPU_MS",
+            "scripts.room_cpu_ms", (int) d.cpuTimeoutMs());
+        return new ResourceLimits(
+            statements > 0 ? statements : d.statementLimit(),
+            cpuMs > 0 ? cpuMs : d.cpuTimeoutMs(),
+            d.heapLimitBytes(), d.stackDepthLimit());
     }
 
     /**

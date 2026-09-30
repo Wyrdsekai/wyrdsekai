@@ -37,6 +37,7 @@ import org.wyrdsekai.between.layer.RoomLayer;
 import org.wyrdsekai.between.layer.MutationRouter;
 import org.wyrdsekai.between.layer.RoomMutationExecutor;
 import org.wyrdsekai.between.layer.RoomPrimaryProtocol;
+import org.wyrdsekai.between.layer.RosterGossip;
 import org.wyrdsekai.between.layer.ServiceCheckpointer;
 import org.wyrdsekai.between.layer.SoulLayer;
 import org.wyrdsekai.between.layer.StigmergicTrace;
@@ -46,6 +47,8 @@ import org.wyrdsekai.core.config.MdnsDiscovery;
 import org.wyrdsekai.core.config.RelayLegConfig;
 import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.identity.HouseholdStore;
+import org.wyrdsekai.core.naming.EnvelopeVerificationMode;
+import org.wyrdsekai.core.naming.HouseholdIdentity;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.InviteService;
 import org.wyrdsekai.core.room.RoomCommand;
@@ -67,6 +70,8 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.function.BiConsumer;
@@ -74,6 +79,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -377,6 +383,9 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
     private HouseholdScheduler householdScheduler;    // Wave 7: household scheduler
     private HouseholdObservability observability;      // Wave 8: observability
     private IdentityReplicator accountReplicator;      // Wave 1+2: account data replication
+    private HouseholdStore householdRoster;            // the enrolled household machines and their keys
+    private RosterGossip rosterGossip;                 // spreads the roster to machines that joined earlier
+    private long heartbeatCount = 0;
     // W5: distributed layers + bridges (audit 2026-07-11 — never spawned before)
     private ActorRef<CrdtLayer.Command> crdtLayerActor;
     private ActorRef<InferenceLayer.Command> inferenceLayerActor;
@@ -521,7 +530,8 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
                         msg.config().natsClientPort(),
                         msg.config().natsMonitorPort(),
                         msg.dataDir(),
-                        true  // bind all interfaces for cluster mode
+                        // The network, with TLS and a login for every client (W2); false: this machine only.
+                        org.wyrdsekai.core.config.WyrdConfig.get().natsBindAll()
                     );
                     natsUrl = natsServer.start();
                 } else {
@@ -545,6 +555,26 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
                 }
             }
 
+            // 3a. Every inbound envelope is checked before a handler sees it (audit 2026-09-28):
+            //     household senders against the roster or their pinned key, other zones against the
+            //     key their agreement pinned, all within a timestamp window and a replay cache.
+            householdRoster = new HouseholdStore(msg.jdbcUrl());
+            var fedService = new FederationService(msg.jdbcUrl());
+            final var roster = householdRoster;
+            final var localZone = msg.zoneId();
+            natsBridge.setGuard(new EnvelopeGuard(
+                localZone,
+                id -> roster.get(id).map(HouseholdStore.Row::publicKey),
+                new PeerKeyPins(msg.dataDir().resolve("peer-keys.json")),
+                zone -> fedService.activeZoneKey(localZone, zone),
+                (id, key) -> roster.upsert(id, key, fingerprintOf(key),
+                    HouseholdIdentity.fromSpkiBytes(key).did(), null),
+                EnvelopeVerificationMode.fromEnv(),
+                Duration.ofSeconds(WyrdConfig.get().resolveInt(
+                    "WYRDSEKAI_ENVELOPE_MAX_SKEW_SECONDS", "federation.envelope_max_skew_seconds",
+                    (int) EnvelopeGuard.DEFAULT_MAX_SKEW.toSeconds())),
+                Clock.systemUTC()));
+
             // 3b. Create broadcast-all RoomEventReplicator so room events
             //     from RoomActor flow to NATS for external subscribers
             //     (e.g. Claude room-resident bridge).
@@ -559,13 +589,10 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
             var relayToken = msg.config().relayToken();
             if (relayUrl != null && !relayUrl.isEmpty()) {
                 try {
-                    // dual-mode: opt-in to NKey auth via
-                    // WYRDSEKAI_RELAY_USE_NKEY=true. When enabled, RelayBridge uses
-                    // NodeIdentity's NKey AuthHandler; otherwise falls back to
-                    // user/password (legacy). After Phase 4 retires password mode,
-                    // this flag's default flips to true and the env-var goes away.
-                    boolean useNkey = "true".equalsIgnoreCase(
-                        System.getenv().getOrDefault("WYRDSEKAI_RELAY_USE_NKEY", "false"));
+                    // NKey auth by default (security review 2026-09-28).
+                    // A leg that holds a relay password (a password-mode registration)
+                    // keeps using it unless WYRDSEKAI_RELAY_USE_NKEY says otherwise.
+                    boolean useNkey = RelayTls.useNkey(relayToken);
                     var authUser = System.getenv().getOrDefault("WYRDSEKAI_RELAY_USER",
                         "hh-" + msg.zoneId());
                     // dual-set diagnostic: when both NKey
@@ -610,7 +637,7 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
                             var legBridge = new RelayBridge(
                                 leg.url(), natsUrl, msg.zoneId(),
                                 identity.nodeId(), legUser, leg.token(),
-                                useNkey ? identity : null, dedup, !leg.isPublic());
+                                RelayTls.useNkey(leg.token()) ? identity : null, dedup, !leg.isPublic());
                             legBridge.start();
                             additionalBridges.add(legBridge);
                             log.info("Between: additional relay leg active — {} (visibility={})",
@@ -654,7 +681,6 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
                 new ProbeTick(), msg.config().probeInterval());
 
             // 10. Spawn FederationActor as child
-            var fedService = new FederationService(msg.jdbcUrl());
             federationActor = getContext().spawn(
                 FederationActor.create(), "federation");
             federationActor.tell(new FederationActor.Initialize(
@@ -673,6 +699,11 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
             presenceLayer = new PresenceLayer(natsBridge, identity.nodeId());
             presenceLayer.start();
             log.info("Between: PresenceLayer started");
+
+            // 12a. Household roster gossip: a machine that joined earlier learns of later ones, so their
+            //      signed account events are not refused as coming from strangers.
+            rosterGossip = new RosterGossip(natsBridge, identity.nodeId(), householdRoster);
+            rosterGossip.start();
 
             // 12b. courier satchel household
             //      transport. Wires NetworkWiring's transport seam (which was
@@ -910,6 +941,12 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
         payload.put("wireProtocol", appVer.wireProtocol());
 
         natsBridge.broadcast("cluster", "heartbeat", payload);
+        // Every ~5 minutes: the roster, and a hello. A peer that missed our first hello drops our
+        // heartbeats as coming from an unknown sender, so it needs to hear hello again to pin us.
+        if (rosterGossip != null && ++heartbeatCount % 30 == 0) {
+            rosterGossip.announce();
+            broadcastHello();
+        }
 
         // Wave 2: Publish node capability snapshot on every heartbeat
         if (nodeCapabilities != null && placementEngine != null) {
@@ -1359,7 +1396,7 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
             return this;
         }
         accountReplicator = new IdentityReplicator(
-            natsBridge, identity.nodeId(), msg.authService(), msg.inviteService());
+            natsBridge, identity, householdRoster, msg.authService(), msg.inviteService());
         accountReplicator.startReplication();
         log.info("Between: IdentityReplicator started (JetStream) — account data persisted in mesh");
         return this;
@@ -1702,6 +1739,15 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
 
     // --- Helpers ---
 
+    /** SHA-256 of the SPKI bytes as colon-separated lowercase hex, the households table's form. */
+    private static String fingerprintOf(byte[] spki) {
+        try {
+            return HexFormat.ofDelimiter(":").formatHex(MessageDigest.getInstance("SHA-256").digest(spki));
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
     private void subscribeToClusterMessages() {
         var self = getContext().getSelf();
 
@@ -1887,7 +1933,8 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
                 cfg.nodeName(),
                 cfg.zoneId(),
                 householdId,
-                7070,                       // wyrd HTTP port — for discover --lan
+                // The port the LAN reaches: HTTPS on 7443 since 0.5.0 (plain 7070 answers this machine only).
+                cfg.tlsEnabled() && !cfg.httpLanPlaintext() ? cfg.tlsPort() : 7070,
                 natsUrl,                    // cluster hint
                 config.arteryPort(),        // cluster hint
                 false,                       // hostsRelay (not yet wired)

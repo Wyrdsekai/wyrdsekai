@@ -18,8 +18,11 @@ import org.wyrdsekai.core.home.HomeProxy;
 import org.wyrdsekai.core.home.HomeRegistryActor;
 import org.wyrdsekai.core.home.HomeStore;
 import org.wyrdsekai.core.home.ZoneDirectory;
+import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.persistence.SchemaInitializer;
+import org.wyrdsekai.core.persistence.SqlDialect;
 import org.wyrdsekai.e2e.infra.PortAllocator;
+import org.wyrdsekai.server.http.ApiAuth;
 import org.wyrdsekai.server.http.HomeRoutes;
 
 import java.net.URI;
@@ -39,6 +42,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Catches drift between the proxy's outbound JSON and what the server
  * REST endpoint expects on the wire.</p>
+ *
+ * <p>Each zone's routes sit behind the same login filter as Main.java. A knock from another
+ * zone carries no login (POST /api/home/grant-requests is PUBLIC; the owner decides); the
+ * owner answers it with their own login (0.5.0: the acting identity comes from the session).</p>
  */
 @Tag("tier2")
 class FederatedHomeProxyE2ETest {
@@ -55,6 +62,8 @@ class FederatedHomeProxyE2ETest {
     private static Javalin betaApp;
     private static String alphaBaseUrl;
     private static String betaBaseUrl;
+    private static AuthService alphaAuth;
+    private static AuthService betaAuth;
 
     @BeforeAll
     static void setUp() throws Exception {
@@ -66,14 +75,18 @@ class FederatedHomeProxyE2ETest {
         tmpAlpha = Files.createTempDirectory("fed-proxy-alpha");
         tmpBeta = Files.createTempDirectory("fed-proxy-beta");
 
-        alphaClient = bootRegistry(kitAlpha, tmpAlpha, "home-alpha");
-        betaClient = bootRegistry(kitBeta, tmpBeta, "home-beta");
+        var alphaJdbc = SchemaInitializer.initialize(tmpAlpha.resolve("home-alpha.db"));
+        var betaJdbc = SchemaInitializer.initialize(tmpBeta.resolve("home-beta.db"));
+        alphaClient = bootRegistry(kitAlpha, alphaJdbc, "home-alpha");
+        betaClient = bootRegistry(kitBeta, betaJdbc, "home-beta");
+        alphaAuth = new AuthService(alphaJdbc, new SqlDialect.SQLite());
+        betaAuth = new AuthService(betaJdbc, new SqlDialect.SQLite());
 
-        // Mount a minimal Javalin per zone with only HomeRoutes.
+        // Mount a minimal Javalin per zone with only HomeRoutes, behind the login filter.
         int alphaPort = PortAllocator.allocate();
         int betaPort = PortAllocator.allocate();
-        alphaApp = mountHome(alphaClient, kitAlpha.system(), alphaPort);
-        betaApp = mountHome(betaClient, kitBeta.system(), betaPort);
+        alphaApp = mountHome(alphaClient, kitAlpha.system(), alphaPort, alphaAuth);
+        betaApp = mountHome(betaClient, kitBeta.system(), betaPort, betaAuth);
         alphaBaseUrl = "http://127.0.0.1:" + alphaPort;
         betaBaseUrl = "http://127.0.0.1:" + betaPort;
     }
@@ -86,20 +99,27 @@ class FederatedHomeProxyE2ETest {
         if (kitBeta != null) kitBeta.shutdownTestKit();
     }
 
-    private static HomeClient bootRegistry(ActorTestKit kit, Path dir, String name)
+    private static HomeClient bootRegistry(ActorTestKit kit, String jdbc, String name)
             throws Exception {
-        var jdbc = SchemaInitializer.initialize(dir.resolve(name + ".db"));
         var store = new HomeStore(jdbc);
         ActorRef<HomeRegistryActor.Command> ref = kit.spawn(
             HomeRegistryActor.create(store), name);
         return new HomeClient(ref, kit.system());
     }
 
-    private static Javalin mountHome(HomeClient client, ActorSystem<?> system, int port) {
-        var app = Javalin.create(cfg ->
-            new HomeRoutes(client.registry(), system).register(cfg.routes));
+    private static Javalin mountHome(HomeClient client, ActorSystem<?> system, int port,
+                                     AuthService auth) {
+        var app = Javalin.create(cfg -> {
+            cfg.routes.beforeMatched(ApiAuth.filter(auth, null, null));
+            new HomeRoutes(client.registry(), system).register(cfg.routes);
+        });
         app.start(port);
         return app;
+    }
+
+    private static HttpResponse<String> send(HttpRequest.Builder b, String token) throws Exception {
+        if (token != null) b.header("Authorization", "Bearer " + token);
+        return HttpClient.newHttpClient().send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     // --- Tests -----------------------------------------------------------
@@ -173,29 +193,42 @@ class FederatedHomeProxyE2ETest {
 
     @Test
     void round_trip_approve_via_remote_rest() throws Exception {
+        // Bob lives on beta: an account there, and the identity his home is filed under
+        // (what beta's own home view says for his login).
+        var created = betaAuth.registerFirstSteward("bob", "bobpass", "Bob");
+        assertThat(created).isInstanceOf(AuthService.Registration.Created.class);
+        var bobToken = ((AuthService.Registration.Created) created).session().token();
+        var summary = send(HttpRequest.newBuilder()
+            .uri(URI.create(betaBaseUrl + "/api/home/summary")).GET(), bobToken);
+        assertThat(summary.statusCode()).isEqualTo(200);
+        var bob = MAPPER.readTree(summary.body()).path("ownerDid").asText();
+        assertThat(bob).isNotBlank();
+
         // Alpha knocks beta via proxy, then beta's owner approves over REST.
         var dir = new ZoneDirectory.StaticZoneDirectory("alpha")
-            .mapDid("bob-at-beta2", "beta")
+            .mapDid(bob, "beta")
             .mapZoneHttp("beta", betaBaseUrl);
         var proxy = new FederatedHomeProxy(
             new HomeProxy.Local(alphaClient, "alpha"), "alpha", dir);
-        var knockResult = proxy.knock("alice-at-alpha", "bob-at-beta2", "please");
+        var knockResult = proxy.knock("alice-at-alpha", bob, "please");
         assertThat(knockResult.ok()).isTrue();
 
-        // Bob (owner on beta) approves via the REST endpoint. This is what
-        // a real UI on beta would do.
-        var approveBody = """
-            {"actor":"bob-at-beta2","note":"come in"}
-            """;
-        var req = HttpRequest.newBuilder()
+        var approve = HttpRequest.newBuilder()
             .uri(URI.create(betaBaseUrl + "/api/home/grant-requests/"
                 + knockResult.requestId() + "/approve"))
-            .header("content-type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(approveBody))
-            .build();
-        HttpResponse<String> resp = HttpClient.newHttpClient()
-            .send(req, HttpResponse.BodyHandlers.ofString());
-        assertThat(resp.statusCode()).isEqualTo(200);
+            .header("content-type", "application/json");
+
+        // 0.5.0: naming the owner in the body no longer approves anything; it takes the
+        // owner's login.
+        var anonymous = send(approve.copy().POST(HttpRequest.BodyPublishers.ofString(
+            "{\"actor\":\"" + bob + "\",\"note\":\"come in\"}")), null);
+        assertThat(anonymous.statusCode()).isEqualTo(401);
+
+        // Bob (owner on beta) approves via the REST endpoint with his login. This is what
+        // a real UI on beta would do.
+        HttpResponse<String> resp = send(approve.copy().POST(HttpRequest.BodyPublishers.ofString(
+            "{\"note\":\"come in\"}")), bobToken);
+        assertThat(resp.statusCode()).as(resp.body()).isEqualTo(200);
         JsonNode json = MAPPER.readTree(resp.body());
         assertThat(json.path("status").asText()).isEqualTo("approved");
         assertThat(json.path("issuedGrantId").asText()).isNotBlank();
@@ -204,7 +237,7 @@ class FederatedHomeProxyE2ETest {
         var held = betaClient.listHeldBy("alice-at-alpha");
         assertThat(held).anySatisfy(g -> {
             assertThat(g.resource().toString())
-                .isEqualTo("home://bob-at-beta2/home-room");
+                .isEqualTo("home://" + bob + "/home-room");
             assertThat(g.capability()).isEqualTo(
                 Capability.use);
         });

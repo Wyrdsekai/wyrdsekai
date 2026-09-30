@@ -15,7 +15,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "Protective runes over the vault — the backup snapshots the wards preserve, and the named slots they guard.",
   author: "did:wyrd:system",
-  capabilities: ["safe.list_slots", "safe.has"],
+  capabilities: ["safe.list_slots", "safe.has", "safe.snapshots"],
   embodiment: {
     silent: false,
     emits: ["body_language", "ambient_shift"],

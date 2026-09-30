@@ -2,7 +2,9 @@ package org.wyrdsekai.common.protocol;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Shared MUD command parser. Used by CLI InputHandler and Telnet adapter.
@@ -75,6 +77,18 @@ public final class CommandParser {
          * "journal private &lt;text&gt;", "journal read [n]", "journal search &lt;words&gt;".
          */
         record Journal(String args) implements ParsedCommand {}
+        /**
+         * "bond" — your bonds with the companions of this home; "bond name &lt;companion&gt; &lt;name&gt;" —
+         * offer a name for a sacred bond (the naming ritual). Any other line that starts with the
+         * word is speech.
+         */
+        record Bond(String args) implements ParsedCommand {}
+        /**
+         * "research yes" — the person's own yes to a question the household library asked them
+         * about before researching it. Only a person typing it sends it; nothing a companion
+         * says can.
+         */
+        record ResearchYes() implements ParsedCommand {}
         record Nearby() implements ParsedCommand {}
         record Rooms() implements ParsedCommand {}
         record Path(String targetRoom) implements ParsedCommand {}
@@ -331,11 +345,20 @@ public final class CommandParser {
             if (who.toLowerCase().startsWith("is ")) who = who.substring(3).trim();
             if (!who.isEmpty()) return new ParsedCommand.Where(who);
         }
+        if (trimmed.equalsIgnoreCase("bond")) {
+            return new ParsedCommand.Bond("");
+        }
+        if (BOND_NAME.matcher(trimmed).matches()) {
+            return new ParsedCommand.Bond(trimmed.substring(4).trim());
+        }
         if (trimmed.equalsIgnoreCase("journal")) {
             return new ParsedCommand.Journal("");
         }
         if (trimmed.regionMatches(true, 0, "journal ", 0, 8)) {
             return new ParsedCommand.Journal(trimmed.substring(8).trim());
+        }
+        if (trimmed.replaceAll("\\s+", " ").equalsIgnoreCase("research yes")) {
+            return new ParsedCommand.ResearchYes();
         }
         if (trimmed.equalsIgnoreCase("mail") || trimmed.equalsIgnoreCase("inbox")) {
             return new ParsedCommand.Mail("");
@@ -681,9 +704,21 @@ public final class CommandParser {
             return new ParsedCommand.Say(trimmed);  // Route to room script via say
         }
 
+        // The Forge's spoken verbs. Its help lists them as things to say and its own error
+        // reads "Speak `birth <name>`", so a person types `birth ada` — which fell through to
+        // Unknown and answered "didn't catch that" (reported 2026-09-19). Routed to the room
+        // script like the Study's verbs above; outside the Forge the words are simply said.
+        if (FORGE_VERBS.contains(firstWord) && words.length > 1) {
+            return new ParsedCommand.Say(trimmed);
+        }
+
         // Default: unknown command (NOT auto-say — standard MUD behavior)
         return new ParsedCommand.Unknown(trimmed);
     }
+
+    private static final Set<String> FORGE_VERBS = Set.of("birth", "forge", "grow", "compare", "restore");
+    private static final Pattern BOND_NAME = Pattern.compile(
+        "^bond\\s+name\\s+\\S+\\s+\\S.*$", Pattern.CASE_INSENSITIVE);
 
     // ── Locale command aliases ────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import org.wyrdsekai.app.network.createHouseholdHttpClient
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
@@ -33,7 +34,7 @@ class BudDelegation(
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    private val http = HttpClient {
+    private val http = createHouseholdHttpClient().config {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         install(io.ktor.client.plugins.HttpTimeout) {
             requestTimeoutMillis = 90_000   // 90s — server inference can take 10-15s
@@ -137,7 +138,7 @@ class BudDelegation(
 
         return try {
             val url = normalizeUrl(serverUrl)
-            println("HTTP delegation: POST $url/api/companion/ask (token=${deviceToken?.take(20)}...)")
+            println("HTTP delegation: POST $url/api/companion/ask")
             val response = http.post("$url/api/companion/ask") {
                 header("Authorization", "Bearer $deviceToken")
                 contentType(ContentType.Application.Json)

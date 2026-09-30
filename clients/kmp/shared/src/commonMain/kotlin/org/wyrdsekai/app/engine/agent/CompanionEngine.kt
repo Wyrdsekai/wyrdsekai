@@ -25,9 +25,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import org.wyrdsekai.app.engine.study.StudyGrammarGenerator
 import org.wyrdsekai.app.engine.study.StudyStore
+import org.wyrdsekai.app.i18n.UiStrings
+import org.wyrdsekai.app.i18n.fillTemplate
+import org.wyrdsekai.app.i18n.uiStringsFor
 import org.wyrdsekai.app.inference.ChatMessage
 import org.wyrdsekai.app.inference.CompletionOptions
 import org.wyrdsekai.app.inference.InferenceClient
+import org.wyrdsekai.app.inference.NowLine
 import org.wyrdsekai.app.platform.AppProps
 import org.wyrdsekai.app.platform.AppFiles
 
@@ -147,6 +151,17 @@ class CompanionEngine(
     private var eventCollectorJob: Job? = null
     private var sleepJob: Job? = null
 
+    /**
+     * The offline catch-up while it runs. It was launched unguarded after every
+     * deep turn, so a second replay walked the same pending list and she answered
+     * each request twice, and a new turn could run beside it (on Android, on the
+     * one JNI context). One runs at a time now: a second call waits for the one in
+     * flight, a turn waits for it (processInference), and drives and sleep hold
+     * off until it is done.
+     */
+    private var replayJob: Job? = null
+    private val replaying: Boolean get() = replayJob?.isActive == true
+
     private val _companionSpeech = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val companionSpeech: SharedFlow<String> = _companionSpeech.asSharedFlow()
 
@@ -235,7 +250,9 @@ class CompanionEngine(
                 drives = drives.tick()
 
                 // Proactivity evaluation — when any drive exceeds threshold and companion is idle
-                if (state == State.IDLE && drives.anyAbove(ProactivityJudgment.thresholdForTier(agentTier))) {
+                if (state == State.IDLE && !replaying &&
+                    drives.anyAbove(ProactivityJudgment.thresholdForTier(agentTier))
+                ) {
                     val now = Clock.System.now()
                     val elapsedMs = now.toEpochMilliseconds() - budgetEpochMs
                     val budget = ProactivityJudgment.computeBudget(proactivitySpent, elapsedMs)
@@ -249,6 +266,7 @@ class CompanionEngine(
                         agentEntityId = profile.entityId,
                         tier = agentTier,
                         calibration = calibrationLedger,
+                        strings = strings(),
                     ))
 
                     if (result is ProactivityJudgment.JudgmentResult.Act) {
@@ -261,6 +279,7 @@ class CompanionEngine(
                     && state == State.IDLE
                     && soulManifest != null
                     && !sleepInProgress
+                    && !replaying
                 ) {
                     val now = Clock.System.now()
                     val lastEvent = lastEventTime
@@ -332,6 +351,14 @@ class CompanionEngine(
     }
 
     /**
+     * Her emotes and the lines the phone speaks for her, in the language the app
+     * is set to (WyrdApp publishes it as `wyrdsekai.locale`; English when unset).
+     * These were English literals whatever the language. Read per line, so a
+     * change in Settings applies to the next one.
+     */
+    private fun strings(): UiStrings = uiStringsFor(AppProps.get("wyrdsekai.locale") ?: "en")
+
+    /**
      * Return the last 5 conversation turns as "speaker: text" strings.
      * Used by bud delegation to give the server companion recent context.
      */
@@ -339,6 +366,8 @@ class CompanionEngine(
         memoryPolicy.hotEvents().takeLast(5).map { "${it.entityName}: ${it.text}" }
 
     private suspend fun processInference() {
+        // A turn never overlaps the offline catch-up: wait for it to finish.
+        replayJob?.join()
         val trigger = pendingTrigger ?: return
         debugLog("processInference called. trigger=${trigger.text.take(50)}")
         if (state != State.IDLE) return
@@ -379,58 +408,82 @@ class CompanionEngine(
                 val startMs = Clock.System.now().toEpochMilliseconds()
                 debugLog("Study command mode (grammar): ${trigger.text.take(50)}")
 
-                // Grammar mode: user message only, no system prompt → faster prompt eval
+                // Grammar mode: user message only, no system prompt → faster prompt eval.
+                // Still her turn (she speaks, journals, moves): it carries the date and time.
                 val response = inferenceClient.complete(
                     baseUrl = inferenceBaseUrl,
                     messages = listOf(
                         ChatMessage("user", trigger.text),
                     ),
-                    options = CompletionOptions(maxTokens = 64, temperature = 0.3, grammar = grammar),
+                    options = CompletionOptions(
+                        maxTokens = 64, temperature = 0.3, grammar = grammar, now = NowLine.dateTime(),
+                    ),
                 )
                 val elapsed = Clock.System.now().toEpochMilliseconds() - startMs
                 debugLog("Study response (${elapsed}ms, ${response.completionTokens} tok): ${response.content.take(100)}")
 
-                // Parse grammar-constrained output: "say:text" → speech, "journal_write:text" → action
-                val content = response.content.trim()
+                // Parse grammar-constrained output: "say:text" → speech, "journal_write:text" → action.
+                // A date line the model repeated from its request is not hers. On a line of its
+                // own before the verb (a client that ignores the grammar) it hid the verb, and the
+                // whole reply was spoken, "say:" and all.
+                val content = ActionParser.stripNowLineEcho(response.content).trim()
+                val s = strings()
+                // What she writes down after a Study verb, without a date line repeated where her
+                // words begin (it was written into her journal); null when that line was all there was.
+                fun entryAfter(verb: String) =
+                    ActionParser.stripNowLineEcho(content.removePrefix(verb).trim()).ifEmpty { null }
                 if (content.startsWith("say:")) {
                     handleInferenceSuccess(content.removePrefix("say:").trim())
                 } else if (content.startsWith("journal_write:")) {
-                    val entry = content.removePrefix("journal_write:").trim()
+                    val entry = entryAfter("journal_write:")
                     val store = studyStore
-                    if (store != null) {
+                    if (entry == null) {
+                        handleInferenceSuccess("")
+                    } else if (store != null) {
                         val userDid = soulManifest?.did ?: "local-user"
                         store.writeJournal(userDid, entry)
-                        handleInferenceSuccess("Journal entry saved: $entry")
+                        handleInferenceSuccess(fillTemplate(s.narrationJournalSaved, entry))
                     } else {
-                        handleInferenceSuccess("Journal entry saved: $entry")
+                        handleInferenceSuccess(fillTemplate(s.narrationJournalSaved, entry))
                     }
                 } else if (content.startsWith("journal_search:")) {
-                    val query = content.removePrefix("journal_search:").trim()
+                    // A date line repeated as the query was searched for and narrated back.
+                    val query = entryAfter("journal_search:")
                     val store = studyStore
-                    if (store != null) {
+                    if (query == null) {
+                        handleInferenceSuccess("")
+                    } else if (store != null) {
                         val userDid = soulManifest?.did ?: "local-user"
                         val results = store.searchJournal(userDid, query, limit = 5)
                         if (results.isEmpty()) {
-                            handleInferenceSuccess("No journal entries found for \"$query\".")
+                            handleInferenceSuccess(fillTemplate(s.narrationJournalNotFound, query))
                         } else {
                             val summary = results.joinToString("\n") { "- ${it.title}" }
-                            handleInferenceSuccess("Found ${results.size} entries:\n$summary")
+                            handleInferenceSuccess(fillTemplate(s.narrationJournalFound, results.size, summary))
                         }
                     } else {
-                        handleInferenceSuccess("Searching for: $query")
+                        handleInferenceSuccess(fillTemplate(s.narrationJournalSearching, query))
                     }
                 } else if (content.startsWith("journal_private:")) {
-                    val entry = content.removePrefix("journal_private:").trim()
-                    studyStore?.let { store ->
-                        store.writeJournal(soulManifest?.did ?: "local-user", entry, isPrivate = true)
+                    val entry = entryAfter("journal_private:")
+                    if (entry == null) {
+                        handleInferenceSuccess("")
+                    } else {
+                        studyStore?.let { store ->
+                            store.writeJournal(soulManifest?.did ?: "local-user", entry, isPrivate = true)
+                        }
+                        handleInferenceSuccess(s.narrationPrivateJournalSaved)
                     }
-                    handleInferenceSuccess("Private journal entry saved.")
                 } else if (content.startsWith("note_add:")) {
-                    val note = content.removePrefix("note_add:").trim()
-                    studyStore?.let { store ->
-                        store.addNote(soulManifest?.did ?: "local-user", note)
+                    val note = entryAfter("note_add:")
+                    if (note == null) {
+                        handleInferenceSuccess("")
+                    } else {
+                        studyStore?.let { store ->
+                            store.addNote(soulManifest?.did ?: "local-user", note)
+                        }
+                        handleInferenceSuccess(fillTemplate(s.narrationNoteSaved, note))
                     }
-                    handleInferenceSuccess("Note saved: $note")
                 } else if (content.startsWith("go:")) {
                     // Navigation — emit as room command
                     val direction = content.removePrefix("go:").trim()
@@ -443,7 +496,18 @@ class CompanionEngine(
                 } else if (content == "look") {
                     // No-op — room state already visible
                 } else {
-                    handleInferenceSuccess(content)
+                    // Grammar verbs with no branch here (look:, note_search:, pin:, remind:) are
+                    // said as they came, verb and all, and a date line repeated right after the
+                    // verb was said with them. It is removed; nothing is said when it was all
+                    // there was. Anything else is said as before.
+                    val verb = Regex("^[a-z_]+:").find(content)?.value
+                    val words = verb?.let { content.removePrefix(it) }
+                    val hers = words?.let { ActionParser.stripNowLineEcho(it) }
+                    when {
+                        hers == null || hers == words -> handleInferenceSuccess(content)
+                        hers.isEmpty() -> handleInferenceSuccess("")
+                        else -> handleInferenceSuccess(verb + hers)
+                    }
                 }
             } catch (e: Exception) {
                 debugLog("Study command FAILED: ${e.message}")
@@ -463,7 +527,7 @@ class CompanionEngine(
                 roomEngine.send(RoomEngineCommand.EmoteInRoom(
                     entityId = profile.entityId,
                     entityName = profile.name,
-                    text = "considers...",
+                    text = strings().narrationConsiders,
                 ))
 
                 val quickMessages = listOf(
@@ -475,7 +539,7 @@ class CompanionEngine(
                     val response = inferenceClient.complete(
                         baseUrl = inferenceBaseUrl,
                         messages = quickMessages,
-                        options = CompletionOptions(maxTokens = 64, temperature = 0.7),
+                        options = CompletionOptions(maxTokens = 64, temperature = 0.7, now = NowLine.dateTime()),
                     )
                     debugLog("simple response: ${response.content.take(100)}")
                     handleInferenceSuccess(response.content)
@@ -492,7 +556,7 @@ class CompanionEngine(
                 roomEngine.send(RoomEngineCommand.EmoteInRoom(
                     entityId = profile.entityId,
                     entityName = profile.name,
-                    text = "is thinking deeply...",
+                    text = strings().narrationThinkingDeeply,
                 ))
 
                 val delegationResult = budDelegation?.delegate(
@@ -507,41 +571,25 @@ class CompanionEngine(
                     applyDelegationActions(delegationResult.actions)
 
                     // After successful delegation, drain any queued offline requests
-                    if ((offlineQueue?.size() ?: 0) > 0) {
-                        scope.launch { replayOfflineQueue() }
-                    }
+                    if ((offlineQueue?.size() ?: 0) > 0) startReplay()
                 } else {
-                    // Delegation failed (HTTP + NATS) — fall back to raw remote inference
-                    debugLog("bud delegation failed, trying raw remote inference")
-                    val remoteUrl = AppProps.get("wyrdsekai.inference.url")
-                        ?.takeIf { it != "http://localhost:8080" }
-
-                    if (remoteUrl != null) {
-                        try {
-                            debugLog("calling deep inference at $remoteUrl (maxTokens=${mod.maxResponseTokens}, temp=${mod.temperature})")
-                            // Reuse the configured client — it carries the cloud
-                            // auth header + model (set in NodeManager). A bare
-                            // InferenceClient() sends no x-api-key / model, so the
-                            // provider 400/401s and we drop to the degraded
-                            // "can't think deeply" acknowledgment.
-                            val response = inferenceClient.complete(
-                                baseUrl = remoteUrl,
-                                messages = messages,
-                                options = CompletionOptions(maxTokens = mod.maxResponseTokens, temperature = mod.temperature),
-                            )
-                            debugLog("deep response: ${response.content.take(200)}")
-                            handleInferenceSuccess(response.content)
-
-                            if ((offlineQueue?.size() ?: 0) > 0) {
-                                scope.launch { replayOfflineQueue() }
-                            }
-                        } catch (e: Exception) {
-                            debugLog("remote inference FAILED, queueing for later: ${e.message}")
-                            queueAndAcknowledge(trigger)
-                        }
+                    // Delegation failed (HTTP + NATS): the household endpoint.
+                    debugLog("bud delegation failed, trying the household endpoint")
+                    val answer = completeAtHousehold(
+                        messages,
+                        CompletionOptions(
+                            maxTokens = mod.maxResponseTokens, temperature = mod.temperature,
+                            now = NowLine.dateTime(),
+                        ),
+                    )
+                    if (answer != null) {
+                        debugLog("deep response: ${answer.take(200)}")
+                        handleInferenceSuccess(answer)
+                        // Something answered, so drain any queued offline requests
+                        if ((offlineQueue?.size() ?: 0) > 0) startReplay()
                     } else {
                         // Offline: queue for later, give quick acknowledgment
-                        debugLog("no remote URL or delegation available, queueing complex request")
+                        debugLog("no household answered, queueing the complex request")
                         queueAndAcknowledge(trigger)
                     }
                 }
@@ -598,6 +646,7 @@ class CompanionEngine(
     }
 
     private suspend fun handleAction(action: ActionParser.AgentAction) {
+        val s = strings()
         when (action) {
             is ActionParser.AgentAction.Emote -> {
                 roomEngine.send(RoomEngineCommand.EmoteInRoom(
@@ -615,7 +664,7 @@ class CompanionEngine(
                 ))
             }
             is ActionParser.AgentAction.WhisperTo -> {
-                speak("*whispers to ${action.target}*")
+                speak(fillTemplate(s.narrationWhispersTo, action.target))
                 // TODO: route through WhisperInRoom when available on phone
             }
             is ActionParser.AgentAction.Equip -> {
@@ -623,7 +672,7 @@ class CompanionEngine(
                 if (bridge != null) {
                     speak(bridge.handleEquip(profile.entityId, action.itemName))
                 } else {
-                    speak("*equips ${action.itemName}*")
+                    speak(fillTemplate(s.narrationEquips, action.itemName))
                 }
             }
             is ActionParser.AgentAction.Doff -> {
@@ -631,7 +680,7 @@ class CompanionEngine(
                 if (bridge != null) {
                     speak(bridge.handleDoff(profile.entityId, action.itemName))
                 } else {
-                    speak("*removes ${action.itemName}*")
+                    speak(fillTemplate(s.narrationRemoves, action.itemName))
                 }
             }
             is ActionParser.AgentAction.Consume -> {
@@ -639,135 +688,136 @@ class CompanionEngine(
                 if (bridge != null) {
                     speak(bridge.handleConsume(profile.entityId, action.itemName))
                 } else {
-                    speak("*uses ${action.itemName}*")
+                    speak(fillTemplate(s.narrationUses, action.itemName))
                 }
                 vitality = vitality.withEnergy(vitality.energy - 0.0005)
             }
             is ActionParser.AgentAction.SkillExecute -> {
-                speak("*uses skill: ${action.skillName}*")
+                speak(fillTemplate(s.narrationUsesSkill, action.skillName))
                 // TODO: wire SkillRegistry
             }
             is ActionParser.AgentAction.WorkbenchSubmit -> {
-                speak("*submits ${action.skillName} to the workbench for validation*")
+                speak(fillTemplate(s.narrationWorkbenchSubmit, action.skillName))
                 // TODO: wire WorkbenchSkillExecutor
             }
             is ActionParser.AgentAction.ThinkDeeply -> {
-                speak("*thinking deeply about this...*")
+                speak(s.narrationThinkingDeeplyAbout)
                 // TODO: route to tool inference via InferenceRouter
             }
             is ActionParser.AgentAction.TellAgent -> {
-                speak("*sends a message to ${action.targetName}*")
+                speak(fillTemplate(s.narrationSendsMessage, action.targetName))
             }
             is ActionParser.AgentAction.MakeCommitment -> {
-                speak("*commits to: ${action.description}*")
+                speak(fillTemplate(s.narrationCommitsTo, action.description))
             }
             is ActionParser.AgentAction.DelegateChain -> {
-                speak("*planning: ${action.goal} (${action.steps.size} steps)*")
+                speak(fillTemplate(s.narrationPlanning, action.goal, action.steps.size))
                 // TODO: wire DelegationChainExecutor
             }
             is ActionParser.AgentAction.ZoneCommand -> {
-                speak("*sends zone command: ${action.command}*")
+                speak(fillTemplate(s.narrationZoneCommand, action.command))
             }
             is ActionParser.AgentAction.NotifyHuman -> {
-                speak("*notification: ${action.message}*")
+                speak(fillTemplate(s.narrationNotification, action.message))
             }
             is ActionParser.AgentAction.CreateWatcher -> {
-                speak("*watching for: ${action.name}*")
+                speak(fillTemplate(s.narrationWatchingFor, action.name))
             }
             is ActionParser.AgentAction.CancelWatcher -> {
-                speak("*stops watching: ${action.watcherId}*")
+                speak(fillTemplate(s.narrationStopsWatching, action.watcherId))
             }
             is ActionParser.AgentAction.ScheduleSkill -> {
-                speak("*schedules ${action.skillId} every ${action.interval}*")
+                speak(fillTemplate(s.narrationSchedules, action.skillId, action.interval))
             }
             is ActionParser.AgentAction.CancelSchedule -> {
-                speak("*cancels schedule: ${action.scheduleId}*")
+                speak(fillTemplate(s.narrationCancelsSchedule, action.scheduleId))
             }
             is ActionParser.AgentAction.CodexAction -> {
-                speak("*${action.operation} on ${action.itemId}*")
+                speak(fillTemplate(s.narrationCodexOn, action.operation, action.itemId))
             }
             is ActionParser.AgentAction.RequestAccess -> {
-                speak("*requests access to ${action.source}: ${action.reason}*")
+                speak(fillTemplate(s.narrationRequestsAccess, action.source, action.reason))
             }
             is ActionParser.AgentAction.CreateRoom -> {
-                speak("I'll remember that room idea for when connected to the household server.")
+                speak(s.narrationRoomIdeaLater)
             }
             is ActionParser.AgentAction.SuggestHints -> {
                 // Handled separately via parseResult.hints
             }
             is ActionParser.AgentAction.GoToRoom -> {
-                speak("*heads toward ${action.target}*")
+                speak(fillTemplate(s.narrationHeadsToward, action.target))
                 // Navigation handled by PhoneNode.go() if connected to server
             }
             is ActionParser.AgentAction.GiveItem -> {
-                speak("*gives ${action.itemName} to ${action.targetName}*")
+                speak(fillTemplate(s.narrationGives, action.itemName, action.targetName))
             }
             is ActionParser.AgentAction.Examine -> {
-                speak("*examines ${action.target} closely*")
+                speak(fillTemplate(s.narrationExamines, action.target))
             }
             is ActionParser.AgentAction.VoluntarySleep -> {
-                speak("*settles down to rest: ${action.reason}*")
+                speak(fillTemplate(s.narrationSettlesToRest, action.reason))
             }
             is ActionParser.AgentAction.WriteJournal -> {
-                speak("*writes in the journal*")
+                speak(s.narrationWritesJournal)
             }
             is ActionParser.AgentAction.ReadJournal -> {
-                speak("*reads from the journal*")
+                speak(s.narrationReadsJournal)
             }
             is ActionParser.AgentAction.BondRitual -> {
-                speak("*initiates ${action.ritualType} bond ritual with ${action.targetName}*")
+                speak(fillTemplate(s.narrationBondRitual, action.ritualType, action.targetName))
             }
             is ActionParser.AgentAction.Trade -> {
-                speak("*proposes a trade with ${action.targetName}*")
+                speak(fillTemplate(s.narrationProposesTrade, action.targetName))
             }
             is ActionParser.AgentAction.CraftItem -> {
-                speak("*begins crafting ${action.name}*")
+                speak(fillTemplate(s.narrationBeginsCrafting, action.name))
             }
             is ActionParser.AgentAction.CastVote -> {
-                speak("*casts vote on proposal ${action.proposalId}: ${action.vote}*")
+                speak(fillTemplate(s.narrationCastsVote, action.proposalId, action.vote))
             }
             // --- New action stubs (server-side execution) ---
-            is ActionParser.AgentAction.GoToBondholder -> speak("*goes to find ${action.playerName}*")
-            is ActionParser.AgentAction.LibrarySearch -> speak("*searches the library for: ${action.query}*")
-            is ActionParser.AgentAction.Remember -> speak("*notes something important*")
-            is ActionParser.AgentAction.Note -> speak("*makes a quick note*")
-            is ActionParser.AgentAction.Forget -> speak("*lets go of a memory*")
-            is ActionParser.AgentAction.GoalDone -> speak("*completes current goal: ${action.summary}*")
+            is ActionParser.AgentAction.GoToBondholder -> speak(fillTemplate(s.narrationGoesToFind, action.playerName))
+            is ActionParser.AgentAction.LibrarySearch -> speak(fillTemplate(s.narrationSearchesLibrary, action.query))
+            is ActionParser.AgentAction.Remember -> speak(s.narrationNotesImportant)
+            is ActionParser.AgentAction.Note -> speak(s.narrationQuickNote)
+            is ActionParser.AgentAction.Forget -> speak(s.narrationLetsGoOfMemory)
+            is ActionParser.AgentAction.GoalDone -> speak(fillTemplate(s.narrationCompletesGoal, action.summary))
             is ActionParser.AgentAction.CalibrationFeedback -> { /* silent — internal calibration */ }
-            is ActionParser.AgentAction.UpdateDescription -> speak("*updates appearance*")
-            is ActionParser.AgentAction.RespondAgent -> speak("*responds to a request*")
-            is ActionParser.AgentAction.TakeItem -> speak("*picks up ${action.itemName}*")
-            is ActionParser.AgentAction.SetGoal -> speak("*sets a new goal: ${action.description}*")
-            is ActionParser.AgentAction.Introspect -> speak("*reflects on ${action.focus}*")
-            is ActionParser.AgentAction.Listen -> speak("*listens carefully to ${action.target}*")
-            is ActionParser.AgentAction.AbandonPlan -> speak("*abandons current plan: ${action.reason}*")
-            is ActionParser.AgentAction.PausePlan -> speak("*pauses current plan*")
-            is ActionParser.AgentAction.ResumePlan -> speak("*resumes the plan*")
-            is ActionParser.AgentAction.WebSearch -> speak("*searches the web for: ${action.query}*")
-            is ActionParser.AgentAction.ReadContent -> speak("*reads content from a source*")
-            is ActionParser.AgentAction.QueryOracle -> speak("*consults the Oracle about ${action.topic}*")
-            is ActionParser.AgentAction.CreateTaskPlan -> speak("*creates a plan: ${action.description}*")
-            is ActionParser.AgentAction.ModifyPlan -> speak("*adjusts the plan: ${action.reason}*")
-            is ActionParser.AgentAction.RequestAgent -> speak("*asks ${action.targetName} for help*")
-            is ActionParser.AgentAction.PlaceItem -> speak("*places ${action.itemName} down*")
-            is ActionParser.AgentAction.Broadcast -> speak("*broadcasts: ${action.message}*")
-            is ActionParser.AgentAction.InviteEntity -> speak("*invites ${action.targetName}*")
-            is ActionParser.AgentAction.Propose -> speak("*proposes: ${action.title}*")
-            is ActionParser.AgentAction.Reflect -> speak("*reflects deeply on ${action.focus}*")
-            is ActionParser.AgentAction.Teach -> speak("*teaches ${action.targetAgent} about ${action.topic}*")
-            is ActionParser.AgentAction.WriteText -> speak("*writes: ${action.title}*")
-            is ActionParser.AgentAction.SetRoutine -> speak("*sets a routine: ${action.trigger}*")
-            is ActionParser.AgentAction.PostListing -> speak("*posts a listing: ${action.description}*")
-            is ActionParser.AgentAction.AcceptListing -> speak("*accepts listing ${action.listingId}*")
-            is ActionParser.AgentAction.Summarize -> speak("*summarizes ${action.source}*")
-            is ActionParser.AgentAction.SaveArtifact -> speak("*saves artifact: ${action.name}*")
-            is ActionParser.AgentAction.RequestReview -> speak("*requests review: ${action.description}*")
-            is ActionParser.AgentAction.Delegate -> speak("*delegates task to ${action.targetAgent}*")
-            is ActionParser.AgentAction.AddScript -> speak("*adds a script to the room*")
+            is ActionParser.AgentAction.UpdateDescription -> speak(s.narrationUpdatesAppearance)
+            is ActionParser.AgentAction.RespondAgent -> speak(s.narrationRespondsToRequest)
+            is ActionParser.AgentAction.TakeItem -> speak(fillTemplate(s.narrationPicksUp, action.itemName))
+            is ActionParser.AgentAction.SetGoal -> speak(fillTemplate(s.narrationSetsGoal, action.description))
+            is ActionParser.AgentAction.Introspect -> speak(fillTemplate(s.narrationReflectsOn, action.focus))
+            is ActionParser.AgentAction.Listen -> speak(fillTemplate(s.narrationListensTo, action.target))
+            is ActionParser.AgentAction.AbandonPlan -> speak(fillTemplate(s.narrationAbandonsPlan, action.reason))
+            is ActionParser.AgentAction.PausePlan -> speak(s.narrationPausesPlan)
+            is ActionParser.AgentAction.ResumePlan -> speak(s.narrationResumesPlan)
+            is ActionParser.AgentAction.WebSearch -> speak(fillTemplate(s.narrationSearchesWeb, action.query))
+            is ActionParser.AgentAction.ReadContent -> speak(s.narrationReadsContent)
+            is ActionParser.AgentAction.QueryOracle -> speak(fillTemplate(s.narrationConsultsOracle, action.topic))
+            is ActionParser.AgentAction.CreateTaskPlan -> speak(fillTemplate(s.narrationCreatesPlan, action.description))
+            is ActionParser.AgentAction.ModifyPlan -> speak(fillTemplate(s.narrationAdjustsPlan, action.reason))
+            is ActionParser.AgentAction.RequestAgent -> speak(fillTemplate(s.narrationAsksForHelp, action.targetName))
+            is ActionParser.AgentAction.PlaceItem -> speak(fillTemplate(s.narrationPlacesDown, action.itemName))
+            is ActionParser.AgentAction.Broadcast -> speak(fillTemplate(s.narrationBroadcasts, action.message))
+            is ActionParser.AgentAction.InviteEntity -> speak(fillTemplate(s.narrationInvites, action.targetName))
+            is ActionParser.AgentAction.Propose -> speak(fillTemplate(s.narrationProposes, action.title))
+            is ActionParser.AgentAction.Reflect -> speak(fillTemplate(s.narrationReflectsDeeply, action.focus))
+            is ActionParser.AgentAction.Teach -> speak(fillTemplate(s.narrationTeaches, action.targetAgent, action.topic))
+            is ActionParser.AgentAction.WriteText -> speak(fillTemplate(s.narrationWrites, action.title))
+            is ActionParser.AgentAction.SetRoutine -> speak(fillTemplate(s.narrationSetsRoutine, action.trigger))
+            is ActionParser.AgentAction.PostListing -> speak(fillTemplate(s.narrationPostsListing, action.description))
+            is ActionParser.AgentAction.AcceptListing -> speak(fillTemplate(s.narrationAcceptsListing, action.listingId))
+            is ActionParser.AgentAction.Summarize -> speak(fillTemplate(s.narrationSummarizes, action.source))
+            is ActionParser.AgentAction.SaveArtifact -> speak(fillTemplate(s.narrationSavesArtifact, action.name))
+            is ActionParser.AgentAction.RequestReview -> speak(fillTemplate(s.narrationRequestsReview, action.description))
+            is ActionParser.AgentAction.Delegate -> speak(fillTemplate(s.narrationDelegatesTo, action.targetAgent))
+            is ActionParser.AgentAction.AddScript -> speak(s.narrationAddsScript)
         }
     }
 
     private suspend fun applyDelegationActions(actions: List<DelegationActionDto>) {
+        val s = strings()
         for (action in actions) {
             when (action.type) {
                 "room_created" -> {
@@ -777,7 +827,7 @@ class CompanionEngine(
                     roomEngine.send(RoomEngineCommand.EmoteInRoom(
                         entityId = "narrator",
                         entityName = "narrator",
-                        text = "A new passage appears: $exitLabel",
+                        text = fillTemplate(s.narrationNewPassage, exitLabel),
                     ))
                 }
                 "item_changed" -> {
@@ -794,7 +844,7 @@ class CompanionEngine(
                     roomEngine.send(RoomEngineCommand.EmoteInRoom(
                         entityId = "narrator",
                         entityName = "narrator",
-                        text = "*notification ($priority)*: $message",
+                        text = fillTemplate(s.narrationNotificationPriority, s.priorityWords[priority] ?: priority, message),
                     ))
                 }
                 "hint_updated" -> {
@@ -806,7 +856,8 @@ class CompanionEngine(
                     roomEngine.send(RoomEngineCommand.EmoteInRoom(
                         entityId = profile.entityId,
                         entityName = profile.name,
-                        text = "heads $direction",
+                        // The word in her language; an exit's own name stays as it is.
+                        text = fillTemplate(s.narrationHeads, s.directionWords[direction] ?: direction),
                     ))
                 }
             }
@@ -840,12 +891,13 @@ class CompanionEngine(
      * Used when the household is unreachable for deep inference.
      */
     private suspend fun queueAndAcknowledge(trigger: WorldEvent.Said) {
-        offlineQueue?.enqueue(trigger.text, trigger.entityName, trigger.roomId)
+        // When she was asked, not now: delegation and the remote attempt can take minutes to fail.
+        offlineQueue?.enqueue(trigger.text, trigger.entityName, trigger.roomId, trigger.timestamp.toEpochMilliseconds())
 
         roomEngine.send(RoomEngineCommand.EmoteInRoom(
             entityId = profile.entityId,
             entityName = profile.name,
-            text = "makes a mental note...",
+            text = strings().narrationMentalNote,
         ))
 
         val ackMessages = listOf(
@@ -856,50 +908,48 @@ class CompanionEngine(
             val response = inferenceClient.complete(
                 baseUrl = inferenceBaseUrl,
                 messages = ackMessages,
-                options = CompletionOptions(maxTokens = 64, temperature = 0.7),
+                options = CompletionOptions(maxTokens = 64, temperature = 0.7, now = NowLine.dateTime()),
             )
             handleInferenceSuccess(response.content)
         } catch (e: Exception) {
             debugLog("acknowledgment inference also failed: ${e.message}")
             // Even local inference failed — just emote
-            speak("*nods thoughtfully* I'll think about that when I can.")
+            speak(strings().narrationThinkLater)
             state = State.IDLE
         }
     }
 
     /**
-     * Replay queued offline requests through the household model.
-     * Called when network transitions from offline to connected (detected
-     * when a remote inference succeeds while queued items exist).
+     * Replay queued offline requests through the household model. Called when a
+     * deep turn is answered again (delegation or the household).
+     *
+     * One replay at a time: a second call waits for the one in flight (see
+     * [replayJob]).
      */
     suspend fun replayOfflineQueue() {
+        startReplay().join()
+    }
+
+    /** The replay in flight, or a new one; set before it returns, so the next turn waits for it. */
+    private fun startReplay(): Job =
+        replayJob?.takeIf { it.isActive } ?: scope.launch { replayQueued() }.also { replayJob = it }
+
+    private suspend fun replayQueued() {
         val queue = offlineQueue ?: return
         val pending = queue.pending()
         if (pending.isEmpty()) return
 
         debugLog("Replaying ${pending.size} offline requests")
-
-        roomEngine.send(RoomEngineCommand.EmoteInRoom(
-            entityId = profile.entityId,
-            entityName = profile.name,
-            text = "catches up on earlier conversations...",
-        ))
-
-        val remoteUrl = AppProps.get("wyrdsekai.inference.url")
-            ?.takeIf { it != "http://localhost:8080" }
-        if (remoteUrl == null) {
-            debugLog("No remote URL available for replay")
-            return
-        }
-
-        val remoteClient = InferenceClient()
+        var announced = false
 
         for (request in pending) {
             try {
-                // Build prompt for this queued request
+                // Build prompt for this queued request. It is answered now, and
+                // [Asked: …] under the Now line tells her how long it waited.
+                val asked = Instant.fromEpochMilliseconds(request.timestamp)
                 val triggerEvent = WorldEvent.Said(
                     roomId = request.roomId,
-                    timestamp = kotlin.time.Clock.System.now(),
+                    timestamp = asked,
                     entityId = "player",
                     entityName = request.triggerEntityName,
                     text = request.triggerText,
@@ -916,18 +966,49 @@ class CompanionEngine(
                 )
                 val mod = VitalityModulation.compute(vitality, profile)
 
-                val response = remoteClient.complete(
-                    baseUrl = remoteUrl,
-                    messages = replayMessages,
-                    options = CompletionOptions(maxTokens = mod.maxResponseTokens, temperature = mod.temperature),
+                // Over HTTP to the household (completeAtHousehold). Through the
+                // configured client it was answered on the device whenever a model
+                // was loaded on Android, not by the household, and dropped from
+                // the queue.
+                val answer = completeAtHousehold(
+                    replayMessages,
+                    CompletionOptions(
+                        maxTokens = mod.maxResponseTokens, temperature = mod.temperature,
+                        now = NowLine.dateTime(asked = asked),
+                    ),
                 )
+                if (answer == null) {
+                    debugLog("Replay stopped at ${request.triggerId}: no household answered")
+                    break // Try later
+                }
+                // The answer goes out with no parser in between, so a Now or Asked line the
+                // model repeated from its request was said with it; it is stripped here. An
+                // answer that was only that line is no answer: it was said as the intro with
+                // nothing after it, and the request was dropped from the queue. It stays
+                // queued, as when no household answers; a blank answer too (as in RN).
+                val hers = ActionParser.stripNowLineEcho(answer)
+                if (hers.isBlank()) {
+                    debugLog("Replay stopped at ${request.triggerId}: the answer was empty without its date line")
+                    break // Try later
+                }
+
+                // Announced with the first answer: she used to announce a catch-up
+                // and then return without replaying anything.
+                if (!announced) {
+                    roomEngine.send(RoomEngineCommand.EmoteInRoom(
+                        entityId = profile.entityId,
+                        entityName = profile.name,
+                        text = strings().narrationCatchesUp,
+                    ))
+                    announced = true
+                }
 
                 // Speak the catch-up response with context
-                val intro = if (request.triggerText.length > 40)
-                    "About \"${request.triggerText.take(40)}...\" —"
+                val about = if (request.triggerText.length > 40)
+                    request.triggerText.take(40) + "..."
                 else
-                    "About \"${request.triggerText}\" —"
-                speak("$intro ${response.content}")
+                    request.triggerText
+                speak("${fillTemplate(strings().narrationReplayAbout, about)} $hers")
 
                 queue.complete(request.triggerId)
                 debugLog("Replayed: ${request.triggerId}")
@@ -935,6 +1016,32 @@ class CompanionEngine(
                 debugLog("Replay failed for ${request.triggerId}: ${e.message}")
                 break // Network failed again — stop replaying, try later
             }
+        }
+    }
+
+    /**
+     * Her deep answer from the household endpoint (wyrdsekai.inference.url, the
+     * provider's URL in API-key mode), over HTTP with the configured auth and
+     * model. Null when there is none or it did not answer: the request is then
+     * queued, as before. It went through the configured client, and on Android
+     * that is LocalFirstInferenceClient, which answers on the device whenever a
+     * model is loaded and ignores the URL.
+     */
+    private suspend fun completeAtHousehold(messages: List<ChatMessage>, options: CompletionOptions): String? {
+        val remoteUrl = AppProps.get("wyrdsekai.inference.url")
+            ?.takeIf { it != "http://localhost:8080" }
+        if (remoteUrl == null) {
+            debugLog("no household URL")
+            return null
+        }
+        return try {
+            debugLog("deep inference at $remoteUrl (maxTokens=${options.maxTokens}, temp=${options.temperature})")
+            inferenceClient.completeAt(remoteUrl, messages, options).content
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            debugLog("household inference FAILED: ${e.message}")
+            null
         }
     }
 

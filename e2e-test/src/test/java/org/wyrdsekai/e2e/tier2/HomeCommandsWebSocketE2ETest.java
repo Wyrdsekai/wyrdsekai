@@ -90,10 +90,12 @@ class HomeCommandsWebSocketE2ETest {
         return MAPPER.readTree(resp.body());
     }
 
-    private static JsonNode pendingFor(String owner) throws Exception {
+    /** The owner's pending knocks, read with the owner's own login (0.5.0). */
+    private static JsonNode pendingFor(String owner, String ownerToken) throws Exception {
         var req = HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl()
                 + "/api/home/grant-requests/pending?owner=" + owner))
+            .header("Authorization", "Bearer " + ownerToken)
             .GET()
             .build();
         var resp = http.send(req, HttpResponse.BodyHandlers.ofString());
@@ -133,7 +135,7 @@ class HomeCommandsWebSocketE2ETest {
                 .contains("knock at " + bobId)
                 .contains("request has been sent");
         }
-        var pending = pendingFor(bobId);
+        var pending = pendingFor(bobId, bobToken);
         assertThat(pending.isArray() && pending.size() > 0)
             .as("Bob's pending list contains the request")
             .isTrue();
@@ -148,7 +150,7 @@ class HomeCommandsWebSocketE2ETest {
             sendCommand(alice, "knock", List.of(bobId, "let me in"));
             alice.waitForProseFrom("narrator", TIMEOUT);
         }
-        var pending = pendingFor(bobId);
+        var pending = pendingFor(bobId, bobToken);
         reqId = pending.get(0).path("id").asText();
 
         // Bob approves via WS.
@@ -161,7 +163,7 @@ class HomeCommandsWebSocketE2ETest {
         }
 
         // Pending list now empty (request transitioned to approved).
-        var after = pendingFor(bobId);
+        var after = pendingFor(bobId, bobToken);
         var stillPending = false;
         for (var r : after) {
             if (reqId.equals(r.path("id").asText())) stillPending = true;
@@ -175,7 +177,7 @@ class HomeCommandsWebSocketE2ETest {
             sendCommand(alice, "knock", List.of(bobId, "please"));
             alice.waitForProseFrom("narrator", TIMEOUT);
         }
-        var pending = pendingFor(bobId);
+        var pending = pendingFor(bobId, bobToken);
         var reqId = pending.get(0).path("id").asText();
 
         try (var bob = connectAs(bobToken)) {

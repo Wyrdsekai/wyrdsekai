@@ -31,9 +31,33 @@ public record Relationship(
     @JsonCreator
     public Relationship {}
 
+    static final String NEW_ACQUAINTANCE = "Recently met.";
+
     /** New acquaintance. */
     public static Relationship acquaintance(String did, String name) {
-        return new Relationship(did, name, 0.3f, 0.3f, 0, 1, Instant.now(),
-            "Recently met.");
+        return new Relationship(did, name, 0.3f, 0.3f, 0, 1, Instant.now(), NEW_ACQUAINTANCE);
+    }
+
+    /**
+     * The summary the system writes from what it has counted. {@link #acquaintance} set
+     * "Recently met." once and nothing ever revised it, so a bondholder of seven weeks and
+     * thousands of exchanges was still described to the companion as recently met.
+     */
+    public static String describe(int bondDepth, int interactionCount) {
+        if (interactionCount < 5) return NEW_ACQUAINTANCE;
+        String who = switch (Math.max(0, bondDepth)) {
+            case 0 -> "Someone you have talked with";
+            case 1 -> "Someone familiar";
+            case 2 -> "Someone close and trusted";
+            default -> "One of the people closest to you";
+        };
+        return who + ": " + interactionCount + " exchanges so far.";
+    }
+
+    /** True when the summary is one this class wrote, so it may be rewritten from the counts.
+     *  A summary written by anyone else is left alone. */
+    public boolean summaryIsAutomatic() {
+        return summary == null || summary.isBlank() || NEW_ACQUAINTANCE.equals(summary)
+            || summary.endsWith(" exchanges so far.");
     }
 }

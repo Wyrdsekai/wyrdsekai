@@ -17,6 +17,7 @@ import type { RoomEngine } from '../room/RoomEngine';
 import type { AgentProfile } from './AgentProfile';
 import type { ChatMessage, ChatResponse, CompletionOptions } from '../../inference/types';
 import type { ModelRole } from '../../inference/InferenceRouter';
+import { NowLine, withAsked } from '../../inference/NowLine';
 import type { ClientSoulManifest } from '../soul/SoulManifest';
 import type { CompanionCapabilityBridge } from './CompanionCapabilityBridge';
 import {
@@ -49,12 +50,15 @@ import {
 } from './DriveState';
 import { CalibrationLedger } from './CalibrationLedger';
 import type { JudgmentContext } from './ProactivityJudgment';
-import { evaluate as evaluateProactivity, computeBudget, MAX_BUDGET_PER_HOUR } from './ProactivityJudgment';
+import { evaluate as evaluateProactivity, computeBudget } from './ProactivityJudgment';
 import { VitalityDerivatives, zeroDerivatives, computeDerivatives } from './VitalityDerivatives';
 import { computeModulation } from './VitalityModulation';
 import { RoomMemoryPolicy } from '../room/RoomMemoryPolicy';
 import { assemblePrompt } from './FullPromptAssembler';
-import { parseActions } from './ActionParser';
+import { parseActions, stripNowLineEcho } from './ActionParser';
+import { getStrings } from '../../i18n/strings';
+import type { NarrationStrings } from '../../i18n/strings';
+import { usePreferencesStore } from '../../state/preferencesStore';
 import { toSnapshot } from '../room/RoomState';
 import {
   SleepCycleState,
@@ -85,6 +89,12 @@ export interface CompanionInferenceClient {
    * emission (what it borrows the 9B for).
    */
   complete(role: ModelRole, messages: ChatMessage[], options?: CompletionOptions): Promise<ChatResponse>;
+  /**
+   * The same request sent to one endpoint the caller names (the household),
+   * with the client's own model and auth — InferenceRouter.completeAt. A client
+   * without it cannot reach a household by itself.
+   */
+  completeAt?(baseUrl: string, messages: ChatMessage[], options?: CompletionOptions): Promise<ChatResponse>;
 }
 
 const VITALITY_SAVE_INTERVAL = 30;
@@ -94,12 +104,23 @@ const VITALITY_SUGGESTION_COOLDOWN_MS = 30_000;
 const SLEEP_ENERGY_THRESHOLD = 0.15;
 /** Minimum idle time (ms) before sleep can trigger. */
 const SLEEP_IDLE_MS = 30_000;
+/**
+ * How long one replayed request may take across its whole path (household,
+ * then the configured client's HTTP backends). The same bound as a delegated
+ * turn (BudDelegation's 60 s).
+ */
+const REPLAY_DEADLINE_MS = 60_000;
 
 const FOUNDATION_ROOMS = new Set([
   'home', 'nexus', 'terminal', 'vault', 'docks', 'bridge', 'boiler-room',
   'counting-house', 'library', 'ward-room', 'trading-post', 'council-chamber',
   'the-safe', 'gpu-chamber', 'the-loom', 'lexicon',
 ]);
+
+/** The word for `code` in `words`, or `code` itself (an exit's own name, a priority no list has). */
+function wordFor(words: Record<string, string>, code: string): string {
+  return Object.prototype.hasOwnProperty.call(words, code) ? words[code] : code;
+}
 
 export class CompanionEngine {
   private _state: CompanionState = 'idle';
@@ -170,6 +191,21 @@ export class CompanionEngine {
 
   /** Remote household inference URL for deep/complex requests. */
   private _remoteInferenceUrl: string | null = null;
+
+  /**
+   * The offline catch-up while it runs. It used to start without await, so a
+   * new turn could begin mid-replay and both spoke at once; a turn waits for it
+   * now (processInference), and drives and sleep hold off until it is done.
+   */
+  private replaying: Promise<void> | null = null;
+
+  /**
+   * A turn is waiting for the catch-up. The replay stops at its next request,
+   * and triggers that arrive meanwhile are deferred as behind a busy turn:
+   * with `_state` still idle they used to overwrite the waiting trigger, so a
+   * greeting or a second speaker replaced the question.
+   */
+  private turnParked = false;
 
   private _resolveEnteredRoom: (() => void) | null = null;
   /** Resolves when the companion has entered its room during start(). */
@@ -302,6 +338,16 @@ export class CompanionEngine {
     this._remoteInferenceUrl = url;
   }
 
+  /**
+   * Her emotes and the lines the phone speaks for her, in the language the app
+   * is set to (Settings → Language, the preferences store; English until it
+   * loads). These were English literals whatever the language. Read per line,
+   * so a change in Settings applies to the next one.
+   */
+  private strings(): NarrationStrings {
+    return getStrings(usePreferencesStore.getState().locale).narration;
+  }
+
   onSpeech(listener: CompanionSpeechListener): () => void {
     this.speechListeners.push(listener);
     return () => {
@@ -365,7 +411,7 @@ export class CompanionEngine {
       this.drives = tickDrives(this.drives);
 
       // Proactivity evaluation — check if any drive exceeds tier threshold
-      if (this._state === 'idle' && !this.sleepInProgress) {
+      if (this._state === 'idle' && !this.sleepInProgress && !this.replaying) {
         this.evaluateDriveProactivity();
       }
 
@@ -374,7 +420,8 @@ export class CompanionEngine {
         this.vitality.energy < SLEEP_ENERGY_THRESHOLD &&
         this._state === 'idle' &&
         this.soulManifest !== null &&
-        !this.sleepInProgress
+        !this.sleepInProgress &&
+        !this.replaying
       ) {
         const now = Date.now();
         const idleLongEnough = this.lastEventTime === null ||
@@ -411,7 +458,7 @@ export class CompanionEngine {
         // Spike social drive on human interaction, relieve on response
         this.drives = spikeSocial(this.drives, 0.05);
 
-        if (this._state === 'idle') {
+        if (this._state === 'idle' && !this.turnParked) {
           this.pendingTrigger = event;
           const mod = computeModulation(this.vitality, this.profile);
           if (this.debounceTimer) clearTimeout(this.debounceTimer);
@@ -424,7 +471,7 @@ export class CompanionEngine {
       case 'entity_entered': {
         if (event.entityType === 'player' && event.entityId !== this.profile.entityId) {
           setTimeout(() => {
-            if (this._state === 'idle') {
+            if (this._state === 'idle' && !this.turnParked) {
               this.greetPlayer(event.entityName);
             }
           }, GREETING_DELAY_MS);
@@ -441,6 +488,16 @@ export class CompanionEngine {
   }
 
   private async processInference(): Promise<void> {
+    // A turn never overlaps the offline catch-up. It waits for the request in
+    // flight only: the replay stops there and leaves the rest queued.
+    if (this.replaying) {
+      this.turnParked = true;
+      try {
+        await this.replaying;
+      } finally {
+        this.turnParked = false;
+      }
+    }
     const trigger = this.pendingTrigger;
     if (!trigger || this._state !== 'idle') return;
 
@@ -485,7 +542,7 @@ export class CompanionEngine {
         type: 'emote_in_room',
         entityId: this.profile.entityId,
         entityName: this.profile.name,
-        text: 'considers...',
+        text: this.strings().considers,
       });
 
       const quickMessages: ChatMessage[] = [
@@ -496,6 +553,7 @@ export class CompanionEngine {
         const response = await this.inferenceClient.complete('voice', quickMessages, {
           maxTokens: 64,
           temperature: 0.7,
+          now: NowLine.dateTime(),
         });
         await this.handleInferenceSuccess(response.content);
       } catch (e) {
@@ -508,7 +566,7 @@ export class CompanionEngine {
         type: 'emote_in_room',
         entityId: this.profile.entityId,
         entityName: this.profile.name,
-        text: 'is thinking deeply...',
+        text: this.strings().thinkingDeeply,
       });
 
       // Layer 1: Bud delegation (NATS → HTTP fallback, full server pipeline)
@@ -522,56 +580,22 @@ export class CompanionEngine {
           this.applyDelegationActions(delegated.actions);
 
           // After successful delegation, drain any queued offline requests
-          const queueSize = await this._offlineQueue?.size() ?? 0;
-          if (queueSize > 0) {
-            this.replayOfflineQueue();
-          }
+          await this.replayOfflineQueue();
           return;
         }
       }
 
-      // Layer 2: Direct remote inference (raw Ollama/llama-server on household)
-      const remoteUrl = this._remoteInferenceUrl;
-      if (remoteUrl != null) {
-        try {
-          const response = await this.completeViaRemote(remoteUrl, messages, {
-            maxTokens: mod.maxResponseTokens,
-            temperature: mod.temperature,
-          });
-          await this.handleInferenceSuccess(response.content);
-
-          // After successful remote inference, drain any queued offline requests
-          const queueSize = await this._offlineQueue?.size() ?? 0;
-          if (queueSize > 0) {
-            this.replayOfflineQueue();
-          }
-          return;
-        } catch {
-          // Remote failed — fall through to queue
-        }
-      }
-
-      // Layer 2.5: Configured inference client (cloud API-key router OR local model).
-      // In standalone API-key mode there is no household `_remoteInferenceUrl`, but the
-      // InferenceRouter is wired straight to the cloud provider (proven on the SIMPLE
-      // path above). Use it for the deep reply rather than degrading to "can't think
-      // deeply" — that fallback is only correct when NOTHING can serve the request. A
-      // local-model standalone likewise answers here on-device.
-      try {
-        const response = await this.inferenceClient.complete('drive', messages, {
-          maxTokens: mod.maxResponseTokens,
-          temperature: mod.temperature,
-        });
-        if (response.content && response.content.trim().length > 0) {
-          await this.handleInferenceSuccess(response.content);
-          const queueSize = await this._offlineQueue?.size() ?? 0;
-          if (queueSize > 0) {
-            this.replayOfflineQueue();
-          }
-          return;
-        }
-      } catch {
-        // Configured client unreachable too — fall through to the offline queue.
+      // Layers 2 and 2.5: the household endpoint, then the configured client
+      const answer = await this.completeDeep(messages, {
+        maxTokens: mod.maxResponseTokens,
+        temperature: mod.temperature,
+        now: NowLine.dateTime(),
+      });
+      if (answer !== null) {
+        await this.handleInferenceSuccess(answer);
+        // Something answered, so drain any queued offline requests
+        await this.replayOfflineQueue();
+        return;
       }
 
       // Layer 3: Offline — queue for later, give quick local acknowledgment
@@ -593,6 +617,7 @@ export class CompanionEngine {
     }
 
     // Handle actions
+    const s = this.strings();
     for (const action of parseResult.actions) {
       switch (action.type) {
         case 'equip': {
@@ -600,7 +625,7 @@ export class CompanionEngine {
           if (bridge) {
             await this.speak(await bridge.handleEquip(this.profile.entityId, action.itemName));
           } else {
-            await this.speak(`*equips ${action.itemName}*`);
+            await this.speak(s.equips(action.itemName));
           }
           break;
         }
@@ -609,7 +634,7 @@ export class CompanionEngine {
           if (bridge) {
             await this.speak(bridge.handleDoff(this.profile.entityId, action.itemName));
           } else {
-            await this.speak(`*removes ${action.itemName}*`);
+            await this.speak(s.removes(action.itemName));
           }
           break;
         }
@@ -618,48 +643,48 @@ export class CompanionEngine {
           if (bridge) {
             await this.speak(await bridge.handleConsume(this.profile.entityId, action.itemName));
           } else {
-            await this.speak(`*uses ${action.itemName}*`);
+            await this.speak(s.uses(action.itemName));
           }
           break;
         }
         case 'skill_execute':
-          await this.speak(`*uses skill: ${action.skillName}*`);
+          await this.speak(s.usesSkill(action.skillName));
           break;
         case 'workbench_submit':
-          await this.speak(`*submits ${action.skillName} to the workbench*`);
+          await this.speak(s.workbenchSubmit(action.skillName));
           break;
         case 'think_deeply':
-          await this.speak('*thinking deeply about this...*');
+          await this.speak(s.thinkingDeeplyAbout);
           break;
         case 'tell_agent':
-          await this.speak(`*sends a message to ${action.targetName}*`);
+          await this.speak(s.sendsMessage(action.targetName));
           break;
         case 'make_commitment':
-          await this.speak(`*commits to: ${action.description}*`);
+          await this.speak(s.commitsTo(action.description));
           break;
         case 'delegate_chain':
-          await this.speak(`*planning: ${action.goal} (${action.steps.length} steps)*`);
+          await this.speak(s.planning(action.goal, action.steps.length));
           break;
         case 'zone_command':
-          await this.speak(`*sends zone command: ${action.command}*`);
+          await this.speak(s.zoneCommand(action.command));
           break;
         case 'notify_human':
-          await this.speak(`*notification: ${action.message}*`);
+          await this.speak(s.notification(action.message));
           break;
         case 'create_watcher':
-          await this.speak(`*watching for: ${action.name}*`);
+          await this.speak(s.watchingFor(action.name));
           break;
         case 'cancel_watcher':
-          await this.speak(`*stops watching: ${action.watcherId}*`);
+          await this.speak(s.stopsWatching(action.watcherId));
           break;
         case 'schedule_skill':
-          await this.speak(`*schedules ${action.skillId} every ${action.interval}*`);
+          await this.speak(s.schedules(action.skillId, action.interval));
           break;
         case 'codex_action':
-          await this.speak(`*${action.operation} on ${action.itemId}*`);
+          await this.speak(s.codexOn(action.operation, action.itemId));
           break;
         case 'create_room':
-          await this.speak("I'll remember that room idea for when connected to the household server.");
+          await this.speak(s.roomIdeaLater);
           break;
         case 'suggest_hints':
           // Handled by room engine via state update
@@ -757,13 +782,13 @@ export class CompanionEngine {
    * Used when the household is unreachable for deep inference.
    */
   private async queueAndAcknowledge(trigger: Said): Promise<void> {
-    await this._offlineQueue?.enqueue(trigger.text, trigger.entityName, trigger.roomId);
+    await this._offlineQueue?.enqueue(trigger.text, trigger.entityName, trigger.roomId, trigger.timestamp);
 
     await this.roomEngine.send({
       type: 'emote_in_room',
       entityId: this.profile.entityId,
       entityName: this.profile.name,
-      text: 'makes a mental note...',
+      text: this.strings().mentalNote,
     });
 
     const ackMessages: ChatMessage[] = [
@@ -774,109 +799,201 @@ export class CompanionEngine {
       const response = await this.inferenceClient.complete('voice', ackMessages, {
         maxTokens: 64,
         temperature: 0.7,
+        now: NowLine.dateTime(),
       });
       await this.handleInferenceSuccess(response.content);
     } catch {
       // Even local inference failed — just emote
-      await this.speak("*nods thoughtfully* I'll think about that when I can.");
+      await this.speak(this.strings().thinkLater);
       this._state = 'idle';
       this.setDialogueState('idle');
     }
   }
 
   /**
-   * Replay queued offline requests through the household model.
-   * Called when network transitions from offline to connected (detected
-   * when a remote inference succeeds while queued items exist).
+   * Replay queued offline requests. Called when something answers a deep turn
+   * again (delegation, the household, or the configured client).
+   *
+   * One replay at a time: a second call gets the one in flight. A new turn
+   * waits for the request in flight, then goes first; the rest stay queued for
+   * the next drain (see `turnParked`).
    */
-  async replayOfflineQueue(): Promise<void> {
+  replayOfflineQueue(): Promise<void> {
+    if (!this.replaying) {
+      this.replaying = this.replayQueued()
+        .catch(() => {
+          // A failure mid-replay (queue storage, the room) leaves the rest
+          // queued for the next drain.
+        })
+        .finally(() => {
+          this.replaying = null;
+        });
+    }
+    return this.replaying;
+  }
+
+  private async replayQueued(): Promise<void> {
     const queue = this._offlineQueue;
     if (!queue) return;
     const pending = await queue.pending();
-    if (pending.length === 0) return;
-
-    await this.roomEngine.send({
-      type: 'emote_in_room',
-      entityId: this.profile.entityId,
-      entityName: this.profile.name,
-      text: 'catches up on earlier conversations...',
-    });
-
-    const remoteUrl = this._remoteInferenceUrl;
-    if (!remoteUrl) return;
+    let announced = false;
 
     for (const request of pending) {
+      if (this.turnParked) break; // someone is waiting; the rest keep
+
+      const triggerEvent: Said = {
+        type: 'said',
+        roomId: request.roomId,
+        timestamp: request.timestamp,
+        entityId: 'player',
+        entityName: request.triggerEntityName,
+        text: request.triggerText,
+      };
+
+      const replayMessages = assemblePrompt(
+        this.profile,
+        toSnapshot(this.roomEngine.state),
+        [],
+        triggerEvent,
+        this.vitality,
+        null,
+        null,
+        this.soulManifest,
+        this.phoneOracle?.allPredictions() ?? null,
+      );
+      const mod = computeModulation(this.vitality, this.profile);
+
+      // She answers now, and knows it waited: [Now: …] as it is sent, then
+      // [Asked: …] from when she was asked. The same way a live deep turn
+      // goes — it used to be the household only, so with no household (API-key
+      // mode) nothing was replayed and the queue never drained. One deadline
+      // covers the whole path: a stalled household used to hold the replay,
+      // and every turn waiting on it, open until the app restarted.
+      const deadline = new AbortController();
+      const timer = setTimeout(() => deadline.abort(), REPLAY_DEADLINE_MS);
+      let answer: string | null;
       try {
-        const triggerEvent: Said = {
-          type: 'said',
-          roomId: request.roomId,
-          timestamp: Date.now(),
-          entityId: 'player',
-          entityName: request.triggerEntityName,
-          text: request.triggerText,
-        };
-
-        const replayMessages = assemblePrompt(
-          this.profile,
-          toSnapshot(this.roomEngine.state),
-          [],
-          triggerEvent,
-          this.vitality,
-          null,
-          null,
-          this.soulManifest,
-          this.phoneOracle?.allPredictions() ?? null,
+        answer = await this.completeDeep(
+          withAsked(replayMessages, new Date(request.timestamp), new Date()),
+          {
+            maxTokens: mod.maxResponseTokens,
+            temperature: mod.temperature,
+            now: NowLine.dateTime(),
+            signal: deadline.signal,
+          },
         );
-        const mod = computeModulation(this.vitality, this.profile);
-
-        const response = await this.completeViaRemote(remoteUrl, replayMessages, {
-          maxTokens: mod.maxResponseTokens,
-          temperature: mod.temperature,
-        });
-
-        // Speak the catch-up response with context
-        const intro = request.triggerText.length > 40
-          ? `About "${request.triggerText.substring(0, 40)}..." —`
-          : `About "${request.triggerText}" —`;
-        await this.speak(`${intro} ${response.content}`);
-
-        await queue.complete(request.triggerId);
-      } catch {
-        break; // Network failed again — stop replaying, try later
+      } finally {
+        clearTimeout(timer);
       }
+
+      // Delegation last, where a live turn tries it first: the ask API carries
+      // only the message, so the zone's answer cannot know how long the
+      // question waited. Without it a phone that only delegation can answer
+      // (home zone, no household, no model) never drained its queue. Not while
+      // a turn is waiting: that is a further request, and it goes first.
+      let actions: DelegationActionDto[] = [];
+      if (answer === null && this._budDelegation && !this.turnParked) {
+        const delegated = await this._budDelegation.delegate({
+          message: request.triggerText,
+          recentHistory: [],
+        });
+        if (delegated) {
+          answer = stripNowLineEcho(delegated.text);
+          actions = delegated.actions;
+        }
+      }
+      // Delegated text that was blank, or only the date line repeated, with no
+      // actions either, is no answer. It was said as the intro with nothing
+      // after it, and the request was dropped from the queue; it stays queued
+      // now. completeDeep already returns null for such a reply; the check ran
+      // before delegation, so delegated text was never checked.
+      if (answer !== null && answer.trim().length === 0 && actions.length === 0) answer = null;
+      if (answer === null) break; // Nothing answered — stop replaying, try later
+
+      // Announced with the first answer: she used to announce a catch-up and
+      // then return without replaying anything.
+      if (!announced) {
+        await this.roomEngine.send({
+          type: 'emote_in_room',
+          entityId: this.profile.entityId,
+          entityName: this.profile.name,
+          text: this.strings().catchesUp,
+        });
+        announced = true;
+      }
+
+      // Speak the catch-up response with context
+      const about = request.triggerText.length > 40
+        ? `${request.triggerText.substring(0, 40)}...`
+        : request.triggerText;
+      // Delegation that only acted has nothing to say: its actions are narrated
+      // without the intro.
+      if (answer.trim().length > 0) {
+        await this.speak(`${this.strings().replayAbout(about)} ${answer}`);
+      }
+      this.applyDelegationActions(actions);
+
+      await queue.complete(request.triggerId);
     }
   }
 
   /**
-   * Call a remote OpenAI-compatible /v1/chat/completions endpoint directly.
-   * Bypasses the InferenceRouter to reach household explicitly.
+   * Her deep answer, the way a live COMPLEX turn goes after delegation: the
+   * household endpoint when one is set, then the configured client. Null when
+   * neither answered. The offline replay goes the same way.
+   *
+   * The answer comes back without a date line the model repeated from its
+   * request. The replay speaks it as it is, not through parseActions, so the
+   * line used to be said in the room. A reply that is blank, or only the line,
+   * is no answer from either leg. The household's used to come back as '': the
+   * live turn said nothing and neither queued nor acknowledged the request,
+   * where the same reply from the configured client queued it. It now falls
+   * through to the configured client, as a failed household does.
+   */
+  private async completeDeep(messages: ChatMessage[], options: CompletionOptions): Promise<string | null> {
+    // Layer 2: Direct remote inference (raw Ollama/llama-server on household)
+    const remoteUrl = this._remoteInferenceUrl;
+    if (remoteUrl != null) {
+      try {
+        const content = stripNowLineEcho((await this.completeViaRemote(remoteUrl, messages, options)).content ?? '');
+        if (content.trim().length > 0) return content;
+      } catch {
+        // Remote failed — fall through to the configured client
+      }
+    }
+
+    // Layer 2.5: Configured inference client (cloud API-key router OR local model).
+    // In standalone API-key mode there is no household `_remoteInferenceUrl`, but the
+    // InferenceRouter is wired straight to the cloud provider (proven on the SIMPLE
+    // path). Use it for the deep reply rather than degrading to "can't think
+    // deeply" — that fallback is only correct when NOTHING can serve the request. A
+    // local-model standalone likewise answers here on-device.
+    try {
+      const response = await this.inferenceClient.complete('drive', messages, options);
+      const content = stripNowLineEcho(response.content ?? '');
+      if (content.trim().length > 0) return content;
+    } catch {
+      // Configured client unreachable too — the caller queues.
+    }
+    return null;
+  }
+
+  /**
+   * Call the household's OpenAI-compatible /v1/chat/completions endpoint
+   * directly, through the configured client (InferenceRouter.completeAt): one
+   * leading system message, the NowLine stamp, and its model and auth. It used
+   * to post on its own with no `model` and no auth header, so it only worked
+   * against an unauthenticated llama-server.
    */
   private async completeViaRemote(
     baseUrl: string,
     messages: ChatMessage[],
     options?: CompletionOptions,
-  ): Promise<{ content: string }> {
-    const url = `${baseUrl}/v1/chat/completions`;
-    const body = {
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
-      max_tokens: options?.maxTokens ?? 256,
-      temperature: options?.temperature ?? 0.7,
-      stream: false,
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Remote inference failed: ${response.status} ${response.statusText}`);
+  ): Promise<ChatResponse> {
+    if (!this.inferenceClient.completeAt) {
+      throw new Error('This inference client cannot reach a household endpoint');
     }
-
-    const data = await response.json();
-    const choice = data.choices?.[0];
-    return { content: choice?.message?.content ?? '' };
+    return this.inferenceClient.completeAt(baseUrl, messages, options);
   }
 
   /**
@@ -992,6 +1109,7 @@ export class CompanionEngine {
    * Each action is narrated into the room so the player sees what happened.
    */
   private applyDelegationActions(actions: DelegationActionDto[]): void {
+    const s = this.strings();
     for (const action of actions) {
       switch (action.type) {
         case 'room_created': {
@@ -1001,7 +1119,7 @@ export class CompanionEngine {
               type: 'emote_in_room',
               entityId: 'narrator',
               entityName: 'narrator',
-              text: `A new passage appears: ${exitLabel}`,
+              text: s.newPassage(exitLabel),
             });
           }
           break;
@@ -1026,7 +1144,7 @@ export class CompanionEngine {
               type: 'emote_in_room',
               entityId: 'narrator',
               entityName: 'narrator',
-              text: `*notification (${priority})*: ${message}`,
+              text: s.notificationPriority(wordFor(s.priorityWords, priority), message),
             });
           }
           break;
@@ -1037,7 +1155,8 @@ export class CompanionEngine {
             type: 'emote_in_room',
             entityId: this.profile.entityId,
             entityName: this.profile.name,
-            text: `heads ${direction}`,
+            // A direction code as a word in her language; an exit's own name as it is.
+            text: s.heads(wordFor(s.directionWords, direction)),
           });
           break;
         }
@@ -1096,6 +1215,7 @@ export class CompanionEngine {
       agentEntityId: this.profile.entityId,
       tier: 0, // Phone agents default to tier 0 (nascent)
       oraclePredictions: this.phoneOracle?.allPredictions() ?? null,
+      strings: this.strings(),
     };
 
     const result = evaluateProactivity(ctx);
@@ -1135,7 +1255,7 @@ export class CompanionEngine {
 
   /** Request a greeting from the companion (e.g. on first room render). */
   requestGreeting(): void {
-    if (this._state === 'idle') {
+    if (this._state === 'idle' && !this.turnParked) {
       this.greetPlayer('You');
     }
   }

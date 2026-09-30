@@ -24,6 +24,7 @@ import org.wyrdsekai.core.agent.CrossZoneTellService;
 import org.wyrdsekai.core.agent.EntityRegistry;
 import org.wyrdsekai.core.home.ResidencyStore;
 import org.wyrdsekai.core.persistence.AuthService;
+import org.wyrdsekai.core.security.LoginRateLimiter;
 import org.wyrdsekai.core.room.*;
 import org.wyrdsekai.core.room.ZoneGuardian;
 
@@ -261,6 +262,16 @@ public final class McpRoutes {
             ctx.status(400).json(McpResponse.error("Password longer than 72 bytes — if you meant a description, send it as `description`"));
             return;
         }
+        // The same throttle as /api/auth/login: per source address and per account, and the
+        // account count is shared with every other password login. Refused before bcrypt runs.
+        var limiter = LoginRateLimiter.shared();
+        var ipKey = "ip:" + ctx.ip();
+        var acctKey = "acct:" + (req.username() == null ? "" : req.username().trim().toLowerCase());
+        if (limiter.anyLocked(ipKey, acctKey)) {
+            log.warn("MCP login throttled for '{}' from {}: too many recent failures", req.username(), ctx.ip());
+            ctx.status(429).json(McpResponse.error("Too many failed attempts — try again later"));
+            return;
+        }
         Optional<AuthService.Session> result;
         try {
             result = auth.login(req.username(), req.password());
@@ -269,9 +280,11 @@ public final class McpRoutes {
             return;
         }
         if (result.isEmpty()) {
+            limiter.recordFailureAll(ipKey, acctKey);
             ctx.status(401).json(McpResponse.error("Invalid credentials"));
             return;
         }
+        limiter.recordSuccessAll(ipKey, acctKey);
 
         var user = result.get();
 
@@ -1013,6 +1026,8 @@ public final class McpRoutes {
         for (var e : new ArrayList<>(sessions.entrySet())) {
             if (username.equalsIgnoreCase(e.getValue().username())) {
                 leaveTheWorld(e.getKey(), e.getValue(), "shown out");
+                // Shown out means the login ends too; the token used to stay good for its 7 days.
+                auth.logout(e.getKey());
                 n++;
             }
         }

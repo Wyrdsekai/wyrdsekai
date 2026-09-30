@@ -8,6 +8,7 @@ import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.inference.InferenceClient;
+import org.wyrdsekai.core.inference.NowLine;
 import org.wyrdsekai.core.inference.InferenceRouter;
 
 import java.io.ByteArrayOutputStream;
@@ -291,7 +292,7 @@ public final class MentalSimulator {
                     null,           // topP
                     null,           // presencePenalty
                     null,           // repetitionPenalty
-                    true),          // localOnly — never route mental sim cross-zone
+                    true).withNow(NowLine.NONE),          // localOnly — never route mental sim cross-zone
             DEFAULT_TIMEOUT,
             scheduler);
 

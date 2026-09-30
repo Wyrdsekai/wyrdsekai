@@ -86,6 +86,17 @@ export interface BetweenConfig {
    *b.
    */
   viaRelay?: boolean;
+  /**
+   * This phone's own login on the home bus (the pairing reply's `nats_user`),
+   * when `client` is that login. The home lets such a login use only Study sync
+   * under its own name (HouseholdBus.phonePermissions
+   * W2): it publishes `between.{zone}.{busUser}.*.study.state|sync` and hears only
+   * `between.{zone}.*.{busUser}.study.sync`. So with a busUser the phone starts
+   * Study sync under that name and none of the LAN machinery (presence, events,
+   * item inbox, dock, headlines, oracle, MCP proxy), which the home refuses; bud
+   * delegation goes straight to its HTTP path.
+   */
+  busUser?: string | null;
 }
 
 export type PhoneNodeState = 'stopped' | 'starting' | 'running' | 'error';
@@ -244,6 +255,12 @@ export class PhoneNode {
   serverUrl: string | null = null;
   /** Device token for HTTP delegation auth (from pairing). */
   deviceToken: string | null = null;
+  /**
+   * The signed-in person's session on the home (the sealed mcp.login, or the
+   * home's own login). A room visit uses it, so the person arrives as
+   * themselves; the device token is used only when no one is signed in.
+   */
+  sessionToken: string | null = null;
 
   /** Server connection for visiting server rooms via WebSocket. */
   serverConnection: ServerConnection | null = null;
@@ -470,9 +487,22 @@ export class PhoneNode {
     this._betweenConfig = config;
     const { client, nodeId, householdId, companionDid } = config;
 
-    // Over a relay only study-sync is permitted; see BetweenConfig.viaRelay.
-    // Everything between here and the study-sync block is LAN-only.
-    if (!config.viaRelay) {
+    // Over a relay, or as a phone's own login on the home bus, only study-sync
+    // is permitted; see BetweenConfig.viaRelay / busUser. Everything between
+    // here and the study-sync block is LAN-only.
+    const busUser = config.busUser || null;
+    if (busUser) {
+      // Complex delegation over HTTP only (its NATS subjects are refused).
+      this._budDelegation = new BudDelegation({
+        between: null,
+        nodeId,
+        familyId: householdId,
+        serverUrl: config.serverUrl ?? null,
+        deviceToken: config.deviceToken ?? null,
+      });
+      this.companion?.setBudDelegation(this._budDelegation);
+    }
+    if (!config.viaRelay && !busUser) {
 
     // 1. PresenceManager — announce online, listen for presence
     this._presenceManager = new PresenceManager(client, nodeId, householdId);
@@ -542,8 +572,12 @@ export class PhoneNode {
       // pairing token is the long-lived fallback. Without one the server peer
       // ignores us (by design — see StudySyncPeer.authenticates).
       const authToken = config.sessionToken ?? config.deviceToken ?? null;
-      this.studyStore.setDeviceId?.(nodeId);
-      this._studySync = new StudySyncLayer(client, this.studyStore, nodeId, studyHousehold, userDid, authToken);
+      // On the home bus the phone's device name IS its login name: the home
+      // lets it send and hear Study frames only under that name.
+      const deviceId = busUser ?? nodeId;
+      this.studyStore.setDeviceId?.(deviceId);
+      this._studySync = new StudySyncLayer(client, this.studyStore, deviceId, studyHousehold, userDid, authToken,
+        { directedOnly: !!busUser });
       // Surface sync outcomes as room prose — merges tell the user their Study
       // moved; a CONCURRENT conflict keeps the local copy and must be VISIBLE
       // (silent conflict-drop was a wired-but-dead audit find).
@@ -978,20 +1012,48 @@ export class PhoneNode {
   private async visitServerRoom(entityId: string, entityName: string, serverRoomId: string, direction: string): Promise<void> {
     // Create server connection on-demand if not already connected
     if (!this.serverConnection || !this.serverConnection.isConnected) {
-      if (!this.serverUrl || !this.deviceToken) {
+      if (!this.serverUrl || !(this.sessionToken || this.deviceToken)) {
         this.emit({ type: 'error', code: 'no_server', message: 'Not paired with a household server. Pair first to visit server rooms.' });
         return;
       }
-      try {
-        const wsUrl = this.serverUrl
-          .replace('http://', 'ws://').replace('https://', 'wss://')
-          .replace(/\/$/, '') + `/ws?device_token=${this.deviceToken}`;
-        const { WebSocketServerConnection } = await import('./transit/WebSocketServerConnection');
-        const conn = new WebSocketServerConnection(wsUrl);
-        await conn.connect();
-        this.serverConnection = conn;
-      } catch (e: any) {
-        this.emit({ type: 'error', code: 'server_connect_failed', message: `Could not connect to household server: ${e.message}` });
+      const { isPlaintextToNetwork } = await import('../network/plainAddress');
+      if (isPlaintextToNetwork(this.serverUrl)) {
+        // The login would cross the network in the clear ( W2).
+        const { securityText } = await import('../security/securityText');
+        this.emit({ type: 'error', code: 'server_not_encrypted', message: securityText().plainAddressRefused });
+        return;
+      }
+      const base = this.serverUrl
+        .replace('http://', 'ws://').replace('https://', 'wss://')
+        .replace(/\/$/, '') + '/ws?';
+      const { WebSocketServerConnection, SessionRefusedError } = await import('./transit/WebSocketServerConnection');
+      // The person, when someone is signed in: they arrive as themselves, in
+      // the room the exit leads to. The device token (a device linked to no one
+      // lands as an anonymous device) only when no one is.
+      const attempts: string[] = [];
+      if (this.sessionToken) {
+        attempts.push(`token=${encodeURIComponent(this.sessionToken)}&room=${encodeURIComponent(serverRoomId)}`);
+      }
+      if (this.deviceToken) attempts.push(`device_token=${encodeURIComponent(this.deviceToken)}`);
+      let lastError: unknown = null;
+      for (const query of attempts) {
+        try {
+          const conn = new WebSocketServerConnection(base + query);
+          await conn.connect();
+          this.serverConnection = conn;
+          lastError = null;
+          break;
+        } catch (e) {
+          lastError = e;
+          // An expired session is refused before any frame: forget it and try
+          // the device token. Anything else (unreachable) ends the attempt.
+          if (!(e instanceof SessionRefusedError) || !query.startsWith('token=')) break;
+          this.sessionToken = null;
+        }
+      }
+      if (lastError || !this.serverConnection) {
+        const msg = lastError instanceof Error ? lastError.message : String(lastError ?? 'no connection');
+        this.emit({ type: 'error', code: 'server_connect_failed', message: `Could not connect to household server: ${msg}` });
         return;
       }
     }

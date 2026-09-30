@@ -8,18 +8,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class TimeContextTest {
 
+    /** The date and the time ride every request now (NowLine), not this trimmable layer. */
     @Test
-    void build_includes_current_time_and_date() {
-        String ctx = TimeContext.build(null, null);
-        assertThat(ctx).startsWith("Current time: ");
-        assertThat(ctx).containsPattern("\\d{2}:\\d{2}");  // HH:mm
-        assertThat(ctx).contains("2026"); // current year
-    }
-
-    @Test
-    void build_includes_time_of_day() {
-        String ctx = TimeContext.build(null, null);
-        assertThat(ctx).containsAnyOf("morning", "afternoon", "evening", "night", "late night");
+    void build_says_nothing_when_there_is_no_elapsed_time() {
+        assertThat(TimeContext.build(null, null)).isEmpty();
     }
 
     @Test

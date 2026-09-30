@@ -20,13 +20,14 @@ jest.mock('../../network/phoneInvite', () => ({
 
 import { addInviteToBank } from '../addInviteToBank';
 import { useZoneBankStore } from '../../state/zoneBankStore';
+import { serializeBank } from '../zoneBankSync';
 
 const RELAY_NODE = { wsUrl: 'wss://relay-node:4443', natsUser: 'relay_phone', natsPassword: 'pw', caFp: 'aa:bb' };
 const QF = { wsUrl: 'wss://relay-b:4443', natsUser: 'relay_phone', natsPassword: 'pw2' };
 
 beforeEach(() => {
   mem.clear();
-  useZoneBankStore.setState({ relays: [], zones: [], loaded: false });
+  useZoneBankStore.setState({ relays: [], zones: [], trust: {}, loaded: false });
   isInvite = true;
   parsed = { relays: [RELAY_NODE], zoneId: 'home-server', householdId: 'hh' };
 });
@@ -56,6 +57,32 @@ describe('addInviteToBank', () => {
     const r = addInviteToBank('wyrdphone://...');
     expect(r?.hasUsername).toBe(true);
     expect(useZoneBankStore.getState().getZone('home-server')?.username).toBe('operator');
+  });
+
+  it("keeps the home's keys from the invite as this phone's trust, outside the synced bank", () => {
+    parsed = {
+      relays: [RELAY_NODE], zoneId: 'home-server',
+      zk: 'ZK-B64', homeCaFp: 'ab'.repeat(32), lanHttps: 'https://198.51.100.20:7443',
+    };
+    addInviteToBank('wyrdphone://...');
+    const bank = useZoneBankStore.getState();
+    expect(bank.getZoneTrust('home-server')).toEqual({
+      zk: 'ZK-B64', homeCaFp: 'ab'.repeat(32), lanHttps: 'https://198.51.100.20:7443',
+    });
+    expect(JSON.stringify(bank.zones)).not.toContain('ZK-B64');
+    expect(serializeBank()).not.toContain('ZK-B64');
+    expect(JSON.parse(mem.get('@wyrd_zone_trust')!)['home-server'].zk).toBe('ZK-B64');
+  });
+
+  it('a newer invite replaces the key; an older one does not erase it', () => {
+    parsed = { relays: [RELAY_NODE], zoneId: 'home-server', zk: 'OLD' };
+    addInviteToBank('wyrdphone://...');
+    parsed = { relays: [RELAY_NODE], zoneId: 'home-server', zk: 'NEW' };
+    addInviteToBank('wyrdphone://...');
+    expect(useZoneBankStore.getState().getZoneTrust('home-server')?.zk).toBe('NEW');
+    parsed = { relays: [RELAY_NODE], zoneId: 'home-server' };
+    addInviteToBank('wyrdphone://...');
+    expect(useZoneBankStore.getState().getZoneTrust('home-server')?.zk).toBe('NEW');
   });
 
   it('returns null for a non-invite string', () => {

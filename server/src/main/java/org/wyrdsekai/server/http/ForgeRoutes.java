@@ -6,6 +6,7 @@ import io.javalin.http.Handler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.agent.CompanionActor;
+import org.wyrdsekai.core.forge.SleepWeightWrite;
 import org.wyrdsekai.core.agent.EntityRegistry;
 import org.wyrdsekai.core.soul.ForgeRoomBridge;
 import org.wyrdsekai.core.persistence.AuthService;
@@ -61,13 +62,19 @@ public final class ForgeRoutes {
             // NORMAL only. DEEP is the epoch-level self-modification cycle (variant
             // growth + voice alignment, welfare-gated, 30-90 min) and stays behind the
             // deliberate in-world ceremony rather than a one-line operator call.
+            // ?rehearse=true: the write in this cycle trains and measures its gate and keeps
+            // nothing. It goes through the same sleep as a night, so under the single-model
+            // profile she is asleep while her model is stopped for it.
+            var rehearse = "true".equalsIgnoreCase(ctx.queryParam("rehearse"));
+            if (rehearse) SleepWeightWrite.rehearseNext();
             ref.tell(new CompanionActor.ForceSleep(CompanionActor.SleepTier.NORMAL));
-            log.info("Steward ran a consolidation cycle for '{}' ({}) via the forge route",
-                target, entityId);
+            log.info("Steward ran a consolidation cycle for '{}' ({}) via the forge route{}",
+                target, entityId, rehearse ? " — the night's write is a rehearsal" : "");
             ctx.json(Map.of(
                 "companion", target,
                 "entityId", entityId,
                 "tier", "NORMAL",
+                "rehearsal", rehearse,
                 "started", true,
                 "note", "sleep → consolidate → forge-manifest; watch the log for "
                     + "'[Forge] Starting full cycle' and the new manifest version"));

@@ -230,6 +230,25 @@ RCT_EXPORT_METHOD(send:(NSString *)socketId base64:(NSString *)base64) {
   }];
 }
 
+/**
+ * Send a TEXT frame. The session websocket of the home (/ws) reads text frames
+ * only, so a RelaySocket opened in text mode (websocket.ts, for a pinned home
+ * on the home network) sends through here instead of send:base64:.
+ */
+RCT_EXPORT_METHOD(sendText:(NSString *)socketId text:(NSString *)text) {
+  NSURLSessionWebSocketTask *task = [self taskForSocket:socketId];
+  if (!task || text == nil) return;
+  NSURLSessionWebSocketMessage *msg = [[NSURLSessionWebSocketMessage alloc] initWithString:text];
+  [task sendMessage:msg
+  completionHandler:^(NSError *error) {
+    if (error) {
+      [self emitForSocket:socketId
+                     type:@"error"
+                     body:@{@"message" : error.localizedDescription ?: @"send failed"}];
+    }
+  }];
+}
+
 /** Close a socket and tear down its session. */
 RCT_EXPORT_METHOD(close:(NSString *)socketId) {
   __block NSURLSessionWebSocketTask *task = nil;
@@ -315,68 +334,16 @@ RCT_EXPORT_METHOD(close:(NSString *)socketId) {
 }
 
 /**
- * serverTrust pinning. (a) Try default system trust; if it passes (public-CA
- * relay or a household CA the user installed via Settings) -> useCredential.
- * (b) Else extract the served leaf and, if the shared WyrdTrustStore has it
- * pinned for url.host, useCredential. (c) Else cancel — the safe default for a
- * self-signed cert that was never pinned (an empty store falls through here, so
- * a connect before the pin lands correctly fails closed).
+ * serverTrust pinning, shared with fetch() (WyrdHandleServerTrustChallenge):
+ * a host with pins must satisfy them — the household CA as the only anchor, or
+ * the relay's pinned leaf — and a mismatch is refused (and reported to JS as
+ * wyrd_trust_pin_mismatch, never offered for acceptance). A host without pins
+ * (a relay with a public certificate) gets the system's default handling.
  */
 - (void)URLSession:(NSURLSession *)session
     didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
       completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
-  NSString *chHost = challenge.protectionSpace.host ?: @"";
-  NSLog(@"[WyrdRelaySocket] didReceiveChallenge host=%@ method=%@ hasPins=%d",
-        chHost, challenge.protectionSpace.authenticationMethod,
-        [[WyrdTrustStore shared] hasPinsForHost:chHost]);
-  if (![challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
-    return;
-  }
-
-  SecTrustRef serverTrust = challenge.protectionSpace.serverTrust;
-  if (!serverTrust) {
-    completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
-    return;
-  }
-
-  // (a) System trust first.
-  CFErrorRef sysError = NULL;
-  BOOL systemOk = SecTrustEvaluateWithError(serverTrust, &sysError);
-  if (sysError) CFRelease(sysError);
-  if (systemOk) {
-    completionHandler(NSURLSessionAuthChallengeUseCredential,
-                      [NSURLCredential credentialForTrust:serverTrust]);
-    return;
-  }
-
-  // (b) Pinned-leaf fallback.
-  NSString *host = challenge.protectionSpace.host ?: @"";
-  SecCertificateRef leaf = WyrdCopyLeafCert(serverTrust);
-  BOOL pinned = NO;
-  if (leaf) {
-    pinned = [WyrdTrustStore isPinnedForHost:host certificate:leaf];
-    if (!pinned && [[WyrdTrustStore shared] hasPinsForHost:host]) {
-      // Host has pins but none matched -> possible rotation/MITM. Surface it
-      // through the SAME wyrd_trust_pin_mismatch DeviceEvent the existing JS
-      // listener (installPinMismatchListener) consumes.
-      CFDataRef derRef = SecCertificateCopyData(leaf);
-      NSString *served = derRef ? WyrdSha256ColonHex((__bridge_transfer NSData *)derRef) : @"";
-      NSArray<NSString *> *pins = [[WyrdTrustStore shared] pinnedFingerprintsForHost:host];
-      [WyrdHouseholdTrust emitPinMismatchForHost:host
-                                  newFingerprint:served
-                               pinnedFingerprint:pins.firstObject ?: @""];
-    }
-    CFRelease(leaf);
-  }
-
-  NSLog(@"[WyrdRelaySocket] pin decision host=%@ systemOk=%d pinned=%d", host, systemOk, pinned);
-  if (pinned) {
-    completionHandler(NSURLSessionAuthChallengeUseCredential,
-                      [NSURLCredential credentialForTrust:serverTrust]);
-  } else {
-    completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
-  }
+  WyrdHandleServerTrustChallenge(challenge, completionHandler);
 }
 
 #pragma mark NSURLSessionWebSocketDelegate

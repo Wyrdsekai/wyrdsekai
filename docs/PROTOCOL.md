@@ -14,6 +14,33 @@ This document specifies the wire protocol between a Wyrdsekai client and server.
 | Frame format | JSON text frames |
 | Encoding | UTF-8 |
 | Idle timeout | 5 minutes (implement ping/pong or periodic messages) |
+| From another machine | `wss://<host>:7443/ws` and `https://<host>:7443/api/...` (encrypted) |
+| On the same machine | `ws://127.0.0.1:7070/ws` and `http://127.0.0.1:7070/api/...` |
+
+### Encryption and the household certificate
+
+Every home makes its own certificate authority (CA) the first time it starts. The CA signs the
+certificate that port 7443 serves. It also signs the certificate of the household bus (NATS on
+4222 and the phones' websocket on 4223). The server always sends the whole chain: its own
+certificate, then the household CA.
+
+A client from another machine must check that chain before it sends anything:
+
+1. Get the CA's fingerprint from the pairing invite. The invite field `home_ca_fp` is the SHA-256
+   of the CA certificate (its DER bytes), in lowercase hex with no colons. The invite field
+   `lan_https` is the address to use on the home network, for example `https://198.51.100.20:7443`.
+2. On connect, find the certificate in the served chain whose SHA-256 is `home_ca_fp`.
+3. Check that the server's own certificate is signed by that CA and is still valid.
+
+A home's CA is never in a public trust store, so the platform's ordinary checks will refuse it.
+That is expected: the fingerprint from the invite is what the client trusts. The server's
+certificate names this machine's host name, `<host name>.local` and every network address it has,
+but a client that pins the CA does not need to match names. If the fingerprint does not match,
+refuse and tell the person to pair again. Do not offer to trust a new certificate.
+
+Port 7070 answers this machine only, without encryption. Local tools and the browser on the same
+machine use it. `WYRDSEKAI_HTTP_LAN_PLAINTEXT=true` opens it to the network again for phone apps
+from before 0.5.0 (see CONFIGURATION.md).
 
 ## Authentication
 
@@ -70,8 +97,9 @@ The token is an opaque UUID string. It is NOT a JWT — do not attempt to decode
 
 Pass the token to the WebSocket connection as a query parameter:
 ```
-wss://host:port/ws?token=<token>
+wss://<host>:7443/ws?token=<token>
 ```
+On the same machine, `ws://127.0.0.1:7070/ws?token=<token>` works too.
 
 For HTTP endpoints, use either:
 - Query parameter: `GET /api/auth/me?token=<token>`
@@ -84,7 +112,7 @@ For HTTP endpoints, use either:
 ### Connecting
 
 ```
-wss://host:port/ws?token=<session-token>
+wss://<host>:7443/ws?token=<session-token>
 ```
 
 On successful connection, the server sends a `room_state` message with the player's current room and inventory.
@@ -612,19 +640,90 @@ Wyrdsekai zones can federate — a player can visit another zone by transiting t
 3. Server sends `transit` message with destination URL and token
 4. Client disconnects from current zone
 5. Client connects to destination: `wss://target-host/ws?transit_token=<token>`
-6. Destination validates the token (Ed25519 signature verification)
+6. Destination checks the token against the one it issued. The token must be
+   for this zone, unexpired and unused, and the destination must still hold an
+   active agreement with the zone it issued the token to. A token works once.
+   Ending the agreement cancels every token issued under it.
 7. Player appears in the destination zone's "docks" room
 8. Player receives `room_state` and can interact normally
 
+The token is a random identifier the destination issued and stored. It is not
+signed; the destination trusts its own record of it. The transit request and
+response that carry it between the zones are signed envelopes.
+
 ### Trust Levels
 
-| Level | Duration | Capabilities |
-|-------|----------|--------------|
-| `tourist` | 1 hour | Read-only visitor, limited interactions |
-| `resident` | 24 hours | Can speak, use objects, repeat visits |
-| `citizen` | 7 days | Extended access, can own property |
+| Level | Token lasts | Issued when the agent has |
+|-------|-------------|---------------------------|
+| `tourist` | 1 hour | fewer than 3 earlier visits |
+| `resident` | 24 hours | 3 to 9 earlier visits |
+| `citizen` | 7 days | 10 or more earlier visits |
 
-Trust level escalates with repeat visits (tourist → resident → citizen).
+Visits are counted by the destination since it last started. The level sets how long a token lasts. It does not change what a visitor may
+do: every visitor arrives at the docks as a guest, without an account.
+
+---
+
+## Through a Relay: Sealed Requests
+
+A phone (or the `wyrd` terminal) that reaches its home through a relay does not
+use the HTTP endpoints above. It sends one NATS request and gets one reply, on
+these subjects:
+
+| Subject | What it carries |
+|---------|-----------------|
+| `wyrd.zone.{zone}.mcp.login` | name and password; the reply has the session token |
+| `wyrd.zone.{zone}.auth.register`, `.auth.redeem` | name, password, invite code; the reply has the token |
+| `wyrd.zone.{zone}.auth.status` | whether the home takes new accounts |
+| `wyrd.zone.{zone}.mcp.tell` | a tell to a companion or a person |
+| `wyrd.zone.{zone}.library.search` | a library search and its results |
+| `wyrd.zone.{zone}.study.journal` | a journal entry, or your recent entries (private ones included) |
+| `wyrd.zone.{zone}.pair.device` | the new device token |
+| `wyrd.zone.{zone}.account.zonebank.get`, `.put` | your list of homes |
+| `wyrd.zone.{zone}.directory.search`, `.knock`, `.knock.list` | finding a zone, asking to join, the steward's list of requests |
+
+Since 0.5.0 every one of these is **sealed**: encrypted from the phone to the
+home, so the relay passes it on without being able to read it or answer in the
+home's place. The key the phone seals to is the home's tunnel key, `zk` in the
+pairing invite (32 bytes, base64url). All base64 below is base64url without
+padding.
+
+**Request.** For each request the phone makes a fresh X25519 key pair `e` and 16
+random bytes `n`. Then:
+
+```
+dh    = X25519(e.private, zk)
+prk   = HKDF-Extract(salt = n, dh)                          (HKDF with SHA-256)
+okm   = HKDF-Expand(prk, "wyrd-request-v2" || e.public, 64)
+k_req = okm[0..32]      k_rep = okm[32..64]
+plain = {"ts": <milliseconds since 1970>, "body": <the request object>}
+c     = ChaCha20-Poly1305(k_req, nonce = 12 zero bytes, aad = the subject, plain)
+```
+
+The phone sends `{"v":2,"e":"<e.public>","n":"<n>","c":"<c>"}`. The request
+object is what the phone sent before sealing existed, for example
+`{"username":"alice","password":"..."}`. An empty request is `{}`.
+
+**Reply.** The home seals its answer with `k_rep`, the same zero nonce and the
+same subject as associated data, and sends `{"v":2,"c":"<c>"}`. Each key seals
+exactly one message, which is why a zero nonce is safe.
+
+**Refusals.** These come back unsealed, and carry no detail:
+
+| Reply | Meaning |
+|-------|---------|
+| `{"ok":false,"error":"sealed_refused"}` | The request did not open (wrong key, altered, or sealed for another subject), its `ts` is more than 120 seconds from the home's clock, or its `n` was already used in the last 10 minutes. Make a new request; check the device clock. |
+| `{"ok":false,"error":"sealed_required"}` | An unsealed request reached the home through a relay. The steward can accept these for a while with `WYRDSEKAI_RELAY_ALLOW_PLAINTEXT_REQUESTS=true`. |
+
+A client must treat any reply that is not sealed, other than these two
+refusals, as not from its home.
+
+On the home's own network the home still accepts unsealed requests.
+`wyrd.discover.zone` (it answers with the zone's name only) is never sealed.
+
+**Test vectors.** `core/src/test/resources/crypto/request-v2-vectors.json`
+holds fixed keys, one request and one reply, byte for byte. Every
+implementation should reproduce them exactly; the home's own tests do.
 
 ---
 

@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * Multi-backend web search service for agent actions.
@@ -39,6 +40,7 @@ public class WebSearchService {
 
     private final HttpClient httpClient;
     private final String searxngUrl;     // nullable
+    private final boolean searxngNative; // /healthz answered: real SearXNG, which knows categories
     private final String braveApiKey;    // nullable
     private final String tavilyApiKey;   // nullable
     private final String serpApiKey;     // nullable
@@ -59,14 +61,17 @@ public class WebSearchService {
 
         // Probe backends in priority order
         var searxng = System.getenv().getOrDefault("WYRDSEKAI_SEARXNG_URL", "http://localhost:8888");
-        this.searxngUrl = isSearxngAvailable(searxng) ? searxng : null;
+        var answered = probeSearxng(searxng);
+        this.searxngUrl = answered != null ? searxng : null;
+        this.searxngNative = "/healthz".equals(answered);
         this.braveApiKey = System.getenv("BRAVE_SEARCH_API_KEY");
         this.tavilyApiKey = System.getenv("TAVILY_API_KEY");
         this.serpApiKey = System.getenv("SERPAPI_API_KEY");
 
         if (this.searxngUrl != null) {
             activeBackend = "searxng";
-            log.info("WebSearchService: Searxng at {}", searxng);
+            log.info("WebSearchService: Searxng at {}{}", searxng,
+                searxngNative ? "" : " (no /healthz: Searxng-compatible, e.g. metasearch2)");
         } else if (braveApiKey != null && !braveApiKey.isBlank()) {
             activeBackend = "brave";
             log.info("WebSearchService: Brave Search API");
@@ -201,10 +206,39 @@ public class WebSearchService {
     // ═══════════════════════════════════════════════════════════════════
 
     private List<SearchResult> searchSearxng(String query, int maxResults, boolean newsOnly) {
+        return withScienceRetry(categories -> searchSearxng(query, maxResults, categories),
+            newsOnly, searxngNative);
+    }
+
+    /**
+     * The general engines are the commercial ones, and on a household node every one of them
+     * answered "too many requests" or a CAPTCHA (2026-09-22): a companion who said she would
+     * learn about attention mechanisms got nothing back, while the science engines (Semantic
+     * Scholar answered at once with "Attention Is All You Need") were never asked.
+     *
+     * <p>The science pass runs only after a 200 with no results from a real SearXNG. After a
+     * failure or timeout ({@code ask} returned null) the same server is not asked again: the
+     * search runs on the companion's actor thread, and a hung backend would hold it for a second
+     * 15 s timeout. metasearch2 has no categories, so asking it again would send the identical
+     * query to the engines that just came back empty. Package-private for unit testing.
+     */
+    static List<SearchResult> withScienceRetry(Function<String, List<SearchResult>> ask,
+                                               boolean newsOnly, boolean searxngNative) {
+        var found = ask.apply(newsOnly ? "news" : null);
+        if (found == null) return List.of();
+        if (found.isEmpty() && !newsOnly && searxngNative) {
+            var science = ask.apply("science");
+            if (science != null) found = science;
+        }
+        return found;
+    }
+
+    /** Null when the request failed or timed out; an empty list when the server answered 200 with nothing. */
+    private List<SearchResult> searchSearxng(String query, int maxResults, String categories) {
         try {
             var encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
             var url = searxngUrl + "/search?q=" + encoded + "&format=json";
-            if (newsOnly) url += "&categories=news";
+            if (categories != null) url += "&categories=" + categories;
 
             var req = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -217,19 +251,19 @@ public class WebSearchService {
                 // answered "no results" forever.
                 log.warn("Searxng answered HTTP {} for '{}' at {} — returning no results",
                     resp.statusCode(), query, searxngUrl);
-                return List.of();
+                return null;
             }
 
             var parsed = parseSearxngJson(mapper.readTree(resp.body()), maxResults);
             if (parsed.isEmpty()) {
                 log.info("Searxng returned 200 but no parseable results for '{}'"
-                    + " (newsOnly={}) — body was {} bytes",
-                    query, newsOnly, resp.body() == null ? 0 : resp.body().length());
+                    + " (categories={}) — body was {} bytes",
+                    query, categories == null ? "default" : categories, resp.body() == null ? 0 : resp.body().length());
             }
             return parsed;
         } catch (Exception e) {
             log.warn("Searxng search failed: {}", e.getMessage());
-            return List.of();
+            return null;
         }
     }
 
@@ -249,15 +283,31 @@ public class WebSearchService {
     static List<SearchResult> parseSearxngJson(JsonNode root, int maxResults) {
         var results = new ArrayList<SearchResult>();
         if (root == null) return results;
+        // Wikipedia and Wikidata answer in "infoboxes", not "results": an exact article's
+        // opening paragraph. It was thrown away, so a search whose answer was a Wikipedia article
+        // read as "no results".
+        var boxes = root.get("infoboxes");
+        if (boxes != null && boxes.isArray()) {
+            for (var box : boxes) {
+                if (results.size() >= maxResults) break;
+                var content = getStr(box, "content");
+                if (content.isBlank()) continue;
+                var url = getStr(box, "id");
+                var links = box.get("urls");
+                if (url.isBlank() && links != null && links.isArray() && links.size() > 0) url = getStr(links.get(0), "url");
+                results.add(new SearchResult(getStr(box, "infobox"), url, content));
+            }
+        }
         var arr = root.get("results");
         if (arr != null && arr.isArray()) {
-            for (int i = 0; i < Math.min(arr.size(), maxResults); i++) {
+            for (int i = 0; i < arr.size() && results.size() < maxResults; i++) {
                 var item = arr.get(i);
                 results.add(new SearchResult(
                     getStr(item, "title"), getStr(item, "url"), getStr(item, "content")));
             }
             return results;
         }
+        if (!results.isEmpty()) return results;
         // metasearch2 shape: locate the "search_results" array (root may be an
         // array whose first element carries it, or an object that carries it).
         var container = root.isArray() && root.size() > 0 ? root.get(0) : root;
@@ -468,7 +518,8 @@ public class WebSearchService {
     // Utilities
     // ═══════════════════════════════════════════════════════════════════
 
-    private boolean isSearxngAvailable(String url) {
+    /** The path that answered 200, or null when neither did. */
+    private String probeSearxng(String url) {
         // Searxng exposes /healthz; metasearch2 (the bundled keyless backend) does
         // not — it only serves /, /search, /settings, etc. Probe /healthz first
         // (Searxng-native), then fall back to the index "/" so a running
@@ -480,12 +531,12 @@ public class WebSearchService {
                     .timeout(Duration.ofSeconds(3))
                     .GET().build();
                 var resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-                if (resp.statusCode() == 200) return true;
+                if (resp.statusCode() == 200) return path;
             } catch (Exception e) {
                 // try next path
             }
         }
-        return false;
+        return null;
     }
 
     private static String stripHtml(String html) {

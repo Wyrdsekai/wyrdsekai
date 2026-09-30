@@ -258,6 +258,18 @@ public class InputHandler {
                     j.args() == null || j.args().isBlank() ? List.of() : List.of(j.args())));
                 yield true;
             }
+            case ParsedCommand.ResearchYes r -> {
+                // The person's own yes to a question the household library asked them about.
+                connection.send(new C2SMessage.Command(connection.newId(), "research", List.of("yes")));
+                yield true;
+            }
+            case ParsedCommand.Bond b -> {
+                // The person's bonds with this home's companions, and the naming ritual.
+                connection.send(new C2SMessage.Command(
+                    connection.newId(), "bond",
+                    b.args() == null || b.args().isBlank() ? List.of() : List.of(b.args())));
+                yield true;
+            }
             case ParsedCommand.Mail m -> {
                 // The server drives the letter: reading and filing come back as prose, and
                 // writing arrives as a Compose message that onCompose turns into line mode.

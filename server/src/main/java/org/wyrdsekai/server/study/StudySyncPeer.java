@@ -17,6 +17,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Server-side Study-sync peer — the home-zone
@@ -41,6 +44,15 @@ import java.util.Map;
  * is missing AND (if the peer is ahead) requesting theirs — convergence in the
  * fewest round-trips. Each message names its owner ({@code userDid}); items
  * merge into that user's Study.</p>
+ *
+ * <p>Home network only (audit W4, 2026-09-28). The frames are plain JSON on a shared
+ * subject: the phone's session token rides in every inbound frame and the home's deltas
+ * carry Study items. On a relay leg that is readable by the relay operator and by any
+ * device allowed to subscribe there, so a peer on a relay connection
+ * ({@link #homeNetworkOnly}) answers every frame with a {@code study_sync_refused} notice
+ * (no content, no token) and merges nothing; the notice's {@code reason} is
+ * {@code home_network_only}. Private journal entries are not sent on any leg
+ * ({@code StudyService.getDeltaForPeer}).</p>
  */
 public final class StudySyncPeer {
 
@@ -58,21 +70,41 @@ public final class StudySyncPeer {
     // or device pairing token both count; both are nullable for tests.
     private final AuthService auth;
     private final PairingService pairing;
+    /** A relay leg: no Study content and no token handling, only the refusal notice. */
+    private final boolean refuseAll;
+    /** Devices already told, so a phone that keeps asking is told once per boot. */
+    private final Set<String> told = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean warned = new AtomicBoolean();
     private Dispatcher dispatcher;
 
     public StudySyncPeer(Connection nats, String zoneId, String serverDeviceId, StudyService study,
                          AuthService auth, PairingService pairing) {
+        this(nats, zoneId, serverDeviceId, study, auth, pairing, false);
+    }
+
+    private StudySyncPeer(Connection nats, String zoneId, String serverDeviceId, StudyService study,
+                          AuthService auth, PairingService pairing, boolean refuseAll) {
         this.nats = nats;
         this.zoneId = zoneId;
         this.serverDeviceId = serverDeviceId;
         this.study = study;
         this.auth = auth;
         this.pairing = pairing;
+        this.refuseAll = refuseAll;
+    }
+
+    /**
+     * The peer for a relay connection: Study sync does not run over the relay. Every frame is
+     * answered with a plain refusal (reason {@code home_network_only}); nothing is merged and
+     * no Study content leaves this node.
+     */
+    public static StudySyncPeer homeNetworkOnly(Connection relay, String zoneId, String serverDeviceId) {
+        return new StudySyncPeer(relay, zoneId, serverDeviceId, null, null, null, true);
     }
 
     /** Subscribe to the study-sync subjects and mark our clock slot on the store. */
     public void start() {
-        study.setServerDeviceId(serverDeviceId);
+        if (study != null) study.setServerDeviceId(serverDeviceId);
         dispatcher = nats.createDispatcher(this::onMessage);
         // Audit F6 (pre-OSS): scope the subscribe to OUR zone's first token, not a
         // wildcard `between.*.*.*`. Phones publish study frames on
@@ -97,16 +129,25 @@ public final class StudySyncPeer {
     }
 
     private void onMessage(Message msg) {
+        onFrame(msg.getSubject(), msg.getData());
+    }
+
+    // Package-visible for tests: one inbound frame.
+    void onFrame(String subject, byte[] data) {
         try {
             // between.{hh}.{src}.{dst}.study.{state|sync}
-            var parts = msg.getSubject().split("\\.");
+            var parts = subject.split("\\.");
             if (parts.length < 6) return;
             String household = parts[1];
             String src = parts[2];
             if (serverDeviceId.equals(src)) return;   // ignore our own traffic
 
-            var body = MAPPER.readTree(msg.getData());
+            var body = MAPPER.readTree(data);
             String type = body.path("type").asText("");
+            if (refuseAll) {
+                refuse(household, src, type);
+                return;
+            }
             String userDid = body.path("userDid").asText("");
             if (userDid.isEmpty()) return;   // unscoped — can't route to a user's Study
             if (!authenticates(body.path("token").asText(""), userDid)) {
@@ -134,7 +175,7 @@ public final class StudySyncPeer {
                 default -> { /* unknown type — ignore */ }
             }
         } catch (Exception e) {
-            log.debug("[StudySync] dropped malformed message on {}: {}", msg.getSubject(), e.toString());
+            log.debug("[StudySync] dropped malformed message on {}: {}", subject, e.toString());
         }
     }
 
@@ -162,6 +203,30 @@ public final class StudySyncPeer {
     private void handleDelta(String userDid, JsonNode body) {
         var items = parseItems(body.get("items"));
         if (!items.isEmpty()) study.mergeFromPeer(userDid, items);
+    }
+
+    /**
+     * Tell a device on a relay leg, once, that Study sync runs on the home network only. The
+     * notice carries no Study content and echoes nothing the device sent.
+     */
+    private void refuse(String household, String src, String type) {
+        if (!"study_state".equals(type) && !"study_delta_request".equals(type) && !"study_delta".equals(type)) return;
+        if (warned.compareAndSet(false, true)) {
+            log.warn("[StudySync] a device asked to sync its Study over the relay (zone {}): refused. "
+                + "Study sync runs on the home network only, because the relay can read what crosses it; "
+                + "the device is told once (reason home_network_only)", zoneId);
+        }
+        if (!told.add(src)) return;
+        try {
+            var out = MAPPER.createObjectNode();
+            out.put("type", "study_sync_refused");
+            out.put("deviceId", serverDeviceId);
+            // A reason code: the phone says it in its own language.
+            out.put("reason", "home_network_only");
+            nats.publish(syncSubject(household, src), MAPPER.writeValueAsBytes(out));
+        } catch (Exception e) {
+            log.debug("[StudySync] refusal notice failed: {}", e.toString());
+        }
     }
 
     // --- publish ---

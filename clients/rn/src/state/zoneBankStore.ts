@@ -21,12 +21,31 @@
  * Sync across the user's own devices (§4) is layered on top in P3: the bank is
  * mirrored as account state on the user's home zone. This store is the local
  * cache + the merge target.
+ *
+ * Per-device trust (, W2/W3): what an invite says about
+ * each zone's own keys — its tunnel key `zk`, its household CA fingerprint and
+ * its home-network address — lives in `trust`, keyed by zoneId, beside the bank
+ * and NEVER in it: the bank blob syncs through the home, and what this phone
+ * trusts must come from an invite it read itself.
  */
 import { create } from 'zustand';
 import { secureStorage as AsyncStorage } from './secureStorage';
 
 const KEY_RELAYS = '@wyrd_held_relays';
 const KEY_ZONES = '@wyrd_zone_bank';
+const KEY_TRUST = '@wyrd_zone_trust';
+
+/** What this phone trusts about one zone, from that zone's invite. */
+export interface ZoneTrust {
+  /** The home's X25519 tunnel key, base64url. Seals the tunnel and requests. */
+  zk?: string;
+  /** SHA-256 of the household CA certificate, lowercase hex. Pins the home network. */
+  homeCaFp?: string;
+  /** https://<lan host>:7443 — the home on the home network. */
+  lanHttps?: string;
+  /** wss://<lan host>:<port> — the home's bus websocket on the home network. */
+  homeBus?: string;
+}
 
 /** A held relay = transport credential. Dumb plumbing, pinned once. */
 export interface HeldRelay {
@@ -65,6 +84,8 @@ export interface ZoneBankEntry {
 interface ZoneBankState {
   relays: HeldRelay[];
   zones: ZoneBankEntry[];
+  /** Per-device trust by zoneId (not synced). */
+  trust: Record<string, ZoneTrust>;
   loaded: boolean;
 
   loadFromStorage: () => Promise<void>;
@@ -89,6 +110,10 @@ interface ZoneBankState {
   relaysForZone: (zoneId: string) => HeldRelay[];
   /** The home/anchor zone, if set. */
   homeZone: () => ZoneBankEntry | undefined;
+
+  /** Record what an invite says about a zone's keys (fields given replace the old ones). */
+  setZoneTrust: (zoneId: string, trust: ZoneTrust) => void;
+  getZoneTrust: (zoneId: string) => ZoneTrust | undefined;
 }
 
 function persistRelays(relays: HeldRelay[]): void {
@@ -97,27 +122,34 @@ function persistRelays(relays: HeldRelay[]): void {
 function persistZones(zones: ZoneBankEntry[]): void {
   AsyncStorage.setItem(KEY_ZONES, JSON.stringify(zones)).catch(() => {});
 }
+function persistTrust(trust: Record<string, ZoneTrust>): void {
+  AsyncStorage.setItem(KEY_TRUST, JSON.stringify(trust)).catch(() => {});
+}
 
 export const useZoneBankStore = create<ZoneBankState>((set, get) => ({
   relays: [],
   zones: [],
+  trust: {},
   loaded: false,
 
   loadFromStorage: async () => {
     try {
-      const [rawRelays, rawZones] = await Promise.all([
+      const [rawRelays, rawZones, rawTrust] = await Promise.all([
         AsyncStorage.getItem(KEY_RELAYS),
         AsyncStorage.getItem(KEY_ZONES),
+        AsyncStorage.getItem(KEY_TRUST),
       ]);
       const relays = rawRelays ? (JSON.parse(rawRelays) as HeldRelay[]) : [];
       const zones = rawZones ? (JSON.parse(rawZones) as ZoneBankEntry[]) : [];
+      const trust = rawTrust ? (JSON.parse(rawTrust) as Record<string, ZoneTrust>) : {};
       set({
         relays: Array.isArray(relays) ? relays : [],
         zones: Array.isArray(zones) ? zones : [],
+        trust: trust && typeof trust === 'object' && !Array.isArray(trust) ? trust : {},
         loaded: true,
       });
     } catch {
-      set({ relays: [], zones: [], loaded: true });
+      set({ relays: [], zones: [], trust: {}, loaded: true });
     }
   },
 
@@ -216,6 +248,19 @@ export const useZoneBankStore = create<ZoneBankState>((set, get) => ({
   },
 
   homeZone: () => get().zones.find((z) => z.homeZone),
+
+  setZoneTrust: (zoneId, trust) => {
+    const prev = get().trust ?? {};
+    const merged: ZoneTrust = { ...prev[zoneId] };
+    for (const [k, v] of Object.entries(trust) as Array<[keyof ZoneTrust, string | undefined]>) {
+      if (v) merged[k] = v;
+    }
+    const next = { ...prev, [zoneId]: merged };
+    set({ trust: next });
+    persistTrust(next);
+  },
+
+  getZoneTrust: (zoneId) => (get().trust ?? {})[zoneId],
 }));
 
 /** Per-device password storage for a zone (NEVER synced — §4.4). */

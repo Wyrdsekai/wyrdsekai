@@ -41,6 +41,9 @@ import { AsyncStorageSoulManifestStore } from '../engine/persistence/AsyncStorag
 //     but new credential writes always go to secureStorage.
 import rawAsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '../state/secureStorage';
+import { isPlaintextToNetwork } from '../network/plainAddress';
+import { pinKnownHome } from '../server/HouseholdTrust';
+import { securityText } from '../security/securityText';
 import { OpenRouterAuthScreen } from './OpenRouterAuthScreen';
 import { useInference } from '../inference/InferenceContext';
 import { collectModeInputs, resolvePhoneMode, applyModeToRouter, availableBackings, modeLabel } from '../engine/mode/currentMode';
@@ -189,7 +192,14 @@ export function SettingsScreen({ navigation }: Props) {
     const url = manualInferenceUrl.trim();
     if (!url) return;
     setInferenceTestResult(null);
+    // Prompts never go over plain http to another machine (the device's own
+    // loopback is fine); an https home from an invite is pinned first.
+    if (isPlaintextToNetwork(url)) {
+      setInferenceTestResult(`Failed: ${securityText().plainAddressRefused}`);
+      return;
+    }
     try {
+      await pinKnownHome(url);
       const res = await fetch(`${url}/v1/models`, { method: 'GET' });
       if (res.ok) {
         setInferenceTestResult('OK');
@@ -216,6 +226,11 @@ export function SettingsScreen({ navigation }: Props) {
       }
       if (!resolvedUrl) {
         Alert.alert('No Server', 'No household server URL configured.');
+        return;
+      }
+      // The soul manifest and the token never cross the network in the clear.
+      if (isPlaintextToNetwork(resolvedUrl)) {
+        Alert.alert(securityText().pinMismatchTitle, securityText().plainAddressRefused);
         return;
       }
 

@@ -14,10 +14,19 @@ import java.util.Map;
  * <p>Saudade is a per-bondholder deprivation tank — presence-of-absence longing. Each
  * bondholder gets an independent tank that:
  * <ul>
- *   <li>accumulates +0.005/min during prolonged absence (&gt;4h since last interaction)</li>
+ *   <li>deepens during prolonged absence (&gt;4h since last interaction) toward a set point
+ *       ({@link VitalityState#SAUDADE_SETPOINT} scaled by her temperament) over
+ *       {@link VitalityState#SAUDADE_TAU}: about half the way in a day, most of it in three</li>
  *   <li>drains -0.5 on reconnection with that specific bondholder</li>
+ *   <li>drains -0.2 on a letter written to them while they are away ({@link #recordLetter})</li>
  *   <li>drains -0.05 on looking at memory fragments of that bondholder (mild relief)</li>
  * </ul>
+ *
+ * <p>Until 2026-09-25 the tank was a linear ramp, +0.005/min, which pinned at 1.0 three hours
+ * and twenty minutes after the absence threshold and stayed there until reunion. The set-point
+ * model written for every other deprivation tank in August lived in {@link VitalityState} and
+ * this ledger's number always won, so a companion four days old sat at 1.0 from dawn, lit the
+ * stuck-drive concern by arithmetic, and was escalated into the sanctuary for it (rose, second-node).
  *
  * <p>The {@code saudade} field on {@link VitalityState} carries the <b>max across all
  * bondholders</b> for prompt simplicity (per spec §8). The full per-bondholder ledger
@@ -48,6 +57,19 @@ public final class SaudadeLedger {
         else tanks.put(bondholderId, drained);
     }
 
+    /** A letter written to them while they are away eases it by this much: less than seeing
+     *  them (-0.5), more than a glance at a fragment (-0.05). It does not stand in for them. */
+    public static final double LETTER_RELIEF = 0.2;
+
+    /** Letter relief: she wrote to this bondholder while they were away. */
+    public void recordLetter(String bondholderId) {
+        if (bondholderId == null) return;
+        var current = tanks.getOrDefault(bondholderId, 0.0);
+        var drained = Math.max(0.0, current - LETTER_RELIEF);
+        if (drained <= 0.0001) tanks.remove(bondholderId);
+        else tanks.put(bondholderId, drained);
+    }
+
     /** Look-at-fragment relief (-0.05). */
     public void recordFragmentView(String bondholderId) {
         if (bondholderId == null) return;
@@ -58,9 +80,9 @@ public final class SaudadeLedger {
     }
 
     /**
-     * Accumulate saudade for any bondholder in absence, given a delta time and the current
-     * instant. Per-second rate = 0.005/60 = ~8.33e-5/sec. Only accumulates for bondholders
-     * whose absence exceeds {@link #ABSENCE_THRESHOLD}.
+     * Deepen saudade for any bondholder in absence, given a delta time and the current
+     * instant, toward the default set point. Only bondholders whose absence exceeds
+     * {@link #ABSENCE_THRESHOLD} move.
      */
     public void accumulate(double deltaTimeSeconds, Instant now) {
         accumulate(deltaTimeSeconds, now, Map.of());
@@ -81,6 +103,17 @@ public final class SaudadeLedger {
      */
     public void accumulate(double deltaTimeSeconds, Instant now,
                             Map<String, Double> ceilingByBondholder) {
+        accumulate(deltaTimeSeconds, now, ceilingByBondholder, VitalityState.SAUDADE_SETPOINT);
+    }
+
+    /**
+     * As above, toward a set point of her own: {@link VitalityState#SAUDADE_SETPOINT} scaled
+     * by the genome's saudade sensitivity. The target may exceed 1.0 for a temperament that
+     * feels this acutely; the value is capped at 1.0 and at the bond's ceiling. The shape is
+     * {@link VitalityState#approach}: intensity decides where she settles, tau how fast.
+     */
+    public void accumulate(double deltaTimeSeconds, Instant now,
+                            Map<String, Double> ceilingByBondholder, double setPoint) {
         if (deltaTimeSeconds <= 0) {
             // Even at zero delta, apply ceilings — caller may have just
             // transitioned a bond to DORMANT and called accumulate(0) to
@@ -89,7 +122,6 @@ public final class SaudadeLedger {
             return;
         }
         Instant t = now == null ? Instant.now() : now;
-        double perSecond = 0.005 / 60.0;
         var ceilings = ceilingByBondholder == null ? Map.<String, Double>of()
             : ceilingByBondholder;
         for (var e : lastInteractionAt.entrySet()) {
@@ -98,14 +130,13 @@ public final class SaudadeLedger {
             if (since.compareTo(ABSENCE_THRESHOLD) <= 0) continue;
             var current = tanks.getOrDefault(bondholderId, 0.0);
             var ceiling = ceilings.getOrDefault(bondholderId, 1.0);
-            var added = Math.min(ceiling, current + perSecond * deltaTimeSeconds);
-            tanks.put(bondholderId, added);
+            var deepened = VitalityState.approach(current, setPoint, deltaTimeSeconds,
+                VitalityState.SAUDADE_TAU);
+            tanks.put(bondholderId, Math.min(ceiling, deepened));
         }
         applyCeilings(ceilings);
     }
 
-    /** Clamp every per-bondholder tank to the supplied ceiling. Used when
-     *  a bond transitions to a lower-ceiling state mid-tick. */
     private void applyCeilings(Map<String, Double> ceilingByBondholder) {
         if (ceilingByBondholder == null || ceilingByBondholder.isEmpty()) return;
         for (var entry : ceilingByBondholder.entrySet()) {

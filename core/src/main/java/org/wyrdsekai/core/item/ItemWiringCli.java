@@ -3,6 +3,7 @@ package org.wyrdsekai.core.item;
 import org.wyrdsekai.core.agent.ActionPolicy;
 
 import org.wyrdsekai.scripting.api.ItemApiSurface;
+import org.wyrdsekai.scripting.api.ItemCapabilityAudit;
 import org.wyrdsekai.scripting.api.ItemManifestParser;
 
 import java.io.IOException;
@@ -51,6 +52,7 @@ public final class ItemWiringCli {
                 var bad = new ArrayList<String>();
                 for (var u : ItemApiSurface.check(script)) bad.add(u.reason());
                 if (manifest != null) {
+                    bad.addAll(ItemCapabilityAudit.undeclared(script, manifest));
                     ItemApiSurface.commandsNeverRead(script,
                         manifest.commands() == null ? List.of() : manifest.commands()).ifPresent(bad::add);
                     if (!ScriptedItemLoader.isBundledPath(p) && !ScriptedItemLoader.isSystemAuthor(manifest.author())

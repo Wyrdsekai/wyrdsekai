@@ -105,8 +105,12 @@ export function StandaloneRoomScreen({ navigation }: Props) {
         const { secureStorage } = await import('../state/secureStorage');
         const zone = (await secureStorage.getItem('@wyrd_zone_id')) || '';
         const token = await secureStorage.getItem('@wyrd_mcp_session_token');
+        // The home's tunnel key from its invite: the session is sealed to it.
+        const { useZoneBankStore } = await import('../state/zoneBankStore');
+        if (!useZoneBankStore.getState().loaded) await useZoneBankStore.getState().loadFromStorage();
+        const zk = useZoneBankStore.getState().getZoneTrust(zone)?.zk ?? null;
         if (cancelled || !zone) return;
-        const conn = new RelayTunnelServerConnection(bc, zone, token ?? null);
+        const conn = new RelayTunnelServerConnection(bc, zone, token ?? null, zk);
         conn.onMessage(renderS2C);
         conn.open();
         // Prime the terminal with the zone's current room (initial render).

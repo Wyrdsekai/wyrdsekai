@@ -228,6 +228,47 @@ public record AgentIdentity(
     }
 
     /**
+     * The raw 32-byte private key, for the Recovery Seed only.
+     *
+     * @throws IllegalStateException when this node holds no private half
+     */
+    public byte[] rawPrivateKey(byte[] householdSecret) throws Exception {
+        if (privateKeyEncrypted == null || privateKeyEncrypted.length == 0) {
+            throw new IllegalStateException("no private key held for " + did);
+        }
+        return decryptPrivateKey(privateKeyEncrypted, householdSecret);
+    }
+
+    /**
+     * An identity carried in by a Recovery Seed, its private key sealed under this
+     * node's household secret. Refuses a key that does not belong to the DID: a
+     * {@code did:key} is its public key, so a mismatched pair could never sign as her.
+     */
+    public static AgentIdentity restored(String did, byte[] rawPrivateKey, List<ObjectNode> keyLog,
+                                         Instant created, String parentDid,
+                                         byte[] householdSecret) throws Exception {
+        if (rawPrivateKey == null || rawPrivateKey.length != 32) {
+            throw new IllegalArgumentException("private key must be 32 bytes");
+        }
+        var publicKey = DidKey.publicKeyFromDid(did)
+            .orElseThrow(() -> new IllegalArgumentException("not a did:key: " + did));
+        var probe = "wyrd-recovery-seed-key-check".getBytes(StandardCharsets.UTF_8);
+        var signer = Signature.getInstance("Ed25519");
+        signer.initSign(reconstructPrivateKey(rawPrivateKey));
+        signer.update(probe);
+        var signature = signer.sign();
+        var check = Signature.getInstance("Ed25519");
+        check.initVerify(publicKey);
+        check.update(probe);
+        if (!check.verify(signature)) {
+            throw new IllegalArgumentException("private key does not belong to " + did);
+        }
+        return new AgentIdentity(did, DidKey.extractRawEd25519PublicKey(publicKey),
+            encryptPrivateKey(rawPrivateKey, householdSecret), keyLog, created, parentDid,
+            IdentityDelegation.of(DelegationLevel.FULL));
+    }
+
+    /**
      * Canonical string for signing (used by delegation chains).
      */
     public String canonicalString() {

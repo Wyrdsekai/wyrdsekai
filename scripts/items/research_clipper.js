@@ -6,8 +6,9 @@ exports.manifest = {
   description: "Probe GitHub code search + Hacker News for a topic, summarise locally, write back to journal.",
   author: "did:wyrd:system",
   capabilities: [
-    "github.code.search",   // §4.26 read — Tier 4
-    "hn.read"               // §4.25 read — Tier 4
+    "github.search_code",   // §4.26 read
+    "hn.search",            // §4.25 read
+    "llm.summarize"
   ],
   embodiment: {
     silent: false,

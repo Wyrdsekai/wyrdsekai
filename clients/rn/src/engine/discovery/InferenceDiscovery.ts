@@ -2,15 +2,28 @@
  * Discovers inference endpoints and Wyrdsekai servers on the local network and on-device.
  *
  * Strategy:
- * 1. If a saved URL exists (user explicitly configured), probe it first
- * 2. If household IP known (from SavedHouseholdConfig), probe well-known ports
- * 3. Try common localhost ports (for on-device servers)
- * 4. Return all responsive endpoints
+ * 1. If a saved URL exists (user explicitly configured), probe it first — only
+ *    when it is encrypted (https, pinned first when an invite named it) or on
+ *    this device
+ * 2. Try common localhost ports (for on-device servers)
+ * 3. Return all responsive endpoints
+ *
+ * No plain-http inference address on the home network is ever probed or
+ * offered: prompts would cross the network in the clear. Inference reaches
+ * the home over its pinned HTTPS (or through the relay).
+ *
+ * Wyrdsekai homes are never found by scanning: since 0.5.0 a home answers
+ * plain http://<ip>:7070 on its own machine only, and a phone must not trust a
+ * home it found on the network by itself. A home becomes known through its
+ * invite (QR or link: lan_https + home_ca_fp), and only such homes are listed,
+ * over HTTPS pinned to their household CA ( W2).
  *
  * Uses short timeouts (2s) so discovery completes quickly even when
  * endpoints are unreachable.
  *
  */
+
+import { isPlaintextToNetwork } from '../../network/plainAddress';
 
 export interface DiscoveredInference {
   /** Base URL of the inference server (e.g., "http://198.51.100.10:11434") */
@@ -96,48 +109,21 @@ function detectType(url: string): 'ollama' | 'llama-server' | 'openai-compat' {
 /**
  * Discover inference endpoints.
  *
- * @param opts.householdHost IP or hostname of the household server (from mDNS or saved config)
- * @param opts.savedUrl User-configured inference URL (from AsyncStorage)
- * @returns All responsive endpoints, ordered by priority (saved > household > local)
+ * @param opts.savedUrl User-configured inference URL (from secure storage)
+ * @returns All responsive endpoints, ordered by priority (saved > local)
  */
 export async function discoverInference(opts?: {
-  householdHost?: string;
   savedUrl?: string;
 }): Promise<DiscoveredInference[]> {
   const results: DiscoveredInference[] = [];
-  const householdHost = opts?.householdHost;
   const savedUrl = opts?.savedUrl;
 
-  // Saved URL first (user explicitly configured)
-  if (savedUrl) {
+  // Saved URL first (user explicitly configured) — never over plain http to another machine.
+  if (savedUrl && !isPlaintextToNetwork(savedUrl)) {
+    const { pinKnownHome } = await import('../../server/HouseholdTrust');
+    await pinKnownHome(savedUrl);
     if (await probe(savedUrl)) {
       results.push({ url: savedUrl, type: detectType(savedUrl), label: 'Saved endpoint' });
-    }
-  }
-
-  // Probe household host at well-known ports
-  if (householdHost) {
-    // Wyrdsekai server on port 7070 (primary — gives us natsUrl)
-    const wyrdUrl = `http://${householdHost}:7070`;
-    const wyrdServer = await probeWyrdsekai(wyrdUrl, `Household server (${householdHost})`);
-    if (wyrdServer) {
-      results.push(wyrdServer);
-    }
-
-    const ollamaUrl = `http://${householdHost}:11434`;
-    if (await probe(`${ollamaUrl}/api/tags`)) {
-      results.push({ url: ollamaUrl, type: 'ollama', label: `Household Ollama (${householdHost})` });
-    }
-
-    const llamaUrl = `http://${householdHost}:8080`;
-    if (await probe(`${llamaUrl}/health`)) {
-      results.push({ url: llamaUrl, type: 'llama-server', label: `Household llama-server (${householdHost})` });
-    }
-
-    // SGLang / vLLM common port
-    const sglangUrl = `http://${householdHost}:30000`;
-    if (await probe(`${sglangUrl}/health`)) {
-      results.push({ url: sglangUrl, type: 'openai-compat', label: `Household inference (${householdHost}:30000)` });
     }
   }
 
@@ -155,47 +141,26 @@ export async function discoverInference(opts?: {
 }
 
 /**
- * Scan the local /24 subnet for Wyrdsekai servers on port 7070.
- *
- * This is the RN equivalent of KMP's InferenceDiscovery.discover() subnet scan.
- * Probes all 254 IPs in parallel with short timeouts.
- *
- * @param localSubnet Subnet prefix (e.g., "192.168.1"). If not provided, tries common subnets.
- * @returns All discovered Wyrdsekai servers with natsUrl from /health
+ * The Wyrdsekai homes this phone knows from its invites that answer on the
+ * home network right now: each invite's lan_https, pinned to its home_ca_fp
+ * before the probe. There is no subnet scan and no trust on first use — a home
+ * the phone has no invite for is not listed (pair with `wyrd phone invite`).
  */
-export async function discoverWyrdsekaiServers(
-  localSubnet?: string,
-): Promise<DiscoveredInference[]> {
-  const subnets = localSubnet ? [localSubnet] : detectLocalSubnets();
-  const results: DiscoveredInference[] = [];
-
-  // Probe all IPs in each subnet in parallel
-  const probePromises: Promise<DiscoveredInference | null>[] = [];
-  for (const subnet of subnets) {
-    for (let host = 1; host <= 254; host++) {
-      const ip = `${subnet}.${host}`;
-      const url = `http://${ip}:7070`;
-      probePromises.push(probeWyrdsekai(url));
-    }
+export async function discoverWyrdsekaiServers(): Promise<DiscoveredInference[]> {
+  const { useZoneBankStore } = await import('../../state/zoneBankStore');
+  const bank = useZoneBankStore.getState();
+  if (!bank.loaded) await bank.loadFromStorage();
+  const homes = new Set<string>();
+  for (const t of Object.values(useZoneBankStore.getState().trust ?? {})) {
+    if (t.lanHttps && t.homeCaFp) homes.add(t.lanHttps);
   }
-
-  const probeResults = await Promise.all(probePromises);
-  for (const server of probeResults) {
-    if (server && !results.some(r => r.url === server.url)) {
-      results.push(server);
-    }
-  }
-
-  return results;
-}
-
-/**
- * Try to detect local subnets. Falls back to common home subnets.
- */
-function detectLocalSubnets(): string[] {
-  // React Native doesn't have NetworkInterface access.
-  // Use common home subnet prefixes as fallback.
-  return ['192.168.1', '192.168.10', '192.168.0'];
+  if (homes.size === 0) return [];
+  const { pinKnownHome } = await import('../../server/HouseholdTrust');
+  const found = await Promise.all([...homes].map(async (url) => {
+    await pinKnownHome(url);
+    return probeWyrdsekai(url, `Household server (${extractHostname(url)})`);
+  }));
+  return found.filter((d): d is DiscoveredInference => d != null);
 }
 
 /**

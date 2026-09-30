@@ -1,6 +1,8 @@
 package org.wyrdsekai.core.room;
 
 import org.wyrdsekai.common.event.WorldEvent;
+import org.wyrdsekai.core.memory.MemoryOrigin;
+import org.wyrdsekai.core.memory.MemoryReader;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,6 +20,11 @@ import java.util.List;
  * Events flow: new → hot → warm → compacted → evicted.
  * Spike handling: during high-traffic bursts, warm events are compacted
  * more aggressively to preserve hot buffer quality.
+ *
+ * Every entry carries its {@link MemoryOrigin} through all three tiers, and the
+ * reads a prompt is built from take the {@link MemoryReader} of the turn: a line
+ * someone said to her privately is never read back into another person's turn
+ * (audit W4, 2026-09-28).
  */
 public final class RoomMemoryPolicy {
 
@@ -28,6 +35,10 @@ public final class RoomMemoryPolicy {
     private final List<WorldEvent.Said> hotBuffer;
     private final List<String> warmBuffer;     // summarized text
     private final List<String> compactedBuffer; // key facts
+    // Parallel to the three buffers: who said each entry and whether privately.
+    private final List<MemoryOrigin> hotOrigins = new ArrayList<>();
+    private final List<MemoryOrigin> warmOrigins = new ArrayList<>();
+    private final List<MemoryOrigin> compactedOrigins = new ArrayList<>();
 
     public RoomMemoryPolicy(int hotSize, int warmSize, int compactedSize) {
         this.hotSize = hotSize;
@@ -54,33 +65,63 @@ public final class RoomMemoryPolicy {
     }
 
     /**
-     * Add a new Said event to the hot buffer.
-     * Oldest hot events cascade to warm, oldest warm to compacted.
+     * Add a new Said event to the hot buffer, as a line whose teller is not known (read
+     * back only in turns with her bondholder).
      */
     public void add(WorldEvent.Said event) {
+        add(event, MemoryOrigin.UNKNOWN);
+    }
+
+    /**
+     * Add a new Said event to the hot buffer with its origin.
+     * Oldest hot events cascade to warm, oldest warm to compacted.
+     */
+    public void add(WorldEvent.Said event, MemoryOrigin origin) {
         hotBuffer.add(event);
+        hotOrigins.add(origin == null ? MemoryOrigin.UNKNOWN : origin);
 
         // Cascade: hot overflow → warm
         while (hotBuffer.size() > hotSize) {
             var evicted = hotBuffer.removeFirst();
             warmBuffer.add(summarize(evicted));
+            warmOrigins.add(hotOrigins.removeFirst());
         }
 
         // Cascade: warm overflow → compacted
         while (warmBuffer.size() > warmSize) {
             var evicted = warmBuffer.removeFirst();
             compactedBuffer.add(compact(evicted));
+            compactedOrigins.add(warmOrigins.removeFirst());
         }
 
         // Compacted overflow: oldest facts evicted
         while (compactedBuffer.size() > compactedSize) {
             compactedBuffer.removeFirst();
+            compactedOrigins.removeFirst();
         }
     }
 
     /** Get hot buffer events (full text, most recent). */
     public List<WorldEvent.Said> hotEvents() {
         return Collections.unmodifiableList(hotBuffer);
+    }
+
+    /** Hot buffer events the reader may read, in order. */
+    public List<WorldEvent.Said> hotEvents(MemoryReader reader) {
+        var r = reader == null ? MemoryReader.NO_ONE : reader;
+        var out = new ArrayList<WorldEvent.Said>(hotBuffer.size());
+        for (int i = 0; i < hotBuffer.size(); i++) {
+            if (r.mayRead(hotOrigins.get(i))) out.add(hotBuffer.get(i));
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /** The origin recorded for this line, if it is still in the hot buffer (same instance). */
+    public MemoryOrigin originOf(WorldEvent.Said event) {
+        for (int i = hotBuffer.size() - 1; i >= 0; i--) {
+            if (hotBuffer.get(i) == event) return hotOrigins.get(i);
+        }
+        return null;
     }
 
     /** Get warm buffer summaries. */
@@ -109,21 +150,39 @@ public final class RoomMemoryPolicy {
      * the hot events are handled separately as conversation history.
      */
     public String buildMemoryContext() {
-        if (compactedBuffer.isEmpty() && warmBuffer.isEmpty()) {
+        return render(compactedBuffer, warmBuffer);
+    }
+
+    /** The Layer 5 memory buffer string, holding only what the reader may read. */
+    public String buildMemoryContext(MemoryReader reader) {
+        var r = reader == null ? MemoryReader.NO_ONE : reader;
+        return render(readable(compactedBuffer, compactedOrigins, r), readable(warmBuffer, warmOrigins, r));
+    }
+
+    private static List<String> readable(List<String> entries, List<MemoryOrigin> origins, MemoryReader r) {
+        var out = new ArrayList<String>(entries.size());
+        for (int i = 0; i < entries.size(); i++) {
+            if (r.mayRead(origins.get(i))) out.add(entries.get(i));
+        }
+        return out;
+    }
+
+    private static String render(List<String> compacted, List<String> warm) {
+        if (compacted.isEmpty() && warm.isEmpty()) {
             return null; // No memory beyond hot buffer
         }
 
         var sb = new StringBuilder();
 
-        if (!compactedBuffer.isEmpty()) {
+        if (!compacted.isEmpty()) {
             sb.append("[Earlier context] ");
-            sb.append(String.join("; ", compactedBuffer));
+            sb.append(String.join("; ", compacted));
             sb.append("\n");
         }
 
-        if (!warmBuffer.isEmpty()) {
+        if (!warm.isEmpty()) {
             sb.append("[Recent history] ");
-            sb.append(String.join(" | ", warmBuffer));
+            sb.append(String.join(" | ", warm));
             sb.append("\n");
         }
 
@@ -135,18 +194,28 @@ public final class RoomMemoryPolicy {
      * Called when events arrive faster than normal (e.g., >5 events/second).
      */
     public void handleSpike() {
-        // Merge pairs of warm summaries to halve the warm buffer
+        // Merge pairs of warm summaries to halve the warm buffer. Only a pair with one origin
+        // is merged: two people's words in one entry could go back to neither alone.
         if (warmBuffer.size() > 4) {
             var merged = new ArrayList<String>();
+            var mergedOrigins = new ArrayList<MemoryOrigin>();
             for (int i = 0; i < warmBuffer.size(); i += 2) {
-                if (i + 1 < warmBuffer.size()) {
+                if (i + 1 < warmBuffer.size() && warmOrigins.get(i).equals(warmOrigins.get(i + 1))) {
                     merged.add(warmBuffer.get(i) + "; " + warmBuffer.get(i + 1));
+                    mergedOrigins.add(warmOrigins.get(i));
                 } else {
                     merged.add(warmBuffer.get(i));
+                    mergedOrigins.add(warmOrigins.get(i));
+                    if (i + 1 < warmBuffer.size()) {
+                        merged.add(warmBuffer.get(i + 1));
+                        mergedOrigins.add(warmOrigins.get(i + 1));
+                    }
                 }
             }
             warmBuffer.clear();
             warmBuffer.addAll(merged);
+            warmOrigins.clear();
+            warmOrigins.addAll(mergedOrigins);
         }
     }
 
@@ -155,6 +224,9 @@ public final class RoomMemoryPolicy {
         hotBuffer.clear();
         warmBuffer.clear();
         compactedBuffer.clear();
+        hotOrigins.clear();
+        warmOrigins.clear();
+        compactedOrigins.clear();
     }
 
     /**

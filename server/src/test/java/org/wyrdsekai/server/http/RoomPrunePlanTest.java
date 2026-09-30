@@ -31,4 +31,27 @@ class RoomPrunePlanTest {
             withDup.stream().map(RoomAdminRoutes.RoomRow::roomId).toList(),
             "the oldest copy (6978, created 10) is kept; the later one goes");
     }
+
+    private static RoomAdminRoutes.RoomRow quiet(String id, String name, long lastActivityAt, List<String> who, boolean kept) {
+        return new RoomAdminRoutes.RoomRow(id, name, kept ? "founding" : "mia", 1, 1, who, false, kept, lastActivityAt);
+    }
+
+    @Test
+    @DisplayName("stale: a made room nobody is in and nothing has happened in for the given days; unknown activity is never stale")
+    void stale() {
+        long day = RoomAdminRoutes.DAY_MS, now = 100 * day;
+        var rooms = List.of(
+            quiet("nexus", "The Nexus", now - 90 * day, List.of(), true),
+            quiet("the-hub-9003", "the hub", now - 45 * day, List.of(), false),
+            quiet("threshold-room-6225", "Threshold Room", now - 3 * day, List.of(), false),
+            quiet("attention-garden-1882", "Attention Garden", now - 60 * day, List.of("mia"), false),
+            quiet("the-silence-7138", "the silence before the first word", 0, List.of(), false));
+        assertEquals(List.of("the-hub-9003"),
+            RoomAdminRoutes.prunePlan(rooms, false, 30, now).stream().map(RoomAdminRoutes.RoomRow::roomId).toList(),
+            "founding stays; recent stays; occupied stays; unknown activity stays");
+        assertEquals(List.of(), RoomAdminRoutes.prunePlan(rooms, false, 0, now).stream().map(RoomAdminRoutes.RoomRow::roomId).toList(),
+            "no stale days asked: the old rule alone");
+        assertEquals(List.of("the-hub-9003"),
+            RoomAdminRoutes.prunePlan(rooms, false, 45, now).stream().map(RoomAdminRoutes.RoomRow::roomId).toList(), "exactly the threshold counts");
+    }
 }

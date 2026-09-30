@@ -214,7 +214,7 @@ class TaskInteractionLiveBatteryTest {
                         chat.temperature(), wrap, chat.preferredBackend(), chat.grammar(),
                         chat.format(), chat.tools(), chat.toolChoice(), chat.topP(),
                         chat.presencePenalty(), chat.repetitionPenalty(), chat.localOnly(),
-                        chat.registerMix()));
+                        chat.registerMix()).withNow(chat.now()));
                 } else {
                     realRouter.tell(msg);
                 }

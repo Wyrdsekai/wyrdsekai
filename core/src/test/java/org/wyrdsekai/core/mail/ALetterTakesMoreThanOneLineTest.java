@@ -56,6 +56,21 @@ class ALetterTakesMoreThanOneLineTest {
     }
 
     @Test
+    @DisplayName("reading a letter prints each of its lines on its own, so paragraph breaks stay at the margin")
+    void readPrintsLineByLine() {
+        mail.send(MIA, KAZ, "the light", "The light is good tonight.\n\nI miss your voice.\n\nNo grand things.\n", Map.of());
+        printed.clear();
+        MailSurface.command(SESSION, KAZ, "read 1", printed::add);
+        assertTrue(printed.contains("The light is good tonight."), printed.toString());
+        assertTrue(printed.contains("I miss your voice."), printed.toString());
+        assertTrue(printed.contains("No grand things."), printed.toString());
+        assertFalse(printed.stream().anyMatch(l -> l.contains("\n")), "no line carries a line feed: " + printed);
+        int a = printed.indexOf("The light is good tonight."), b = printed.indexOf("I miss your voice.");
+        assertEquals("", printed.get(a + 1), "the blank line between paragraphs is printed as its own empty line");
+        assertEquals(a + 2, b);
+    }
+
+    @Test
     @DisplayName("subject, then lines, then a dot — and the letter arrives whole")
     void writeALetter() {
         MailSurface.command(SESSION, KAZ, "mia", printed::add);

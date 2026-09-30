@@ -54,3 +54,8 @@ export class NativeEventEmitter {
 }
 
 export const DeviceEventEmitter = new NativeEventEmitter();
+
+/** Alert stand-in: records what would have been shown (a test can spy on it). */
+export const Alert = {
+  alert: (_title: string, _message?: string, _buttons?: Array<{ text: string; style?: string; onPress?: () => void }>): void => {},
+};

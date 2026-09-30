@@ -562,6 +562,9 @@ public final class ItemManifestValidator {
             // the acting player (provider enforces from == acting player).
             "treasury.transfer");
         addAll(m, 7, "household.set_role", "household.remove_member");
+        // A new being, a bondholder handover, MCP tool grants. The provider steward-gates each;
+        // since 2026-09-28 the item must also declare them (they were reachable with no capability).
+        addAll(m, 7, "companions.birth", "bond.transfer", "mcp.grant", "mcp.revoke");
 
         // §4.16c Parental controls (2026-07-03) — steward writes backing the
         // parental-controls scroll (per-member time limits, room blocks,
@@ -660,6 +663,9 @@ public final class ItemManifestValidator {
         addAll(m, 4, "amadeus.read", "kayak.read", "google_flights.read",
             "booking.read", "airbnb.read", "uber.read", "lyft.read",
             "transit.read");
+        // The runtime gate names the method (amadeus.flight_search), so the namespace needs its
+        // wildcard for a manifest to declare what it calls. Read-only, like the rest of §4.42.
+        m.put("amadeus.*", 4);
 
         // §4.43 Shopping, commerce, real estate — Phase V.
         addAll(m, 4, "shopify.read", "amazon.read", "etsy.read",

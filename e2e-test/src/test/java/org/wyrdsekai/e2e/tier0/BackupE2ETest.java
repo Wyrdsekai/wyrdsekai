@@ -26,6 +26,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * - Backup list via HTTP
  * - DB + search indexes backed up together
  * - Study content survives backup/restore cycle
+ *
+ * <p>The household's steward drives it, logged in (0.5.0: backups are the steward's, and a
+ * Study is reached with its owner's login); the Study content is the steward's own.
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -35,6 +38,9 @@ class BackupE2ETest {
     private static TestServerBootstrap server;
     private static WireMockInferenceServer wireMock;
     private static HttpClient http;
+    private static String stewardToken;
+    /** The identity the server files the steward's Study under. */
+    private static String owner;
 
     @BeforeAll
     static void setUp() throws Exception {
@@ -48,6 +54,8 @@ class BackupE2ETest {
         server.start();
 
         http = HttpClient.newHttpClient();
+        stewardToken = TestUsers.registerStewardToken(server.baseUrl(), "backupuser", "backuppass", "Backup User");
+        owner = TestUsers.personId(server.baseUrl(), stewardToken);
 
         // Seed some data so backups have content
         if (server.luceneStore() != null) {
@@ -60,9 +68,9 @@ class BackupE2ETest {
 
             // Study
             var study = new StudyService(server.luceneStore());
-            study.writeJournalEntry("did:key:z6MkBackupUser", "My important journal entry about backups");
-            study.addNote("did:key:z6MkBackupUser", "Reminder: test backup restore");
-            study.indexDocument("did:key:z6MkBackupUser", "recipes", "Pasta Recipe",
+            study.writeJournalEntry(owner, "My important journal entry about backups");
+            study.addNote(owner, "Reminder: test backup restore");
+            study.indexDocument(owner, "recipes", "Pasta Recipe",
                 "Boil water, add pasta, cook 10 minutes.", "/recipes/pasta.txt");
             study.commitDocuments();
         }
@@ -79,13 +87,24 @@ class BackupE2ETest {
     private HttpResponse<String> get(String path) throws Exception {
         return http.send(HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + path))
+            .header("Authorization", "Bearer " + stewardToken)
             .GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> post(String path) throws Exception {
         return http.send(HttpRequest.newBuilder()
             .uri(URI.create(server.baseUrl() + path))
+            .header("Authorization", "Bearer " + stewardToken)
             .POST(HttpRequest.BodyPublishers.noBody())
+            .build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> postJson(String path, String json) throws Exception {
+        return http.send(HttpRequest.newBuilder()
+            .uri(URI.create(server.baseUrl() + path))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + stewardToken)
+            .POST(HttpRequest.BodyPublishers.ofString(json))
             .build(), HttpResponse.BodyHandlers.ofString());
     }
 
@@ -141,7 +160,7 @@ class BackupE2ETest {
     @Test @Order(3)
     void study_content_searchable_before_backup() throws Exception {
         // Verify the Study content we seeded is searchable
-        var resp = get("/api/study/search?q=important+journal+backups&user=did:key:z6MkBackupUser");
+        var resp = get("/api/study/search?q=important+journal+backups");
         assertEquals(200, resp.statusCode());
         var json = mapper.readTree(resp.body());
         assertTrue(json.get("count").asInt() > 0,
@@ -185,12 +204,8 @@ class BackupE2ETest {
     @Test @Order(10)
     void backup_includes_study_documents() throws Exception {
         // Write another Study document
-        var writeResp = http.send(HttpRequest.newBuilder()
-            .uri(URI.create(server.baseUrl() + "/api/study/journal"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(
-                "{\"user\":\"did:key:z6MkBackupUser\",\"content\":\"Post-backup journal entry for verification\"}"))
-            .build(), HttpResponse.BodyHandlers.ofString());
+        var writeResp = postJson("/api/study/journal",
+            "{\"content\":\"Post-backup journal entry for verification\"}");
         assertEquals(200, writeResp.statusCode());
         Thread.sleep(200);
 
@@ -206,12 +221,8 @@ class BackupE2ETest {
     @Test @Order(11)
     void backup_includes_private_journal() throws Exception {
         // Write a private journal entry
-        var writeResp = http.send(HttpRequest.newBuilder()
-            .uri(URI.create(server.baseUrl() + "/api/study/journal"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(
-                "{\"user\":\"did:key:z6MkBackupUser\",\"content\":\"My private thoughts about security\",\"isPrivate\":true}"))
-            .build(), HttpResponse.BodyHandlers.ofString());
+        var writeResp = postJson("/api/study/journal",
+            "{\"content\":\"My private thoughts about security\",\"isPrivate\":true}");
         assertEquals(200, writeResp.statusCode());
         Thread.sleep(1100); // distinct timestamp
 
@@ -236,7 +247,7 @@ class BackupE2ETest {
 
     @Test @Order(20)
     void study_disk_usage_reflects_content() throws Exception {
-        var resp = get("/api/study/disk-usage?user=did:key:z6MkBackupUser");
+        var resp = get("/api/study/disk-usage");
         assertEquals(200, resp.statusCode());
         var json = mapper.readTree(resp.body());
         assertTrue(json.get("totalItems").asLong() >= 3,

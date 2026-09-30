@@ -1,6 +1,9 @@
 package org.wyrdsekai.core.agent;
 
 import org.junit.jupiter.api.Test;
+import org.wyrdsekai.core.inference.NowLine;
+import java.time.Instant;
+import java.time.ZoneId;
 import org.wyrdsekai.common.model.Hint;
 import org.wyrdsekai.core.agent.ActionParser.AgentAction;
 import org.wyrdsekai.core.agent.ActionParser.ExitSpec;
@@ -210,6 +213,21 @@ class ActionParserTest {
     @Test void extractProse_keeps_role_prose_without_harness_vocabulary() {
         var honest = "You are a companion to me too, you know.";
         assertThat(ActionParser.extractProse(honest)).isEqualTo(honest);
+    }
+
+    /** The date line a request carries, repeated at the head of her reply (2026-09-23). */
+    @Test void stripSystemPromptFragments_strips_an_echoed_date_line() {
+        var line = NowLine.dateTimeText(
+            Instant.parse("2026-09-23T14:05:00Z"), ZoneId.of("America/New_York"));
+        assertThat(ActionParser.stripSystemPromptFragments(line + "\nMorning. The tea is on."))
+            .isEqualTo("Morning. The tea is on.");
+        assertThat(ActionParser.stripSystemPromptFragments(
+            "[Now: Wednesday 23 September 2026, 10:05 EDT (UTC-4), morning\nMorning."))
+            .as("the closing bracket dropped").isEqualTo("Morning.");
+        assertThat(ActionParser.stripSystemPromptFragments("[Asked: Wednesday 23 September 2026, 09:40 EDT (UTC-4)]\nYes."))
+            .isEqualTo("Yes.");
+        assertThat(ActionParser.stripSystemPromptFragments("Now: the kettle, then the letters."))
+            .as("her own words are not a date line").isEqualTo("Now: the kettle, then the letters.");
     }
 
     @Test void stripSystemPromptFragments_combined_leak_shape() {

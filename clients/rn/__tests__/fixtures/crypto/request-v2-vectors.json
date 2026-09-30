@@ -1,0 +1,19 @@
+{
+  "about": "Sealed request v2 interop vector ( W3, 'Sealed requests'). Hex keys are raw RFC 7748 encoding; zone_static and phone_ephemeral are the RFC 7748 section 6.1 Bob and Alice keys (same as tunnel-v2-vectors.json). AEAD = ChaCha20-Poly1305 with a 12-byte all-zero nonce (each key is used for exactly one message). AAD = the request subject, UTF-8, for both the request and the reply. request_wire and reply_wire are the exact JSON bodies on the wire.",
+  "zone_static_priv": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+  "zone_static_pub": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+  "phone_ephemeral_priv": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+  "phone_ephemeral_pub": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+  "n": "000102030405060708090a0b0c0d0e0f",
+  "dh": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+  "prk": "9ee3b0de8bb5cf68ae9600690631f4125804930b72cdf1f904e4ffe93e792675",
+  "k_req": "8b89f24d1a57dcf54eec2ba3db14d3f74508ca415a7642e7a932ab97462e23a9",
+  "k_rep": "89aa615d5573aa36cbb44636c166e251af98251800982d71a635a20325c29787",
+  "subject": "wyrd.zone.zone-example.mcp.login",
+  "request_plain": "{\"ts\":1790000000000,\"body\":{\"username\":\"alice\",\"password\":\"correct horse battery\"}}",
+  "request_ct": "ba0a82a7ab9f6e4141b62d35a6365de3b08fcc60b891e928a71fe440c125fe255ad02ad08f597d08dcaf9dceba020dd7517b93f22c2d0b6958673d0dd803ac0b5cc077d5bdc4362699b84952c5436da042e3b85b46c9ecc97c75d49f658f72dda4b86e",
+  "request_wire": "{\"v\":2,\"e\":\"hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo\",\"n\":\"AAECAwQFBgcICQoLDA0ODw\",\"c\":\"ugqCp6ufbkFBti01pjZd47CPzGC4kekopx_kQMEl_iVa0CrQj1l9CNyvnc66Ag3XUXuT8iwtC2lYZz0N2AOsC1zAd9W9xDYmmbhJUsVDbaBC47hbRsnsyXx11J9lj3LdpLhu\"}",
+  "reply_plain": "{\"ok\":true,\"token\":\"example-token\",\"userId\":\"u-1\",\"username\":\"alice\",\"role\":\"member\",\"zoneId\":\"zone-example\"}",
+  "reply_ct": "661b625d2090cd04c532f957143563efb2e502f9f8f2430ec6ad9df9c6ead2f6b1d6fbc91e80a36069630a009d94021cda7b43fb724b3e815253d3fa8dd0bc8b59593604266c8738b9b1772f1c16d754c65c83ebbdd9e82690140ed699eb5dafe26739b348a99500a95befaaa740508c8d555d37febbed7bb6b33ff0b4",
+  "reply_wire": "{\"v\":2,\"c\":\"ZhtiXSCQzQTFMvlXFDVj77LlAvn48kMOxq2d-cbq0vax1vvJHoCjYGljCgCdlAIc2ntD-3JLPoFSU9P6jdC8i1lZNgQmbIc4ubF3LxwW11TGXIPrvdnoJpAUDtaZ612v4mc5s0iplQCpW--qp0BQjI1VXTf-u-17trM_8LQ\"}"
+}

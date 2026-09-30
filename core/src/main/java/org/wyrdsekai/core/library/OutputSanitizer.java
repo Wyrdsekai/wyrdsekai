@@ -35,9 +35,26 @@ public final class OutputSanitizer {
         this.compiledPatterns = List.of();
     }
 
+    /**
+     * A sanitizer over the built-in injection patterns alone, needing no pattern store —
+     * for paths that run before the library is open or with no library at all (skills,
+     * SKILL.md imports).
+     */
+    public static OutputSanitizer builtin(SanitizationMode mode) {
+        var sanitizer = new OutputSanitizer(null, mode);
+        sanitizer.compiledPatterns = compile(SecurityPatternManager.builtinInjectionPatterns());
+        return sanitizer;
+    }
+
     /** Reload patterns from the SecurityPatternManager. Call after pattern updates. */
     public void reloadPatterns() throws SQLException {
-        var raw = patternManager.getPatterns(SecurityPatternManager.PatternType.INJECTION);
+        if (patternManager == null) return;
+        var compiled = compile(patternManager.getPatterns(SecurityPatternManager.PatternType.INJECTION));
+        this.compiledPatterns = compiled;
+        log.info("OutputSanitizer loaded {} injection patterns", compiled.size());
+    }
+
+    private static List<CompiledPattern> compile(List<SecurityPatternManager.SecurityPattern> raw) {
         var compiled = new ArrayList<CompiledPattern>();
         for (var sp : raw) {
             try {
@@ -46,8 +63,7 @@ public final class OutputSanitizer {
                 log.warn("Invalid regex for pattern '{}': {}", sp.name(), e.getMessage());
             }
         }
-        this.compiledPatterns = List.copyOf(compiled);
-        log.info("OutputSanitizer loaded {} injection patterns", compiled.size());
+        return List.copyOf(compiled);
     }
 
     /** Scan a tool response for prompt injection. */

@@ -19,6 +19,7 @@
 
 import type { ClientSoulManifest, ClientSoulFragment } from './SoulManifest';
 import type { ChatMessage, ChatResponse, CompletionOptions } from '../../inference/types';
+import { NowLine } from '../../inference/NowLine';
 
 /**
  * Check whether the manifest is ready for identity regeneration.
@@ -79,7 +80,9 @@ export async function regenerateIdentity(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      { maxTokens: 150, temperature: 0.7 },
+      // NONE: this writes her resident identity, and a date there goes stale
+      // inside every later prompt.
+      { maxTokens: 150, temperature: 0.7, now: NowLine.NONE },
     );
     const text = response.content.trim();
     // Reject too-short responses — a real identity needs substance

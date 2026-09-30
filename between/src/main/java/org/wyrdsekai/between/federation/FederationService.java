@@ -3,6 +3,7 @@ package org.wyrdsekai.between.federation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.wyrdsekai.between.NodeIdentity;
 import org.wyrdsekai.common.model.QuotaPolicy;
 import org.wyrdsekai.core.soul.SoulManifest;
 import org.wyrdsekai.core.soul.SoulStore;
@@ -18,6 +19,7 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -71,19 +73,21 @@ public final class FederationService {
      * has no ADD COLUMN IF NOT EXISTS), which is fine — we swallow it.
      */
     private void migrateEpochColumns() {
-        addColumnIfMissing("epoch", "BIGINT NOT NULL DEFAULT 0");
-        addColumnIfMissing("epoch_owner", "TEXT NOT NULL DEFAULT ''");
+        addColumnIfMissing("bilateral_agreements", "epoch", "BIGINT NOT NULL DEFAULT 0");
+        addColumnIfMissing("bilateral_agreements", "epoch_owner", "TEXT NOT NULL DEFAULT ''");
+        // 2026-09-28: a transit token is single use; used_at marks the redemption.
+        addColumnIfMissing("transit_tokens", "used_at", "BIGINT");
     }
 
-    private void addColumnIfMissing(String column, String columnDef) {
-        var sql = "ALTER TABLE bilateral_agreements ADD COLUMN " + column + " " + columnDef;
+    private void addColumnIfMissing(String table, String column, String columnDef) {
+        var sql = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + columnDef;
         try (var conn = DriverManager.getConnection(jdbcUrl);
              var stmt = conn.createStatement()) {
             stmt.executeUpdate(sql);
-            log.info("Federation: migrated bilateral_agreements — added '{}' column", column);
+            log.info("Federation: migrated {} — added '{}' column", table, column);
         } catch (SQLException e) {
             // Column already present (duplicate-column error) — the common, fine case.
-            log.debug("Federation: bilateral_agreements.{} already present ({})", column, e.getMessage());
+            log.debug("Federation: {}.{} already present ({})", table, column, e.getMessage());
         }
     }
 
@@ -169,6 +173,12 @@ public final class FederationService {
             return token.withSoul(agentDid, m.contentHash());
         }
         return token;
+    }
+
+    /** The latest soul manifest held for {@code did}, to travel with a relocating companion. */
+    public Optional<SoulManifest> latestSoulManifest(String did) {
+        if (did == null || soulStore == null) return Optional.empty();
+        return soulStore.latest(did);
     }
 
     /**
@@ -290,6 +300,9 @@ public final class FederationService {
             log.error("Failed to update agreement status: {}", e.getMessage());
             return;
         }
+        if (!BilateralAgreement.STATUS_ACTIVE.equals(newStatus)) {
+            revokeTransitTokens(localZoneId, remoteZoneId);
+        }
         var sync = grantSync;
         if (sync != null) {
             if (BilateralAgreement.STATUS_ACTIVE.equals(newStatus)) {
@@ -410,6 +423,7 @@ public final class FederationService {
         String newOwner = newEpoch == a.epoch() ? a.epochOwner() : normalize(msgOwner);
         saveAgreement(a.withEpoch(newEpoch, newOwner)
             .toStatus(BilateralAgreement.STATUS_REVOKED));
+        revokeTransitTokens(localZoneId, remoteZoneId);
         var sync = grantSync;
         if (sync != null) sync.onStatusChanged(localZoneId, remoteZoneId, BilateralAgreement.STATUS_REVOKED);
         return true;
@@ -430,6 +444,63 @@ public final class FederationService {
             log.error("Failed to count agreements: {}", e.getMessage());
         }
         return 0;
+    }
+
+    // --- Pinned zone keys (audit 2026-09-28) ---
+    //
+    // A zone's key is pinned on first verified contact: on our agreement row when there is one,
+    // else on its stored manifest. It changes only through a key_rotation signed by the old key.
+
+    /** The key pinned for {@code remoteZoneId} (base64 X.509 SPKI), whatever the agreement's status. */
+    public Optional<String> pinnedZoneKey(String localZoneId, String remoteZoneId) {
+        var agreement = getAgreement(localZoneId, remoteZoneId);
+        if (agreement.isPresent() && agreement.get().hasPinnedKey()) {
+            return Optional.of(agreement.get().remotePublicKey());
+        }
+        return getManifest(remoteZoneId).map(ZoneManifest::publicKey).filter(k -> !k.isBlank());
+    }
+
+    /** The pinned key of a zone we hold an ACTIVE agreement with; empty otherwise. */
+    public Optional<byte[]> activeZoneKey(String localZoneId, String remoteZoneId) {
+        var agreement = getAgreement(localZoneId, remoteZoneId);
+        if (agreement.isEmpty() || !agreement.get().isActive()) return Optional.empty();
+        try {
+            return pinnedZoneKey(localZoneId, remoteZoneId).map(k -> Base64.getDecoder().decode(k));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Pin {@code keyB64} on the agreement row when that row has no key yet. */
+    public void pinZoneKey(String localZoneId, String remoteZoneId, String keyB64) {
+        getAgreement(localZoneId, remoteZoneId)
+            .filter(a -> !a.hasPinnedKey())
+            .ifPresent(a -> saveAgreement(a.withRemotePublicKey(keyB64)));
+    }
+
+    /** Replace a zone's pinned key (a key_rotation the old key signed). */
+    public void rotateZoneKey(String localZoneId, String remoteZoneId, String newKeyB64) {
+        getAgreement(localZoneId, remoteZoneId)
+            .ifPresent(a -> saveAgreement(a.withRemotePublicKey(newKeyB64)));
+        getManifest(remoteZoneId).ifPresent(m -> saveManifest(new ZoneManifest(
+            m.zoneId(), m.zoneName(), newKeyB64, m.natsUrl(), m.httpUrl(), m.arteryPort(),
+            m.capabilities(), m.createdAt())));
+    }
+
+    /**
+     * True when {@code sigB64} over {@code data} verifies against the key pinned for a zone we hold an
+     * ACTIVE agreement with. Used for requests that travel as plain JSON with a signature field
+     * (cross-zone inference).
+     */
+    public boolean verifyZoneSignature(String localZoneId, String remoteZoneId, byte[] data, String sigB64) {
+        if (remoteZoneId == null || data == null || sigB64 == null) return false;
+        var key = activeZoneKey(localZoneId, remoteZoneId);
+        if (key.isEmpty()) return false;
+        try {
+            return NodeIdentity.verify(data, Base64.getDecoder().decode(sigB64), key.get());
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     // --- Zone Manifests ---
@@ -515,22 +586,68 @@ public final class FederationService {
         }
     }
 
-    public Optional<TransitToken> validateTransitToken(String tokenId) {
-        var sql = "SELECT * FROM transit_tokens WHERE token_id = ?";
+    /**
+     * Redeem a transit token this zone issued (audit 2026-09-28: it used to be a bearer id checked only
+     * for expiry, reusable, and alive after a revoke). The token must be for this zone, unexpired and
+     * unused; when the presenter names its zone it must be the zone the token was issued to; and the
+     * agreement with that zone must still be active. Redemption marks it used, once.
+     *
+     * @param presentingZoneId the zone presenting the token, or null when it is not known (a direct
+     *                         WebSocket connection)
+     */
+    public Optional<TransitToken> redeemTransitToken(String tokenId, String localZoneId,
+                                                      String presentingZoneId) {
+        if (tokenId == null || tokenId.isBlank() || localZoneId == null) return Optional.empty();
+        TransitToken token;
         try (var conn = DriverManager.getConnection(jdbcUrl);
-             var stmt = conn.prepareStatement(sql)) {
+             var stmt = conn.prepareStatement(
+                 "SELECT * FROM transit_tokens WHERE token_id = ? AND used_at IS NULL")) {
             stmt.setString(1, tokenId);
             var rs = stmt.executeQuery();
-            if (rs.next()) {
-                var token = transitTokenFromRow(rs);
-                if (token.isValid()) {
-                    return Optional.of(token);
-                }
-            }
+            if (!rs.next()) return Optional.empty();
+            token = transitTokenFromRow(rs);
         } catch (SQLException e) {
-            log.error("Failed to validate transit token: {}", e.getMessage());
+            log.error("Failed to read transit token: {}", e.getMessage());
+            return Optional.empty();
         }
-        return Optional.empty();
+        if (!localZoneId.equals(token.targetZoneId()) || !token.isValid()) return Optional.empty();
+        if (presentingZoneId != null && !presentingZoneId.equals(token.sourceZoneId())) {
+            log.warn("Transit token {} presented by zone '{}' but issued to '{}' — refused",
+                tokenId, presentingZoneId, token.sourceZoneId());
+            return Optional.empty();
+        }
+        var agreement = getAgreement(localZoneId, token.sourceZoneId());
+        if (agreement.isEmpty() || !agreement.get().isActive()) return Optional.empty();
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.prepareStatement(
+                 "UPDATE transit_tokens SET used_at = ? WHERE token_id = ? AND used_at IS NULL")) {
+            stmt.setLong(1, Instant.now().getEpochSecond());
+            stmt.setString(2, tokenId);
+            if (stmt.executeUpdate() != 1) return Optional.empty();   // someone redeemed it first
+        } catch (SQLException e) {
+            log.error("Failed to redeem transit token: {}", e.getMessage());
+            return Optional.empty();
+        }
+        return Optional.of(token);
+    }
+
+    /** Drop every transit token between this zone and {@code remoteZoneId} (the agreement ended). */
+    public int revokeTransitTokens(String localZoneId, String remoteZoneId) {
+        var sql = "DELETE FROM transit_tokens WHERE (source_zone_id = ? AND target_zone_id = ?) "
+            + "OR (source_zone_id = ? AND target_zone_id = ?)";
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, remoteZoneId);
+            stmt.setString(2, localZoneId);
+            stmt.setString(3, localZoneId);
+            stmt.setString(4, remoteZoneId);
+            int n = stmt.executeUpdate();
+            if (n > 0) log.info("Federation: revoked {} transit token(s) with zone '{}'", n, remoteZoneId);
+            return n;
+        } catch (SQLException e) {
+            log.error("Failed to revoke transit tokens: {}", e.getMessage());
+            return 0;
+        }
     }
 
     public void cleanExpiredTokens() {

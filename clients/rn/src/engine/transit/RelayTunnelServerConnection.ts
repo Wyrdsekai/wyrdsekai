@@ -7,10 +7,17 @@
  * renders S2C; this transport just carries those frames over the relay's dumb
  * pipe instead of an in-process node. Mirrors the KMP RelayTunnelServerConnection.
  *
- * Wire: the same C2S/S2C JSON the zone's `/ws` reads/writes. We publish the
- * phone's C2S frames to `wyrd.tunnel.{zone}.{session}.up` and subscribe the
- * zone's S2C frames on `...down`. The relay only shuffles bytes; the zone
- * tunnels them into its own session server (see TunnelSessionHandler.java).
+ * Wire: the same C2S/S2C JSON the zone's `/ws` reads/writes, sealed end to end
+ * (the sealed tunnel v2, W3; src/crypto/sealedTunnel.ts):
+ *   1. `.open` carries only the phone's ephemeral key `{"v":2,"e":...}`.
+ *   2. The home answers on `.down` with its own ephemeral key; both sides derive
+ *      the session keys, which need the home's static key `zk` from the invite —
+ *      a relay cannot stand in for the home.
+ *   3. The first sealed frame up carries what `.open` used to carry
+ *      (`{"token":...}`); every later frame on `.up`/`.down` is sealed, in order.
+ * Frames the phone sends before step 2 completes wait in order. A frame that
+ * does not open closes the session. Without `zk` (a phone paired before 0.5.0)
+ * the tunnel does not open at all and says to pair again.
  */
 import type { BetweenClient } from '../between/BetweenClient';
 import type { C2SMessage } from '../../protocol/c2s';
@@ -18,9 +25,18 @@ import { serializeC2S } from '../../protocol/c2s';
 import type { S2CMessage } from '../../protocol/s2c';
 import { parseS2CMessage } from '../../protocol/s2c';
 import type { ServerConnection, S2CHandler } from './ServerConnection';
+import { fromUtf8, utf8 } from '../../crypto/bytes';
+import { randomHex } from '../../crypto/random';
+import {
+  TunnelHandshake,
+  decodePublicKey,
+  parseTunnelAccept,
+  type TunnelChannel,
+} from '../../crypto/sealedTunnel';
+import { securityText } from '../../security/securityText';
 
-const enc = new TextEncoder();
-const dec = new TextDecoder();
+/** Frames sent before the home answered, held in order (same bound as the home's). */
+const MAX_PENDING_UP = 64;
 
 /**
  * The session id is a CAPABILITY, not just a correlation key (audit F1
@@ -30,71 +46,132 @@ const dec = new TextDecoder();
  * read their `.down` stream. It must therefore be unguessable: 128 bits from
  * the platform CSPRNG (react-native-get-random-values polyfills
  * crypto.getRandomValues; imported in index.js), hex, no dots — the zone splits
- * the subject on the last dot. The old value — Date.now() hex plus 32 bits of
- * Math.random — was both low-entropy and largely predictable from the clock.
+ * the subject on the last dot. With the sealed tunnel a guessed id no longer
+ * reads or writes a session (frames do not open without its keys), but it
+ * could still close one, so there is no Math.random fallback: randomHex throws.
  */
 function newSessionId(): string {
-  const bytes = new Uint8Array(16);
-  const g = globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => void } };
-  if (g.crypto?.getRandomValues) {
-    g.crypto.getRandomValues(bytes);
-  } else {
-    // Should not happen — index.js imports react-native-get-random-values. A
-    // predictable session id is a real (if household-scoped) vulnerability, so
-    // this is loud rather than silent.
-    // eslint-disable-next-line no-console
-    console.error('[RelayTunnel] crypto.getRandomValues unavailable — session id is NOT unguessable');
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  }
-  let hex = '';
-  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
-  return hex;
+  return randomHex(16);
 }
 
 export class RelayTunnelServerConnection implements ServerConnection {
   private readonly base: string;
+  private readonly upAad: Uint8Array;
+  private readonly downAad: Uint8Array;
+  private readonly zk: Uint8Array | null;
   private handlers: S2CHandler[] = [];
   private downUnsub: (() => void) | null = null;
   private opened = false;
+  /** Closed sessions stay closed; a new one is a new connection. */
+  private ended = false;
+  private handshake: TunnelHandshake | null = null;
+  private up: TunnelChannel | null = null;
+  private down: TunnelChannel | null = null;
+  private pendingUp: Uint8Array[] = [];
 
   constructor(
     private readonly between: BetweenClient,
     private readonly zoneId: string,
     private readonly token: string | null,
+    zk: string | null,
     private readonly sessionId: string = newSessionId(),
   ) {
     this.base = `wyrd.tunnel.${zoneId}.${this.sessionId}`;
+    this.upAad = utf8(`${this.base}.up`);
+    this.downAad = utf8(`${this.base}.down`);
+    this.zk = decodePublicKey(zk);
   }
 
   get isConnected(): boolean {
     return this.between.isConnected && this.opened;
   }
 
+  /** Whether the session keys are agreed (frames now travel sealed). */
+  get isSealed(): boolean {
+    return this.up != null;
+  }
+
   /**
-   * Subscribe the downlink and announce the session. Call once after the relay
-   * NATS connection is up. Idempotent.
+   * Subscribe the downlink and announce the session with this phone's
+   * ephemeral key. Call once after the relay NATS connection is up. Idempotent.
    */
   open(): void {
-    if (this.opened) return;
-    this.downUnsub = this.between.subscribe(`${this.base}.down`, (_subject, data) => {
-      let msg: S2CMessage | null = null;
-      try {
-        msg = parseS2CMessage(dec.decode(data));
-      } catch {
-        msg = null;
-      }
-      if (msg) {
-        for (const h of [...this.handlers]) h(msg);
-      }
-    });
-    const openPayload = JSON.stringify(this.token ? { token: this.token } : {});
-    this.between.publish(`${this.base}.open`, enc.encode(openPayload));
+    if (this.opened || this.ended) return;
     this.opened = true;
+    if (!this.zk) {
+      this.fail('tunnel_pair_again', securityText().pairAgain);
+      return;
+    }
+    this.handshake = new TunnelHandshake(this.zk, this.sessionId);
+    this.downUnsub = this.between.subscribe(`${this.base}.down`, (_subject, data) => this.onDown(data));
+    this.between.publish(`${this.base}.open`, utf8(this.handshake.openPayload()));
+  }
+
+  private onDown(data: Uint8Array): void {
+    if (!this.opened) return;
+    if (this.down) {
+      let text: string;
+      try {
+        text = fromUtf8(this.down.open(data, this.downAad));
+      } catch {
+        this.fail('tunnel_interrupted', securityText().tunnelInterrupted);
+        return;
+      }
+      const msg = parseS2CMessage(text);
+      if (msg) this.deliver(msg);
+      return;
+    }
+    // Before the keys: the home's accept frame, or its refusal in the clear.
+    const text = fromUtf8(data);
+    const zoneEph = parseTunnelAccept(text);
+    if (zoneEph && this.handshake) {
+      let channels: { up: TunnelChannel; down: TunnelChannel };
+      try {
+        channels = this.handshake.finish(zoneEph);
+      } catch {
+        this.fail('tunnel_key_refused', securityText().tunnelRefused);
+        return;
+      }
+      this.handshake = null;
+      this.up = channels.up;
+      this.down = channels.down;
+      this.publishUp(utf8(JSON.stringify(this.token ? { token: this.token } : {})));
+      const queued = this.pendingUp;
+      this.pendingUp = [];
+      for (const f of queued) this.publishUp(f);
+      return;
+    }
+    const refusal = parseS2CMessage(text);
+    if (refusal && refusal.type === 'error') {
+      const plain = refusal.code === 'tunnel_key_refused' || refusal.code === 'tunnel_plaintext_refused';
+      this.fail(refusal.code, plain ? securityText().tunnelRefused : refusal.message);
+    }
+    // Anything else before the accept is not from the home; ignore it.
+  }
+
+  private publishUp(plaintext: Uint8Array): void {
+    this.between.publish(`${this.base}.up`, this.up!.seal(plaintext, this.upAad));
+  }
+
+  private deliver(msg: S2CMessage): void {
+    for (const h of [...this.handlers]) h(msg);
+  }
+
+  /** Tell the terminal why, then end the session. */
+  private fail(code: string, message: string): void {
+    this.deliver({ type: 'error', seq: 0, code, message });
+    this.close();
   }
 
   send(message: C2SMessage): void {
     if (!this.opened) this.open();
-    this.between.publish(`${this.base}.up`, enc.encode(serializeC2S(message)));
+    if (!this.opened) return;
+    const frame = utf8(serializeC2S(message));
+    if (this.up) {
+      this.publishUp(frame);
+    } else if (this.handshake && this.pendingUp.length < MAX_PENDING_UP) {
+      this.pendingUp.push(frame);
+    }
   }
 
   onMessage(handler: S2CHandler): () => void {
@@ -108,9 +185,9 @@ export class RelayTunnelServerConnection implements ServerConnection {
     return new Set();
   }
 
-  /** End the tunneled session. */
+  /** End the tunneled session. `.close` stays a plain signal: it carries no data. */
   close(): void {
-    if (this.opened) {
+    if (this.opened && this.zk) {
       try {
         this.between.publish(`${this.base}.close`, new Uint8Array(0));
       } catch {
@@ -121,5 +198,10 @@ export class RelayTunnelServerConnection implements ServerConnection {
     this.downUnsub = null;
     this.handlers = [];
     this.opened = false;
+    this.ended = true;
+    this.handshake = null;
+    this.up = null;
+    this.down = null;
+    this.pendingUp = [];
   }
 }

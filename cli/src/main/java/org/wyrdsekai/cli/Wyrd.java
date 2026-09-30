@@ -9,8 +9,12 @@ import org.jline.reader.EndOfFileException;
 import org.jline.terminal.TerminalBuilder;
 import org.wyrdsekai.common.protocol.C2SMessage;
 import org.wyrdsekai.common.protocol.S2CMessage;
+import org.wyrdsekai.core.crypto.HouseholdTls;
+import org.wyrdsekai.core.crypto.TunnelKey;
 
+import javax.net.ssl.SSLContext;
 import java.io.IOException;
+import java.security.GeneralSecurityException;
 import java.io.PrintStream;
 import java.util.List;
 import java.util.function.Consumer;
@@ -19,9 +23,13 @@ import java.util.function.Consumer;
  * Wyrdsekai CLI entry point.
  * Connects to server via WebSocket, renders room state, handles user input.
  *
- * Usage: wyrd [--host HOST] [--port PORT] [--accessible]
+ * Usage: wyrd [--host HOST] [--port PORT] [--ca-fp FINGERPRINT] [--accessible]
  */
 public class Wyrd {
+
+    private static boolean isThisMachine(String host) {
+        return host == null || host.equals("localhost") || host.startsWith("127.") || host.equals("::1");
+    }
 
     private static final String DEFAULT_HOST = "localhost";
     private static final int DEFAULT_PORT = 7070;
@@ -38,6 +46,9 @@ public class Wyrd {
         String relayUser = null;  // relay transport account (e.g. relay_phone)
         String relayPass = null;
         String relayCaFp = null;  // pinned household-CA SHA-256 (from the invite's ca_fp)
+        String zoneKey = null;    // the home's tunnel key (from the invite's zk): seals login and session
+        // Another machine of the household: HTTPS/WSS on 7443, pinned to its household CA (W2).
+        String homeCaFp = null;
         // Headless credentials — skip the interactive door gate (scripts, CI,
         // automation). Works for both the direct and the relay-tunnel path.
         String acctUser = null;
@@ -57,6 +68,8 @@ public class Wyrd {
                 case "--relay-user" -> { if (i + 1 < args.length) relayUser = args[++i]; }
                 case "--relay-pass" -> { if (i + 1 < args.length) relayPass = args[++i]; }
                 case "--relay-ca-fp" -> { if (i + 1 < args.length) relayCaFp = args[++i]; }
+                case "--zone-key" -> { if (i + 1 < args.length) zoneKey = args[++i]; }
+                case "--ca-fp" -> { if (i + 1 < args.length) homeCaFp = args[++i]; }
                 case "--user" -> { if (i + 1 < args.length) acctUser = args[++i]; }
                 case "--password" -> { if (i + 1 < args.length) acctPass = args[++i]; }
             }
@@ -65,10 +78,35 @@ public class Wyrd {
         final String finalAcctPass = acctPass;
         final boolean headlessLogin = acctUser != null && acctPass != null;
 
+        // The plain port answers only its own machine: another machine is reached over HTTPS, pinned to
+        // the household CA whose fingerprint `wyrd doctor` shows on that machine ( W2).
+        SSLContext homeTls = null;
+        if (homeCaFp != null) {
+            try {
+                homeTls = HouseholdTls.pinnedContext(homeCaFp);
+            } catch (GeneralSecurityException e) {
+                System.err.println("--ca-fp: " + e.getMessage());
+                System.exit(2);
+            }
+            if (port == DEFAULT_PORT) port = 7443;
+        } else if (!isThisMachine(host)) {
+            System.err.println("Another machine's plain port answers only that machine. Connect with its household "
+                + "certificate fingerprint (`wyrd doctor` on it shows it): --ca-fp <fingerprint>");
+        }
         final var finalHost = host;
         final var finalPort = port;
+        final var finalHomeTls = homeTls;
         final String finalRelayCaFp = relayCaFp;
         final boolean viaRelay = relayUrl != null && zoneId != null;
+        final byte[] zoneKeyBytes = zoneKey == null ? null : TunnelKey.decodeKey(zoneKey);
+        if (viaRelay && zoneKey != null && (zoneKeyBytes == null || zoneKeyBytes.length != 32)) {
+            System.err.println("--zone-key is not a home key: copy the zk value from the home's invite.");
+            return;
+        }
+        if (viaRelay && zoneKey == null) {
+            System.err.println("No --zone-key given: this terminal cannot encrypt the connection to the home, so it"
+                + " will not send your password or session through the relay. Copy the zk value from the home's invite.");
+        }
 
         var terminal = TerminalBuilder.builder()
             .system(true)
@@ -100,7 +138,7 @@ public class Wyrd {
 
         var inputHandler = new InputHandler(null, System.out);
         inputHandler.setRenderer(renderer);
-        var authClient = new AuthClient(finalHost, finalPort);
+        var authClient = new AuthClient(finalHost, finalPort, finalHomeTls);
         inputHandler.setAuthClient(authClient);
 
         // The render handler is transport-agnostic — both the direct WebSocket
@@ -121,7 +159,7 @@ public class Wyrd {
             // to a zone with no public door. Auth is mcp.login over the relay bus
             // (same request/reply the phone uses); the minted token authenticates
             // the zone-side loopback /ws. No direct HTTP to the NAT'd zone.
-            var tunnel = new RelayTunnelConnection(relayUrl, relayUser, relayPass, finalRelayCaFp, zoneId,
+            var tunnel = new RelayTunnelConnection(relayUrl, relayUser, relayPass, finalRelayCaFp, zoneId, zoneKeyBytes,
                 onMessage,
                 status -> System.out.println("Relay tunnel: " + status));
             connection = tunnel;
@@ -144,7 +182,7 @@ public class Wyrd {
             }
             System.out.println("Tunneling into zone '" + zoneId + "' via relay " + relayUrl + "...");
         } else {
-            var direct = new Connection(finalHost, finalPort, onMessage,
+            var direct = new Connection(finalHost, finalPort, finalHomeTls, onMessage,
                 state -> {
                     switch (state) {
                         case CONNECTING -> System.out.println("Connecting to " + finalHost + ":" + finalPort + "...");

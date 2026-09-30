@@ -85,12 +85,14 @@ public final class LibraryRecall {
         }
 
         int notices = 0, marked = 0;
+        boolean landed = false;
         String next = cursor;
         for (int page = 0; page < 20; page++) {
             var ch = patron.changes(next, 200).orElse(null);
             if (ch == null) break;
             notices += ch.changes().size();
             for (var c : ch.changes()) {
+                if ("investigation".equals(c.kind()) && "added".equals(c.event())) landed = true;
                 var to = c.toState();
                 if (to == null || c.id() == null) continue;
                 var f = mine.get(c.id());
@@ -111,6 +113,9 @@ public final class LibraryRecall {
             if (!ch.more()) break;
         }
         if (!next.equals(cursor)) writeCursor(file, next, st.libraryId());
+        // A household with no webhook learns here that a write-up landed: whoever said yes to
+        // it is told (once, whichever path learns of it first).
+        if (landed) LibraryConsent.writeUpLanded();
         // Every run says so: a week of silence on a library that changes nightly once meant
         // "nobody knows whether this ran" — it had not been distinguishable from a quiet feed.
         log.info("[recall] {}: {} notice(s) since cursor {}, {} of her {} finding(s) from it marked disputed",

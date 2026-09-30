@@ -20,7 +20,7 @@ class FindZoneViewModelTest {
     @Test fun search_success_populatesResults() = runTest {
         val vm = FindZoneViewModel(
             discover = { _, _ -> DiscoverResult(zones = listOf(sampleZone)) },
-            requestAccessFn = { _, _ -> true },
+            requestAccessFn = { _, _ -> KnockAnswer("req-1") },
         )
         vm.search("commons")
         assertEquals(1, vm.results.size)
@@ -33,7 +33,7 @@ class FindZoneViewModelTest {
     @Test fun search_transportFailure_surfacesError() = runTest {
         val vm = FindZoneViewModel(
             discover = { _, _ -> DiscoverResult(zones = emptyList(), error = "directory search failed") },
-            requestAccessFn = { _, _ -> true },
+            requestAccessFn = { _, _ -> KnockAnswer("req-1") },
         )
         vm.search("anything")
         assertTrue(vm.results.isEmpty())
@@ -46,7 +46,7 @@ class FindZoneViewModelTest {
         var sawName: String? = null
         val vm = FindZoneViewModel(
             discover = { _, _ -> DiscoverResult(zones = listOf(sampleZone)) },
-            requestAccessFn = { target, name -> sawTarget = target; sawName = name; true },
+            requestAccessFn = { target, name -> sawTarget = target; sawName = name; KnockAnswer("req-1") },
             requesterName = { "ada" },
         )
         vm.requestAccess(sampleZone)
@@ -56,10 +56,20 @@ class FindZoneViewModelTest {
         assertNull(vm.error)
     }
 
+    @Test fun aKnockThatWasNotRecordedIsToldInPlainWords() = runTest {
+        val vm = FindZoneViewModel(
+            discover = { _, _ -> DiscoverResult(zones = listOf(sampleZone)) },
+            requestAccessFn = { _, _ -> KnockAnswer(null, "That zone did not answer through your relay.") },
+        )
+        vm.requestAccess(sampleZone)
+        assertNull(vm.knockState["commons"])
+        assertEquals("That zone did not answer through your relay.", vm.error)
+    }
+
     @Test fun requestAccess_failure_clearsStateAndShowsError() = runTest {
         val vm = FindZoneViewModel(
             discover = { _, _ -> DiscoverResult(zones = listOf(sampleZone)) },
-            requestAccessFn = { _, _ -> false },
+            requestAccessFn = { _, _ -> KnockAnswer(null) },
         )
         vm.requestAccess(sampleZone)
         assertNull(vm.knockState["commons"])

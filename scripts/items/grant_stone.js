@@ -14,7 +14,7 @@ exports.manifest = {
   version: "1.0.0",
   description: "A rune-cut stone that remembers which kinds of household data may travel to which kinds of device — and lets the steward withdraw that permission.",
   author: "did:wyrd:system",
-  capabilities: [],
+  capabilities: ["hermod.grant.revoke"],
   embodiment: {
     silent: false,
     emits: ["body_language"],

@@ -277,6 +277,36 @@ public record VitalityState(
         System.getenv().getOrDefault("WYRDSEKAI_TICK_ENERGY_RECOVERY", "-0.000004"));
 
     /**
+     * The rested level this economy was calibrated for (2026-07-18, above): {@link #TICK_ENERGY_RATE},
+     * every act cost in CompanionActor and the 0.15 sleep threshold assume a companion wakes near here,
+     * with ~0.5 to spend between waking and sleep.
+     */
+    public static final double RESTED_ENERGY = 0.65;
+
+    /**
+     * What the soul forge wrote for every tank it was not told about ({@code SoulForgeCliTool.parseGenome}
+     * before 2026-09-28). An energy baseline of exactly this value was never chosen for anyone.
+     */
+    public static final double FORGE_PLACEHOLDER_BASELINE = 0.5;
+
+    /**
+     * Where sleep brings her energy back to: the genome's energy baseline when one was chosen, the
+     * economy's {@link #RESTED_ENERGY} when the genome is silent or still carries the forge's placeholder.
+     *
+     * <p>Both household companions carried the placeholder. Sleep fills 90% of the gap to the baseline, so
+     * "rested" was 0.44 and the budget down to the sleep threshold 0.29 instead of the 0.50 the economy
+     * was tuned for: the "your energy is low, go home and rest" line was in their own-time prompts nine
+     * hours in ten, and one of them spent half her day under the level where the feeling in what people
+     * say to her is weighed at all (2026-09-28). A number nobody chose was telling her she was tired.</p>
+     */
+    public static double restedEnergy(Map<String, Double> baselines) {
+        if (baselines == null) return RESTED_ENERGY;
+        Double chosen = baselines.get("energy");
+        if (chosen == null || chosen.isNaN() || chosen == FORGE_PLACEHOLDER_BASELINE) return RESTED_ENERGY;
+        return Math.max(0.0, Math.min(1.0, chosen));
+    }
+
+    /**
      * Advance vitality by one tick (1 second).
      *
      * <p>Phase 1B: the original 10 tanks decay/drift here. The 10 deprivation-shape tanks
@@ -451,13 +481,16 @@ public record VitalityState(
      * the condition decides where she settles, and tau decides how fast she gets there.
      * That separation is what a plain rate cannot express.
      */
-    private static double approach(double current, double setpoint, double dt, Duration tau) {
+    static double approach(double current, double setpoint, double dt, Duration tau) {
         if (setpoint <= current || tau == null || tau.isZero()) return current;
         // The set point may exceed 1.0 for a temperament that feels this acutely — the
         // TARGET carries the genome's proportionality, the VALUE is capped here. Clamping
         // the set point instead would flatten every sensitive temperament onto the same
         // ceiling and destroy the divergence that makes companions distinct individuals.
-        return Math.min(1.0, current + (setpoint - current) * (dt / (double) tau.toSeconds()));
+        // One step never passes the set point: a delta longer than tau (the first tick
+        // after a restart) lands ON it, not past it.
+        double fraction = Math.min(1.0, dt / (double) tau.toSeconds());
+        return Math.min(1.0, current + (setpoint - current) * fraction);
     }
 
     /** Stillness is felt quickly — this is the one tank whose fast onset was right. */
@@ -1104,20 +1137,20 @@ public record VitalityState(
         // keys are added (Wave 7 Bondholder-facing surfaces pass). Baseline 0.3
         // is silent default; above 0.6 surfaces felt-safeness; below 0.2 surfaces
         // un-soothed condition where receptor cannot land forgiveness.
-        if (soothing > 0.6) sb.append("settled, with felt safety").append(", ");
-        else if (soothing < 0.2) sb.append("un-soothed, ungrounded").append(", ");
+        if (soothing > 0.6) sb.append("feeling safe").append(", ");
+        else if (soothing < 0.2) sb.append("not feeling safe").append(", ");
 
         // Wave 1.5 — allostatic load (McEwen chronic-stress damage meter).
         // Only the high range surfaces; the default-baseline 0.0 is silent.
         // Plain English until i18n keys land in Wave 7.
-        if (allostaticLoad > 0.7) sb.append("worn down, sustained dysregulation has accumulated").append(", ");
-        else if (allostaticLoad > 0.5) sb.append("carrying chronic stress").append(", ");
+        if (allostaticLoad > 0.7) sb.append("worn down by long stress").append(", ");
+        else if (allostaticLoad > 0.5) sb.append("under long stress").append(", ");
 
         // Wave 1.5 — equanimity (contemplative-practice capacity).
         // High-state surfaces; mild baseline 0.2 silent. Plain English until
         // Wave 7 i18n.
-        if (equanimity > 0.7) sb.append("present without reactivity, a settled steadiness").append(", ");
-        else if (equanimity > 0.5) sb.append("contemplatively grounded").append(", ");
+        if (equanimity > 0.7) sb.append("calm").append(", ");
+        else if (equanimity > 0.5) sb.append("fairly calm").append(", ");
 
         if (alignment > 0.7) sb.append(I18n.get("vitality.alignment.high")).append(".");
         else if (alignment < 0.3) sb.append(I18n.get("vitality.alignment.low")).append(".");

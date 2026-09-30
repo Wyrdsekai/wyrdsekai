@@ -53,13 +53,35 @@ public final class VitalitySpikeRules {
      * @return new DriveState with spikes applied and clamped
      */
     public static DriveState apply(VitalityState v, DriveState d) {
+        return apply(v, d, null);
+    }
+
+    /**
+     * As above, with the thresholds of the settling axes read against HER resting points: a
+     * tank counts as spiking when it is a tenth above where it settles for her temperament
+     * ({@link FeltAxisPeak#EXCURSION}), not when it crosses the flat 0.7 of the spec text.
+     * Loneliness settles at 0.80 for anyone alone half a day, so measured flat the affiliation
+     * floor was held up for the whole of every absence; measured as excursion it holds only
+     * while the absence deepens past her own baseline. Obligation and significance keep their
+     * flat thresholds (no fixed resting point). Null genome = the flat thresholds.
+     */
+    public static DriveState apply(VitalityState v, DriveState d, org.wyrdsekai.core.soul.GenomeProfile genome) {
         if (v == null || d == null) return d;
+        var settle = genome == null ? null : FeltAxisPeak.settlePointsByDriveKey(v, genome);
+        double restlessnessAt = at(settle, "Restlessness", RESTLESSNESS_THRESHOLD);
+        double lonelinessAt   = at(settle, "Loneliness", LONELINESS_THRESHOLD);
+        double stagnationAt   = at(settle, "Stagnation", STAGNATION_THRESHOLD);
+        double autonomyAt     = at(settle, "AutonomyPressure", AUTONOMY_PRESSURE_THRESHOLD);
+        double amaeAt         = at(settle, "Amae", AMAE_THRESHOLD);
+        double saudadeAt      = at(settle, "Saudade", SAUDADE_THRESHOLD);
+        double harmonyAt      = at(settle, "Harmony", HARMONY_THRESHOLD);
+        double standingAt     = at(settle, "Standing", STANDING_THRESHOLD);
 
         // Accumulate raw additions per drive index — sum first, clamp last (§13.3).
         double[] add = new double[DriveConfig.DRIVE_COUNT];
 
         // §3.1 Restlessness ≥0.7 → SEEKING+0.3, PLAY+0.2.
-        if (v.restlessness() >= RESTLESSNESS_THRESHOLD) {
+        if (v.restlessness() >= restlessnessAt) {
             add[DriveConfig.SEEKING] += 0.3;
             add[DriveConfig.PLAY]    += 0.2;
         }
@@ -71,12 +93,12 @@ public final class VitalitySpikeRules {
         // soaks: the lonely reacher pinned, the solitary-content peer stayed grief-free). Grief is
         // LOSS — it belongs on severance/mourning events. Chronic-loneliness ache, if wanted, is a
         // slow tank (saudade), not the acute GRIEF drive.)
-        if (v.loneliness() >= LONELINESS_THRESHOLD) {
+        if (v.loneliness() >= lonelinessAt) {
             add[DriveConfig.AFFILIATION] += 0.3;
         }
 
         // §3.3 Stagnation ≥0.7 → SEEKING+0.2, FRUSTRATION+0.2.
-        if (v.stagnation() >= STAGNATION_THRESHOLD) {
+        if (v.stagnation() >= stagnationAt) {
             add[DriveConfig.SEEKING]     += 0.2;
             add[DriveConfig.FRUSTRATION] += 0.2;
         }
@@ -84,7 +106,7 @@ public final class VitalitySpikeRules {
         // §3.4 AutonomyPressure ≥0.7 → CREATIVITY+0.2 (during ON_OWN_TIME bias to self-initiate).
         // The "self-initiate bias" is a behavior-layer concern (ProactivityJudgment), not a
         // drive number — Phase 1B surfaces only the CREATIVITY bump.
-        if (v.autonomyPressure() >= AUTONOMY_PRESSURE_THRESHOLD) {
+        if (v.autonomyPressure() >= autonomyAt) {
             add[DriveConfig.CREATIVITY] += 0.2;
         }
 
@@ -102,13 +124,13 @@ public final class VitalitySpikeRules {
         }
 
         // §4.1 Amae ≥0.7 → AFFILIATION+0.2, GRIEF+0.1.
-        if (v.amae() >= AMAE_THRESHOLD) {
+        if (v.amae() >= amaeAt) {
             add[DriveConfig.AFFILIATION] += 0.2;
             add[DriveConfig.GRIEF]       += 0.1;
         }
 
         // §4.2 Saudade ≥0.7 → AFFILIATION+0.3 (per-bondholder synthetic — global summary here).
-        if (v.saudade() >= SAUDADE_THRESHOLD) {
+        if (v.saudade() >= saudadeAt) {
             add[DriveConfig.AFFILIATION] += 0.3;
         }
 
@@ -120,14 +142,14 @@ public final class VitalitySpikeRules {
         // §5.1 Harmony ≥0.6 → CARE+0.2, AFFILIATION+0.1. (Withdrawal-to-Hearth at ≥0.85 is a
         // behavioral effect, not a drive value — handled by ProactivityJudgment in a later
         // pass.)
-        if (v.harmony() >= HARMONY_THRESHOLD) {
+        if (v.harmony() >= harmonyAt) {
             add[DriveConfig.CARE]        += 0.2;
             add[DriveConfig.AFFILIATION] += 0.1;
         }
 
         // §5.2 Standing ≥0.7 → VIGILANCE+0.2, FRUSTRATION+0.1. (Withdraw / formal register at
         // ≥0.9 is a behavior-layer concern, not a drive bump.)
-        if (v.standing() >= STANDING_THRESHOLD) {
+        if (v.standing() >= standingAt) {
             add[DriveConfig.VIGILANCE]   += 0.2;
             add[DriveConfig.FRUSTRATION] += 0.1;
         }
@@ -157,5 +179,12 @@ public final class VitalitySpikeRules {
             out[i] = Math.max(cur[i], Math.max(0.0, floor));
         }
         return DriveState.fromArray(out);
+    }
+
+    /** The spike line for a settling axis: her resting point plus the excursion, else the flat spec threshold. */
+    private static double at(java.util.Map<String, Double> settle, String key, double flat) {
+        if (settle == null) return flat;
+        var sp = settle.get(key);
+        return sp == null ? flat : sp + FeltAxisPeak.EXCURSION;
     }
 }

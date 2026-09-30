@@ -1,10 +1,14 @@
 package org.wyrdsekai.app.engine.agent
 
+import kotlinx.datetime.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Instant
+import org.wyrdsekai.app.inference.NowLine
 
 class ActionParserTest {
 
@@ -220,5 +224,53 @@ But this is fine."""
         // First action wins as primary
         assertEquals(1, result.actions.size)
         assertIs<ActionParser.AgentAction.Emote>(result.actions[0])
+    }
+
+    // ── The date line a request carries, repeated in her reply (2026-09-23) ──
+
+    private val newYork = TimeZone.of("America/New_York")
+    /** `[Now: Wednesday 23 September 2026, 10:05 UTC-4, morning]` */
+    private val nowLine = NowLine.dateTimeText(Instant.parse("2026-09-23T14:05:00Z"), newYork)
+    /** `[Asked: Wednesday 23 September 2026, 09:40 UTC-4]` */
+    private val askedLine = NowLine.askedText(Instant.parse("2026-09-23T13:40:00Z"), newYork)
+
+    @Test
+    fun anEchoedDateLineIsNotHerWords() {
+        assertEquals("[Now: Wednesday 23 September 2026, 10:05 UTC-4, morning]", nowLine)
+        assertEquals("Morning. The tea is on.", ActionParser.stripNowLineEcho("$nowLine\nMorning. The tea is on."))
+        assertEquals("Morning.", ActionParser.stripNowLineEcho("${nowLine.dropLast(1)}\nMorning."),
+            "the closing bracket dropped")
+        assertEquals("Yes.", ActionParser.stripNowLineEcho("$askedLine\nYes."))
+        assertEquals("Yes.", ActionParser.stripNowLineEcho("${askedLine.dropLast(1)}\nYes."),
+            "the closing bracket dropped")
+        assertEquals("At noon.", ActionParser.stripNowLineEcho("$nowLine\n$askedLine\nAt noon."),
+            "a replay's two lines")
+        assertEquals("Morning.\nThe tea is on.", ActionParser.stripNowLineEcho("Morning.\n  $nowLine  \nThe tea is on."),
+            "at the start of any line of hers")
+        assertEquals("", ActionParser.stripNowLineEcho(nowLine), "the line was all there was")
+    }
+
+    @Test
+    fun herOwnWordsThatStartWithNowStay() {
+        val hers = "Now: the kettle, then the letters."
+        assertSame(hers, ActionParser.stripNowLineEcho(hers))
+        assertEquals(hers, ActionParser.parseAll(hers).prose)
+        assertEquals("Asked: whether the tide turns at noon.", ActionParser.parseAll("Asked: whether the tide turns at noon.").prose)
+    }
+
+    @Test
+    fun theProseOfEveryReplyLeavesWithoutTheDateLine() {
+        assertEquals("Morning. The tea is on.", ActionParser.parseAll("$nowLine\nMorning. The tea is on.").prose)
+        assertEquals("Morning.", ActionParser.parseAll("${nowLine.dropLast(1)}\nMorning.").prose)
+        assertEquals("At noon.", ActionParser.parseAll("$nowLine\n$askedLine\nAt noon.").prose)
+
+        val withAction = ActionParser.parseAll(
+            "$nowLine\nLet me look.\n```json\n{\"action\": \"emote\", \"text\": \"looks up\"}\n```",
+        )
+        assertEquals("Let me look.", withAction.prose)
+        assertIs<ActionParser.AgentAction.Emote>(withAction.primaryAction)
+
+        assertEquals("", ActionParser.parseAll("$nowLine\n```json\n{\"action\": \"emote\", \"text\": \"nods\"}\n```").prose,
+            "nothing of hers before the action")
     }
 }

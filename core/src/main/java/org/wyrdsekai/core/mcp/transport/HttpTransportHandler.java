@@ -77,7 +77,7 @@ public class HttpTransportHandler implements McpTransportHandler {
 
         var response = sendRequest(request);
         if (response.isError()) {
-            throw new IOException("tools/call failed for '" + toolName + "': " + response.error().message());
+            throw McpToolException.fromRpcError(toolName, response.error());
         }
         return mapper.convertValue(response.result(), JsonRpcMessage.ToolCallResult.class);
     }
@@ -99,6 +99,14 @@ public class HttpTransportHandler implements McpTransportHandler {
         var httpReq = reqBuilder.POST(HttpRequest.BodyPublishers.ofString(body)).build();
         var httpResp = client.send(httpReq, HttpResponse.BodyHandlers.ofString());
 
+        var tool = McpToolException.toolOf(request);
+        int status = httpResp.statusCode();
+        if ((status == 422 || status == 429) && tool != null) {
+            // A REST door's refusal ({"error": {"code", "message"}}): the tool answered
+            // (429: an older library's budget_exceeded).
+            var answered = McpToolException.fromHttpBody(tool, status, httpResp.body());
+            if (answered != null) throw answered;
+        }
         if (httpResp.statusCode() >= 400) {
             throw new IOException("HTTP " + httpResp.statusCode() + ": " + httpResp.body());
         }

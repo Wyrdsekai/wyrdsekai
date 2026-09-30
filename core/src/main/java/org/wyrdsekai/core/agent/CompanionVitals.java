@@ -2,6 +2,7 @@ package org.wyrdsekai.core.agent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.body.BodyMap;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -30,8 +31,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>So this class counts, thresholds, and <em>fires</em>. Each signal is tied to
  * a failure that actually happened, thresholds sit well outside healthy operation
- * so a trip means something, and a tripped signal reaches the steward through
- * {@link NotificationService} rather than only the log. Per-signal quiet periods
+ * so a trip means something, and a tripped signal reaches the household through
+ * {@link NotificationService}, or the steward's ledger on the body map when nobody hears it, rather
+ * than only the log. Per-signal quiet periods
  * keep a standing condition from becoming its own noise — the same discipline the
  * Hwa-byung detector uses.
  *
@@ -195,21 +197,50 @@ public final class CompanionVitals {
     /**
      * Check, and for anything that tripped log a warning and tell the household. The
      * notice goes to everyone rather than only the steward: a companion in this state
-     * is visible to whoever is around, and welfare here is visibility.
+     * is visible to whoever is around, and welfare here is visibility. When the notice
+     * reaches no live session it is kept on the steward's ledger instead.
      */
     public void checkAndReport(Instant now, String companionName) {
         for (var alert : check(now)) {
             log.warn("COMPANION-VITALS {} for '{}' ({}): {}",
                 alert.signal(), companionName, agentDid, alert.detail());
+            var text = "Something looks wrong with " + companionName + ": " + alert.detail();
+            boolean heard = false;
             var notifier = NotificationService.get();
             if (notifier != null) {
                 try {
-                    notifier.notifyAll("Something looks wrong with " + companionName + ": "
-                        + alert.detail(), "critical", agentDid);
+                    heard = notifier.notifyAll(text, "critical", agentDid);
                 } catch (Exception e) {
                     log.debug("Vitals notify failed: {}", e.toString());
                 }
             }
+            if (!heard) keepForSteward(alert.signal(), text, now);
+        }
+    }
+
+    /**
+     * A broadcast that reaches no live session is gone. On the household node every alarm
+     * from 09-01 to 09-23 (43: Mia 38, Rose 5) went that way, because nobody is usually
+     * connected there. The body map's steward marks are kept in the record and shown by
+     * {@code wyrd body}, beside the immune system's proposals; addressed to the steward,
+     * the mark is not told to her in her felt line. The quiet period in {@link #check} is
+     * in memory and that node restarts often, so the ledger itself is the dedup: one mark
+     * per signal per companion per {@link #QUIET_PERIOD}.
+     */
+    private void keepForSteward(String signal, String text, Instant now) {
+        var map = BodyMap.get();
+        if (map == null) return;
+        var detail = "being=" + agentDid;
+        try {
+            for (var m : map.recentMarks(Integer.MAX_VALUE)) {
+                if ("vitals".equals(m.kind()) && signal.equals(m.subject()) && detail.equals(m.detail())
+                        && Duration.between(m.at(), now).compareTo(QUIET_PERIOD) < 0) {
+                    return;
+                }
+            }
+            map.mark("vitals", signal, "steward", text, detail);
+        } catch (RuntimeException e) {
+            log.debug("Vitals mark not written: {}", e.toString());
         }
     }
 

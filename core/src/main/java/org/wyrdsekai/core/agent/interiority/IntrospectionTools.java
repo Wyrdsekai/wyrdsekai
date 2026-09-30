@@ -3,6 +3,7 @@ package org.wyrdsekai.core.agent.interiority;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.memory.MemoryEntityStore;
+import org.wyrdsekai.core.memory.MemoryReader;
 import org.wyrdsekai.core.memory.MemoryEntityStore.EntityRow;
 
 import java.sql.DriverManager;
@@ -42,6 +43,13 @@ public final class IntrospectionTools {
     private static final long WEEK_MS  = 7L * DAY_MS;
     private static final long MONTH_MS = 30L * DAY_MS;
 
+    /**
+     * These pulls feed her own time, which answers no one and may be spoken aloud anywhere:
+     * only what was said openly, or is hers, is read here. A person's private words come back
+     * only in turns that answer that person (MemoryReader).
+     */
+    private static final String OWN_TIME_READS = "visibility = 'open'";
+
     private final String jdbcUrl;
     private final MemoryEntityStore entityStore;
 
@@ -74,7 +82,7 @@ public final class IntrospectionTools {
         // Pull a generous candidate pool, then shuffle to N. Bounded so memory
         // stays small even for long-lived agents.
         var sql = "SELECT entity_type, entity_role, entity_value, timestamp "
-            + "FROM memory_entities WHERE did = ? "
+            + "FROM memory_entities WHERE did = ? AND " + OWN_TIME_READS + " "
             + "ORDER BY timestamp DESC LIMIT 500";
         var pool = new ArrayList<String>();
         try (var conn = DriverManager.getConnection(jdbcUrl);
@@ -104,7 +112,8 @@ public final class IntrospectionTools {
     public List<String> recallThread(String agentDid, String threadName, int limit) {
         if (entityStore == null || agentDid == null || threadName == null) return List.of();
         try {
-            var rows = entityStore.findByValue(agentDid, threadName, Math.max(1, limit));
+            var rows = entityStore.findByValue(agentDid, threadName, Math.max(1, limit),
+                MemoryReader.NO_ONE);
             var out = new ArrayList<String>(rows.size());
             for (var r : rows) out.add(truncate(renderRow(r), 160));
             return out;
@@ -121,7 +130,7 @@ public final class IntrospectionTools {
         var cutoff = System.currentTimeMillis() - windowMs;
         var sql = "SELECT entity_type, entity_role, entity_value, timestamp "
             + "FROM memory_entities "
-            + "WHERE did = ? AND timestamp >= ? "
+            + "WHERE did = ? AND timestamp >= ? AND " + OWN_TIME_READS + " "
             + "ORDER BY timestamp DESC LIMIT ?";
         var out = new ArrayList<String>(limit);
         try (var conn = DriverManager.getConnection(jdbcUrl);

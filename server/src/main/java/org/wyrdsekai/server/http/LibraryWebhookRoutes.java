@@ -5,6 +5,7 @@ import io.javalin.router.JavalinDefaultRoutingApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.agent.CompanionActor;
+import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.library.LibraryWebhook;
 import org.wyrdsekai.core.room.ZoneGuardian;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
@@ -12,6 +13,7 @@ import org.wyrdsekai.core.search.WyrdLuceneStore;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -25,6 +27,12 @@ import java.util.function.Supplier;
  * companion as a message from the librarian, so "read I-0014" is a thought that occurs
  * rather than a check to remember. The changes feed stays the source of truth: the sleep-time
  * recall still reads it.
+ *
+ * <p>A write-up researched after a person's {@code research yes} is not announced: the companions
+ * talk in rooms where a child may be, and such a report is never a child's to read
+ * ({@code LibraryConsent}). The landing is when the household learns the report's id, so the
+ * library is asked about the yes jobs not yet settled first; when it cannot say, the write-up is
+ * not announced either.
  */
 public final class LibraryWebhookRoutes {
 
@@ -34,12 +42,20 @@ public final class LibraryWebhookRoutes {
     /** The unarchived companions' dids and entity ids, read at call time. */
     private final Supplier<List<Map.Entry<String, String>>> companions;
     private final Function<String, String> secrets;
+    /** Whether a landed write-up was researched after a person's yes (production: LibraryConsent). */
+    private final Predicate<String> afterAYes;
 
     public LibraryWebhookRoutes(WyrdLuceneStore store, Supplier<List<Map.Entry<String, String>>> companions,
                                 Function<String, String> secrets) {
+        this(store, companions, secrets, LibraryConsent::landedAfterAYes);
+    }
+
+    LibraryWebhookRoutes(WyrdLuceneStore store, Supplier<List<Map.Entry<String, String>>> companions,
+                         Function<String, String> secrets, Predicate<String> afterAYes) {
         this.store = store;
         this.companions = companions;
         this.secrets = secrets == null ? id -> System.getenv(LibraryWebhook.secretEnvVar(id)) : secrets;
+        this.afterAYes = afterAYes == null ? id -> false : afterAYes;
     }
 
     public void register(JavalinDefaultRoutingApi app) {
@@ -72,7 +88,10 @@ public final class LibraryWebhookRoutes {
             marked = applied.marked(); noted = applied.noted();
         }
         boolean told = false;
-        if (change.isLandedInvestigation()) {
+        if (change.isLandedInvestigation() && afterAYes.test(change.id())) {
+            log.info("[library-webhook] {} {}: researched after a person's yes, so not announced to the companions",
+                serviceId, change.id());
+        } else if (change.isLandedInvestigation()) {
             var name = change.libraryName().isBlank() ? "the librarian" : change.libraryName();
             var text = "A write-up has landed on " + name + "'s shelves: " + change.id()
                 + ". It answers a question this house handed over for the night. At the librarian's desk, `read "

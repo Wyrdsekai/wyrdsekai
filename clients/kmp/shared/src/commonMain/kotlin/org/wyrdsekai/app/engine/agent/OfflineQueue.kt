@@ -28,14 +28,20 @@ class OfflineQueue(private val dataDir: String) {
     private val json = Json { ignoreUnknownKeys = true }
     private var cache: MutableList<PendingRequest>? = null
 
-    suspend fun enqueue(triggerText: String, triggerEntityName: String, roomId: String) {
+    /** [askedAt] = when the person asked (epoch ms), not when it was queued. */
+    suspend fun enqueue(
+        triggerText: String,
+        triggerEntityName: String,
+        roomId: String,
+        askedAt: Long = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+    ) {
         val list = loadOrInit()
         val request = PendingRequest(
             triggerId = "${epochMillis()}-${Random.nextInt(10000)}",
             triggerText = triggerText,
             triggerEntityName = triggerEntityName,
             roomId = roomId,
-            timestamp = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+            timestamp = askedAt,
         )
         list.add(request)
         // Cap at 50 — drop oldest

@@ -94,6 +94,50 @@ describe('phoneInvite', () => {
     expect(invite.relays.map(r => r.wsUrl)).toEqual(['wss://first', 'wss://second']);
   });
 
+  it('reads the 0.5.0 fields: the home key, the CA fingerprint and the home-network address', () => {
+    const zk = 'hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo';
+    const fp = 'AB'.repeat(32);
+    const invite = parsePhoneInvite(
+      encodeInvite('relay.example.org', {
+        ...SELF_SIGNED_PAYLOAD,
+        zone_id: 'zone-example',
+        zk,
+        home_ca_fp: fp.match(/.{2}/g)!.join(':'),
+        lan_https: 'https://198.51.100.20:7443/',
+      }),
+    );
+    expect(invite.zk).toBe(zk);
+    expect(invite.homeCaFp).toBe('ab'.repeat(32));
+    expect(invite.lanHttps).toBe('https://198.51.100.20:7443');
+  });
+
+  it("reads the home bus as the home gives it (its port, not an assumed 4223), wss only", () => {
+    const invite = parsePhoneInvite(encodeInvite('h', {
+      ...SELF_SIGNED_PAYLOAD, lan_https: 'https://198.51.100.20:27443', home_bus: 'wss://198.51.100.20:27223/',
+    }));
+    expect(invite.homeBus).toBe('wss://198.51.100.20:27223');
+    expect(parsePhoneInvite(encodeInvite('h', { ...SELF_SIGNED_PAYLOAD, home_bus: 'ws://198.51.100.20:4223' })).homeBus)
+      .toBeUndefined();
+    expect(parsePhoneInvite(encodeInvite('h', { ...SELF_SIGNED_PAYLOAD, home_bus: 'nats://198.51.100.20:4222' })).homeBus)
+      .toBeUndefined();
+  });
+
+  it('an invite older than 0.5.0 simply has none of them', () => {
+    const invite = parsePhoneInvite(encodeInvite('h', SELF_SIGNED_PAYLOAD));
+    expect(invite.zk).toBeUndefined();
+    expect(invite.homeCaFp).toBeUndefined();
+    expect(invite.lanHttps).toBeUndefined();
+    expect(invite.homeBus).toBeUndefined();
+  });
+
+  it('refuses a damaged home key or fingerprint, and never takes a plain http address', () => {
+    expect(() => parsePhoneInvite(encodeInvite('h', { ...SELF_SIGNED_PAYLOAD, zk: 'short' }))).toThrow(/home key/);
+    expect(() => parsePhoneInvite(encodeInvite('h', { ...SELF_SIGNED_PAYLOAD, home_ca_fp: 'abcd' }))).toThrow(/fingerprint/);
+    const invite = parsePhoneInvite(
+      encodeInvite('h', { ...SELF_SIGNED_PAYLOAD, lan_https: 'http://198.51.100.20:7070' }));
+    expect(invite.lanHttps).toBeUndefined();
+  });
+
   it('rejects malformed input with readable errors', () => {
     expect(() => parsePhoneInvite('https://nope')).toThrow(/wyrdphone/);
     expect(() => parsePhoneInvite('wyrdphone://host-only')).toThrow(/payload/);

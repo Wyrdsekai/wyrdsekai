@@ -16,6 +16,7 @@
  */
 
 import type { BetweenClient } from './BetweenClient';
+import { isPlaintextToNetwork } from '../../network/plainAddress';
 
 export interface DelegationRequest {
   type: 'delegate';
@@ -225,6 +226,8 @@ export class BudDelegation {
     locale: string,
   ): Promise<DelegationResult | null> {
     if (!this.serverUrl || !this.deviceToken) return null;
+    // The question and the device token never cross the network in the clear.
+    if (isPlaintextToNetwork(this.serverUrl)) return null;
 
     const url = `${this.serverUrl}/api/companion/ask`;
     const body = JSON.stringify({ message, recentHistory, locale });
