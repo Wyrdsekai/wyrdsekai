@@ -79,8 +79,8 @@ public final class CommandParser {
         record Journal(String args) implements ParsedCommand {}
         /**
          * "bond" — your bonds with the companions of this home; "bond name &lt;companion&gt; &lt;name&gt;" —
-         * offer a name for a sacred bond (the naming ritual). Any other line that starts with the
-         * word is speech.
+         * offer a name for a sacred bond (the naming ritual); "bond take &lt;companion&gt;" — take the
+         * name the companion offered. Any other line that starts with the word is speech.
          */
         record Bond(String args) implements ParsedCommand {}
         /**
@@ -718,7 +718,7 @@ public final class CommandParser {
 
     private static final Set<String> FORGE_VERBS = Set.of("birth", "forge", "grow", "compare", "restore");
     private static final Pattern BOND_NAME = Pattern.compile(
-        "^bond\\s+name\\s+\\S+\\s+\\S.*$", Pattern.CASE_INSENSITIVE);
+        "^bond\\s+(?:name\\s+\\S+\\s+\\S.*|take\\s+\\S+)$", Pattern.CASE_INSENSITIVE);
 
     // ── Locale command aliases ────────────────────────────────────────
 

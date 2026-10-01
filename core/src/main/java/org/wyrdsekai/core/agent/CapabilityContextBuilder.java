@@ -349,7 +349,7 @@ public final class CapabilityContextBuilder {
             Map.entry("voluntary_sleep", "{\"action\": \"voluntary_sleep\", \"reason\": \"<why you need rest>\"}"),
             Map.entry("write_journal", "{\"action\": \"write_journal\", \"player_id\": \"<player>\", \"content\": \"<text>\", \"category\": \"note|observation|finding\"}"),
             Map.entry("read_journal", "{\"action\": \"read_journal\", \"player_id\": \"<player>\", \"query\": \"<search terms>\"}"),
-            Map.entry("bond_ritual", "{\"action\": \"bond_ritual\", \"target\": \"<entity name>\", \"ritual_type\": \"initiate|deepen|affirm\"}"),
+            Map.entry("bond_ritual", "{\"action\": \"bond_ritual\", \"target\": \"<entity name>\", \"ritual_type\": \"initiate|deepen|affirm|naming\", \"name\": \"<for naming: the name or symbol you offer>\"}"),
             Map.entry("trade", "{\"action\": \"trade\", \"target\": \"<entity name>\", \"offer\": \"<what you give>\", \"request\": \"<what you want>\"}"),
             Map.entry("craft_item", "{\"action\": \"craft_item\", \"name\": \"<item name>\", \"description\": \"<what it is>\", \"category\": \"tool|gift|artifact\"}"),
             Map.entry("cast_vote", "{\"action\": \"cast_vote\", \"proposal_id\": \"<proposal>\", \"vote\": \"approve|reject|abstain\", \"reason\": \"<why>\"}"),

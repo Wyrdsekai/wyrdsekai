@@ -100,14 +100,19 @@ public final class ActionToolBuilder {
      */
     private static final Map<String, Map<String, List<String>>> FIELD_ENUMS = Map.of(
         "create_room", Map.of(
-            "template", StandardRoomLibrary.TEMPLATE_NAMES));
+            "template", StandardRoomLibrary.TEMPLATE_NAMES),
+        "bond_ritual", Map.of(
+            "ritual_type", List.of("initiate", "deepen", "affirm", "naming")));
 
     /** Field descriptions where the NAME alone invites the wrong value. */
     private static final Map<String, Map<String, String>> FIELD_DESCRIPTIONS = Map.of(
         "create_room", Map.of(
             "template", "Room template — the room's FURNISHING, not its name. "
                 + "Without one the room is created EMPTY (no default objects), "
-                + "so pick the closest by purpose."));
+                + "so pick the closest by purpose."),
+        "bond_ritual", Map.of(
+            "target", "Who the ritual is with, by name.",
+            "name", "For ritual_type naming only: the name or symbol you offer for the bond, one short line."));
 
     /**
      * Build JSON Schema parameters from ActionSchemas.
@@ -456,7 +461,9 @@ public final class ActionToolBuilder {
         Map.entry("voluntary_sleep", "Choose to sleep for rest and Forge consolidation"),
         Map.entry("write_journal", "Write an entry in a player's journal"),
         Map.entry("read_journal", "Read entries from a player's journal"),
-        Map.entry("bond_ritual", "Perform a bond ritual with another entity"),
+        Map.entry("bond_ritual", "Perform a bond ritual with someone you share a bond with. "
+            + "ritual_type naming offers them a name or symbol for a sacred bond (put it in name): "
+            + "they take it, or offer you another."),
         Map.entry("trade", "Propose a trade with another entity"),
         Map.entry("craft_item", "Craft a new item"),
         Map.entry("cast_vote", "Vote on a proposal"),

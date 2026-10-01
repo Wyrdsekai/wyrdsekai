@@ -52,6 +52,22 @@ class BondNameStoreTest {
     }
 
     @Test
+    void a_name_she_offers_waits_is_replaced_by_a_later_offer_and_ends_when_a_name_is_kept(@TempDir Path tmp) throws Exception {
+        var jdbc = SchemaInitializer.initialize(tmp.resolve("world.db"));
+        var store = new BondNameStore(jdbc);
+        assertThat(store.findOffer(MIA, PERSON)).isEmpty();
+        assertThat(store.offer(MIA, PERSON, "lantern")).isTrue();
+        assertThat(new BondNameStore(jdbc).findOffer(MIA, PERSON)).as("kept across a restart").contains("lantern");
+        assertThat(store.offer(MIA, PERSON, "the quiet light")).isTrue();
+        assertThat(store.findOffer(MIA, PERSON)).as("one offer waits at a time").contains("the quiet light");
+        assertThat(store.find(MIA, PERSON)).as("an offer is not a name").isEmpty();
+
+        assertThat(store.save(new BondNameStore.Named(MIA, PERSON, "riverbridge", PERSON, Instant.now()))).isTrue();
+        assertThat(store.findOffer(MIA, PERSON)).as("the bond has its name").isEmpty();
+        assertThat(store.offer(MIA, PERSON, "another")).as("a named bond takes no more offers").isFalse();
+    }
+
+    @Test
     void without_a_database_names_are_held_in_memory() {
         var store = new BondNameStore(null);
         assertThat(store.save(new BondNameStore.Named(MIA, PERSON, "lantern", PERSON, Instant.now()))).isTrue();

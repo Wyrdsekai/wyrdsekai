@@ -61,6 +61,7 @@ import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.room.Rooms;
 import org.wyrdsekai.core.room.StudyProvisioner;
 import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.item.Giving;
 import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.soul.BondNaming;
 import org.wyrdsekai.core.mail.JournalSurface;
@@ -2758,44 +2759,13 @@ public class WyrdShellCommand implements Command {
 
     private void handleGive(String objectName, String targetName) {
         var catalog = ScriptMessageCatalog.forLang(locale);
-        var item = inventoryService.findTakeableByName(playerId, objectName);
-        if (item.isEmpty()) {
-            try {
-                sendLine(catalog.get("telnet.give_not_found", objectName));
-                renderer.sendPrompt(currentRoomName, currentZoneLabel());
-            } catch (IOException ignored) {}
-            return;
-        }
-        var registry = EntityRegistry.get();
-        if (registry == null) {
-            try {
-                sendLine(catalog.get("telnet.give_target_not_here", targetName));
-                renderer.sendPrompt(currentRoomName, currentZoneLabel());
-            } catch (IOException ignored) {}
-            return;
-        }
-        var targetId = registry.findByName(targetName);
-        if (targetId.isEmpty()) {
-            try {
-                sendLine(catalog.get("telnet.give_target_not_here", targetName));
-                renderer.sendPrompt(currentRoomName, currentZoneLabel());
-            } catch (IOException ignored) {}
-            return;
-        }
-        var targetRoomId = registry.roomOf(targetId.get());
-        if (targetRoomId.isEmpty() || !targetRoomId.get().equals(currentRoomId)) {
-            try {
-                sendLine(catalog.get("telnet.give_target_not_here", targetName));
-                renderer.sendPrompt(currentRoomName, currentZoneLabel());
-            } catch (IOException ignored) {}
-            return;
-        }
-        var inv = item.get();
-        inventoryService.removeItem(playerId, inv.objectId());
-        inventoryService.addItem(targetId.get(), inv.objectId(), inv.objectName(),
-            inv.description(), inv.takeable(), currentRoomId);
+        var outcome = Giving.give(inventoryService, playerId, playerName, currentRoomId, objectName, targetName);
         try {
-            sendLine(catalog.get("telnet.give_success", objectName, targetName));
+            sendLine(switch (outcome.status()) {
+                case GIVEN -> catalog.get("telnet.give_success", outcome.itemName(), outcome.targetName());
+                case NOT_CARRIED -> catalog.get("telnet.give_not_found", objectName);
+                case NOT_HERE -> catalog.get("telnet.give_target_not_here", targetName);
+            });
             renderer.sendPrompt(currentRoomName, currentZoneLabel());
         } catch (IOException ignored) {}
     }

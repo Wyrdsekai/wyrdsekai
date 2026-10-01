@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.typesafe.config.ConfigFactory;
 import org.apache.pekko.actor.testkit.typed.javadsl.ActorTestKit;
 import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
@@ -206,6 +207,99 @@ class TheNamingRitualTest {
             .contains("\"the quiet light\"").contains("with no one else");
         assertThat(CompanionActor.bondNameLine("Ada", "Wyrd", null))
             .contains("has no name yet").contains("bond name Wyrd <the name>");
+    }
+
+    // ── her side: she offers a name with her own action, the person takes it ──
+
+    private BondNaming.Heard take() throws Exception {
+        var heard = new CompletableFuture<BondNaming.Heard>();
+        companion.tell(new CompanionActor.TakeOfferedBondName(ADA, "Ada", heard));
+        return heard.get(5, TimeUnit.SECONDS);
+    }
+
+    private Optional<String> awaitOffer(boolean expected) throws InterruptedException {
+        long until = System.currentTimeMillis() + 3000;
+        var found = BondNameStore.get().findOffer(SELF, ADA);
+        while (found.isPresent() != expected && System.currentTimeMillis() < until) {
+            Thread.sleep(50);
+            found = BondNameStore.get().findOffer(SELF, ADA);
+        }
+        return found;
+    }
+
+    @Test
+    void a_name_she_offers_waits_until_the_person_takes_it() throws Exception {
+        EntityRegistry.get().enter(ADA, "Ada", "player", ROOM_ID);
+        companion.tell(new CompanionActor.ForceBond(ADA, bondAt(Bond.BondDepth.SACRED)));
+        companion.tell(new CompanionActor.ForceBondRitual("Ada", "naming", "  the quiet   light "));
+        assertThat(awaitOffer(true)).contains("the quiet light");
+        assertThat(BondNameStore.get().find(SELF, ADA)).as("an offer is not yet the name").isEmpty();
+
+        assertThat(take()).isEqualTo(BondNaming.Heard.TAKEN);
+        var kept = BondNameStore.get().find(SELF, ADA);
+        assertThat(kept).isPresent();
+        assertThat(kept.get().name()).isEqualTo("the quiet light");
+        assertThat(kept.get().offeredBy()).as("the name was hers to offer").isEqualTo(SELF);
+        assertThat(BondNameStore.get().findOffer(SELF, ADA)).as("the offer is answered").isEmpty();
+        assertThat(asked).as("she is not asked about a name she offered herself").isEmpty();
+    }
+
+    @Test
+    void there_is_nothing_to_take_when_she_has_offered_nothing() throws Exception {
+        companion.tell(new CompanionActor.ForceBond(ADA, bondAt(Bond.BondDepth.SACRED)));
+        assertThat(take()).isEqualTo(BondNaming.Heard.NO_OFFER);
+        assertThat(BondNameStore.get().find(SELF, ADA)).isEmpty();
+    }
+
+    @Test
+    void she_cannot_offer_a_name_for_a_bond_that_is_not_sacred_or_not_hers() throws Exception {
+        EntityRegistry.get().enter(ADA, "Ada", "player", ROOM_ID);
+        companion.tell(new CompanionActor.ForceBond(ADA, bondAt(Bond.BondDepth.ITEM)));
+        companion.tell(new CompanionActor.ForceBondRitual("Ada", "naming", "the quiet light"));
+        companion.tell(new CompanionActor.ForceBondRitual("Nobody", "naming", "the quiet light"));
+        assertThat(take()).as("the actor has worked through both").isEqualTo(BondNaming.Heard.NOT_YET);
+        assertThat(BondNameStore.get().findOffer(SELF, ADA)).isEmpty();
+    }
+
+    @Test
+    void the_person_can_answer_her_offer_with_another_name() throws Exception {
+        EntityRegistry.get().enter(ADA, "Ada", "player", ROOM_ID);
+        companion.tell(new CompanionActor.ForceBond(ADA, bondAt(Bond.BondDepth.SACRED)));
+        companion.tell(new CompanionActor.ForceBondRitual("Ada", "naming", "the quiet light"));
+        assertThat(awaitOffer(true)).isPresent();
+        herAnswer = "yes";
+        assertThat(offer("riverbridge")).isEqualTo(BondNaming.Heard.OFFERED);
+        assertThat(awaitName(true).get().name()).isEqualTo("riverbridge");
+        assertThat(BondNameStore.get().findOffer(SELF, ADA)).as("her earlier offer is answered by the name").isEmpty();
+        assertThat(take()).isEqualTo(BondNaming.Heard.ALREADY_NAMED);
+    }
+
+    @Test
+    void her_other_bond_rituals_are_as_before() throws Exception {
+        EntityRegistry.get().enter(ADA, "Ada", "player", ROOM_ID);
+        companion.tell(new CompanionActor.ForceBond(ADA, bondAt(Bond.BondDepth.SACRED)));
+        companion.tell(new CompanionActor.ForceBondRitual("Ada", "affirm", ""));
+        assertThat(take()).isEqualTo(BondNaming.Heard.NO_OFFER);
+    }
+
+    @Test
+    void on_a_turn_with_that_person_she_sees_the_offer_she_made() {
+        assertThat(CompanionActor.bondNameLine("Ada", "Wyrd", null, "the quiet light"))
+            .contains("You offered one: \"the quiet light\"").contains("bond take Wyrd");
+        assertThat(CompanionActor.bondNameLine("Ada", "Wyrd", "riverbridge", "the quiet light"))
+            .as("a kept name is what she sees").contains("\"riverbridge\"").doesNotContain("the quiet light");
+    }
+
+    @Test
+    void her_action_can_say_who_it_is_for_and_what_name_she_offers() {
+        var tool = ActionToolBuilder.buildFromNames(List.of("bond_ritual")).get(0);
+        var params = (JsonNode) tool.function().parameters();
+        assertThat(params.path("properties").has("target")).isTrue();
+        assertThat(params.path("properties").has("name")).isTrue();
+        assertThat(params.path("properties").path("ritual_type").path("enum").toString()).contains("naming");
+        assertThat(params.path("required").toString()).contains("target");
+        var parsed = ActionParser.parse("{\"action\": \"bond_ritual\", \"target\": \"Ada\", \"ritual_type\": \"naming\", \"name\": \"the quiet light\"}");
+        assertThat(parsed).isEqualTo(new ActionParser.AgentAction.BondRitual("Ada", "naming", "the quiet light"));
     }
 
     @Test

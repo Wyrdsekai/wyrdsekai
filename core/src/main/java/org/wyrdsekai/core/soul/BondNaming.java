@@ -34,15 +34,18 @@ public final class BondNaming {
     public static final int MAX_NAME_CHARS = 60;
 
     /** What the companion's side said to an offer, before she decides. */
-    public enum Heard { OFFERED, NO_BOND, NOT_YET, ALREADY_NAMED, ASLEEP, DECIDING }
+    public enum Heard { OFFERED, NO_BOND, NOT_YET, ALREADY_NAMED, ASLEEP, DECIDING, NO_OFFER, TAKEN }
 
     private static final Pattern NAME = Pattern.compile("^name\\s+(\\S+)\\s+(\\S.*)$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern LINE = Pattern.compile("^bond(?:\\s+name\\s+\\S+\\s+\\S.*)?$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TAKE = Pattern.compile("^take\\s+(\\S+)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern LINE = Pattern.compile(
+        "^bond(?:\\s+name\\s+\\S+\\s+\\S.*|\\s+take\\s+\\S+)?$", Pattern.CASE_INSENSITIVE);
 
     private BondNaming() {}
 
     /**
-     * Whether a typed line is the verb: {@code bond} alone, or {@code bond name <companion> <name>}.
+     * Whether a typed line is the verb: {@code bond} alone, {@code bond name <companion> <name>}, or
+     * {@code bond take <companion>}.
      * Anything else that starts with the word is speech.
      */
     public static boolean isCommand(String line) {
@@ -56,18 +59,23 @@ public final class BondNaming {
     }
 
     /** A name as it is kept: one line, single spaces, no control characters. Null when nothing is left. */
-    static String clean(String raw) {
+    public static String clean(String raw) {
         if (raw == null) return null;
         var t = raw.replaceAll("\\p{Cntrl}", " ").replaceAll("\\s+", " ").strip();
         return t.isEmpty() ? null : t;
     }
 
-    /** {@code bond} (the person's bonds here) and {@code bond name <companion> <name>} (the offer). */
+    /**
+     * {@code bond} (the person's bonds here), {@code bond name <companion> <name>} (the person's
+     * offer) and {@code bond take <companion>} (taking the name the companion offered).
+     */
     public static String command(String personId, String personName, String args, String locale) {
         var text = ScriptMessageCatalog.forLang(lang(locale));
         if (personId == null || personId.isBlank()) return text.get("bond.sign_in");
         var rest = args == null ? "" : args.strip();
         if (rest.isEmpty()) return list(personId, text);
+        var take = TAKE.matcher(rest);
+        if (take.matches()) return take(personId, personName, take.group(1), text);
         var m = NAME.matcher(rest);
         if (!m.matches()) return text.get("bond.usage");
         var who = m.group(1);
@@ -93,6 +101,32 @@ public final class BondNaming {
             case ALREADY_NAMED -> text.get("bond.name.already", who);
             case ASLEEP -> text.get("bond.name.asleep", who);
             case DECIDING -> text.get("bond.name.deciding", who);
+            case NO_OFFER, TAKEN -> text.get("bond.name.not_heard", who);
+        };
+    }
+
+    /** Take the name the companion offered. */
+    private static String take(String personId, String personName, String who, ScriptMessageCatalog text) {
+        var entityId = ForgeRoomBridge.resolveCompanionEntity(who);
+        var companion = entityId == null ? null : ZoneGuardian.getCompanionRef(null, entityId);
+        if (companion == null) return text.get("bond.no_companion", who);
+        var heard = new CompletableFuture<Heard>();
+        companion.tell(new CompanionActor.TakeOfferedBondName(personId, personName, heard));
+        Heard answer;
+        try {
+            answer = heard.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return text.get("bond.name.not_heard", who);
+        }
+        log.info("Bond name taken from '{}' by {}: {}", who, personId, answer);
+        return switch (answer) {
+            case TAKEN -> text.get("bond.take.taken", who);
+            case NO_OFFER -> text.get("bond.take.no_offer", who);
+            case NO_BOND -> text.get("bond.name.no_bond", who);
+            case NOT_YET -> text.get("bond.name.not_yet", who);
+            case ALREADY_NAMED -> text.get("bond.name.already", who);
+            case OFFERED, ASLEEP, DECIDING -> text.get("bond.name.not_heard", who);
         };
     }
 
@@ -117,8 +151,10 @@ public final class BondNaming {
                 text.get("bond.depth." + b.depth().name().toLowerCase(Locale.ROOT)), String.valueOf(b.interactionCount()));
             if (b.depth().level() >= Bond.BondDepth.SACRED.level()) {
                 var named = BondNameStore.get().find(companionDid, me);
+                var offered = named.isPresent() ? null : BondNameStore.get().findOffer(companionDid, me).orElse(null);
                 line += named.map(n -> text.get("bond.list.named", n.name()))
-                    .orElseGet(() -> text.get("bond.list.unnamed", companion));
+                    .orElseGet(() -> offered != null ? text.get("bond.list.offered", companion, offered)
+                        : text.get("bond.list.unnamed", companion));
             }
             lines.add(line);
         }

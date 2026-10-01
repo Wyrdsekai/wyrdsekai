@@ -133,6 +133,7 @@ public final class SchemaInitializer {
         runMigration(conn, 16, "library_yes_reports", () -> LibraryYesReports.ensureTable(conn));
         runMigration(conn, 17, "library_yes_reports_asker", () -> LibraryYesReports.ensureAsker(conn));
         runMigration(conn, 18, "bond_names", () -> BondNameStore.ensureTable(conn));
+        runMigration(conn, 19, "bond_name_offers", () -> BondNameStore.ensureOffers(conn));
 
         // Retry deferred indexes after migrations
         for (var statement : cleaned.split(";")) {
@@ -157,7 +158,7 @@ public final class SchemaInitializer {
      * {@link DataVersion} so an OLDER binary opening a NEWER data dir can refuse
      * instead of silently mangling tables it doesn't understand. Append-only.
      */
-    public static final int SCHEMA_VERSION = 18;
+    public static final int SCHEMA_VERSION = 19;
 
     @FunctionalInterface
     private interface Migration { void run() throws SQLException; }

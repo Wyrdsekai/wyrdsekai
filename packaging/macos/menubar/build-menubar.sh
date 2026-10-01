@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-VERSION="${WYRDSEKAI_VERSION:-0.5.0}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.1}"
 
 OUT_DIR="$PROJECT_DIR/build/macos-app"
 APP="$OUT_DIR/Wyrdsekai.app"

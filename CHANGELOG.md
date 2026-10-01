@@ -4,6 +4,36 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.1] — 2026-09-30
+
+A small update to 0.5.0. It fixes four problems we found on the first day.
+
+### Added
+- **Your companion can suggest the name for your bond.** When a bond becomes sacred, your
+  companion asks for a shared name. Before, only you could suggest one. Now you can ask your
+  companion to pick a name, and it will. You get the suggestion as a private message, and `bond`
+  shows it. Type `bond take <companion>` to accept it, or `bond name <companion> <name>` to
+  suggest a different one.
+- **The morning check now tests real conversations.** After your companion learns from its day
+  each night, a check makes sure it still talks like itself. That check only asked a few fixed
+  questions. It missed the problem where replies ran on and on, because short questions never
+  did that. Now the check also replays your companion's last six real conversations with the
+  new learning switched on. If the replies run on, the night's learning is put aside. Only the
+  counts are saved, never the conversations.
+
+### Fixed
+- **Companions no longer sleep for an hour.** The last step of sleep goes over the day's moments,
+  and it got slower the longer your home computer ran without a restart. After one day, a
+  companion stayed asleep 17 minutes longer than it should. After a full day, it would have been
+  an hour. Now this step always takes about a minute.
+- **Giving your companion something now works.** `give <item> to <companion>` moved the item, but
+  nothing else happened. Nobody in the room saw it, and your companion was not told. In the
+  browser, the phone app, and the `wyrd` terminal, the words were just spoken out loud and
+  nothing was given. Now it works the same everywhere. The item changes hands, everyone in the
+  room sees it, and your companion remembers who gave it what.
+- **Your companion's bond ritual action now works.** The action was missing all its details, so
+  your companion could not say who the ritual was for. Now it can.
+
 ## [0.5.0] — 2026-09-30
 
 The main additions in this release:

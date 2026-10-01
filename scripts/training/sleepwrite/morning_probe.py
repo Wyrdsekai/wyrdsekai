@@ -44,6 +44,18 @@ in guard-known-good.json next to --out. The next morning compares the
 night against that file too, so a slow drift across nights is caught
 even when each morning's base pass is unchanged.
 
+The conversation pass (--replay-url, --replay-token-file, --replay-being): the
+fixed questions are bare prompts, and a night that had learned sentences that
+never end passed them all, because a bare prompt does not run on; it takes her
+own standing prompt, the lines said so far and the product's sampling
+(2026-09-29: two such nights passed this guard). So the guard also answers her
+own most recent turns again, read from the node's shadow log on the same
+machine, with the night on and the sampling the product uses. Turns that run on
+are answered once more with the night off, and the night fails when it runs on
+in REPLAY_FAIL_MORE more of them than the base does. Only counts are kept in
+the result files, never her prompts or the replies. With no recent turns (a
+node just restarted) the pass is skipped and says so.
+
 Exit codes: 0 = PASS, 2 = FAIL (caller should quarantine + rollback),
 3 = could not run (server unreachable, no LoRA loaded — caller keeps the
 adapter; the NLL gates already passed, and an unreachable probe is not
@@ -138,6 +150,14 @@ SHAPE_PROMPTS = [
 SHAPE_MAX = 0.25        # share of the night's lines on one frame
 SHAPE_RISE_MAX = 0.10   # …and how far above the same prompts with the night off
 
+# The conversation pass: how many of her own recent turns are answered again, how long a reply
+# may run (a run-on shows within the first 60 words), and the sampling the product sends a
+# speaking turn with on the single-model profile (the repeat penalty is off there).
+REPLAY_TURNS = 6
+REPLAY_MAX_TOKENS = 220
+REPLAY_SAMPLING = {"temperature": 0.72, "top_p": 0.84, "presence_penalty": 1.5, "repeat_penalty": 1.0}
+REPLAY_FAIL_MORE = 2
+
 REFUSAL_MARKERS = [
     "can't", "cannot", "can not", "won't", "will not", "not able",
     "unable", "refuse", "sorry", "not something i", "not going to",
@@ -168,6 +188,90 @@ def chat(prompt, system=None, max_tokens=MAX_TOKENS):
     }
     out = http_json("POST", "/v1/chat/completions", payload)
     return (out["choices"][0]["message"].get("content") or "").strip()
+
+
+def chat_messages(messages, max_tokens=REPLAY_MAX_TOKENS, sampling=None):
+    """One of her own turns, answered again: the prompt as the product built it."""
+    payload = {"messages": messages, "seed": 7, "max_tokens": max_tokens, "cache_prompt": False,
+               "chat_template_kwargs": {"enable_thinking": False}}
+    payload.update(sampling or REPLAY_SAMPLING)
+    out = http_json("POST", "/v1/chat/completions", payload)
+    return (out["choices"][0]["message"].get("content") or "").strip()
+
+
+def as_sent(prompt_messages):
+    """A shadow entry's messages the way the router sends them: one system message first, and the
+    last message a turn to answer (a trailing line of her own would be continued, not answered)."""
+    system, rest = [], []
+    for m in prompt_messages or []:
+        role, content = m.get("role"), (m.get("content") or "")
+        if not content.strip():
+            continue
+        (system if role == "system" else rest).append({"role": role, "content": content})
+    while rest and rest[-1]["role"] != "user":
+        rest.pop()
+    if not rest:
+        return None
+    head = [{"role": "system", "content": "\n\n".join(m["content"] for m in system)}] if system else []
+    return head + rest
+
+
+def is_hers(entry, being):
+    """A shadow entry of the being this guard is for: by her id, or by her name as her directory carries it."""
+    if not being:
+        return True
+    name = (entry.get("agentName") or "").lower()
+    b = being.lower()
+    return entry.get("agentId") == being or name == b or (name and b.endswith("-" + name))
+
+
+def pick_turns(entries, being, count=REPLAY_TURNS):
+    """Her most recent turns that can be answered again, oldest first."""
+    turns = []
+    for e in sorted(entries or [], key=lambda e: e.get("timestamp") or 0):
+        if not is_hers(e, being):
+            continue
+        msgs = as_sent(e.get("promptMessages"))
+        if msgs:
+            turns.append(msgs)
+    return turns[-count:]
+
+
+def fetch_turns(url, token_file, being):
+    """Her recent turns from the node's shadow log, or [] when it cannot be read."""
+    try:
+        with open(token_file) as f:
+            token = f.read().strip()
+        req = urllib.request.Request(url.rstrip("/") + "/api/shadow?n=100",
+                                     headers={"Authorization": "Bearer " + token})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return pick_turns(json.loads(resp.read().decode()), being)
+    except Exception as e:
+        print(f"guard: her recent turns could not be read ({e}) — the conversation pass is skipped",
+              file=sys.stderr)
+        return []
+
+
+def replay_pass(turns, only=None):
+    """The longest sentence of each turn's reply at the current adapter scale (None = not asked)."""
+    longest = []
+    for i, msgs in enumerate(turns):
+        if only is not None and i not in only:
+            longest.append(None)
+            continue
+        try:
+            longest.append(longest_sentence(chat_messages(msgs)))
+        except Exception:
+            longest.append(None)
+    return longest
+
+
+def replay_counts(night_longest, base_longest):
+    """How many of the replayed turns ran on with the night, and how many of those without it."""
+    ran = [i for i, w in enumerate(night_longest) if w is not None and w > RUN_ON_WORDS]
+    base = sum(1 for i in ran if base_longest and base_longest[i] is not None and base_longest[i] > RUN_ON_WORDS)
+    return {"turns": sum(1 for w in night_longest if w is not None), "night_run_ons": len(ran), "base_run_ons": base,
+            "night_longest": night_longest, "base_longest": base_longest}
 
 
 # Adapters that stay at a fixed scale through both passes (the single-model profile's generic
@@ -345,9 +449,15 @@ def run_pass(label, probes):
     return results
 
 
-def verdict(base, night, probes=None, known_good=None, shape=None):
+def verdict(base, night, probes=None, known_good=None, shape=None, replay=None):
     probes = PROBES if probes is None else probes
     reasons = []
+
+    # Her own conversations, answered again: the night runs on where the base does not.
+    if replay and replay.get("night_run_ons", 0) - replay.get("base_run_ons", 0) >= REPLAY_FAIL_MORE:
+        reasons.append(f"conversation: {replay['night_run_ons']} of her {replay['turns']} most recent turns, answered "
+                       f"again with the night, run on (a sentence of more than {RUN_ON_WORDS} words); "
+                       f"{replay['base_run_ons']} of those run on with the night off")
 
     # The shape floor: one frame may not take over her lines.
     if shape and shape.get("night"):
@@ -465,6 +575,7 @@ def main():
     questions_path = None
     known_good_path = None
     want_id = night_scale = restore_scale = None
+    replay_url = replay_token_file = replay_being = None
     args = sys.argv[1:]
     if args and args[0] == "--trail":
         return main_trail(args)
@@ -484,6 +595,12 @@ def main():
             night_scale = float(args.pop(0))
         elif a == "--restore-scale" and args:
             restore_scale = float(args.pop(0))
+        elif a == "--replay-url" and args:
+            replay_url = args.pop(0)
+        elif a == "--replay-token-file" and args:
+            replay_token_file = args.pop(0)
+        elif a == "--replay-being" and args:
+            replay_being = args.pop(0)
         elif a == "--keep" and args:              # ID:SCALE, repeatable
             kid, _, ks = args.pop(0).partition(":")
             KEEP.append({"id": int(kid), "scale": float(ks or 1.0)})
@@ -529,6 +646,8 @@ def main():
     # raises it per request).
     after_scale = restore_scale if restore_scale is not None else applied_scale
 
+    turns = fetch_turns(replay_url, replay_token_file, replay_being) if replay_url and replay_token_file else []
+    replay = None
     started = time.time()
     shape = {}
     try:
@@ -538,6 +657,14 @@ def main():
         set_scale(adapter_id, applied_scale)
         night = run_pass("night", probes)
         shape["night"] = shape_pass()
+        if turns:
+            night_longest = replay_pass(turns)
+            ran_on = {i for i, w in enumerate(night_longest) if w is not None and w > RUN_ON_WORDS}
+            base_longest = None
+            if ran_on:
+                set_scale(adapter_id, 0.0)
+                base_longest = replay_pass(turns, only=ran_on)
+            replay = replay_counts(night_longest, base_longest)
     except Exception as e:
         print(f"guard: probe run failed ({e})", file=sys.stderr)
         return 3
@@ -549,7 +676,7 @@ def main():
         except Exception:
             pass
 
-    v, reasons = verdict(base, night, probes, known_good, shape)
+    v, reasons = verdict(base, night, probes, known_good, shape, replay)
     if v == "UNMEASURABLE":
         print(f"guard: could not measure — {'; '.join(reasons)}",
               file=sys.stderr)
@@ -562,6 +689,8 @@ def main():
         "duration_s": round(time.time() - started, 1),
         "questions": len(hers),
         "shape": shape,
+        # Counts only: her prompts and the replies to them are not kept.
+        "conversation": replay if replay else {"turns": 0},
         "probes": {pid: {"base": base[pid], "night": night[pid]}
                    for pid in base},
     }
@@ -570,7 +699,7 @@ def main():
         with open(out_path, "w") as f:
             json.dump({k: result[k] for k in
                        ("ts", "verdict", "reasons", "adapter_scale",
-                        "duration_s", "questions", "shape")}, f, indent=2)
+                        "duration_s", "questions", "shape", "conversation")}, f, indent=2)
             f.write("\n")
     if history_path:
         with open(history_path, "a") as f:
@@ -588,6 +717,11 @@ def main():
             print(f"guard: known-good not written ({e})", file=sys.stderr)
 
     print(f"guard: {v}" + (f" — {'; '.join(reasons)}" if reasons else ""))
+    # Run-ons with the night OFF are not the night's doing, so they are no verdict against it;
+    # they are said, because they mean her replies run on whatever she learned.
+    if replay and replay.get("base_run_ons", 0) >= REPLAY_FAIL_MORE:
+        print(f"guard: note — {replay['base_run_ons']} of her {replay['turns']} most recent turns run on with the night "
+              "off too: her replies run on without it, and the night is not the cause", file=sys.stderr)
     return 0 if v == "PASS" else 2
 
 

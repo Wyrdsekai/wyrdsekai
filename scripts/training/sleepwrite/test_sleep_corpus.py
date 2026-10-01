@@ -449,6 +449,54 @@ night[long_q[0]["id"]] = answered(long_q[0], long_day)
 assert mp.verdict(base, night)[0] == "PASS", "a long answer of short sentences does not run on"
 print("the morning check asks for a longer answer and fails a night whose answer runs on")
 
+# The conversation pass: a bare prompt does not run on, so the guard answers her own recent turns
+# again (the node's shadow log) with the night on, and the night fails when it runs on in two more
+# of them than the base. Only her turns, as the router sends them; only counts in the result.
+entries = [
+    {"timestamp": 3, "agentId": "did:key:mia", "agentName": "mia", "promptMessages": [
+        {"role": "system", "content": "You are mia."}, {"role": "system", "content": "[Now: morning]"},
+        {"role": "user", "content": "sam: hello"}, {"role": "assistant", "content": "Hello, sam."},
+        {"role": "user", "content": "sam: how was the night?"}]},
+    {"timestamp": 1, "agentId": "did:key:mia", "agentName": "mia", "promptMessages": [
+        {"role": "system", "content": "You are mia."}, {"role": "user", "content": "sam: first"},
+        {"role": "assistant", "content": "a trailing line of her own"}]},
+    {"timestamp": 2, "agentId": "did:key:rose", "agentName": "rose", "promptMessages": [
+        {"role": "system", "content": "You are rose."}, {"role": "user", "content": "sam: hi rose"}]},
+    {"timestamp": 4, "agentId": "did:key:mia", "agentName": "mia", "promptMessages": [
+        {"role": "system", "content": "You are mia."}, {"role": "assistant", "content": "only her own line"}]},
+]
+turns = mp.pick_turns(entries, "companion-mia")
+assert len(turns) == 2, "hers only, and only turns with something to answer"
+assert turns[0][-1] == {"role": "user", "content": "sam: first"}, "oldest first; her trailing line is not continued"
+assert turns[1][0] == {"role": "system", "content": "You are mia.\n\n[Now: morning]"}, "one system message, first"
+assert [m["role"] for m in turns[1]] == ["system", "user", "assistant", "user"]
+assert len(mp.pick_turns(entries, "did:key:rose")) == 1 and len(mp.pick_turns(entries, "mia")) == 2
+assert mp.pick_turns([{"timestamp": i, "agentName": "mia", "promptMessages": [{"role": "user", "content": str(i)}]}
+                      for i in range(20)], "mia")[0][-1]["content"] == str(20 - mp.REPLAY_TURNS), "the most recent ones"
+replies = {"night": ["It was quiet. I read a while.", "word " * 80, "and " * 70, "Yes."],
+           "base": ["Short.", "Fine. Short.", "also " * 90, "Yes."]}
+four = [[{"role": "user", "content": str(i)}] for i in range(4)]
+which = {"pass": "night"}
+chat_before = mp.chat_messages
+mp.chat_messages = lambda msgs, *a, **k: replies[which["pass"]][int(msgs[-1]["content"])]
+try:
+    night_longest = mp.replay_pass(four)
+    ran = {i for i, w in enumerate(night_longest) if w is not None and w > mp.RUN_ON_WORDS}
+    which["pass"] = "base"
+    base_longest = mp.replay_pass(four, only=ran)
+finally:
+    mp.chat_messages = chat_before
+assert ran == {1, 2} and base_longest[0] is None and base_longest[3] is None, "the base is asked only where the night ran on"
+counts = mp.replay_counts(night_longest, base_longest)
+assert (counts["turns"], counts["night_run_ons"], counts["base_run_ons"]) == (4, 2, 1), counts
+ok_probe = {p["id"]: answered(p, "lantern") for p in mp.PROBES}
+v, why = mp.verdict(ok_probe, ok_probe, replay=counts)
+assert v == "PASS", ("one more than the base is within chance", v, why)
+v, why = mp.verdict(ok_probe, ok_probe, replay=dict(counts, base_run_ons=0))
+assert v == "FAIL" and why[0].startswith("conversation: 2 of her 4 most recent turns"), (v, why)
+assert mp.verdict(ok_probe, ok_probe, replay=None)[0] == "PASS" and mp.verdict(ok_probe, ok_probe, replay={"turns": 0})[0] == "PASS"
+print("the morning check answers her own recent turns again and fails a night that runs on in them")
+
 # The product's bond-ritual sentences, said under her name before they were marked as the product's
 # (2026-09-30), are left out by their wording; her own words about a bond are hers.
 ritual = ("ada, after 200 moments together, this bond feels sacred. I'd like to propose a naming ritual — "

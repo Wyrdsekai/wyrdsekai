@@ -927,7 +927,11 @@ public final class ActionParser {
         record ReadJournal(String playerId, String query) implements AgentAction {}
 
         /** Agent initiates or advances a bond ritual with another entity. */
-        record BondRitual(String targetName, String ritualType) implements AgentAction {}
+        record BondRitual(String targetName, String ritualType, String name) implements AgentAction {
+            public BondRitual(String targetName, String ritualType) {
+                this(targetName, ritualType, "");
+            }
+        }
 
         /** Agent initiates an economic trade via CountingHouse. */
         record Trade(String targetName, String offer, String request) implements AgentAction {}
@@ -2129,7 +2133,7 @@ public final class ActionParser {
                     String bondTarget = node.path("target").asText("");
                     String ritualType = node.path("ritual_type").asText("initiate");
                     if (!bondTarget.isBlank()) {
-                        primaryAction = new AgentAction.BondRitual(bondTarget, ritualType);
+                        primaryAction = new AgentAction.BondRitual(bondTarget, ritualType, node.path("name").asText(""));
                     }
                 }
 

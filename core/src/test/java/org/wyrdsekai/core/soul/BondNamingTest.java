@@ -15,6 +15,10 @@ class BondNamingTest {
         assertThat(BondNaming.isCommand("  Bond  ")).isTrue();
         assertThat(BondNaming.isCommand("bond name mia lantern")).isTrue();
         assertThat(BondNaming.isCommand("BOND NAME mia the quiet light ✶")).isTrue();
+        assertThat(BondNaming.isCommand("bond take mia")).isTrue();
+        assertThat(BondNaming.argsOf("bond take mia")).isEqualTo("take mia");
+        assertThat(CommandParser.parse("bond take mia")).isEqualTo(new ParsedCommand.Bond("take mia"));
+        assertThat(BondNaming.isCommand("bond take")).as("take from whom").isFalse();
         assertThat(BondNaming.argsOf("bond")).isEmpty();
         assertThat(BondNaming.argsOf("bond name mia the quiet light")).isEqualTo("name mia the quiet light");
     }

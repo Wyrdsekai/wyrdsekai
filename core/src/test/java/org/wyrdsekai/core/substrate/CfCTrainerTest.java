@@ -232,4 +232,30 @@ class CfCTrainerTest {
         float avgLoss = trainer.consolidate(traces, 0.001f, 1.0f);
         assertThat(avgLoss).isFinite();
     }
+
+    // A trace is recorded every second she is awake and each costs a forward pass per parameter:
+    // a day without a restart kept her asleep 17 minutes after the night's write (2026-09-30).
+
+    @Test
+    void aLongDayIsReplayedAsABoundedEvenlySpreadPartOfIt() {
+        var day = new ArrayList<Integer>();
+        for (int i = 0; i < 25_691; i++) day.add(i);
+        var replay = CfCTrainer.evenly(day, CfCTrainer.MAX_REPLAY);
+        assertThat(replay).hasSize(CfCTrainer.MAX_REPLAY);
+        assertThat(replay.get(0)).as("from the first moment").isEqualTo(0);
+        assertThat(replay.get(replay.size() - 1)).as("to the last").isEqualTo(25_690);
+        assertThat(replay).as("in the order they happened").isSorted().doesNotHaveDuplicates();
+        int widest = 0;
+        for (int i = 1; i < replay.size(); i++) widest = Math.max(widest, replay.get(i) - replay.get(i - 1));
+        assertThat(widest).as("no stretch of the day left out").isLessThanOrEqualTo(18);
+    }
+
+    @Test
+    void aShortDayIsReplayedWhole() {
+        var day = List.of(1, 2, 3, 4, 5);
+        assertThat(CfCTrainer.evenly(day, CfCTrainer.MAX_REPLAY)).isSameAs(day);
+        assertThat(CfCTrainer.evenly(day, 5)).isSameAs(day);
+        assertThat(CfCTrainer.evenly(day, 3)).containsExactly(1, 3, 5);
+        assertThat(CfCTrainer.evenly(day, 1)).containsExactly(1);
+    }
 }

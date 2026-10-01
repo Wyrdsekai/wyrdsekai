@@ -15215,9 +15215,13 @@ _do_sleepwrite_brain() {
 m = "/brainwrite/" + sys.argv[1] + "/"
 print(next((a["id"] for a in json.load(sys.stdin) if m in a.get("path", "")), ""))' "$being" 2>/dev/null || true)
         if [[ -z "$aid" ]]; then warn "$(_t sleepwrite.being.not_loaded "$being")"; return 3; fi
+        # Her own recent turns, answered again with the night: the fixed questions are bare
+        # prompts and cannot show a night that runs on in conversation.
         LLAMA_VOICE_PORT="$port" python3 "$probe" --out "$sw_dir/guard-last.json" \
             --history "$sw_dir/guard-history.jsonl" --adapter-id "$aid" --keep 0:1.0 \
-            --night-scale "$scale" --restore-scale 0.0
+            --night-scale "$scale" --restore-scale 0.0 \
+            --replay-url "http://127.0.0.1:${WYRDSEKAI_PORT:-7070}" \
+            --replay-token-file "$DATA_DIR/operator.token" --replay-being "$being"
     }
     case "${1:-status}" in
         status)

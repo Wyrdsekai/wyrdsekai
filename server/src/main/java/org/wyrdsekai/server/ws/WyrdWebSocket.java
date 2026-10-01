@@ -115,6 +115,7 @@ import java.util.function.Function;
 import java.time.Clock;
 import org.wyrdsekai.core.identity.PersonIds;
 import org.wyrdsekai.core.library.LibraryConsent;
+import org.wyrdsekai.core.item.Giving;
 import org.wyrdsekai.core.mail.JournalSurface;
 import org.wyrdsekai.core.soul.BondNaming;
 import org.wyrdsekai.core.mail.MailSurface;
@@ -1267,6 +1268,19 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                     sendProse(sessionRef, "system", LibraryConsent.researchYes(playerId, locale));
                     return;
                 }
+                // "give <item> to <who>": the terminal client, the browser and the phone send it as a
+                // say. It is a gift when the person carries the item and the other is in the room;
+                // otherwise the words are said, as any sentence that starts with "give" is.
+                var gift = Giving.parse(say.text());
+                if (gift != null) {
+                    var outcome = Giving.give(inventoryService, playerId,
+                        sessionPlayerNames.getOrDefault(sessionId, "player"), currentRoomId, gift[0], gift[1]);
+                    if (outcome.status() == Giving.Status.GIVEN) {
+                        sendProse(sessionRef, "system", ScriptMessageCatalog.forLang(locale)
+                            .get("telnet.give_success", outcome.itemName(), outcome.targetName()));
+                        return;
+                    }
+                }
                 // "bond" and "bond name <companion> <name>" are the person's own verb too, not speech.
                 if (BondNaming.isCommand(say.text())) {
                     sendProse(sessionRef, "system", BondNaming.command(playerId,
@@ -2004,6 +2018,24 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             }
             case "journal" -> {
                 handleJournal(sessionRef, playerId, cmd.args());
+                return;
+            }
+            case "give" -> {
+                // "give <item> to <who>" as a command: the gift, or why it could not be given.
+                var gargs = cmd.args() != null ? cmd.args() : List.<String>of();
+                var gift = Giving.parse(("give " + String.join(" ", gargs)).strip());
+                var gcatalog = ScriptMessageCatalog.forLang(locale);
+                if (gift == null) {
+                    sendProse(sessionRef, "system", gcatalog.get("give.usage"));
+                    return;
+                }
+                var outcome = Giving.give(inventoryService, playerId,
+                    sessionPlayerNames.getOrDefault(sessionId, "player"), currentRoomId, gift[0], gift[1]);
+                sendProse(sessionRef, "system", switch (outcome.status()) {
+                    case GIVEN -> gcatalog.get("telnet.give_success", outcome.itemName(), outcome.targetName());
+                    case NOT_CARRIED -> gcatalog.get("telnet.give_not_found", gift[0]);
+                    case NOT_HERE -> gcatalog.get("telnet.give_target_not_here", gift[1]);
+                });
                 return;
             }
             case "bond" -> {

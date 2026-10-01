@@ -197,12 +197,24 @@ it in the world, on any surface:
 ```
 bond                            your bonds with this home's companions
 bond name <companion> <name>    offer a name for a sacred bond
+bond take <companion>           take the name the companion offered
 ```
 
 The companion is asked, as itself, whether it takes the name. If it does, the
 name is kept, and the companion answers aloud where it is. If it would rather
 have another, it says so and nothing is kept; offer a different one. A name is
 up to 60 characters and is given once.
+
+The companion can go first. It can offer a name of its own with its bond ritual
+action, for example when you ask it to choose. The room sees that it offered
+one; the name reaches you as a private notice, and `bond` shows it. Take it
+with `bond take <companion>`, or answer with another through `bond name`.
+
+**Exchanging a token.** At the `ITEM` depth the companion offers to exchange
+something small. Hand it something you carry with `give <item> to <companion>`,
+on any surface, while you are in the same room. The room sees the gift change
+hands and the companion remembers who gave it what. A companion gives with its
+own give action.
 
 The name stays between the two of you. `bond` shows it only to you. The
 companion sees it only when it is answering you. The chapel's bond reliquary

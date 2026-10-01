@@ -45,6 +45,13 @@ public final class ActionSchemas {
             new FieldDef("exits", false, "array"),
             new FieldDef("behavior_script", false, "string")
         )),
+        // bond_ritual was offered with no fields declared, so a tool call could not say who the
+        // ritual was for (2026-09-30).
+        Map.entry("bond_ritual", List.of(
+            new FieldDef("target", true, "string"),
+            new FieldDef("ritual_type", false, "string"),
+            new FieldDef("name", false, "string")
+        )),
         Map.entry("tell_agent", List.of(
             new FieldDef("target", true, "string"),
             new FieldDef("message", true, "string")

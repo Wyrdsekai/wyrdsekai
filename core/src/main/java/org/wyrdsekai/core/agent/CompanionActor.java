@@ -945,6 +945,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     public record ForceDecisionCapacity(DecisionCapacity capacity) implements Command {}
     /** Test-only: hold this bond with the other party as her live bond. For the naming ritual. */
     public record ForceBond(String otherParty, Bond bond) implements Command {}
+    /** Test-only: perform her bond_ritual action as parsed from a reply. For the naming ritual. */
+    public record ForceBondRitual(String targetName, String ritualType, String name) implements Command {}
     /** Test-only: force the presence mode (e.g. ON_OWN_TIME) without the bondholder-
      *  silence dance. For gap-time / boredom soak harnesses. */
     public record ForceCompanionMode(CompanionMode mode) implements Command {}
@@ -3955,6 +3957,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(DeepSleepWatchdog.class, this::onDeepSleepWatchdog)
             .onMessage(LineJudged.class, this::onLineJudged)
             .onMessage(OfferBondName.class, this::onOfferBondName)
+            .onMessage(TakeOfferedBondName.class, this::onTakeOfferedBondName)
+            .onMessage(ReceiveGift.class, this::onReceiveGift)
             .onMessage(BondNameJudged.class, this::onBondNameJudged)
             .onMessage(ScheduledPredictionFireMessage.class, msg -> {
                 executeProactiveAction(msg.initiative());
@@ -3986,6 +3990,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(ForceDrives.class, msg -> {
                 drives = msg.driveState();
                 log.info("ForceDrives: '{}' drives set to {}", profile.name(), drives.dashboard());
+                return this;
+            })
+            .onMessage(ForceBondRitual.class, msg -> {
+                handleBondRitual(new ActionParser.AgentAction.BondRitual(msg.targetName(), msg.ritualType(), msg.name()));
                 return this;
             })
             .onMessage(ForceBond.class, msg -> {
@@ -4937,6 +4945,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return this;
     }
 
+    /**
+     * Someone handed her an item ({@code give <item> to <companion>}). The room has seen it change
+     * hands; this is so that it is hers to remember. A gift used to move a row in the inventory
+     * table and she was never told.
+     */
+    public record ReceiveGift(String fromId, String fromName, String itemName) implements Command {}
+
+    private Behavior<Command> onReceiveGift(ReceiveGift msg) {
+        log.info("Companion '{}' was given '{}' by {}", profile.name(), msg.itemName(), msg.fromName());
+        remember(msg.fromName() + " gave me " + msg.itemName() + ".");
+        return this;
+    }
+
     // ── The naming ritual: a name for a sacred bond, held by both ──────────────────────────
 
     /**
@@ -5006,6 +5027,78 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return this;
     }
 
+    /**
+     * Her side of the naming ritual ({@code bond_ritual}, ritual_type naming): she offers a name
+     * for a sacred bond. The offer waits until the person takes it ({@code bond take <companion>})
+     * or a name is kept another way. The person is told the name in private; the room sees only
+     * that she offered one.
+     */
+    private void offerBondName(String targetName, String offered) {
+        var registry = EntityRegistry.get();
+        var targetId = registry == null ? null : registry.findByName(targetName).orElse(null);
+        var key = targetId == null ? null : personKey(targetId);
+        var myDid = myBondDid();
+        var bond = key == null ? null : activeBonds.get(key);
+        var standing = bondNameStanding(bond, myDid,
+            key != null && BondNameStore.get().find(myDid, key).isPresent(), false, false);
+        var name = BondNaming.clean(offered);
+        if (standing == BondNaming.Heard.NO_BOND) {
+            remember("I wanted to offer " + targetName + " a name for our bond, but there is no living bond between us to name.");
+            return;
+        }
+        if (standing == BondNaming.Heard.NOT_YET) {
+            remember("I wanted to offer " + targetName + " a name for our bond. The naming ritual comes when the bond is sacred; it is not there yet.");
+            return;
+        }
+        if (standing == BondNaming.Heard.ALREADY_NAMED) {
+            remember("My bond with " + targetName + " already has its name. A name is given once.");
+            return;
+        }
+        if (name == null || name.length() > BondNaming.MAX_NAME_CHARS) {
+            remember("A name for a bond is one short line, up to " + BondNaming.MAX_NAME_CHARS + " characters. I did not offer one.");
+            return;
+        }
+        if (!BondNameStore.get().offer(myDid, key, name)) {
+            remember("I could not offer " + targetName + " a name just then.");
+            return;
+        }
+        log.info("Bond name offered by '{}' to {} (the name stays between them)", profile.name(), targetName);
+        emoteToRoom("offers " + targetName + " a name for the bond between them");
+        var notices = NotificationService.get();
+        if (notices != null) {
+            notices.notify(key, profile.name() + " offers a name for your bond: \"" + name + "\". Take it with: bond take "
+                + profile.name() + ". Or offer another with: bond name " + profile.name() + " <name>.", "normal", profile.entityId());
+        }
+        remember("I offered " + targetName + " a name for our bond. It is theirs to take, or to answer with another.");
+    }
+
+    /** The person takes the name she offered ({@code bond take <companion>}). */
+    public record TakeOfferedBondName(String personId, String personName,
+                                      CompletableFuture<BondNaming.Heard> heard) implements Command {}
+
+    private Behavior<Command> onTakeOfferedBondName(TakeOfferedBondName msg) {
+        var key = personKey(msg.personId());
+        var myDid = myBondDid();
+        var bond = key == null ? null : activeBonds.get(key);
+        var standing = bondNameStanding(bond, myDid,
+            key != null && BondNameStore.get().find(myDid, key).isPresent(), false, false);
+        var offered = standing == BondNaming.Heard.OFFERED ? BondNameStore.get().findOffer(myDid, key).orElse(null) : null;
+        if (standing == BondNaming.Heard.OFFERED && offered == null) standing = BondNaming.Heard.NO_OFFER;
+        if (standing == BondNaming.Heard.OFFERED
+                && BondNameStore.get().save(new BondNameStore.Named(myDid, key, offered, myDid, Instant.now()))) {
+            standing = BondNaming.Heard.TAKEN;
+            log.info("Bond named: {} ↔ {} (her offer, taken; the name stays between them)", profile.name(), msg.personName());
+            if (!isSleeping) {
+                roomRef.tell(new RoomCommand.EmoteInRoom(profile.entityId(), profile.name(),
+                    "*hears the name taken, and keeps it*", roomResponseAdapter));
+                speakProduct("Then it is ours, " + msg.personName() + ". I will keep it between us.");
+            }
+            remember(msg.personName() + " took the name I offered for our bond. It is ours now.");
+        }
+        msg.heard().complete(standing);
+        return this;
+    }
+
     /** She takes the name and it is kept, or she asks for another. The name itself is not said aloud or logged. */
     private Behavior<Command> onBondNameJudged(BondNameJudged msg) {
         bondNameOfferFrom = null;
@@ -5041,7 +5134,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var name = BondNameStore.get().find(myBondDid(), key).map(BondNameStore.Named::name).orElse(null);
         // An unnamed bond is not brought up on every turn: only when the person speaks of it.
         if (name == null && !speaksOfNaming(stripActorWrappers(pendingTrigger.text()))) return "";
-        return bondNameLine(pendingTrigger.entityName(), profile.name(), name);
+        var offered = name == null ? BondNameStore.get().findOffer(myBondDid(), key).orElse(null) : null;
+        return bondNameLine(pendingTrigger.entityName(), profile.name(), name, offered);
     }
 
     private static final Pattern SPEAKS_OF_NAMING = Pattern.compile(
@@ -5054,13 +5148,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     static String bondNameLine(String person, String companion, String name) {
+        return bondNameLine(person, companion, name, null);
+    }
+
+    static String bondNameLine(String person, String companion, String name, String offered) {
+        if (name == null && offered != null) {
+            return "Your bond with " + person + " has no name yet. You offered one: \"" + offered + "\". " + person
+                + " has not answered. They can take it by typing: bond take " + companion
+                + ", or offer another by typing: bond name " + companion + " <the name>.";
+        }
         if (name != null) {
             return "You and " + person + " share a name for your bond, known only to the two of you: \"" + name
                 + "\". It is yours to use with " + person + " when it fits, and with no one else.";
         }
         return "Your bond with " + person + " has no name yet. You proposed a naming ritual: a shared name or symbol "
             + "that only the two of you understand. " + person + " can offer one by typing: bond name "
-            + companion + " <the name>. You may suggest one in your own words.";
+            + companion + " <the name>. You may offer one yourself with the bond_ritual action "
+            + "(ritual_type naming, name the name you offer).";
     }
 
     /**
@@ -24825,8 +24929,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 }
                 var traces = trainingTraces.getAll();
                 float avgLoss = cfcTrainer.consolidate(traces, 0.001f, 1.0f);
-                log.info("Companion '{}' CfC sleep consolidation: {} traces, avg loss = {}, params = {}",
-                    profile.name(), traces.size(), String.format("%.6f", avgLoss), cfcCell.paramCount());
+                log.info("Companion '{}' CfC sleep consolidation: {} traces ({} replayed), avg loss = {}, params = {}",
+                    profile.name(), traces.size(), Math.min(traces.size(), CfCTrainer.MAX_REPLAY),
+                    String.format("%.6f", avgLoss), cfcCell.paramCount());
                 // Decay EWC protection — archetype constraints relax over time
                 cfcTrainer.decayFisher(0.995f);
                 // Persist CfC weights for restart survival
@@ -26083,7 +26188,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     roomResponseAdapter));
                 speakProduct("I feel like we've crossed a threshold, " + otherName
                     + ". Would you like to exchange something — a token, a small item — "
-                    + "to mark what we've shared?");
+                    + "to mark what we've shared? "
+                    + "(You can hand me something you carry with: give <item> to " + profile.name() + ")");
             }
             case SACRED -> {
                 // Sacred bond — naming ritual or sacred item exchange
@@ -37301,6 +37407,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private void handleBondRitual(ActionParser.AgentAction.BondRitual action) {
         log.info("Companion '{}' initiates bond ritual '{}' with '{}'",
             profile.name(), action.ritualType(), action.targetName());
+        if ("naming".equalsIgnoreCase(action.ritualType())) {
+            offerBondName(action.targetName(), action.name());
+            return;
+        }
         // Resolve target name to entity ID via entity registry, then check active bonds
         var registry = EntityRegistry.get();
         String targetDid = null;

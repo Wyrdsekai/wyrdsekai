@@ -3,6 +3,7 @@ package org.wyrdsekai.core.substrate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -10,11 +11,15 @@ import java.util.List;
  * Pure Java trainer for CfC cell. Implements forward + numerical gradient + Adam + EWC.
  *
  * <p>Used during Forge sleep consolidation to update the agent's CfC drive engine
- * from the day's behavioral traces. ~22ms for 1000 traces on CPU.
+ * from the day's behavioral traces.
  *
  * <p>Gradient computation uses finite differences (numerical) rather than analytical
- * backprop. For ~4,800 parameters this takes ~5ms per trace but is simpler and
- * correct by construction. Analytical backprop can be added later if needed.
+ * backprop: one forward pass per parameter, per trace. It is simple and correct by
+ * construction, and it is slow: about 40 ms a trace for 5,976 parameters (household node,
+ * 2026-09-30). A trace is recorded every second she is awake, so a day without a restart
+ * kept her asleep for a long time after the night's write: 25,691 traces took 17 minutes,
+ * and a full day would take an hour. {@link #consolidate} therefore replays at most
+ * {@link #MAX_REPLAY} of the day's traces, spread evenly across it.
  *
  * <p>EWC (Elastic Weight Consolidation) protects archetype identity by penalizing
  * changes to important weights.
@@ -118,6 +123,19 @@ public class CfCTrainer {
     private static final float DOWNREGULATION_THRESHOLD = 0.9f;
     private static final float DOWNREGULATION_FRACTION = 0.10f; // 10% of traces
 
+    /** The most traces one consolidation replays: about a minute at 40 ms a trace. */
+    public static final int MAX_REPLAY = 1_500;
+
+    /** At most {@code max} of the items, spread evenly from the first to the last, in order. */
+    static <T> List<T> evenly(List<T> all, int max) {
+        if (max <= 0 || all.size() <= max) return all;
+        if (max == 1) return List.of(all.get(0));
+        var picked = new ArrayList<T>(max);
+        double step = (all.size() - 1) / (double) (max - 1);
+        for (int i = 0; i < max; i++) picked.add(all.get((int) Math.round(i * step)));
+        return picked;
+    }
+
     public float consolidate(List<TrainingTrace.Sample> traces, float lr, float ewcLambda) {
         if (traces.isEmpty()) return 0;
 
@@ -128,14 +146,17 @@ public class CfCTrainer {
         float totalLoss = 0;
         cell.resetHidden(); // start clean for replay
 
-        for (var trace : traces) {
+        // The sustained highs above are read from the whole day; the replay is a bounded,
+        // evenly spread part of it.
+        var replay = evenly(traces, MAX_REPLAY);
+        for (var trace : replay) {
             // Apply per-dimension learning rate scaling for downregulated drives
             float effectiveLr = lr;
             float loss = trainStep(trace.input(), trace.target(), trace.deltaTime(), effectiveLr, ewcLambda);
             totalLoss += loss;
         }
 
-        float avgLoss = totalLoss / traces.size();
+        float avgLoss = totalLoss / replay.size();
 
         // Log downregulation warnings
         String[] driveNames = {"seeking", "care", "play", "vigilance",
@@ -152,7 +173,7 @@ public class CfCTrainer {
             }
         }
 
-        log.info("CfC consolidation: {} traces, avg loss = {}{}", traces.size(),
+        log.info("CfC consolidation: {} of {} traces replayed, avg loss = {}{}", replay.size(), traces.size(),
             String.format("%.6f", avgLoss),
             anyDownregulated ? " (with receptor downregulation)" : "");
 
