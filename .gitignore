@@ -174,3 +174,7 @@ scripts/training/.venv*
 # Relay identity backups carry the household CA private key + invite key —
 # never commit them; keep them on offline media.
 relay-*identity*.tgz
+
+# Release runs: artifacts, logs, checksums, evidence per version (scripts/release/*.sh write here).
+# Nothing in it is source; the published files live on GitHub, signed.
+releases/

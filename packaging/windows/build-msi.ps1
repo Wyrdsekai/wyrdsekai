@@ -33,7 +33,7 @@ Write-Host ""
 
 # --- Version ---
 if (-not $Version) {
-    $Version = "0.5.1"
+    $Version = "0.5.2"
     Write-Host "[info] No version specified, using default: $Version"
 }
 Write-Host "[info] Building Wyrdsekai v$Version"

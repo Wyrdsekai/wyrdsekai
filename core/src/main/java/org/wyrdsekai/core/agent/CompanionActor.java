@@ -15280,7 +15280,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         text = stripInternalMarkers(text);
         if (text.isBlank()) return;
         // A sentence that never ends is cut before it is polished, said or kept (RunOn).
-        text = cutRunOn(text);
+        text = cutRunOn(text, authoredBy);
         // Who this line answers is decided now, while the turn that produced it is the turn: a
         // polished line comes back after its loop may have closed and another turn begun, and
         // judged then it was taken for her own time, hushed and trailed to no one (review of
@@ -15896,11 +15896,34 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * kept in her conversation, read back in the next prompt and learned at night, and the model
      * copied it: household node, 2026-09-29, 23 lines of up to 6,000 characters in a day.
      */
-    private String cutRunOn(String text) {
-        if (!RunOn.hasRunOn(text)) return text;
-        var cut = RunOn.cut(text);
-        log.info("Run-on cut for '{}': {} chars kept of {}", profile.name(), cut.length(), text.length());
-        return cut;
+    /**
+     * Her own words are held to {@link RunOn}; a tool's text spoken for the person and the
+     * product's fixed sentences are not. The library's answers ("The sources say …") string their
+     * findings together with semicolons, so a 700-character answer read as one sentence and was cut
+     * to its first clause (household node, 2026-09-30 evening: four of five cuts were the library's
+     * text, not hers). The shape of what was cut is logged, never the words, so the next cut can be
+     * read.
+     */
+    private String cutRunOn(String text, String authoredBy) {
+        var held = heldToRunOn(text, authoredBy);
+        if (held != text) {
+            log.info("Run-on cut for '{}': {} chars kept of {} ({})", profile.name(), held.length(), text.length(),
+                RunOn.shape(text));
+        }
+        return held;
+    }
+
+    /**
+     * A line as it goes out: her own words cut where they run on; a tool's text and the product's
+     * fixed sentences as they are. A product line quotes content (a task she sends to the workshop,
+     * a name, a title), and cutting it loses the product's own words after the quote: live
+     * 2026-10-01 06:36 "Taking that to the workshop: <61-word task>. I'll hand it to … and report
+     * back when it's done." was cut inside the task, and the promise to report back never reached
+     * the person.
+     */
+    static String heldToRunOn(String text, String authoredBy) {
+        if (authoredBy != null || !RunOn.hasRunOn(text)) return text;
+        return RunOn.cut(text);
     }
 
     private void speakDirect(String text) {
@@ -15926,7 +15949,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         text = stripInternalMarkers(text);
         if (text == null || text.isBlank()) return;
         // Every path that reaches the wire, the polish's answer included, is held to RunOn.
-        text = cutRunOn(text);
+        text = cutRunOn(text, authoredBy);
 
         // Trailing-digest hygiene (home-server 2026-07-24): a genuine sentence followed by
         // an appended journal/tool-action map — "…haven't asked for anything yet.

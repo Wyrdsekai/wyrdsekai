@@ -43,6 +43,32 @@ public final class RunOn {
         return trailOff(text.strip());
     }
 
+    /**
+     * The shape of the first sentence that runs on, for the log: its words and how it is joined,
+     * so a long list can be told from a sentence that never ends without keeping the words.
+     * Example: {@code 84 words, 11 commas, 3 semicolons, 2 "and", 0 list marks}.
+     */
+    public static String shape(String text) {
+        if (text == null) return "";
+        int start = runOnStart(text);
+        if (start < 0) return "no run-on";
+        int end = start;
+        while (end < text.length() && !isSentenceEnd(text.charAt(end))) end++;
+        var sentence = text.substring(start, end);
+        int commas = 0, semicolons = 0, ands = 0, marks = 0;
+        for (int i = 0; i < sentence.length(); i++) {
+            char c = sentence.charAt(i);
+            if (c == ',') commas++;
+            else if (c == ';') semicolons++;
+            else if (c == '•' || c == '–' || c == '—') marks++;
+        }
+        var lower = sentence.toLowerCase();
+        int at = 0;
+        while ((at = lower.indexOf(" and ", at)) >= 0) { ands++; at += 5; }
+        return words(sentence) + " words, " + commas + " commas, " + semicolons + " semicolons, " + ands
+            + " \"and\", " + marks + " list marks";
+    }
+
     /** Where the first run-on sentence starts, or -1. */
     private static int runOnStart(String text) {
         int sentenceStart = 0;

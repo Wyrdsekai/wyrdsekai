@@ -226,9 +226,13 @@ public class WebSearchService {
                                                boolean newsOnly, boolean searxngNative) {
         var found = ask.apply(newsOnly ? "news" : null);
         if (found == null) return List.of();
-        if (found.isEmpty() && !newsOnly && searxngNative) {
-            var science = ask.apply("science");
-            if (science != null) found = science;
+        if (found.isEmpty() && searxngNative) {
+            // The news engines are four commercial ones, and on the household node all four were
+            // unresponsive at once (2026-10-01 06:02: "are people having trouble with the 26.04
+            // upgrade", news → nothing, while the general engines had 25 answers). A news
+            // question is a web question first; the general pass answers it, dated as it comes.
+            var again = ask.apply(newsOnly ? null : "science");
+            if (again != null) found = again;
         }
         return found;
     }

@@ -665,6 +665,9 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
                 return List.of();
             }
 
+            // The person's own words travel in a marked span so the library's cull keeps them
+            // (WyrdLuceneStore.withPersonTerms); the web gets the words without the marks.
+            query = WyrdLuceneStore.stripProtectionMarkers(query).replaceAll("\\s+", " ").trim();
             var results = "news".equals(type)
                 ? ws.searchNews(query, Math.min(limit, 10))
                 : ws.search(query, Math.min(limit, 10));

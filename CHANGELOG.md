@@ -4,6 +4,23 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.2] — 2026-10-01
+
+### Fixed
+- **Library answers are no longer cut short.** When a companion reads something up in the household
+  library, the library's answer is spoken as it is. These answers join their findings with
+  semicolons, so one answer could look like a single very long sentence. The 60-word rule that
+  stops a reply from running on cut such answers to their first part. Now the rule only applies to
+  the companion's own words. When a reply is cut, the log says how long the sentence was and how it
+  was joined, never the words.
+- **A news search that finds nothing now tries the general web.** The news engines behind the
+  household search are a handful of commercial ones, and when all of them are quiet a question like
+  "are people having trouble with the new upgrade" came back with nothing while the general engines
+  had answers. Now the general engines are asked next.
+- **A search that finds nothing repeats the question plainly.** Your own words travel with the
+  companion's search in a marked span (so the library keeps them). The web search and the "no
+  results" line showed the marks; now both use the plain words.
+
 ## [0.5.1] — 2026-09-30
 
 A small update to 0.5.0. It fixes four problems we found on the first day.

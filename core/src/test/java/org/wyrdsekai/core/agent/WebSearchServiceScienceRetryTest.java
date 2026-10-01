@@ -66,9 +66,26 @@ class WebSearchServiceScienceRetryTest {
     }
 
     @Test
-    void aNewsSearchHasNoSciencePass() {
-        var backend = new Backend(List.of(), List.of());
+    void aNewsSearchWithNothingAsksTheGeneralEngines() {
+        // Household node, 2026-10-01: all four news engines unresponsive, the general ones had 25.
+        var backend = new Backend(List.of(PAPER), List.of());
         var r = WebSearchService.withScienceRetry(backend::ask, true, true);
+        assertEquals(Arrays.asList("news", null), backend.asked);
+        assertEquals(List.of(PAPER), r);
+    }
+
+    @Test
+    void aNewsSearchThatAnswersIsNotAskedAgain() {
+        var backend = new Backend(List.of(), List.of(PAPER));
+        var r = WebSearchService.withScienceRetry(backend::ask, true, true);
+        assertEquals(List.of("news"), backend.asked);
+        assertEquals(List.of(PAPER), r);
+    }
+
+    @Test
+    void aNewsSearchOnMetasearch2HasNoSecondPass() {
+        var backend = new Backend(List.of(PAPER), List.of());
+        var r = WebSearchService.withScienceRetry(backend::ask, true, false);
         assertEquals(List.of("news"), backend.asked);
         assertTrue(r.isEmpty());
     }

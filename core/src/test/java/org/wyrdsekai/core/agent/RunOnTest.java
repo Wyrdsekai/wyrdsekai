@@ -71,4 +71,13 @@ class RunOnTest {
         assertThat(RunOn.cut(reply))
             .isEqualTo("We were — though honestly the quiet parts felt just as good as anything else.");
     }
+
+    @Test
+    void theShapeOfWhatRanOnIsToldWithoutTheWords() {
+        var list = "It shows. " + String.join("; ", Collections.nCopies(12, "one finding, with a detail and a source"));
+        assertThat(RunOn.hasRunOn(list)).isTrue();
+        assertThat(RunOn.shape(list)).isEqualTo("96 words, 12 commas, 11 semicolons, 12 \"and\", 0 list marks");
+        assertThat(RunOn.shape("Short. Fine.")).isEqualTo("no run-on");
+        assertThat(RunOn.shape(null)).isEmpty();
+    }
 }

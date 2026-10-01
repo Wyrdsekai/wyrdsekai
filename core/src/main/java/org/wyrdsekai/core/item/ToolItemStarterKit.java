@@ -1389,7 +1389,9 @@ public final class ToolItemStarterKit {
             var type = params.type || "general";
             var results = world.web.search(params.query, type);
             if (!results || results.length === 0) {
-                return { findings: "No web results found for: " + params.query, sources: [] };
+                // The query may carry the person's words in a marked span; say it without the marks.
+                var asked = String(params.query).replace(/[\\u27E6\\u27E7]/g, " ").replace(/\\s+/g, " ").trim();
+                return { findings: "No web results found for: " + asked, sources: [] };
             }
             // Source-tagged blocks so the LLM can cite per-claim, same pattern
             // as library_card. Web results lack a numeric score (search engines
