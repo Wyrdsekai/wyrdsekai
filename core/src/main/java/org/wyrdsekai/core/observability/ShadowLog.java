@@ -32,7 +32,9 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 public class ShadowLog {
 
     private static final Logger log = LoggerFactory.getLogger(ShadowLog.class);
-    private static final int MAX_BUFFER = 100;
+    private static final int MAX_BUFFER = 300;
+    /** The on-disk copy is trimmed to this many turns at boot (the move gate reads her last ones). */
+    static final int KEEP_ON_DISK = 500;
 
     /** Global instance — initialized by Main.java, accessed by CompanionActor. */
     private static volatile ShadowLog instance;
@@ -96,6 +98,32 @@ public class ShadowLog {
         var envPath = WyrdConfig.get().resolve(
             "WYRDSEKAI_SHADOW_LOG", "observability.shadow_log_path", () -> null);
         return new ShadowLog(envPath != null ? Path.of(envPath) : null);
+    }
+
+    /**
+     * Her turns kept on disk under the data directory, so the gate before a brain move has her last
+     * ones after a restart too (the in-memory buffer starts empty at every boot; the gate's first runs
+     * on 2026-10-01 kept saying "too few recent turns" for that reason). An explicit
+     * {@code WYRDSEKAI_SHADOW_LOG} path wins; the file is trimmed to {@link #KEEP_ON_DISK} turns at boot.
+     */
+    public static ShadowLog fromEnvOrDataDir(Path dataDir) {
+        var envPath = WyrdConfig.get().resolve(
+            "WYRDSEKAI_SHADOW_LOG", "observability.shadow_log_path", () -> null);
+        var path = envPath != null ? Path.of(envPath) : (dataDir == null ? null : dataDir.resolve("shadow.jsonl"));
+        if (path != null) trimToLast(path, KEEP_ON_DISK);
+        return new ShadowLog(path);
+    }
+
+    /** Keeps the last {@code keep} lines of the file; a missing or short file is left alone. */
+    static void trimToLast(Path path, int keep) {
+        try {
+            if (!Files.exists(path)) return;
+            var lines = Files.readAllLines(path);
+            if (lines.size() <= keep) return;
+            Files.write(path, lines.subList(lines.size() - keep, lines.size()));
+        } catch (IOException | RuntimeException e) {
+            log.warn("shadow log not trimmed: {}", e.toString());
+        }
     }
 
     /** Initialize the global instance. Called by Main.java at startup. */

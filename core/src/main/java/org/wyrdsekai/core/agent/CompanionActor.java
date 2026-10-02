@@ -3632,6 +3632,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         } catch (Exception e) {
             log.debug("companion registry register failed (non-fatal): {}", e.getMessage());
         }
+        refreshHouseFacts();
     }
 
     /**
@@ -4631,6 +4632,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // Placed BEFORE the quota gate — a child out of inference budget
                 // still gets a safety scan.
                 SafetyMonitorService.inspect(said.entityId(), said.entityName(), said.text());
+                // The record guard: names her record does not hold, and asks that touch an attested
+                // default, go into this turn's prompt in plain words (RecordGuard, HouseFacts).
+                try {
+                    var guardNote = RecordGuard.notesFor(said.text(), knownNames());
+                    if (guardNote != null) HouseFacts.noteForNextTurn(profile.entityId(), guardNote);
+                } catch (RuntimeException e) {
+                    log.debug("record guard: {}", e.toString());
+                }
 
                 // Parental controls: the SPEAKER's daily inference quota. A
                 // controlled member with nothing left today gets a canned
@@ -6938,6 +6947,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (record != null) memories = memories == null ? record : record + "\n" + memories;
 
         String identity = ConversationLane.identity(profile.name(), resident, null, null, zone);
+        var houseFacts = HouseFacts.blockFor(profile.entityId());
+        if (houseFacts != null) identity = identity + "\n\n" + houseFacts;
         String about = ConversationLane.aboutPerson(trig.entityName(), isBondholder, bondSince, daysTalked, zone);
         // What she feels reaches this turn as the full lane carries it: the drives numbers and the
         // plain words under the private-background frame.
@@ -8138,16 +8149,102 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /**
+     * The facts of her house into her prompt (HouseFacts): her people and the bonds, her housemates,
+     * her room, her formative fragments. From her record; nothing invented, blanks left out.
+     */
+    void refreshHouseFacts() {
+        try {
+            var people = new ArrayList<HouseFacts.Person>();
+            var myDid = profile.did() != null ? profile.did()
+                : (cachedManifest != null ? cachedManifest.did() : profile.entityId());
+            for (var b : activeBondholderBonds()) {
+                var name = nameOfParty(b.otherParty(myDid));
+                if (name != null) people.add(new HouseFacts.Person(name, true, b.formedAt()));
+            }
+            var housemates = new ArrayList<String>();
+            var jdbc = System.getProperty("wyrdsekai.jdbc.url", System.getenv("WYRDSEKAI_JDBC_URL"));
+            if (jdbc != null && !jdbc.isBlank()) {
+                for (var row : new CompanionRegistry(jdbc).all()) {
+                    if (row.name() == null || row.name().isBlank()) continue;
+                    if (profile.entityId().equals(row.entityId()) || profile.name().equalsIgnoreCase(row.name())) continue;
+                    if (!housemates.contains(row.name())) housemates.add(row.name());
+                }
+            }
+            // What has stayed with her: the fragments her sleeps marked formative, then what she holds
+            // about her relationships and her values. They live in the fragment store, not the manifest
+            // JSON (the household node's manifests carry none inline; the store had 372 for one of them).
+            var formative = new ArrayList<String>();
+            var relationships = new ArrayList<String>();
+            var values = new ArrayList<String>();
+            var fragments = new ArrayList<org.wyrdsekai.core.soul.SoulFragment>();
+            if (jdbc != null && !jdbc.isBlank() && myDid != null) {
+                try {
+                    fragments.addAll(new org.wyrdsekai.core.soul.SoulFragmentStore(jdbc).loadAll(myDid));
+                } catch (RuntimeException e) {
+                    log.debug("house facts: fragment store unavailable: {}", e.toString());
+                }
+            }
+            if (fragments.isEmpty() && cachedManifest != null && cachedManifest.soulFragments() != null) {
+                fragments.addAll(cachedManifest.soulFragments());
+            }
+            for (var f : fragments) {
+                if (f.text() == null || f.text().isBlank() || f.supersededAt() != null) continue;
+                if (f.formative()) formative.add(f.text());
+                else if ("relationships".equals(f.category())) relationships.add(f.text());
+                else if ("values".equals(f.category())) values.add(f.text());
+            }
+            formative.addAll(relationships.subList(0, Math.min(2, relationships.size())));
+            formative.addAll(values.subList(0, Math.min(2, values.size())));
+            housematesKnown = List.copyOf(housemates);
+            HouseFacts.setIdentity(profile.entityId(), cachedManifest == null ? null : cachedManifest.residentIdentity());
+            HouseFacts.set(profile.entityId(), HouseFacts.build(profile.name(), people, housemates,
+                "home-" + profile.entityId(), formative, ZoneId.systemDefault()));
+        } catch (RuntimeException e) {
+            log.debug("house facts not refreshed: {}", e.toString());
+        }
+    }
+
+    /** Her housemates' names as of the last refresh of the facts of her house (no database read per line). */
+    private volatile List<String> housematesKnown = List.of();
+
+    /** Every name she can account for: her own, her people's, her housemates', everyone the directory knows. */
+    java.util.Set<String> knownNames() {
+        var known = new java.util.HashSet<String>();
+        known.add(profile.name());
+        var reg = EntityRegistry.get();
+        if (reg != null) {
+            for (var id : reg.allEntities()) reg.nameOf(id).ifPresent(known::add);
+        }
+        known.addAll(housematesKnown);
+        for (var n : List.of("Nexus", "Hearth", "Study", "Sanctuary", "Chapel", "Library", "Workshop")) known.add(n);
+        return known;
+    }
+
+    /**
      * Her bondholder's display name, for a reach aimed at someone who isn't in the room.
      * {@code tell_agent} routes on the NAME, so without this the away-reach has nothing to
-     * land on. Null when there is no bondholder or the registry has never seen them.
+     * land on. Null when there is no bondholder or nothing here knows their name.
      */
     private String bondholderDisplayNameForReach() {
         var did = primaryBondholderDid();
-        if (did == null) return null;
+        return did == null ? null : nameOfParty(did);
+    }
+
+    /**
+     * The name a party to one of her bonds goes by: the registry's when the process has seen them,
+     * else the record's (a person's users row carries their DID). With nobody logged in after a
+     * restart the registry had never seen her person, and the facts of her house named her housemate
+     * and her room but not him (household node, 2026-10-02).
+     */
+    String nameOfParty(String id) {
+        if (id == null || id.isBlank()) return null;
         var reg = EntityRegistry.get();
-        if (reg == null) return null;
-        return reg.nameOf(did).filter(n -> !n.isBlank()).orElse(null);
+        if (reg != null) {
+            var n = reg.nameOf(id).filter(s -> !s.isBlank()).orElse(null);
+            if (n != null) return n;
+        }
+        if (isAgentParty(id)) return null;
+        return PersonIds.displayName(id).orElse(null);
     }
 
     /**
@@ -13354,6 +13451,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** Exact-repeat guard state — see speakDirect. */
     private String lastSpokenLine;
+    /** Her own lines of the last half hour, so a line said again into silence is not said twice (RecentLines). */
+    private final RecentLines recentLines = new RecentLines();
     /** When anyone last spoke TO this companion — opens the reactive window
      *  in which the exact-repeat guard stands down (see speakDirect). */
     private Instant lastHeardUtteranceAt;
@@ -15987,6 +16086,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             text = grounded;
             lastIntrospectVoiceSummary = null;
         }
+        // The record guard on her own words (RecordGuard.personsSpokenOf): a line of hers that
+        // makes a person of a name her record does not hold — "I'll go find Eve Lewis in the quiet
+        // room where she's been sitting with her thoughts" (household node, 2026-10-01: a name from
+        // a book search, two days on a woman reading letters) — is spoken, and her next turn is
+        // told in one sentence that no such person is here, so the invention is not carried forward.
+        if (authoredBy == null) {
+            try {
+                var spokenOf = RecordGuard.personsSpokenOf(text, knownNames());
+                if (!spokenOf.isEmpty()) {
+                    HouseFacts.noteForNextTurn(profile.entityId(), RecordGuard.spokenPersonNote(spokenOf));
+                    log.info("Record guard for '{}': spoke of {} as a person; her record holds no one by that name",
+                        profile.name(), spokenOf);
+                }
+            } catch (RuntimeException e) {
+                log.debug("record guard (spoken): {}", e.toString());
+            }
+        }
         // Exact-repeat guard (2026-08-09): the same settling line spoken twice
         // in a row, verbatim, in live runs — a broken record, not a person. A
         // near-time exact duplicate carries no information; drop it. Distinct
@@ -16003,6 +16119,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // the broken record.
         // Exemption is SPENT once used (2026-08-17) — see judgeRepeat.
         var repeatKey = text.strip();
+        final boolean answeringNow = lastHeardUtteranceAt != null
+            && Duration.between(lastHeardUtteranceAt, Instant.now()).compareTo(REACTIVE_EXEMPTION_WINDOW) < 0;
         var repeatVerdict = judgeRepeat(repeatKey, lastSpokenLine, lastSpokenLineAt,
             lastHeardUtteranceAt, Instant.now());
         if (repeatVerdict.suppress()) {
@@ -16012,6 +16130,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         if (repeatVerdict.usedReactiveExemption()) lastHeardUtteranceAt = null;
         lastSpokenLine = repeatKey;
+        // Her own time, a line said again (RecentLines, 2026-10-02): the guard above sees her last
+        // line for two minutes; after a tool completed she said the whole of a line from nine minutes
+        // before, and other lines opened with an earlier one word for word before what was new. Into
+        // silence a whole repeat is dropped and a repeated opening keeps only what follows; a line
+        // that answers a person passes as before.
+        if (answering == null && !answeringNow) {
+            var again = recentLines.judge(text, Instant.now());
+            if (again.kind() == RecentLines.Kind.DROP) {
+                log.info("Dropped a line of '{}' said word for word {}s ago (own time)", profile.name(),
+                    Duration.between(again.saidAt(), Instant.now()).toSeconds());
+                return;
+            }
+            if (again.kind() == RecentLines.Kind.CUT) {
+                log.info("Kept only what was new in a line of '{}' that opened with one said {}s ago", profile.name(),
+                    Duration.between(again.saidAt(), Instant.now()).toSeconds());
+                text = again.keep();
+            }
+        }
+        recentLines.remember(text, Instant.now());
         // A line to no one is her own time speaking; the speech-rate vital counts these and only these.
         if (answering == null) CompanionVitals.forAgent(soulKey()).recordProactiveUtterance(Instant.now());
         lastSpokenLineAt = Instant.now();
@@ -25464,6 +25601,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Arc 2 — wake-without-bondholder auto-opens SOLITUDE.
         maybeAutoOpenSolitude("wake");
 
+        refreshHouseFacts();
         log.info("Companion '{}' sleep complete (quality={}, recovery={}, energy={}, manifest=v{})",
             profile.name(), String.format("%.2f", quality),
             String.format("%.2f", recovery), String.format("%.2f", vitality.energy()),

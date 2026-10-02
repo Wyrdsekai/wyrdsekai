@@ -81,7 +81,7 @@ public final class ApiPolicy {
             "POST /api/oracle/ingest", "POST /api/oracle/anticipate", "GET /api/oracle/stats",
             "GET /api/rooms", "GET /api/search",
             "GET /api/soul/list", "GET /api/soul/{did}", "GET /api/soul/{did}/history",
-            "GET /api/soul/{did}/version/{version}", "POST /api/soul/{did}",
+            "GET /api/soul/{did}/version/{version}", "POST /api/soul/{did}", "POST /api/soul/{did}/identity",
             "GET /api/study/search", "GET /api/study/journal", "POST /api/study/journal",
             "GET /api/study/status", "DELETE /api/study/collection/{name}",
             "PUT /api/study/item/{id}", "GET /api/study/item/{id}/history",

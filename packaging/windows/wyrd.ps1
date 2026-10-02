@@ -3433,6 +3433,20 @@ function Get-BrainPlanText {
     }
 }
 
+# A companion lives here when the trail holds her own words (lines not authored by a tool or the product).
+function Get-LivingCompanion {
+    $trail = Join-Path $DataDir "data\agent-activity.jsonl"
+    if (-not (Test-Path $trail)) { return $null }
+    $counts = @{}
+    foreach ($line in Get-Content $trail -ErrorAction SilentlyContinue) {
+        if ($line -notmatch '"type"\s*:\s*"speak"') { continue }
+        if ($line -match '"authored"\s*:\s*"') { continue }
+        if ($line -match '"agent"\s*:\s*"([^"]+)"') { $n = $Matches[1]; $counts[$n] = 1 + [int]$counts[$n] }
+    }
+    if ($counts.Count -eq 0) { return $null }
+    return ($counts.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1).Key
+}
+
 function Invoke-Brain {
     $sub = if ($Rest.Count -ge 1) { $Rest[0].ToLower() } else { "status" }
     Import-ConfEnv   # LLAMA_BRAIN_MODEL may live in the conf
@@ -3509,10 +3523,17 @@ function Invoke-Brain {
         "enable" {
             if (-not (Test-Path $modelPath)) { Write-Err2 (_T 'brain.enable.needs_setup'); exit 1 }
             if ($plan -eq 'not-viable') { Write-Err2 (_T 'brain.setup.not_viable'); exit 1 }
+            # A living companion is moved through the gate, not switched under. The gate's tools
+            # (the trainer scripts) are not in the Windows package in this release, so Windows says so
+            # and `--force` remains, with its words.
+            $who = Get-LivingCompanion
+            if ($who -and ($Rest -notcontains '--force')) { Write-Err2 (_T 'brain.move.redirect' $who); Write-Err2 (_T 'brain.move.windows'); exit 1 }
             New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
             Set-ConfKey -Key "WYRDSEKAI_SERVING_PROFILE" -Value "single-sparse"
             Write-Ok (_T 'brain.enable.done')
         }
+        "move" { Write-Err2 (_T 'brain.move.windows'); exit 1 }
+        "identity" { Write-Err2 (_T 'brain.move.windows'); exit 1 }
         "disable" {
             New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
             Set-ConfKey -Key "WYRDSEKAI_SERVING_PROFILE" -Value "two-model"

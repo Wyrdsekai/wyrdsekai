@@ -253,6 +253,17 @@ public record SoulManifest(
 
     /** Return a copy stamped as a new manifest version — the Forge's restore
      *  writes the restored shape as a NEW version so history stays append-only. */
+    /** A copy with her description of herself replaced (the move gate writes it from her own record). */
+    public SoulManifest withResidentIdentity(String newResidentIdentity) {
+        return new SoulManifest(did, publicKeyMultibase, keyLog, parentDid,
+            manifestVersion, forgedAt, signature, profile, newResidentIdentity,
+            soulFragments, retrievalK, soulSpecCompat, genome, mirrorCalibration,
+            memory, relationships, learnedPatterns, worldKnowledge,
+            vitalitySnapshot, fingerprint, bonds, decisionCapacity, skillCostGenome,
+            voiceProfile, codingPreferences, protectionManifest, personalManifest,
+            affinityMap);
+    }
+
     public SoulManifest withManifestVersion(int newVersion, Instant newForgedAt) {
         return new SoulManifest(did, publicKeyMultibase, keyLog, parentDid,
             newVersion, newForgedAt, signature, profile, residentIdentity,

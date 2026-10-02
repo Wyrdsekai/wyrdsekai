@@ -56,9 +56,12 @@ public final class PromptAssembler {
     private static String identitySystem(AgentProfile profile) {
         var preamble = WyrdConfig.get().resolve(
             "WYRDSEKAI_SYSTEM_PREAMBLE", "inference.system_preamble", () -> null);
+        // Her own description of herself stands where the first-run greeter's opening stood, once she
+        // has one (HouseFacts.identityOrGreeter); the greeter's working instructions stay.
+        var body = HouseFacts.identityOrGreeter(profile.entityId(), profile.systemPrompt());
         return preamble != null && !preamble.isBlank()
-            ? preamble.strip() + "\n\n" + profile.systemPrompt()
-            : profile.systemPrompt();
+            ? preamble.strip() + "\n\n" + body
+            : body;
     }
 
 
@@ -293,6 +296,9 @@ public final class PromptAssembler {
 
         // L1 — system prompt (identity, never trimmed)
         messages.add(new ChatMessage("system", identitySystem(profile)));
+        // Layer 1.05: the facts of her house, from her record, independent of retrieval (HouseFacts).
+        var houseFacts = HouseFacts.blockFor(profile.entityId());
+        if (houseFacts != null) messages.add(new ChatMessage("system", houseFacts));
 
         // L1.1 — voice-tier behavioral rule. Distinct from the full assembler's
         // CORE_RULES (which talks about tools and goal_done). The voice path
@@ -521,6 +527,9 @@ public final class PromptAssembler {
 
         // Layer 1: System prompt (identity, never trimmed)
         messages.add(new ChatMessage("system", identitySystem(profile)));
+        // Layer 1.05: the facts of her house, from her record, independent of retrieval (HouseFacts).
+        var houseFacts = HouseFacts.blockFor(profile.entityId());
+        if (houseFacts != null) messages.add(new ChatMessage("system", houseFacts));
 
         // Calculate token budget.
         // #32 item 5: clamp to the SMALLEST backend this prompt can land on.

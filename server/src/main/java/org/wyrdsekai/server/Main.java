@@ -222,6 +222,7 @@ import org.wyrdsekai.server.http.TlsConfig;
 import org.wyrdsekai.core.crypto.HouseholdBus;
 import org.wyrdsekai.core.item.MailboxService;
 import org.wyrdsekai.core.body.BodyMap;
+import org.wyrdsekai.core.body.BrainMoveMark;
 import org.wyrdsekai.core.body.ImmuneMemory;
 import org.wyrdsekai.core.body.Immune;
 import org.wyrdsekai.core.body.BodyStore;
@@ -959,6 +960,8 @@ public class Main {
         // aged by the watch. Brains attach themselves when the inference router starts;
         // the record and the host attach here. She feels it as one line per turn.
         var bodyMap = BodyMap.install(new BodyStore(jdbcUrl));
+        // A different serving profile than the last boot ran: she is told once, on her next turn.
+        BrainMoveMark.noteProfile(bodyMap, SystemPaths.dataDir(), WyrdConfig.get().servingProfile());
         // The immune system's memory lives in the record, and the tolerance rule needs to know
         // who is "hers": this node, the household's members, and its companions.
         ImmuneMemory.install(ImmuneMemory.onRecord(jdbcUrl));
@@ -1489,7 +1492,7 @@ public class Main {
             new ChronicleEntryStore(jdbcUrl));
 
         // Shadow log: observation recording for agent perspective
-        ShadowLog.init(ShadowLog.fromEnv());
+        ShadowLog.init(ShadowLog.fromEnvOrDataDir(SystemPaths.dataDir()));
 
         // Core singletons — one-stop init shared with TestServerBootstrap.
         // Covers EntityRegistry, AgentEventStream, InProcessEventBus,

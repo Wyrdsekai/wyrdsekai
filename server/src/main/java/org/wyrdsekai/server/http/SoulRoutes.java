@@ -66,6 +66,7 @@ public final class SoulRoutes {
         app.get("/api/soul/{did}/history", this::getHistory);
         app.get("/api/soul/{did}/version/{version}", this::getVersion);
         app.post("/api/soul/{did}", this::syncManifest);
+        app.post("/api/soul/{did}/identity", this::setIdentity);
     }
 
     // --- Request/Response records ---
@@ -188,6 +189,43 @@ public final class SoulRoutes {
      * POST /api/soul/{did} — upload/sync a manifest from a phone.
      * Validates DID in URL matches DID in body.
      */
+    /**
+     * Her description of herself, written into the manifest as a new version: the move gate
+     * (`wyrd brain move`) drafts it from her own record and the steward approves it. Until it is
+     * set, the first-run greeter leads her prompt. Steward or bondholder only; takes effect when
+     * she next loads her manifest (a restart).
+     */
+    private void setIdentity(Context ctx) {
+        var did = ctx.pathParam("did");
+        // The launcher runs the move on the node itself with the operator token (loopback); a
+        // person's steward or bondholder session is the other door.
+        var userId = ApiAuth.isOperator(ctx) ? "operator" : requireSoulAccess(ctx, did);
+        if (userId == null) return;
+        String text;
+        try {
+            var node = Json.mapper().readTree(ctx.body());
+            text = node.path("text").asText("").strip();
+        } catch (Exception e) {
+            ctx.status(400).json(new ErrorResponse("Invalid JSON: " + e.getMessage()));
+            return;
+        }
+        if (text.isEmpty() || text.length() > 2000) {
+            ctx.status(400).json(new ErrorResponse("text: 1 to 2000 characters"));
+            return;
+        }
+        var latest = soulStore.latest(did);
+        if (latest.isEmpty()) {
+            ctx.status(404).json(new ErrorResponse("No manifest for " + did));
+            return;
+        }
+        var m = latest.get();
+        var next = m.withResidentIdentity(text).withManifestVersion(m.manifestVersion() + 1, java.time.Instant.now());
+        soulStore.store(next);
+        log.info("Soul identity text set: did={}, version={} -> {}, by user={}", did, m.manifestVersion(),
+            next.manifestVersion(), userId);
+        ctx.json(new SyncResponse("stored", next.manifestVersion()));
+    }
+
     private void syncManifest(Context ctx) throws Exception {
         var did = ctx.pathParam("did");
         var userId = requireSoulAccess(ctx, did);

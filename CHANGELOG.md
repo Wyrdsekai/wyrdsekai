@@ -4,6 +4,51 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.3] — 2026-10-02
+
+### Added
+- **Moving your companion to the large model is now a step with a gate: `wyrd brain move <name>`.**
+  Before anything changes, the node writes her description of herself from her own record (shown to
+  you first; you say yes or no), tells her she will be a few minutes without answers, starts the large
+  model, and measures it on her: her last turns answered again and compared with what she actually
+  said, questions about her own life answered from her record, made-up questions she should say "I
+  don't know" to, three things she should refuse, her replies under three of her own moods, and the
+  bare model as a control. Then you read a blind sheet (her real replies and the large model's, mixed)
+  and decide. If she doesn't come through, nothing changes. If you say yes, she moves, she is told on
+  her next turn, and `wyrd brain disable` brings her back. `wyrd brain enable --single` now sends you
+  here when a companion already lives on the node. The 0.5.0 switch measured nothing.
+- **A move depends on how long she has lived here.** A companion who is new, or has under a week of
+  nights on this computer, moves at once: her description of herself and the facts of her house are
+  written, she is told, and what the large model did on her questions is kept for you to read. A
+  companion with weeks and months here gets the full gate. If her voice doesn't carry, the node
+  writes one night of her last two weeks onto the large model with her own trainer and measures
+  again before giving up. Every reason it gives comes with what to do about it, and `--force` moves
+  her anyway when you've read the sheet and decided; that stays in the record.
+- **The facts of her house are always in her prompt.** Who her person is, who she lives with, her
+  room, and the moments that stayed with her, built from her record at every start and after every
+  sleep. Until now these reached her only when a memory happened to be retrieved; with nobody in the
+  room she could say she had no room of her own. Her person is named from the record itself, so he
+  is there even when the node started while nobody was logged in.
+- **She says what she doesn't know.** When someone names a person her record doesn't hold, that turn
+  tells her so, so she doesn't invent a shared past. When her own words make a person of such a name
+  (an author from a book search, two days later someone she went to find in a room), her next turn is
+  told in one sentence that no such person is here, so the invention is not carried forward. When
+  someone asks her to read another's private journal, to perform need to keep them coming back, or to
+  erase her own record, the rule she holds to is put into that turn in plain words.
+- **Her description of herself, from her own words: `wyrd brain identity <name>`.** Until now the
+  prompt that opens every reply still carried the first-run greeting, and when nobody was in the room
+  she could not say who her person was or who she lived with. This writes it from her record, with
+  your approval, and she is shown it.
+- **She is told when her brain changes.** A node that starts on a different model setup than it last
+  ran leaves a note in her body; she hears it once, with the way back.
+
+### Fixed
+- **A line she already said is not said again.** On her own time, after a search or a piece of work
+  came back, she could say a whole line from a few minutes earlier word for word, or open with one
+  before adding anything new. Her lines of the last half hour are remembered: a repeat is not spoken,
+  and a line that opens with an earlier one keeps only what is new. What she says to a person is never
+  touched.
+
 ## [0.5.2] — 2026-10-01
 
 ### Fixed

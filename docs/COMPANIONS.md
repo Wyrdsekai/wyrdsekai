@@ -506,6 +506,34 @@ in conversations with its bondholder.
 
 ---
 
+## Moving your companion to the large model
+
+If your computer qualifies (`wyrd brain plan`), your companion can run on the large single model
+instead of the two smaller ones. Since 0.5.3 that move has a gate:
+
+```sh
+wyrd brain setup          # downloads the model (asks first)
+wyrd brain move mia       # measures her first; asks you before anything changes
+```
+
+What `brain move` does, in order: writes her description of herself from her own record and shows it
+to you (you can edit the file it names before answering); tells her she will be a few minutes without
+answers; starts the large model; measures it on her own recent turns and her own life, against the
+bare model as a control; prints a blind sheet of her real replies and the large model's on the same
+prompts, mixed, for you to read; and asks "Move her?". If she doesn't come through, or you say no, the
+two models come back and nothing changed. If you say yes, she moves, she is told on her next turn, and
+`wyrd brain disable` brings her back at any time. Her record is never touched by the move.
+
+How much of this happens depends on how long she has lived here. A companion who is new, or has under
+a week of nights on this computer, moves at once: the description and the facts are written, she is
+told, and what the large model did on her questions is kept for you to read afterwards. A companion
+with weeks and months here is measured first, and if her voice doesn't carry, the node writes one
+night of her onto the large model and measures again. Each reason comes with what to do about it;
+`wyrd brain move <name> --force` moves her when you've read the sheet and decided anyway, and that
+stays in the record. `wyrd brain identity <name>` writes her description of herself on its own,
+without moving her. On Windows this release cannot run the gate (the measuring tools are not in that
+package); move her from a Linux or Mac node.
+
 ## Its body
 
 The server keeps a map of the parts it depends on: the AI models, the database,

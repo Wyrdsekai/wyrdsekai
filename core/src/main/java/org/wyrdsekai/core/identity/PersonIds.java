@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.config.WyrdConfig;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -111,6 +112,25 @@ public final class PersonIds {
     }
 
     /** Do these identifiers name the same person? Null-safe; null never matches. */
+    /**
+     * The name a person goes by, from their DID, account id or username, out of the record itself.
+     * The entity registry only knows people the process has seen arrive; a companion whose person
+     * is away (every restart with nobody logged in) had no name for them from it, and the facts of
+     * her house went into her prompt without her person (household node, 2026-10-02). Empty when
+     * nobody here goes by the identifier, or there is no record to ask.
+     */
+    public static Optional<String> displayName(String identifier) {
+        if (identifier == null || identifier.isBlank()) return Optional.empty();
+        var r = resolverOrNull();
+        if (r == null) return Optional.empty();
+        try {
+            return r.displayNameFor(identifier).filter(n -> !n.isBlank());
+        } catch (Exception e) {
+            log.debug("displayName('{}') failed: {}", identifier, e.toString());
+            return Optional.empty();
+        }
+    }
+
     public static boolean samePerson(String a, String b) {
         if (a == null || b == null) return false;
         if (a.equals(b)) return true;

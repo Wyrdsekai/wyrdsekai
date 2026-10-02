@@ -5373,6 +5373,7 @@ PY
     # wound entries without a release/amends. Pure local file scan — no
     # server required.
     _doctor_substrate_neglect
+    _doctor_brain_move
     local _sub_rc=$?
     if [[ "$_sub_rc" -eq 1 ]]; then _wbump; fi
     if [[ "$_sub_rc" -eq 2 ]]; then _ebump; fi
@@ -5707,6 +5708,25 @@ _doctor_nostr() {
 # trained on her speech answers a tool request in prose) and nothing said so; the e2e suites read
 # 62/63 the same evening because every scene in them is a person asking. Pure local read of
 # data/agent-activity.jsonl; no server needed. Returns 1 on a warning.
+# A companion moved to the large model in the last week: the record and the way back, so the days
+# after a move are read with the move in mind.
+_doctor_brain_move() {
+    local f; for f in "$DATA_DIR"/adapters/brainwrite/*/move-*.json; do
+        [[ -f "$f" ]] || continue
+        local line; line=$(python3 - "$f" <<'PY' 2>/dev/null || true
+import json, sys, datetime
+d = json.load(open(sys.argv[1]))
+if not d.get("moved"): raise SystemExit
+at = datetime.datetime.fromisoformat(d["moved_at"]); days = (datetime.datetime.now(datetime.timezone.utc) - at).days
+if days <= 7: print(f"{d.get('being','?')}|{days}|{d.get('verdict','?')}")
+PY
+)
+        [[ -z "$line" ]] && continue
+        local who days verdict; IFS='|' read -r who days verdict <<<"$line"
+        log "doctor.brain: $who moved to the large model $days day(s) ago (gate $verdict); the way back is: wyrd brain disable. Record: $f"
+    done
+}
+
 _doctor_own_time() {
     local trail="$DATA_DIR/data/agent-activity.jsonl"
     [[ -f "$trail" ]] || return 0
@@ -14912,6 +14932,286 @@ _brain_hardware_notice() {
     printf '{\n  "fingerprint": "%s",\n  "offered": "%s",\n  "seen": "%s"\n}\n' "$fp" "$best" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$file" 2>/dev/null || true
 }
 
+# ── wyrd brain move <companion>: the gate before her brain is moved ─────────────────────────
+# 0.5.0 shipped `brain enable --single` with nothing measured on the companion being moved. The move
+# is now a step with a gate: her description of herself written from her own record and approved,
+# the large model measured on her own turns and her record against the bare model as control
+# (scripts/training/sleepwrite/move_gate.py), a blind sheet for the person who knows her, and only
+# then the switch — told to her on her next turn and reversible with `wyrd brain disable`.
+_brain_gate_script() {
+    local g="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/move_gate.py"
+    [[ -f "$g" ]] || g="$PROJECT_ROOT/scripts/training/sleepwrite/move_gate.py"
+    echo "$g"
+}
+_brain_trail() { echo "$DATA_DIR/data/agent-activity.jsonl"; }
+# name<TAB>entityId<TAB>did for each companion who has spoken here (the trail) joined to her manifest.
+_brain_companions() {
+    python3 - "$(_brain_trail)" "$DATA_DIR/world.db" <<'PY'
+import json, sqlite3, sys, collections
+trail, db = sys.argv[1], sys.argv[2]
+ids = {}
+try:
+    with open(trail) as f:
+        for line in f:
+            try: r = json.loads(line)
+            except Exception: continue
+            if r.get("type") == "speak" and r.get("agent") and r.get("agentId"): ids[r["agent"]] = r["agentId"]
+except FileNotFoundError:
+    pass
+dids = {}
+try:
+    c = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+    for did, mj in c.execute("SELECT did, manifest_json FROM soul_manifests WHERE archived = 0 ORDER BY version"):
+        try: name = ((json.loads(mj).get("profile") or {}).get("name") or "").strip()
+        except Exception: continue
+        if name: dids[name.lower()] = did
+except Exception:
+    pass
+for name, eid in sorted(ids.items()):
+    print(f"{name}\t{eid}\t{dids.get(name.lower(), '')}")
+PY
+}
+# A companion lives here when the trail holds her own words. Prints her name and returns 1 then;
+# 0 (nothing printed) when `enable --single` may proceed. `--force` bypasses, for the build box.
+_brain_move_guard() {
+    local a; for a in "$@"; do [[ "$a" == "--force" ]] && return 0; done
+    local trail; trail="$(_brain_trail)"; [[ -f "$trail" ]] || return 0
+    local name; name=$(python3 - "$trail" <<'PY'
+import json, sys, collections
+c = collections.Counter()
+with open(sys.argv[1]) as f:
+    for line in f:
+        try: r = json.loads(line)
+        except Exception: continue
+        if r.get("type") == "speak" and not r.get("authored") and r.get("agent"): c[r["agent"]] += 1
+best = c.most_common(1)
+print(best[0][0] if best else "")
+PY
+)
+    [[ -z "$name" ]] && return 0
+    echo "$name"; return 1
+}
+# The facts of her house, from her record: her person, her housemates, her room, what she did
+# yesterday, rooms she made. The gate asks about these; the identity draft carries them verbatim.
+_brain_move_facts() {   # <name> <entityId> <out.json>
+    python3 - "$(_brain_trail)" "$1" "$2" "$3" <<'PY'
+import json, sys, collections, datetime
+trail, name, eid, out = sys.argv[1:5]
+to = collections.Counter(); mates = set(); made = []; yday = collections.Counter()
+yesterday = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=1)).isoformat()
+with open(trail) as f:
+    for line in f:
+        try: r = json.loads(line)
+        except Exception: continue
+        a = r.get("agent")
+        if r.get("type") == "speak" and a and a != name: mates.add(a)
+        if a != name: continue
+        t = r.get("type")
+        if t == "speak" and r.get("to") and r["to"] not in ("system", name): to[r["to"]] += 1
+        if t == "move" and r.get("reason", "").startswith("to-") and r.get("to") not in ("nexus", f"home-{eid}") and r["to"] not in made: made.append(r["to"])
+        if t == "enacted" and r.get("ts", "").startswith(yesterday): yday[r.get("verb")] += 1
+mates -= {name}
+person = next((n for n, _ in to.most_common() if n.lower() not in {m.lower() for m in mates}), None)
+words = {"library_card": ["read", "library", "sources", "book"], "go_to_room": ["room", "moved", "went", "walked"],
+         "create_room_from_template": ["built", "made", "room"], "journal": ["journal", "wrote"], "quiet_place": ["quiet", "sat"],
+         "workbench": ["workbench", "built", "made"], "emote": ["sat", "looked"], "tell_agent": ["told", "said", "message"]}
+facts = {"name": name, "entity": eid, "person": person, "housemates": sorted(mates), "home": f"home-{eid}",
+         "yesterday": [words[v] for v, _ in yday.most_common(3) if v in words],
+         "rooms_made": [m.rsplit("-", 1)[0].replace("-", " ") for m in made[-3:]]}
+json.dump(facts, open(out, "w"), indent=1)
+print(json.dumps({k: facts[k] for k in ("person", "housemates", "home")}))
+PY
+}
+# The adapter ids the gate names, from what the server loaded: the species floor and the honesty (work) adapter.
+_brain_adapter_id() {   # <port> <file name>
+    curl -sf --max-time 5 "http://127.0.0.1:$1/lora-adapters" 2>/dev/null | python3 -c '
+import json, sys
+m = "/" + sys.argv[1]
+print(next((str(a["id"]) for a in json.load(sys.stdin) if a.get("path", "").endswith(m)), ""))' "$2" 2>/dev/null || true
+}
+# Start the large model as the only brain for the gate, whatever the profile says (the profile is
+# changed only after the gate and the person's yes). Returns 1 when it does not come up.
+_brain_move_start_candidate() {   # <port>
+    local plan; plan="$(plan_for_profile single-sparse "$(_brain_vram_available_mb)" "$(_brain_ram_mb)")"
+    [[ "$plan" == "not-viable" ]] && return 1
+    case "$plan" in gpu-full) export LLAMA_CPU_MOE=0 ;; *) export LLAMA_CPU_MOE="$plan" ;; esac
+    export LLAMA_BRAIN_MODEL="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}" WYRDSEKAI_DATA="$DATA_DIR"
+    [[ -z "${LLAMA_BRAIN_MEM_LIMIT:-}" ]] && export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit "$plan")"
+    docker stop wyrdsekai-llama wyrdsekai-llama-voice >/dev/null 2>&1 || true
+    _ensure_nvidia_container_runtime
+    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; docker compose --profile brain up -d llama-brain >/dev/null 2>&1 ) || return 1
+    local i; for i in $(seq 1 180); do curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$1/health" && return 0; sleep 5; done
+    return 1
+}
+# Her description of herself, drafted from her record by the model on <port>, shown, and written on a yes.
+_brain_identity() {   # <name> <entityId> <did> <port> <facts.json> [--yes]
+    local name="$1" eid="$2" did="$3" port="$4" facts="$5" yes="${6:-}"
+    local dir="$DATA_DIR/adapters/brainwrite/$eid"; mkdir -p "$dir"
+    local species_id; species_id="$(_brain_adapter_id "$port" "brain/species.gguf")"
+    local floor=(); [[ -n "$species_id" ]] && floor=(--floor "$species_id:1.0")
+    log "$(_t brain.move.drafting)"
+    python3 "$(_brain_gate_script)" --draft-identity --url "http://127.0.0.1:$port" --being "$name" \
+        --trail "$(_brain_trail)" --facts "$facts" --language "${WYRDSEKAI_LOCALE:-en}" "${floor[@]}" \
+        --out "$dir/identity-draft.txt" >/dev/null 2>&1 || { err "$(_t brain.move.identity_failed "draft")"; return 1; }
+    echo; echo "$(_t brain.move.identity_show "$dir/identity-draft.txt")"; echo
+    fold -s -w 100 "$dir/identity-draft.txt"; echo
+    # WYRDSEKAI_BRAIN_MOVE_ANSWER answers both of the move's questions without a terminal: the build
+    # box's end-to-end run only. A person answers everywhere else.
+    local ans="n"
+    if [[ "$yes" == "--yes" || -n "${WYRDSEKAI_BRAIN_MOVE_ANSWER:-}" ]]; then ans="${WYRDSEKAI_BRAIN_MOVE_ANSWER:-y}"
+    else read -r -p "$(_t brain.move.identity_confirm)" ans </dev/tty 2>/dev/null || ans=n; fi
+    case "$ans" in y|Y|s|S|yes|sí|si) ;; *) echo "$(_t brain.move.identity_kept)"; return 2 ;; esac
+    [[ -z "$did" ]] && { err "$(_t brain.move.identity_failed "no manifest")"; return 1; }
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}" token; token=$(wyrd_session_token 2>/dev/null || true)
+    local body; body=$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read().strip()}))' "$dir/identity-draft.txt")
+    local resp; resp=$(curl -s -m 20 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+        -d "$body" "$api/api/soul/$did/identity" 2>/dev/null || true)
+    local ver; ver=$(printf '%s' "$resp" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin); print(d.get("version") or d.get("manifestVersion") or "")
+except Exception: print("")' 2>/dev/null)
+    if [[ -z "$ver" ]]; then err "$(_t brain.move.identity_failed "${resp:-no answer from the node}")"; return 1; fi
+    cp "$dir/identity-draft.txt" "$dir/identity.txt"
+    echo "$(_t brain.move.identity_written "$ver")"
+}
+# One night of her last two weeks written onto the large model, before she is judged on it: the
+# remedy when her voice does not carry. Her own trainer, her own directory; the adapter is served as
+# her night at the night's scale. Returns 1 when nothing was written (a quiet fortnight, no trainer).
+_brain_move_transfer_night() {   # <entityId> <port>
+    local eid="$1" port="$2" dir="$DATA_DIR/adapters/brainwrite/$1"
+    local bvenv="${WYRDSEKAI_BRAIN_WRITE_VENV:-$DATA_DIR/brainwrite-venv}" py=""
+    for c in "$bvenv/bin/python3" "$bvenv/bin/python"; do [[ -x "$c" ]] && { py="$c"; break; }; done
+    [[ -z "$py" ]] && { log "$(_t brain.move.night_no_trainer)"; return 1; }
+    local script="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/brain_write.py"
+    [[ -f "$script" ]] || script="$PROJECT_ROOT/scripts/training/sleepwrite/brain_write.py"
+    local since; since="$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%S+00:00 2>/dev/null || python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=14)).isoformat())')"
+    log "$(_t brain.move.night_writing)"
+    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
+      WYRDSEKAI_DATA="$DATA_DIR" WYRDSEKAI_SLEEP_WRITE_AGENT_ID="$eid" WYRDSEKAI_BRAIN_WRITE_SINCE="$since" \
+        "$py" "$script" > "$dir/transfer-night.log" 2>&1 &
+      # The launcher is one file for every system and a stock Mac has no bounding command: the
+      # trainer is given forty minutes here, and the child that is stopped is our own.
+      tpid=$!; waited=0
+      while kill -0 "$tpid" 2>/dev/null; do
+          if (( waited >= 2400 )); then
+              kill "$tpid" 2>/dev/null; sleep 2; kill -9 "$tpid" 2>/dev/null
+              wait "$tpid" 2>/dev/null; exit 124
+          fi
+          sleep 5; waited=$((waited + 5))
+      done
+      wait "$tpid" ); local rc=$?
+    if [[ $rc -ne 0 || ! -f "$dir/current.gguf" ]]; then log "$(_t brain.move.night_none "$dir/transfer-night.log")"; return 1; fi
+    # The trainer starts the container again; the adapter is picked up on a fresh start.
+    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; docker compose --profile brain up -d --force-recreate llama-brain >/dev/null 2>&1 )
+    local i; for i in $(seq 1 120); do curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$port/health" && return 0; sleep 5; done
+    return 1
+}
+_brain_move_revert() {   # the two models back, nothing changed
+    docker stop "$BRAIN_CONTAINER" >/dev/null 2>&1 || true; do_start >/dev/null 2>&1 || true
+}
+_brain_move() {   # <name> [--force]
+    local name="$1"; [[ -z "$name" || "$name" == "help" ]] && { echo "$(_t brain.move.usage)"; return 64; }
+    local force=0 a; for a in "${@:2}"; do [[ "$a" == "--force" ]] && force=1; done
+    command -v python3 >/dev/null 2>&1 || { err "$(_t brain.move.no_python)"; return 1; }
+    local row; row=$(_brain_companions | awk -F'\t' -v n="$(echo "$name" | tr '[:upper:]' '[:lower:]')" 'tolower($1)==n {print; exit}' || true)
+    if [[ -z "$row" ]]; then err "$(_t brain.move.unknown "$name" "$(_brain_companions | cut -f1 | paste -sd, -)")"; return 1; fi
+    name="$(cut -f1 <<<"$row")"; local eid did; eid="$(cut -f2 <<<"$row")"; did="$(cut -f3 <<<"$row")"
+    local gate; gate="$(_brain_gate_script)"
+    local port="${LLAMA_DRIVE_PORT:-8200}" dir="$DATA_DIR/adapters/brainwrite/$eid"; mkdir -p "$dir"
+    # Her state by her age: born here or young moves at once; established is measured first.
+    local check state; check=$(python3 "$gate" --check --being "$name" --trail "$(_brain_trail)" --nights-dir "$dir" 2>/dev/null || true)
+    state=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("state","established"))' "$check" 2>/dev/null || echo established)
+    local lines days; lines=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("lines_28d",0))' "$check" 2>/dev/null || echo 0)
+    days=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("days",0))' "$check" 2>/dev/null || echo 0)
+    case "$state" in
+        born) echo "$(_t brain.move.state_born "$name" "$lines")" ;;
+        young) echo "$(_t brain.move.state_young "$name" "$lines" "$days")" ;;
+        *) echo "$(_t brain.move.state_established "$name" "$lines" "$days")" ;;
+    esac
+    local model_path="$DATA_DIR/models/${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}"
+    [[ -f "$model_path" ]] || { err "$(_t brain.enable.needs_setup)"; return 1; }
+    local stamp; stamp="$(date +%Y%m%d-%H%M)"
+    local facts="$dir/move-$stamp-facts.json" out="$dir/move-$stamp.json" sheet="$dir/move-$stamp-sheet.txt"
+    _brain_move_facts "$name" "$eid" "$facts" >/dev/null || true
+    # She is told; the two models stop; the large model comes up.
+    log "$(_t brain.move.quiet "$name")"; _quiesce_notice "brain move"
+    if ! _brain_move_start_candidate "$port"; then err "$(_t brain.move.server_failed)"; do_start >/dev/null 2>&1 || true; return 1; fi
+    # Her description of herself (kept when she already has one).
+    local has_identity; has_identity=$(python3 - "$DATA_DIR/world.db" "$did" <<'PY'
+import json, sqlite3, sys
+try:
+    c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+    row = c.execute("SELECT manifest_json FROM soul_manifests WHERE did = ? AND archived = 0 ORDER BY version DESC LIMIT 1", (sys.argv[2],)).fetchone()
+    print("yes" if row and (json.loads(row[0]).get("residentIdentity") or "").strip() else "")
+except Exception:
+    print("")
+PY
+)
+    if [[ -z "$has_identity" ]]; then
+        _brain_identity "$name" "$eid" "$did" "$port" "$facts"; local rc=$?
+        if [[ $rc -ne 0 ]]; then _brain_move_revert; echo "$(_t brain.move.declined "$dir")"; return 1; fi
+    fi
+    # The battery: measured for the established, reported for the young; a newborn needs none.
+    local species_id work_id styled_id; species_id="$(_brain_adapter_id "$port" "brain/species.gguf")"
+    work_id="$(_brain_adapter_id "$port" "brain/work.gguf")"; styled_id="$(_brain_adapter_id "$port" "brain/styled.gguf")"
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}" shadow="$dir/move-$stamp-shadow.json"
+    local args=(--url "http://127.0.0.1:$port" --being "$name" --trail "$(_brain_trail)" --facts "$facts" --out "$out" --sheet "$sheet"
+                --language "${WYRDSEKAI_LOCALE:-en}" --state "$state" --nights-dir "$dir" --shadow-file "$DATA_DIR/shadow.jsonl")
+    [[ -f "$dir/identity.txt" ]] && args+=(--identity "$dir/identity.txt")
+    [[ -n "$species_id" ]] && args+=(--floor "$species_id:1.0")
+    [[ -n "$work_id" ]] && args+=(--judge "$work_id:1.0" --alt-floor "$work_id:1.0")
+    [[ -n "$styled_id" ]] && args+=(--dial "$styled_id:0.3")
+    curl -s -m 20 -H "Authorization: Bearer $(cat "$DATA_DIR/operator.token" 2>/dev/null)" "$api/api/shadow?n=300" -o "$shadow" 2>/dev/null && args+=(--shadow "$shadow")
+    local verdict="" reasons=""
+    if [[ "$state" != "born" ]]; then
+        log "$(_t brain.move.measuring "$name")"
+        verdict=$( { python3 "$gate" "${args[@]}" 2>&1 || true; } | tee "$dir/move-$stamp.log" | grep -vE "^gate:" | head -1 || true)
+        reasons=$(grep -E "^  [-~→] |^      → " "$dir/move-$stamp.log" || true)
+        echo "$(_t brain.move.result "${verdict:-could not run}")"; [[ -n "$reasons" ]] && echo "$reasons"
+        # Her voice did not carry: one night of her onto the large model, measured again.
+        if [[ "$state" == "established" && "$verdict" == "FAIL" ]] && grep -qE "^  - (run-ons|longest|abstract|state words)" "$dir/move-$stamp.log"; then
+            if _brain_move_transfer_night "$eid" "$port"; then
+                local night_id; night_id="$(_brain_adapter_id "$port" "brainwrite/$eid/current.gguf")"
+                [[ -n "$night_id" ]] && args+=(--floor "$night_id:${WYRDSEKAI_CONVERSATION_ADAPTER_SCALE:-0.3}")
+                log "$(_t brain.move.night_remeasure)"
+                verdict=$( { python3 "$gate" "${args[@]}" --out "$dir/move-$stamp-2.json" --sheet "$sheet" 2>&1 || true; } | tee "$dir/move-$stamp-2.log" | grep -vE "^gate:" | head -1 || true)
+                reasons=$(grep -E "^  [-~→] |^      → " "$dir/move-$stamp-2.log" || true); out="$dir/move-$stamp-2.json"
+                echo "$(_t brain.move.result "${verdict:-could not run}")"; [[ -n "$reasons" ]] && echo "$reasons"
+            fi
+        fi
+    fi
+    case "$state:$verdict:$force" in
+        born:*|young:*) ;;                     # she moves at once; what was measured is in the record
+        established:PASS:*) ;;
+        established:*:1) log "$(_t brain.move.forced "$name")" ;;
+        established:UNINFORMATIVE:*) err "$(_t brain.move.uninformative "$name")"; _brain_move_revert; echo "$(_t brain.move.record "$out")"; return 1 ;;
+        *) err "$(_t brain.move.failed "$name" "$out")"; _brain_move_revert; return 1 ;;
+    esac
+    # The person who knows her reads the sheet and decides (an established companion; the young show theirs after).
+    if [[ "$state" == "established" ]]; then
+        echo; echo "$(_t brain.move.sheet)"; echo; [[ -f "$sheet" ]] && fold -s -w 110 "$sheet"; echo
+        local ans="n"
+        if [[ -n "${WYRDSEKAI_BRAIN_MOVE_ANSWER:-}" ]]; then ans="$WYRDSEKAI_BRAIN_MOVE_ANSWER"; echo "$(_t brain.move.confirm "$name")$ans"
+        else read -r -p "$(_t brain.move.confirm "$name")" ans </dev/tty 2>/dev/null || ans=n; fi
+        case "$ans" in y|Y|s|S|yes|sí|si) ;; *) _brain_move_revert; echo "$(_t brain.move.declined "$out")"; return 1 ;; esac
+    fi
+    do_config set "WYRDSEKAI_SERVING_PROFILE=single-sparse" >/dev/null
+    # This process read the conf when it started, as two-model; the restart below must see the new
+    # profile or it brings the two models back up under a single-brain node (the build box, 17:46).
+    export WYRDSEKAI_SERVING_PROFILE=single-sparse
+    python3 - "$out" "$state" "$force" "${verdict:-none}" <<'PY'
+import json, sys, datetime, os
+p = sys.argv[1]
+d = json.load(open(p)) if os.path.exists(p) else {}
+d.update({"moved": True, "moved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "state": sys.argv[2],
+          "forced": sys.argv[3] == "1", "verdict": sys.argv[4], "approved_by": "the steward"})
+json.dump(d, open(p, "w"), indent=1)
+PY
+    do_stop >/dev/null 2>&1; sleep 1; do_start
+    echo "$(_t brain.move.moved "$name" "$out")"
+    [[ "$state" != "established" && -f "$sheet" ]] && { echo; echo "$(_t brain.move.sheet_after)"; fold -s -w 110 "$sheet" | head -60; }
+    return 0
+}
+
 do_brain() {
     local sub="${1:-status}"
     local model="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}"
@@ -15063,6 +15363,10 @@ do_brain() {
                     want=sparse-drive; echo "$(_t brain.enable.keeps_voice)"
                 else want=single-sparse; fi
             fi
+            # A living companion is moved through the gate, not switched under: `wyrd brain move <name>`.
+            if [[ "$want" == "single-sparse" ]]; then
+                local _who; if ! _who="$(_brain_move_guard "${@:2}")"; then err "$(_t brain.move.redirect "$_who")"; return 1; fi
+            fi
             local want_plan; want_plan="$(plan_for_profile "$want" "${avail:-0}" "${ram:-0}")"
             [[ "$(uname -s)" == "Darwin" ]] && want_plan="$plan"
             if [[ "$want_plan" == "not-viable" ]]; then
@@ -15076,6 +15380,19 @@ do_brain() {
         disable)
             do_config set "WYRDSEKAI_SERVING_PROFILE=two-model" >/dev/null
             echo "$(_t brain.disable.done)"
+            ;;
+        move)
+            _brain_move "${2:-}" "${@:3}"
+            ;;
+        identity)
+            # Her description of herself from her own record, on whatever brain serves the drive port now.
+            local _n="${2:-}"; [[ -z "$_n" || "$_n" == "help" ]] && { echo "$(_t brain.identity.usage)"; return 64; }
+            local _row; _row=$(_brain_companions | awk -F'\t' -v n="$(echo "$_n" | tr '[:upper:]' '[:lower:]')" 'tolower($1)==n {print; exit}')
+            [[ -z "$_row" ]] && { err "$(_t brain.move.unknown "$_n" "$(_brain_companions | cut -f1 | paste -sd, -)")"; return 1; }
+            local _eid _did _facts; _eid="$(cut -f2 <<<"$_row")"; _did="$(cut -f3 <<<"$_row")"
+            _facts="$DATA_DIR/adapters/brainwrite/$_eid/identity-facts.json"; mkdir -p "$(dirname "$_facts")"
+            _brain_move_facts "$(cut -f1 <<<"$_row")" "$_eid" "$_facts" >/dev/null || true
+            _brain_identity "$(cut -f1 <<<"$_row")" "$_eid" "$_did" "${LLAMA_DRIVE_PORT:-8200}" "$_facts" "${3:-}"
             ;;
         vram)
             # `wyrd brain vram 8` — she may use up to 8 GB of the card; `auto` lifts the ceiling.

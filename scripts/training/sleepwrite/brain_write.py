@@ -127,7 +127,10 @@ def main():
               f"({sum(1 for r in fresh if r.get('with'))} with a person, "
               f"{sum(1 for r in fresh if r.get('dream'))} dreams) from {len(past)} kept")
     else:
-        since = sw.window_start()
+        # A night of her last weeks onto a brain she is about to move to (the move gate's remedy when
+        # her voice does not carry): the window is given, the rest is an ordinary night.
+        given = os.environ.get("WYRDSEKAI_BRAIN_WRITE_SINCE", "").strip()
+        since = datetime.fromisoformat(given.replace("Z", "+00:00")) if given else sw.window_start()
         fresh, past = sw.load_lines(since)
         replay = sw.sample_replay(past)
         print(f"[brainwrite] window since {since.isoformat()}: {len(fresh)} fresh felt-stamped lines "

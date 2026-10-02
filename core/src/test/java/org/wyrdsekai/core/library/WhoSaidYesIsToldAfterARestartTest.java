@@ -109,7 +109,8 @@ class WhoSaidYesIsToldAfterARestartTest {
             assertThat(rs.next()).isTrue();
             assertThat(rs.getString(1)).isEqualTo("library_yes_reports_asker");
         }
-        assertThat(SchemaInitializer.SCHEMA_VERSION).isEqualTo(17);
+        // Migration 17 is this feature's; later migrations (18, 19: the naming ritual) moved the version on.
+        assertThat(SchemaInitializer.SCHEMA_VERSION).isGreaterThanOrEqualTo(17);
     }
 
     @Test
