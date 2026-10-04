@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
@@ -3057,6 +3058,100 @@ public class WyrdLuceneStore implements Closeable {
         } catch (IOException | RuntimeException e) {
             log.warn("Could not read neighbours of {}: {}", docId, e.toString());
             return List.of();
+        }
+    }
+
+    /** A book (or any paginated document) on a shelf: its name, where it is, whose it is, how many parts. */
+    public record BookRef(String group, String collection, String ownerDid, String studyCollection, int parts) {}
+
+    /**
+     * The books on a shelf whose names hold every one of the words, at most {@code limit}, with
+     * the name's parts counted. The names are the {@code doc_group} terms, read once per call:
+     * a shelf holds thousands of names, not millions.
+     */
+    public List<BookRef> booksMatching(String collection, List<String> words, int limit) {
+        var out = new ArrayList<BookRef>();
+        if (collection == null || limit <= 0) return out;
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                var terms = org.apache.lucene.index.MultiTerms.getTerms(searcher.getIndexReader(), FIELD_DOC_GROUP);
+                if (terms == null) return out;
+                var it = terms.iterator();
+                BytesRef term;
+                while ((term = it.next()) != null && out.size() < limit) {
+                    var name = term.utf8ToString();
+                    var low = name.toLowerCase(Locale.ROOT);
+                    boolean all = true;
+                    for (var w : words) if (!low.contains(w)) { all = false; break; }
+                    if (!all) continue;
+                    var ref = bookRef(searcher, collection, name);
+                    if (ref != null && ref.parts() > 0) out.add(ref);
+                }
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not list books on {} for {}: {}", collection, words, e.toString());
+        }
+        return out;
+    }
+
+    /** One book by its exact name on the shelf, or null. */
+    public BookRef book(String collection, String group) {
+        if (collection == null || group == null) return null;
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                return bookRef(searcher, collection, group);
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not read book {} on {}: {}", group, collection, e.toString());
+            return null;
+        }
+    }
+
+    private BookRef bookRef(IndexSearcher searcher, String collection, String group) throws IOException {
+        var q = new TermQuery(new Term(FIELD_DOC_GROUP, group));
+        var first = searcher.search(new BooleanQuery.Builder()
+            .add(q, BooleanClause.Occur.MUST)
+            .add(IntPoint.newRangeQuery(FIELD_PART, 1, Integer.MAX_VALUE), BooleanClause.Occur.MUST)
+            .build(), 1);
+        if (first.scoreDocs.length == 0) return null;
+        var d = searcher.storedFields().document(first.scoreDocs[0].doc);
+        int parts = 0;
+        var m = PART_SUFFIX.matcher(safe(d.get("title")));
+        if (m.matches()) {
+            try { parts = Integer.parseInt(m.group(3)); } catch (NumberFormatException ignored) { parts = 0; }
+        }
+        if (parts <= 0) parts = searcher.count(q);
+        return new BookRef(group, collection, d.get("user_did"), d.get("collection"), parts);
+    }
+
+    /** One part of a book, by its number from 1, or null when the shelf has no such part. */
+    public SearchResult partOf(String collection, String group, int part) {
+        if (collection == null || group == null || part < 1) return null;
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                var q = new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(FIELD_DOC_GROUP, group)), BooleanClause.Occur.MUST)
+                    .add(IntPoint.newExactQuery(FIELD_PART, part), BooleanClause.Occur.MUST)
+                    .build();
+                var hits = searcher.search(q, 1);
+                if (hits.scoreDocs.length == 0) return null;
+                return toResult(searcher.storedFields().document(hits.scoreDocs[0].doc), 1.0f);
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not read part {} of {}: {}", part, group, e.toString());
+            return null;
         }
     }
 

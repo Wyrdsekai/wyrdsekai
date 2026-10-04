@@ -3016,19 +3016,50 @@ function Show-UpdateStatus {
     } elseif ($latest) { if (Test-ReleaseVersion $installed) { Write-Host (_T 'update.status.current') } else { Write-Host (_T 'update.status.dev') } }
 }
 
-function Get-ReleaseArtifact([string]$Version) {
+# With -From, a household node's http url (nodes update each other): the installer's bytes are taken
+# from that node first, over the house network; the SHA256SUMS always come from the release itself.
+function Get-ReleaseArtifact([string]$Version, [string]$From = '') {
     $dir = Join-Path $DataDir "updates"; New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $art = "Wyrdsekai-$Version.msi"; $base = "https://github.com/$ReleaseRepo/releases/download/v$Version"
     $msi = Join-Path $dir $art; $sums = Join-Path $dir "SHA256SUMS.$Version"
     $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
     try {
+        if (-not (Test-Path $msi) -and $From) {
+            # The household door is HTTPS with the household certificate: curl.exe with the household
+            # CA this node holds. Without curl.exe or the CA, the peer is passed over for the release.
+            $ca = Join-Path $DataDir "tls\household-ca.pem"
+            $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+            if ($From -like 'https://*' -and -not ($curl -and (Test-Path $ca))) { $From = '' }
+        }
+        if (-not (Test-Path $msi) -and $From) {
+            Write-Info (_T 'update.now.from_peer' $art ($From -replace '^https?://', ''))
+            try {
+                $uri = "{0}/api/update/artifact/{1}" -f $From.TrimEnd('/'), $art
+                if ($From -like 'https://*') {
+                    & $curl.Source -fsSL --cacert $ca -o "$msi.partial" $uri
+                    if ($LASTEXITCODE -ne 0) { throw "curl exit $LASTEXITCODE" }
+                } else {
+                    Invoke-WebRequest -Uri $uri -OutFile "$msi.partial" -UseBasicParsing
+                }
+                Move-Item -Force "$msi.partial" $msi
+            } catch {
+                Remove-Item -Force "$msi.partial" -ErrorAction SilentlyContinue
+                Write-Info (_T 'update.now.peer_missed')
+            }
+        }
         if (-not (Test-Path $msi)) {
             Write-Info (_T 'update.now.downloading' $art)
             Invoke-WebRequest -Uri "$base/$art" -OutFile "$msi.partial" -UseBasicParsing
             Move-Item -Force "$msi.partial" $msi
         }
-        try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums -UseBasicParsing }
-        catch { Write-Err2 "the release has no SHA256SUMS - refusing an unverified install"; return $null }
+        # The checksums: from the release itself; when the release cannot be reached, the copy
+        # another household machine fetched from it and passed on over the signed Between.
+        try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile "$sums.fetch" -UseBasicParsing; Move-Item -Force "$sums.fetch" $sums }
+        catch {
+            Remove-Item -Force "$sums.fetch" -ErrorAction SilentlyContinue
+            if (Test-Path "$sums.household") { $sums = "$sums.household"; Write-Info (_T 'update.now.sums_from_household') }
+            else { Write-Err2 "the release has no SHA256SUMS - refusing an unverified install"; return $null }
+        }
     } finally { $ProgressPreference = $prev }
     Write-Info (_T 'update.now.verifying')
     $line = Select-String -Path $sums -Pattern ("\s\*?" + [regex]::Escape($art) + "$") | Select-Object -First 1
@@ -3135,10 +3166,13 @@ function Invoke-Update {
             return
         }
         "stage" {
+            # --from <url>: a household node that already runs the release (the self-updater passes it).
+            $from = ''
+            if ($Rest.Count -ge 2) { for ($i = 1; $i -lt $Rest.Count; $i++) { if ($Rest[$i] -eq '--from' -and $i + 1 -lt $Rest.Count) { $from = $Rest[$i + 1] } elseif ($Rest[$i] -like '--from=*') { $from = $Rest[$i].Substring(7) } } }
             $v = Get-LatestRelease $ReleaseRepo -Fresh
             if (-not $v) { Write-Err2 (_T 'update.now.no_latest'); exit 1 }
             if (-not (Test-VersionNewer $v (Get-InstalledRelease))) { Write-Info (_T 'update.now.already' $v); return }
-            $f = Get-ReleaseArtifact $v; if (-not $f) { exit 1 }
+            $f = Get-ReleaseArtifact $v $from; if (-not $f) { exit 1 }
             Write-Ok (_T 'update.now.staged' $f); return
         }
         "now" {
@@ -3804,6 +3838,43 @@ function Invoke-Vault {
     }
 }
 
+# wyrd rooms find / wyrd items find: search the archive (closed-up rooms, put-away items) by what a
+# thing was. No words lists the whole tier; --cold looks in cold storage instead.
+function Show-ArchiveFind([string]$Kind, [string]$Base, [string[]]$Words) {
+    $cold = $false; $q = @()
+    foreach ($w in @($Words)) { if ($w -eq '--cold') { $cold = $true } elseif ($w) { $q += $w } }
+    $token = Get-SessionToken
+    if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+    $uri = "$Base/api/rooms/archive?q=" + [uri]::EscapeDataString(($q -join ' ')) + "&cold=" + $cold.ToString().ToLower()
+    try { $d = Invoke-RestMethod -Uri $uri -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20 }
+    catch {
+        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+        if ($code -eq 403) { Write-Err2 "Only the steward searches the archive from here. In the house, anyone can type: archive"; exit 1 }
+        Write-Err2 "The server did not answer at $Base - is it running? ($($_.Exception.Message))"; exit 1
+    }
+    $other = if ($Kind -eq 'rooms') { 'items' } else { 'rooms' }
+    $rows = @($d.$Kind)
+    $where = if ($d.cold) { 'cold storage' } else { 'the archive' }
+    if ($rows.Count -eq 0) {
+        if ($d.query) { Write-Host "No $($Kind.TrimEnd('s')) in $where fit `"$($d.query)`"." } else { Write-Host "No $Kind in $where." }
+    } else {
+        Write-Host ("{0,-34} {1,-12} {2,6}  {3}" -f $(if ($Kind -eq 'rooms') { 'ROOM' } else { 'ITEM' }), 'MADE BY', 'AWAY', 'WHAT IT WAS')
+        foreach ($r in $rows) {
+            $name = "$($r.name)"; if (-not $name) { $name = "$($r.id)" }
+            if ($name.Length -gt 34) { $name = $name.Substring(0, 31) + '...' }
+            $by = "$($r.madeBy)"; if ($by.Length -gt 12) { $by = $by.Substring(0, 12) }
+            $what = (("$($r.what)") -split '\s+' -join ' ').Trim(); if ($what.Length -gt 100) { $what = $what.Substring(0, 99) + '...' }
+            Write-Host ("{0,-34} {1,-12} {2,5}d  {3}" -f $name, $by, [int]$r.days, $what)
+        }
+        if ($Kind -eq 'rooms') { Write-Host "Bring one back with: wyrd rooms open <name>" } else { Write-Host "Bring one back with: wyrd items out <name>" }
+    }
+    $others = @($d.$other)
+    if ($others.Count -gt 0) { Write-Host "$($others.Count) $($other.TrimEnd('s'))(s) $(if ($d.query) { 'fit too' } else { "in $where too" }): wyrd $other find $($q -join ' ')$(if ($d.cold) { ' --cold' })" }
+    $n = if ($Kind -eq 'rooms') { [int]$d.coldRooms } else { [int]$d.coldItems }
+    if (-not $d.cold -and $n -gt 0) { Write-Host "$n more in cold storage (where a thing goes after $($d.coldDays) days in the archive): add --cold" }
+}
+
 function Invoke-Rooms {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
     $base = Get-ApiBase
@@ -3856,7 +3927,77 @@ function Invoke-Rooms {
             $res = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/prune?dry=false&duplicates=$dup" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 300
             foreach ($r in @($res.results)) { Write-Host (($(if ($r.ok) { 'ok   ' } else { 'kept ' })) + "$($r.name) - $($r.message)") }
         }
-        default { Write-Host "Usage: wyrd rooms [list] | demolish <room> | prune [--duplicates] [--yes]"; exit 64 }
+        "made" {
+            # The rooms companions made: who each was made for, how long since anyone was in it,
+            # whether the house holds it, and which are closed up.
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            try { $d = Invoke-RestMethod -Uri "$base/api/rooms/made" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20 }
+            catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                if ($code -eq 403) { Write-Err2 "Only the steward sees this list."; exit 1 }
+                Write-Err2 "The server did not answer at $base - is it running? ($($_.Exception.Message))"; exit 1
+            }
+            $rows = @($d.rooms)
+            Write-Host ("{0,-34} {1,-8} {2,-12} {3,7}  {4,-9} {5}" -f 'NAME', 'MADE BY', 'FOR', 'QUIET', 'STATE', 'HELD BECAUSE')
+            foreach ($r in ($rows | Sort-Object @{ Expression = { [bool]$_.closed } }, @{ Expression = { [int]$_.quietDays }; Descending = $true })) {
+                $name = "$($r.name)"; if (-not $name) { $name = "$($r.roomId)" }
+                if ($name.Length -gt 34) { $name = $name.Substring(0, 31) + '...' }
+                $by = "$($r.madeBy)"; if ($by.Length -gt 8) { $by = $by.Substring(0, 8) }
+                $state = if ($r.cold) { "cold $([int]$r.closedDays)d" } elseif ($r.closed) { "closed $([int]$r.closedDays)d" } else { 'open' }
+                Write-Host ("{0,-34} {1,-8} {2,-12} {3,5}d   {4,-9} {5}" -f $name, $by, "$($r.madeFor)", [int]$r.quietDays, $state, "$($r.held)")
+            }
+            $closed = @($rows | Where-Object { $_.closed }).Count
+            $own = @($rows | Where-Object { -not $_.held -and -not $_.closed }).Count
+            $max = if ($d.openMax) { $d.openMax } else { 'none' }
+            Write-Host "$($rows.Count) made room(s); $closed closed up; $own open and counted against a companion (limit $max each)"
+            Write-Host "A room nobody enters is closed up after $($d.emptyDays) days ($($d.heldDays) when it holds something). Closed-up rooms are kept; go to one by name, or: wyrd rooms open <room>. Search them by what they were: wyrd rooms find <words>"
+        }
+        "find" {
+            Show-ArchiveFind 'rooms' $base @($Rest | Select-Object -Skip 1)
+        }
+        "tidy" {
+            # Close up, now, what the nightly pass would. Lists first; --yes closes. Nothing is deleted.
+            $yes = ($Rest -contains '--yes') -or ($Rest -contains '-y')
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            try { $plan = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/tidy?dry=true" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 180 }
+            catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                if ($code -eq 403) { Write-Err2 "Only the steward tidies rooms."; exit 1 }
+                Write-Err2 "The server did not answer at $base - is it running? ($($_.Exception.Message))"; exit 1
+            }
+            $rooms = @($plan.rooms)
+            if ($rooms.Count -eq 0) { Write-Host "Nothing to close up: no room of a companion has been quiet past the setting."; return }
+            Write-Host "Would close up $($rooms.Count) room(s) (kept as they are; each opens again when someone goes to it):"
+            foreach ($r in ($rooms | Sort-Object maker, @{ Expression = { [int]$_.quietDays }; Descending = $true })) {
+                $name = "$($r.name)"; if ($name.Length -gt 40) { $name = $name.Substring(0, 40) }
+                Write-Host ("  {0,-8} {1,-40} quiet {2} d" -f "$($r.maker)", $name, [int]$r.quietDays)
+            }
+            if (-not $yes) { Write-Host "Run again with --yes to close them up. Each companion is told which of hers were closed."; return }
+            $res = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/tidy?dry=false" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 600
+            Write-Host "Closed up $(@($res.rooms).Count) room(s)."
+        }
+        { $_ -in "close", "open", "keep" } {
+            $room = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+            if (-not $room) { Write-Err2 "Usage: wyrd rooms $sub <room-id-or-name>"; exit 2 }
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            $enc = [uri]::EscapeDataString($room)
+            try {
+                $d = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/$enc/$sub" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 40
+                Write-Host $d.message
+            } catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                $body = $null; try { $body = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
+                Write-Err2 $(if ($body -and $body.message) { $body.message } elseif ($body -and $body.error) { $body.error } else { $_.Exception.Message })
+                exit 1
+            }
+        }
+        default { Write-Host "Usage: wyrd rooms [list] | made | find [words] [--cold] | tidy [--yes] | keep <room> | close <room> | open <room> | demolish <room> | prune [--duplicates] [--yes]"; exit 64 }
     }
 }
 
@@ -4358,7 +4499,51 @@ function Invoke-Items {
                 Write-Err2 "The server did not answer at $base - is it running?"; exit 1
             }
         }
-        default { Write-Host "Usage: wyrd items check [--quiet] [dir...] | broken | repair <name>|--all"; if ($sub -ne 'help') { exit 2 } }
+        "made" {
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            $base = Get-ApiBase
+            try { $d = Invoke-RestMethod -Uri "$base/api/items/made" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20 }
+            catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                if ($code -eq 403) { Write-Err2 "Only the steward sees this list."; exit 1 }
+                Write-Err2 "The server did not answer at $base - is it running? ($($_.Exception.Message))"; exit 1
+            }
+            $rows = @($d.items)
+            Write-Host ("{0,-34} {1,-16} {2,-12} {3,7}  {4,-8} {5}" -f 'ITEM', 'MADE BY', 'FOR', 'UNUSED', 'STATE', 'HELD BECAUSE')
+            foreach ($r in ($rows | Sort-Object @{ Expression = { [bool]$_.putAway } }, @{ Expression = { [int]$_.unusedDays }; Descending = $true })) {
+                $name = "$($r.item)"; if ($name.Length -gt 34) { $name = $name.Substring(0, 31) + '...' }
+                $by = "$($r.madeBy)"; if ($by.Length -gt 16) { $by = $by.Substring(0, 16) }
+                $state = if ($r.cold) { 'cold' } elseif ($r.putAway) { 'away' } else { 'out' }
+                Write-Host ("{0,-34} {1,-16} {2,-12} {3,5}d   {4,-8} {5}" -f $name, $by, "$($r.madeFor)", [int]$r.unusedDays, $state, "$($r.held)")
+            }
+            $away = @($rows | Where-Object { $_.putAway }).Count
+            Write-Host "$($rows.Count) made item(s); $away put away. An item unused for $($d.unusedDays) days is put away ($($d.firstLookDays) days of watching for ones made before the record); it is kept, and named again it is taken out. $($d.outMax) stay out per companion."
+        }
+        "find" {
+            Show-ArchiveFind 'items' (Get-ApiBase) @($Rest | Select-Object -Skip 1)
+        }
+        "out" {
+            $item = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+            if (-not $item -or $item.StartsWith('--')) { Write-Err2 "Usage: wyrd items out <item> [--of <companion-id>]"; exit 2 }
+            $of = $null; for ($i = 2; $i -lt $Rest.Count - 1; $i++) { if ($Rest[$i] -eq '--of') { $of = $Rest[$i + 1] } }
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            $base = Get-ApiBase
+            $q = "item=" + [uri]::EscapeDataString($item); if ($of) { $q += "&of=" + [uri]::EscapeDataString($of) }
+            try {
+                $d = Invoke-RestMethod -Method Post -Uri "$base/api/items/made/out?$q" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20
+                Write-Host $d.message
+            } catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                $body = $null; try { $body = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
+                Write-Err2 $(if ($body -and $body.message) { $body.message } elseif ($body -and $body.error) { $body.error } else { $_.Exception.Message })
+                exit 1
+            }
+        }
+        default { Write-Host "Usage: wyrd items check [--quiet] [dir...] | broken | repair <name>|--all | made | find [words] [--cold] | out <item>"; if ($sub -ne 'help') { exit 2 } }
     }
 }
 

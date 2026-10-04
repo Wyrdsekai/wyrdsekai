@@ -36,7 +36,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
@@ -337,6 +336,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      *                          backend — bounds recovery at one cross-backend hop so a
      *                          two-backend household cannot ping-pong a broken request.
      */
+    /** The household would not or could not take a turn after all: it goes the local way. */
+    private record HouseholdDeclined(ChatRequest req, String why) implements Command {}
+
     private record InferFailure(String requestId, String error,
                                  String failedBackend,
                                  InferenceClient.ChatRequest chatReq,
@@ -556,8 +558,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * Requests are priority-ordered: human-triggered > tool > autonomy.
      * When in-flight count drops below max concurrency, next queued request fires.
      */
-    private final PriorityQueue<QueuedRequest> inferenceQueue =
-        new PriorityQueue<>(Comparator.comparingInt(QueuedRequest::priority));
+    private final FairQueue<Command> inferenceQueue = new FairQueue<>();
     private int inferenceInFlightCount = 0;
     private static final int MAX_QUEUE_SIZE = 20;
 
@@ -586,12 +587,18 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     // ── What the rest of the node may ask about the queue, without a message ──
     /** A point-in-time view for /health, `wyrd doctor` and the steward's eye. */
     public record Snapshot(int inFlight, int queued, int maxConcurrency, Instant pausedUntil,
-                           String pauseReason, long p95LatencyMs, long avgLatencyMs, int samples) {
+                           String pauseReason, long p95LatencyMs, long avgLatencyMs, int samples,
+                           long householdCarried) {
+        public Snapshot(int inFlight, int queued, int maxConcurrency, Instant pausedUntil,
+                        String pauseReason, long p95LatencyMs, long avgLatencyMs, int samples) {
+            this(inFlight, queued, maxConcurrency, pausedUntil, pauseReason, p95LatencyMs, avgLatencyMs, samples, 0L);
+        }
         public Map<String, Object> asMap() {
             var m = new LinkedHashMap<String, Object>();
             m.put("inFlight", inFlight);
             m.put("queued", queued);
             m.put("maxConcurrency", maxConcurrency);
+            m.put("householdCarried", householdCarried);
             m.put("paused", pausedUntil != null && pausedUntil.isAfter(Instant.now()));
             if (pausedUntil != null) m.put("pausedUntil", pausedUntil.toString());
             if (pauseReason != null) m.put("pauseReason", pauseReason);
@@ -606,6 +613,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     private static volatile String pauseReason;
     private static final InferenceMetrics.Aggregator LATENCY = new InferenceMetrics.Aggregator(500, Duration.ofMinutes(10));
     private final Map<String, Long> startedAt = new HashMap<>();
+    /** Requests another machine of the household is answering: they hold no local slot. */
+    private final Set<String> carriedByHousehold = new HashSet<>();
+    private long householdCarried;
+    private static volatile long snapHouseholdCarried;
     private Duration healthCheckInterval = Duration.ofSeconds(30);
 
     // ── the body map: brains are parts ──
@@ -638,7 +649,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     public static Snapshot snapshot() {
         var s = LATENCY.summary();
         return new Snapshot(snapInFlight, snapQueued, snapMax, pausedUntil, pauseReason,
-            s.p95Ms(), (long) s.avgLatencyMs(), s.sampleCount());
+            s.p95Ms(), (long) s.avgLatencyMs(), s.sampleCount(), snapHouseholdCarried);
     }
 
     /** The 95th-percentile chat latency over the last minutes, or 0 when nothing has run. */
@@ -703,7 +714,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     private void recordLatency(String requestId, String backendName, boolean ok, int tokensIn, int tokensOut) {
-        if (ok && backendName != null) {
+        if (ok && backendName != null && !HOUSEHOLD.equals(backendName)) {
             var map = BodyMap.get();
             if (map != null) map.used(BrainLimbs.id(backendName));
         }
@@ -714,7 +725,105 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             ms, tokensIn, tokensOut, ok, Instant.now()));
     }
 
-    private record QueuedRequest(int priority, Command command) {}
+    /** The name a turn carries when another machine of the house answered it. */
+    static final String HOUSEHOLD = "household";
+
+    /**
+     * Her own time goes to another machine of the house when the line here is busy and one is there.
+     * Only her own time (a person's turn never leaves the brain that knows the room), only when
+     * someone's turn holds the slot or is waiting for it, and only when a household brain is
+     * advertised right now. True when the turn was handed over.
+     */
+    private boolean tryHousehold(ChatRequest req) {
+        if (classifyPriority(req.requestId()) != PRIORITY_AMBIENT) return false;
+        var carrier = MeshDispatch.installed();
+        if (carrier == null) return false;
+        boolean lineBusy = inferenceInFlightCount > 0 || !inferenceQueue.isEmpty();
+        if (!lineBusy) return false;
+        try {
+            if (!carrier.someoneElseCanTake()) return false;
+        } catch (RuntimeException e) {
+            return false;
+        }
+        executeViaHousehold(req, carrier);
+        return true;
+    }
+
+    private void executeViaHousehold(ChatRequest req, MeshDispatch.Carrier carrier) {
+        var model = req.model() != null ? req.model() : defaultModel;
+        // The same hygiene a local llama-server gets: the machine that answers runs one too, and
+        // its executor hands the request straight to it.
+        var messages = ensureUserTurn(endOnATurnToAnswer(consolidateSystemMessages(req.messages())));
+        messages = stampToday(req.now(), messages);
+        boolean hasTools = req.tools() != null && !req.tools().isEmpty();
+        var chatReq = new InferenceClient.ChatRequest(model == null ? "default" : model, messages,
+                req.maxTokens(), req.temperature(), req.topP(), null, hasTools ? null : req.grammar(), hasTools ? null : req.format(),
+                req.tools(), req.toolChoice(), req.presencePenalty(), req.repetitionPenalty(),
+                req.registerMix());
+        final String json;
+        try {
+            json = Json.mapper().writeValueAsString(chatReq);
+        } catch (Exception e) {
+            executeChatRequest(req);
+            return;
+        }
+        carriedByHousehold.add(req.requestId());
+        startedAt.putIfAbsent(req.requestId(), System.nanoTime());
+        log.info("Own-time turn {} goes to the household: the line here is busy ({} in flight, {} waiting)",
+            req.requestId(), inferenceInFlightCount, inferenceQueue.size());
+        var self = getContext().getSelf();
+        final long budget = Math.max(1, req.maxTokens());
+        java.util.concurrent.CompletableFuture.supplyAsync(() -> carrier.carryChat(json, budget))
+            .thenAccept(out -> {
+                if (out == null || out.isBlank()) { self.tell(new HouseholdDeclined(req, "no machine took it")); return; }
+                try {
+                    var resp = Json.mapper().readValue(out, InferenceClient.ChatResponse.class);
+                    self.tell(new InferResult(req.requestId(), foldedContent(resp), HOUSEHOLD, resp.usage(), req.replyTo()));
+                } catch (Exception e) {
+                    self.tell(new HouseholdDeclined(req, "unreadable answer: " + e.getMessage()));
+                }
+            })
+            .exceptionally(ex -> { self.tell(new HouseholdDeclined(req, String.valueOf(ex.getMessage()))); return null; });
+    }
+
+    /** The household did not answer after all: the turn takes the local way, as if it had just arrived. */
+    private Behavior<Command> onHouseholdDeclined(HouseholdDeclined d) {
+        carriedByHousehold.remove(d.req().requestId());
+        log.info("Own-time turn {} comes back from the household ({}); the line here takes it", d.req().requestId(), d.why());
+        if (isPaused()) { d.req().replyTo().tell(new InferError(d.req().requestId(), pausedMessage())); return this; }
+        if (inferenceInFlightCount >= maxConcurrency) {
+            inferenceQueue.add(classifyPriority(d.req().requestId()), beingOf(d.req().replyTo()), System.currentTimeMillis(), d.req());
+            updateSnapshot();
+            return this;
+        }
+        executeChatRequest(d.req());
+        updateSnapshot();
+        return this;
+    }
+
+    /** A completed inference on the asking being's ledger; a node without a tracker (tests) records nothing. */
+    public static void noteSpend(String being, long latencyMs, int promptTokens, int completionTokens) {
+        if (being == null || being.isBlank()) return;
+        try {
+            var tracker = org.wyrdsekai.core.agent.AgentCostTracker.get();
+            if (tracker != null) tracker.recordInference(being, latencyMs, promptTokens, completionTokens);
+        } catch (RuntimeException ignored) { }
+    }
+
+    /** The being a request is for: the actor that asked, by the name it was spawned under. */
+    public static String beingOf(ActorRef<?> replyTo) {
+        if (replyTo == null) return "";
+        try {
+            var name = replyTo.path().name();
+            // "companion-mia-3" after a respawn is still mia.
+            return name == null ? "" : name.replaceAll("-\\d+$", "");
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** A companion's own-time turn carries this at the end of its request id; it ranks below a person's. */
+    public static final String OWN_TIME_TAG = "~own";
 
     /**
      * Queue priority constants — lower = served first.
@@ -738,6 +847,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      */
     static int classifyPriority(String requestId) {
         if (requestId == null) return PRIORITY_HUMAN;
+        // Her own time waits for a person's turn, a tool's, and a working copy's. It stood level
+        // with a person's turn: a dream, a want she was naming, a polish of her own line, all in
+        // the same band as someone waiting for an answer (2026-10-03).
+        if (requestId.endsWith(OWN_TIME_TAG)) return PRIORITY_AMBIENT;
         if (requestId.startsWith("bunshin-")) return PRIORITY_BUNSHIN;
         if (requestId.startsWith("familiar-")) return PRIORITY_FAMILIAR;
         if (requestId.startsWith("tool-") || requestId.startsWith("item-")) return PRIORITY_TOOL;
@@ -753,6 +866,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                             ApiKeyProvider apiKeyProvider,
                             Duration healthCheckInterval) {
         super(context);
+        this.timers = timers;
         this.backends = new ArrayList<>(backends);
         this.maxConcurrency = concurrencyFor(backends);
         snapMax = this.maxConcurrency;
@@ -865,6 +979,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 .onMessage(ListBackends.class, this::onListBackends)
                 .onMessage(InferResult.class, this::onInferResult)
                 .onMessage(InferFailure.class, this::onInferFailure)
+                .onMessage(HouseholdDeclined.class, this::onHouseholdDeclined)
+                .onMessage(RetryAfterLoading.class, this::onRetryAfterLoading)
                 .onMessage(HealthCheckTick.class, this::onHealthCheckTick)
                 .onMessage(HealthCheckResult.class, this::onHealthCheckResult)
                 .onMessage(DrainQueueTick.class, msg -> { drainQueue(); return this; })
@@ -896,7 +1012,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             }
             log.info("Queuing inference request {} ({}/{} in flight, queue: {})",
                 req.requestId(), inferenceInFlightCount, maxConcurrency, inferenceQueue.size() + 1);
-            inferenceQueue.add(new QueuedRequest(PRIORITY_HUMAN, req));
+            inferenceQueue.add(classifyPriority(req.requestId()), beingOf(req.replyTo()), System.currentTimeMillis(), req);
             return this;
         }
         executeInferRequest(req);
@@ -1030,6 +1146,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             req.replyTo().tell(new InferError(req.requestId(), pausedMessage()));
             return this;
         }
+        // Her own time, when the line here is busy with someone's turn and another machine of the
+        // house has a brain: more brains instead of a better line (the Hermod first errand).
+        if (!isItemScript && tryHousehold(req)) return this;
         if (!isItemScript && inferenceInFlightCount >= maxConcurrency) {
             if (inferenceQueue.size() >= MAX_QUEUE_SIZE) {
                 req.replyTo().tell(new InferError(req.requestId(),
@@ -1040,7 +1159,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             log.info("Queuing chat request {} [pri={}] ({}/{} in flight, queue: {})",
                 req.requestId(), pri, inferenceInFlightCount, maxConcurrency,
                 inferenceQueue.size() + 1);
-            inferenceQueue.add(new QueuedRequest(pri, req));
+            inferenceQueue.add(pri, beingOf(req.replyTo()), System.currentTimeMillis(), req);
             updateSnapshot();
             if (inferenceQueue.size() == 10) {
                 log.warn("Inference is backing up: {} waiting, {} in flight (max {}), p95 {} ms — "
@@ -1135,7 +1254,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             }
             log.info("Queuing tool inference {} ({}/{} in flight, queue: {})",
                 req.requestId(), inferenceInFlightCount, maxConcurrency, inferenceQueue.size() + 1);
-            inferenceQueue.add(new QueuedRequest(PRIORITY_TOOL, req));
+            inferenceQueue.add(PRIORITY_TOOL, beingOf(req.replyTo()), System.currentTimeMillis(), req);
             return this;
         }
         executeToolInferRequest(req);
@@ -1263,12 +1382,26 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     private Behavior<Command> onInferResult(InferResult result) {
+        loadingRetries.remove(result.requestId());
         var usage = result.usage();
         int promptTokens = usage != null ? usage.promptTokens() : 0;
         int completionTokens = usage != null ? usage.completionTokens() : 0;
-
+        // Her spend, on her own ledger: every completed inference, under the actor that asked
+        // (aliased to her DID by the companion), so the budget tool can tell the truth.
+        var t0 = startedAt.get(result.requestId());
+        long tookMs = t0 == null ? 0L : (System.nanoTime() - t0) / 1_000_000L;
+        noteSpend(result.agentId() != null ? result.agentId() : beingOf(result.replyTo()), tookMs, promptTokens, completionTokens);
         recordLatency(result.requestId(), result.backendName(), true, promptTokens, completionTokens);
-        endRequest();
+        // A turn another machine of the house answered held no slot here; it is counted, not released.
+        boolean offNode = carriedByHousehold.remove(result.requestId());
+        if (offNode) {
+            householdCarried++;
+            snapHouseholdCarried = householdCarried;
+            log.info("Own-time turn {} answered by the household in {} ms ({} so far this run)",
+                result.requestId(), tookMs, householdCarried);
+        } else {
+            endRequest();
+        }
         result.replyTo().tell(new InferOk(
                 result.requestId(), result.content(), promptTokens, completionTokens));
         drainQueue();
@@ -1399,6 +1532,27 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             }
         }
 
+        // The model server is up and still loading its model: it answers 503 "Loading model" until
+        // the weights are in. The backend is not broken and the request is not wrong. Each start
+        // of the node lost the first two turns of every companion this way: 84 turns in a week on
+        // the household node, every one of them inside a boot minute (2026-10-03). Wait and ask
+        // again, on the same backend, for as long as a large model takes to load.
+        if (isStillLoading(failure.error()) && failure.chatReq() != null) {
+            int tries = loadingRetries.merge(failure.requestId(), 1, Integer::sum);
+            var backend = findBackendByName(failure.failedBackend());
+            if (backend != null && tries <= LOADING_RETRIES_MAX) {
+                if (tries == 1) {
+                    log.info("Backend '{}' is still loading its model; request {} waits and asks again (every {} s, up to {} min)",
+                        failure.failedBackend(), failure.requestId(), LOADING_RETRY_DELAY.toSeconds(),
+                        LOADING_RETRY_DELAY.multipliedBy(LOADING_RETRIES_MAX).toMinutes());
+                }
+                healthStatus.put(failure.failedBackend(), true);   // loading is not unhealthy
+                timers.startSingleTimer("loading-retry-" + failure.requestId(), new RetryAfterLoading(failure), LOADING_RETRY_DELAY);
+                return this;
+            }
+            loadingRetries.remove(failure.requestId());
+        }
+
         if (isPermanentInferenceError(failure.error())) {
             log.warn("Permanent inference error from '{}' — failing fast (no fallback). err={}",
                 failure.failedBackend(),
@@ -1468,6 +1622,33 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         "Maximum context length",                 // OpenAI-style phrasing
         "payload size exceed",                    // NATS server-side max-payload reject
         "Message payload size exceed");           // jnats client wrapping
+
+    /** The model server's own word that it is up and its model is not in yet. */
+    static boolean isStillLoading(String errMsg) {
+        if (errMsg == null) return false;
+        var lower = errMsg.toLowerCase();
+        return lower.contains("http 503") && lower.contains("loading model");
+    }
+
+    static final Duration LOADING_RETRY_DELAY = Duration.ofSeconds(10);
+    static final int LOADING_RETRIES_MAX = 30;
+    private final Map<String, Integer> loadingRetries = new HashMap<>();
+    private final TimerScheduler<Command> timers;
+
+    /** A request held while the model server loaded, asked again. */
+    private record RetryAfterLoading(InferFailure failure) implements Command {}
+
+    private Behavior<Command> onRetryAfterLoading(RetryAfterLoading msg) {
+        var f = msg.failure();
+        var backend = findBackendByName(f.failedBackend());
+        if (backend == null) {
+            loadingRetries.remove(f.requestId());
+            f.replyTo().tell(new InferError(f.requestId(), f.error()));
+            return this;
+        }
+        dispatchWithRetry(backend, f.chatReq(), f.requestId(), f.replyTo(), f.localOnly(), f.compactRounds(), f.fallbackAttempted());
+        return this;
+    }
 
     private static boolean isPermanentInferenceError(String errMsg) {
         if (errMsg == null || errMsg.isBlank()) return false;
@@ -1915,15 +2096,15 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      */
     private void drainQueue() {
         while (inferenceInFlightCount < maxConcurrency && !inferenceQueue.isEmpty()) {
-            var queued = inferenceQueue.poll();
+            var queued = inferenceQueue.poll(System.currentTimeMillis());
             if (queued == null) break;
             log.info("Draining queued request (in-flight: {}/{}, remaining: {})",
                 inferenceInFlightCount, maxConcurrency, inferenceQueue.size());
-            switch (queued.command()) {
+            switch (queued) {
                 case InferRequest r -> executeInferRequest(r);
-                case ChatRequest r -> executeChatRequest(r);
+                case ChatRequest r -> { if (!tryHousehold(r)) executeChatRequest(r); }
                 case ToolInferRequest r -> executeToolInferRequest(r);
-                default -> log.warn("Unknown queued command type: {}", queued.command().getClass());
+                default -> log.warn("Unknown queued command type: {}", queued.getClass());
             }
         }
     }

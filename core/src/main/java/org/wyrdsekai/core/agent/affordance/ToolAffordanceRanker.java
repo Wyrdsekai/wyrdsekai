@@ -97,6 +97,93 @@ public final class ToolAffordanceRanker {
     }
 
     /** The need with the highest current pressure (for the instrument's "dominant need"). */
+    // ── A surface that spans the kinds of act ──────────────────────────────────────────────
+
+    /** The kinds of act a companion's own time can hold. A surface should offer one of each before two of any. */
+    public static final List<String> KINDS = List.of("reading", "keeping", "reaching", "making", "going",
+        "working", "tending", "household", "other");
+
+    private static final Map<String, String> KIND_OF_TOOL = Map.ofEntries(
+        Map.entry("library_card", "reading"), Map.entry("library_shelves", "reading"), Map.entry("searching_glass", "reading"),
+        Map.entry("oracle_lens", "reading"), Map.entry("read_book", "reading"), Map.entry("read_content", "reading"),
+        Map.entry("observation_crystal", "reading"), Map.entry("research_assistant", "reading"),
+        Map.entry("quill", "keeping"), Map.entry("journal", "keeping"), Map.entry("chronicle_stone", "keeping"),
+        Map.entry("task_ledger", "keeping"), Map.entry("project_note", "keeping"), Map.entry("recall", "keeping"),
+        Map.entry("sending_stone", "reaching"), Map.entry("channel_stone", "reaching"),
+        Map.entry("dispatch_task", "working"), Map.entry("mending_bench", "working"));
+
+    private static final Map<String, String> KIND_OF_DOMAIN = Map.ofEntries(
+        Map.entry("search", "reading"), Map.entry("knowledge", "reading"), Map.entry("observation", "reading"),
+        Map.entry("memory", "keeping"), Map.entry("study", "keeping"), Map.entry("planning", "keeping"),
+        Map.entry("social", "reaching"), Map.entry("communication", "reaching"), Map.entry("bond", "reaching"),
+        Map.entry("creation", "making"), Map.entry("recipes", "making"),
+        Map.entry("navigation", "going"),
+        Map.entry("workshop", "working"), Map.entry("code", "working"), Map.entry("delegation", "working"),
+        Map.entry("automation", "working"),
+        Map.entry("repair", "tending"), Map.entry("safety", "tending"), Map.entry("self", "tending"),
+        Map.entry("analysis", "tending"));
+
+    /** The kind of act a tool is, from its name or its domain. A household item with no domain is its own kind. */
+    public static String kindOf(String tool, String domain) {
+        var byName = tool == null ? null : KIND_OF_TOOL.get(tool);
+        if (byName != null) return byName;
+        if (domain == null || domain.isBlank() || "unknown".equals(domain) || "items".equals(domain)) return "household";
+        return KIND_OF_DOMAIN.getOrDefault(domain, "other");
+    }
+
+    /**
+     * The surface for her own time: one tool of each kind of act first, then by score, with no
+     * kind taking more than a share.
+     *
+     * <p>Ranked by score alone, a week of one household's own-time surfaces (3,492 passes, eight
+     * tools each) offered "make a room" in 83% and "go to a room" in 72%, and offered recalling
+     * in 0.9%, the journal in 1.4%, a message to someone in 1.3%, and writing a note, reflecting,
+     * a letter in none. Seven household items named after rooms took the rest. What she is not
+     * shown she cannot choose: two companions made 133 rooms (household node, 2026-10-03).
+     *
+     * @param kindOf name → kind (see {@link #kindOf(String, String)})
+     * @param share  the most one kind may take before every kind has been offered (at least 2)
+     */
+    public static List<String> rankSpanning(Map<String, Double> needPressures, String forcedFront,
+            List<String> candidates, Function<String, ToolAffordance> resolve, int topK,
+            Function<String, Double> relevance, Function<String, String> kindOf, int share) {
+        var ranked = rank(needPressures, forcedFront, candidates, resolve, 0, relevance);
+        if (topK <= 0 || ranked.size() <= topK) return ranked;
+        var out = new ArrayList<String>();
+        var perKind = new HashMap<String, Integer>();
+        java.util.function.Consumer<String> take = n -> { out.add(n); perKind.merge(kindOf.apply(n), 1, Integer::sum); };
+        if (forcedFront != null && ranked.contains(forcedFront)) take.accept(forcedFront);
+        // One of each kind, in the order her pull and the request rank them.
+        for (var n : ranked) {
+            if (out.size() >= topK) break;
+            if (out.contains(n)) continue;
+            if (perKind.getOrDefault(kindOf.apply(n), 0) == 0) take.accept(n);
+        }
+        // Then by score, no kind past its share.
+        int cap = Math.max(2, share);
+        for (var n : ranked) {
+            if (out.size() >= topK) break;
+            if (out.contains(n)) continue;
+            int have = perKind.getOrDefault(kindOf.apply(n), 0);
+            if (have < ("household".equals(kindOf.apply(n)) ? 2 : cap)) take.accept(n);
+        }
+        // Then whatever is left, by score.
+        for (var n : ranked) {
+            if (out.size() >= topK) break;
+            if (!out.contains(n)) take.accept(n);
+        }
+        return out;
+    }
+
+    /** The strongest of the levels that are pulls, leaving out the capacities (a full tank of confidence is not a need). */
+    public static String dominantPull(Map<String, Double> needPressures, java.util.Set<String> notPulls) {
+        if (needPressures == null || needPressures.isEmpty()) return null;
+        return needPressures.entrySet().stream()
+            .filter(e -> e.getKey() != null && e.getValue() != null && (notPulls == null || !notPulls.contains(e.getKey())))
+            .max(Comparator.comparingDouble(Map.Entry::getValue))
+            .map(Map.Entry::getKey).orElse(null);
+    }
+
     public static String dominantNeed(Map<String, Double> needPressures) {
         if (needPressures == null || needPressures.isEmpty()) return null;
         return needPressures.entrySet().stream()

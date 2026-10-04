@@ -106,7 +106,7 @@ class BunshinVerbBatteryIntegrationTest {
     /** Mirrors CompanionActor.BUNSHIN_EXCLUDED. */
     private static final List<String> EXCLUDED = List.of(
         "dispatch_bunshin", "delegate", "voluntary_sleep", "emergency_call",
-        "go_to_bondholder", "craft_from_template", "create_room_from_template", "codex_action", "configure_channel");
+        "go_to_bondholder", "craft_from_template", "create_room_from_template", "close_room", "codex_action", "configure_channel");
 
     /** The surface under test — derived exactly as bunshinToolSurface does. */
     static Stream<String> surface() {

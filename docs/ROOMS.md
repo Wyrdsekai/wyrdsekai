@@ -48,6 +48,74 @@ wyrd rooms prune [--duplicates] [--stale <days>] [--with-objects] [--yes]
 
 Only the steward can demolish or prune rooms. Log in first with `wyrd login`.
 
+### Rooms your companions make
+
+A companion can make rooms, and makes many. The house keeps them tidy without deleting anything.
+
+```bash
+wyrd rooms made                 # every made room: who for, how long since anyone was in it, open or closed up
+wyrd rooms tidy                 # list what would be closed up now; add --yes to close them
+wyrd rooms keep <room>          # this room is yours: the house never closes it
+wyrd rooms close <room>         # close a room up yourself
+wyrd rooms open <room>          # open a closed-up room again, by its name or by what it was
+wyrd rooms find greenhouse      # search the closed-up rooms by what they were; --cold for cold storage
+wyrd items made                 # every item a companion made: who for, how long unused, out or put away
+wyrd items find lantern         # search the put-away items the same way
+wyrd items out <item>           # take a put-away item out again
+```
+
+- A room she made **because you asked** is yours. The house never closes it up. It stays in the
+  list with its age so you can decide.
+- A room she made **on her own** that nobody has entered for 7 days is **closed up**: its doorways
+  close and it leaves the map. The room and everything in it are kept. She is told. It opens again
+  when anyone goes to it by name, or with `wyrd rooms open`.
+- A room that holds something beyond what it was furnished with waits 30 days.
+- A room of hers that **you have been in** is held like one you asked for.
+- She keeps 12 rooms of her own open. When she goes to make one more, she is shown the three she has
+  been in least, with how long each has been quiet and whether it holds something, and she chooses
+  which to close up. If she does not choose, the new room waits. Nothing of hers is closed unless
+  she chooses it, or it goes quiet for the week.
+- She can close up a room of her own at any time, when she is done with it. She cannot close one you
+  asked for; she can ask you.
+- Rooms made before 0.5.4 are sorted once, on the first start after updating, from the companions'
+  activity log and the rooms' own histories: made on her own time, or while answering a person, and
+  when anyone was last in it. A room the record cannot place is held and never closed by the house.
+  If the record has one wrong (a room she built later because you had asked earlier reads as her
+  own), `wyrd rooms keep <room>` makes it yours.
+- Items she made on her own and has not used for 7 days are **put away**: kept, and off the list of
+  tools she is shown. Items made before 0.5.4 are watched for 3 days from the update first.
+- The nightly look happens after each companion's sleep. `wyrd rooms tidy` does the same look now.
+
+#### Finding something again: the archive and cold storage
+
+Closed-up rooms and put-away items are **the archive**. When a room is closed up, the house writes
+down what it was and what was in it. An item keeps its name and what it does. That is what a search
+looks through, so you do not need to remember a name.
+
+Anyone in the house can type, on any surface:
+
+```
+archive                    the closed-up rooms and put-away items, newest first
+archive greenhouse         search them by what they were
+archive cold               what is in cold storage
+reopen The Glass Garden    bring a room or an item back by its name
+reopen greenhouse          or by what it was, when one thing clearly fits
+```
+
+A reopened room is as it was left, and you are told which room its doorway is in. A reopened item is
+back with the companion who made it on her next turn.
+
+You can also just ask a companion: "take me to the room with the greenhouse". If one closed-up room
+fits every word, she opens it and goes there. If several fit, she names them and what each was.
+
+After 90 days in the archive, a room or an item goes to **cold storage**. It is still kept, whole.
+It leaves the everyday list and the search by words, so the archive stays short. `archive cold`
+shows what is there, and its name brings it back. Nothing is ever deleted by the house; only the
+steward's `wyrd rooms demolish` removes a room.
+
+The numbers are settings: see "Rooms and items your companions make" in
+[CONFIGURATION.md](CONFIGURATION.md).
+
 ## How scripts work
 
 Wyrdsekai is built like a MUD, a text world made of rooms. Each room's

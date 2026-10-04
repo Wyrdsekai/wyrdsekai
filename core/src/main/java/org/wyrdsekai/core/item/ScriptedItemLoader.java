@@ -196,6 +196,33 @@ public final class ScriptedItemLoader {
     /** Items loaded with calls that do not resolve here — for the steward, and for `wyrd items check`. */
     public List<WiringAuditEntry> wiringAudit() { return List.copyOf(wiringAudit.values()); }
 
+    /** Items set aside on the last scan: broken on use, and mending has given up on the file as it stands. */
+    private final Map<String, String> setAside = new ConcurrentHashMap<>();
+
+    public Map<String, String> setAside() { return Map.copyOf(setAside); }
+
+    /**
+     * A household item that fails in her hands and that the workshop could not mend in its tries is
+     * not offered: it leaves the loaded set (the file stays), and she is told once.
+     */
+    private void setAsideWhatMendingGaveUpOn() {
+        setAside.clear();
+        var dir = householdItemsDir();
+        if (dir == null) return;
+        try {
+            for (var e : BrokenItems.givenUp(dir)) {
+                if (loaded.remove(e.item()) == null) continue;
+                setAside.put(e.item(), e.file().toString());
+                log.warn("ScriptedItemLoader: '{}' is set aside: it fails on use and mending gave up after {} tries ({}). "
+                        + "It is kept at {}; `wyrd items repair {}` tries again.",
+                    e.item(), BrokenItems.MAX_ATTEMPTS, String.join(" | ", e.problems()), e.file(), e.item());
+                BrokenItems.tellSetAside(e, org.wyrdsekai.core.body.BodyMap.get());
+            }
+        } catch (RuntimeException ex) {
+            log.debug("ScriptedItemLoader: set-aside pass: {}", ex.toString());
+        }
+    }
+
     /** Re-scan all configured directories. Idempotent. */
     public synchronized List<ScriptedItemDef> reloadAll() {
         loaded.clear();
@@ -209,6 +236,7 @@ public final class ScriptedItemLoader {
         for (var dir : dirs) {
             scanDir(dir);
         }
+        setAsideWhatMendingGaveUpOn();
         log.info("ScriptedItemLoader: {} item(s) loaded from {} dir(s){}{}",
             loaded.size(), dirs.size(),
             wiringAudit.isEmpty() ? "" : " — " + wiringAudit.size() + " MIS-WIRED (a missing call fails on use; an unread command does the same thing whatever is asked): " + String.join(", ", wiringAudit.keySet()),

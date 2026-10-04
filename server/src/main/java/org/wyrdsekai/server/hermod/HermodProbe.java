@@ -37,8 +37,13 @@ public final class HermodProbe {
         var gossip = new NatsGossip(nats, scope);
         var table = new CapabilityTable(Duration.ofSeconds(90));
         table.attach(gossip);
+        // The probe advertises its key and signs with it, like any device: a verifying door refuses
+        // an envelope from a device whose advert carries no key.
+        var probeIdentity = org.wyrdsekai.between.NodeIdentity.loadOrGenerate(java.nio.file.Path.of(
+            System.getenv().getOrDefault("WYRDSEKAI_DATA_DIR", System.getProperty("user.home") + "/.wyrdsekai"))
+            .resolve("node-identity.json"));
         gossip.publish(new Capability(deviceId, scope, "probe", List.of(),
-            List.of(), true, true, 0.0, Instant.now()));
+            List.of(), true, true, 0.0, Instant.now(), probeIdentity.publicKeyBytes()));
 
         System.out.println("[probe] listening for gossip on scope " + scope + " ...");
         for (int i = 0; i < 24; i++) {
@@ -52,11 +57,12 @@ public final class HermodProbe {
         var doors = new NatsDoors(nats, scope);
         var mesh = new Mesh(new DefaultRouter(table, Clock.systemUTC()),
             (e, cap) -> doors.doorTo(cap.deviceId()));
-        var envelope = new TaskEnvelope("probe-" + System.nanoTime(), scope, deviceId,
+        // Signed like the product's own envelopes: a verifying door refuses the old constant byte.
+        var envelope = org.wyrdsekai.hermod.EnvelopeSigning.sign(new TaskEnvelope("probe-" + System.nanoTime(), scope, deviceId,
             "inference.chat", "none", capClass,
             Map.of("model", "default", "prompt", prompt),
             256, Instant.now(), Instant.now().plusSeconds(180),
-            Optional.empty(), new byte[]{1});
+            Optional.empty(), new byte[0]), probeIdentity::sign);
 
         System.out.println("[probe] submitting errand for '" + capClass + "' ...");
         var result = mesh.submit(envelope);

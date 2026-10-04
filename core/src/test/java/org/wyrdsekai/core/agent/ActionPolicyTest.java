@@ -44,16 +44,20 @@ class ActionPolicyTest {
 
     @Test
     void tier_2_includes_delegation_and_code() {
-        assertEquals(2, ActionPolicy.forAction("think_deeply").requiredTier());
+        // Handing work to another agent keeps its tier; her own thinking and her own skills do not
+        // (HerOwnWorkIsNotTieredTest, 2026-10-03).
+        assertEquals(0, ActionPolicy.forAction("think_deeply").requiredTier());
         assertEquals(2, ActionPolicy.forAction("delegate").requiredTier());
-        assertEquals(2, ActionPolicy.forAction("skill_execute").requiredTier());
+        assertEquals(0, ActionPolicy.forAction("skill_execute").requiredTier());
     }
 
     @Test
     void tier_3_includes_room_creation_and_governance() {
-        assertEquals(3, ActionPolicy.forAction("create_room").requiredTier());
-        assertEquals(3, ActionPolicy.forAction("workbench_submit").requiredTier());
+        // A room and the workbench are her own work; the zone is shared.
+        assertEquals(0, ActionPolicy.forAction("create_room").requiredTier());
+        assertEquals(0, ActionPolicy.forAction("workbench_submit").requiredTier());
         assertEquals(3, ActionPolicy.forAction("zone_command").requiredTier());
+        assertEquals(3, ActionPolicy.forAction("create_zone").requiredTier());
     }
 
     @Test
@@ -271,7 +275,7 @@ class ActionPolicyTest {
         assertEquals("create_room_from_template", ActionPolicy.actionTypeOf(templated));
         assertEquals("create_room", ActionPolicy.actionTypeOf(raw));
         assertEquals(1, ActionPolicy.forAction(ActionPolicy.actionTypeOf(templated)).requiredTier());
-        assertEquals(3, ActionPolicy.forAction(ActionPolicy.actionTypeOf(raw)).requiredTier());
+        assertEquals(0, ActionPolicy.forAction(ActionPolicy.actionTypeOf(raw)).requiredTier());
         assertEquals(ActionPolicy.AutonomyTier.VISIBLE,
             ActionPolicy.AUTONOMY_TIERS.get(ActionPolicy.actionTypeOf(templated)));
     }

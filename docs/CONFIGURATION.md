@@ -360,6 +360,8 @@ With `WYRDSEKAI_UPDATE=auto`, the node installs a newer release by itself at a q
 
 On Windows, the installer needs an administrator prompt that a background service cannot show. So automatic mode downloads and checks the `.msi`, and `wyrd update now` finishes the job.
 
+**Nodes update each other.** The machines of a household tell each other what release they run. When one of them runs a newer release, and has run it for five minutes without going away, the others count that release as available: `wyrd update` says which machine runs it, `wyrd update now` takes the installer from that machine over the house network instead of the internet, through its HTTPS door and the household certificate every joined machine trusts, and in automatic mode the node follows it at its quiet moment. The checksums come from the release itself; a machine that cannot reach the internet uses the checksums another household machine fetched from the release and passed on over the household's signed network, so no machine's word about an installer is what is trusted. The steward's node, marked `WYRDSEKAI_NODE_ROLE=primary`, goes last: it follows only when every other machine is already there. An installer you hand a node yourself with `wyrd update <file>` is kept, so the rest of the house can take it from there.
+
 `WYRDSEKAI_UPDATE_CHANNEL` belongs to a separate system: a signed release channel for updating many nodes at once. None of the above changes it.
 
 | Setting | What it does | Default |
@@ -369,6 +371,8 @@ On Windows, the installer needs an administrator prompt that a background servic
 | `WYRDSEKAI_UPDATE_WINDOW` | When automatic mode may install, as `HH:MM-HH:MM` in local time. | `03:00-05:00` |
 | `WYRDSEKAI_UPDATE_PIN` | Stay on this version. | not set |
 | `WYRDSEKAI_UPDATE_SIBLINGS` | `0` stops `wyrd update now` from updating CodeZaiku and ResearchZosho, like `--no-siblings`. | `1` |
+| `WYRDSEKAI_NODE_ROLE` | `primary` for the steward's node: it follows the household's release last, when every other machine is there. | `secondary` |
+| `WYRDSEKAI_UPDATE_DELAY` | How long a machine must have run a newer release before the others count it. | `5m` |
 
 ## Backups: the vault
 
@@ -580,6 +584,41 @@ After each of the companion's sleeps, the workshop repairs broken items on copie
 | `WYRDSEKAI_ITEMS_ALLOW_UNDECLARED` | `false` | For the move to enforced manifests only. `true` lets bundled and household items do what their manifest does not declare, as before, and logs a warning for each such call so it can be fixed. Items that companions make and items visitors bring keep their limits. |
 
 A placed item is replaced only when its repaired copy has no problems left. The old version is kept in `items/.repaired/`. Next to it is `state.json`, which records what the companion has been told and how often each file has been tried. After three tries with no change, the file is left for a person. `wyrd items repair <name>` or `wyrd items repair --all` does the same by hand. The mending bench in the Hearth lets the companion ask for it.
+
+### Rooms and items your companions make
+
+A room a companion made on her own and that nobody tends is closed up, never deleted: it leaves the
+map, is kept as it was, and opens again when someone goes to it. An item she made and does not use is
+put away the same way. What a person asked for, or has been in or used, is left alone and not counted.
+`0` turns a rule off.
+
+| Setting | Also called | Default | What it does |
+|---|---|---|---|
+| `WYRDSEKAI_MADE_ROOM_EMPTY_DAYS` | `made.room_empty_days` | `7` | Days nobody has entered a room she made on her own before it is closed up. |
+| `WYRDSEKAI_MADE_ROOM_HELD_DAYS` | `made.room_held_days` | `30` | The same, for a room that holds something beyond what it was furnished with. |
+| `WYRDSEKAI_MADE_ROOMS_OPEN_MAX` | `made.rooms_open_max` | `12` | How many rooms of her own making a companion keeps open at once. |
+| `WYRDSEKAI_MADE_ITEM_UNUSED_DAYS` | `made.item_unused_days` | `7` | Days an item she made on her own goes unused before it is put away. |
+| `WYRDSEKAI_MADE_ITEMS_OUT_MAX` | `made.items_out_max` | `24` | How many items of her own making a companion keeps out at once. |
+| `WYRDSEKAI_MADE_FIRST_LOOK_DAYS` | `made.first_look_days` | `3` | Items made before 0.5.4 have no record of use. They are watched this many days from the update; one not used in that time is put away. After that the ordinary number applies. |
+| `WYRDSEKAI_MADE_COLD_DAYS` | `made.cold_days` | `90` | Days a closed-up room or a put-away item stays in the archive before it goes to cold storage. `0` means never. |
+
+### What a companion is offered, and her projects
+
+| Environment variable | Config key | Default | What it does |
+| --- | --- | --- | --- |
+| `WYRDSEKAI_AFFORDANCE_TOPK` | `affordance.top_k` | `16` | How many tools a turn of hers is offered. On her own time they span every kind of act (reading, keeping, reaching, making, going, working, tending) before any kind gets a second. |
+| `WYRDSEKAI_PROJECT_SITTING_MINUTES` | `project.sitting_minutes` | `90` | After she works on a project of hers, how long before her own time is offered it again. |
+| `WYRDSEKAI_PROJECT_REST_DAYS` | `project.rest_days` | `14` | Days a project goes unworked before it rests. A resting project is kept and comes back when she names it. `0` means never. |
+
+### Wants that are set down
+
+When a companion reaches for the same thing several times and it is not there, the want is set down
+with the reason, and she is told.
+
+| Setting | Also called | Default | What it does |
+|---|---|---|---|
+| `WYRDSEKAI_WANT_MISSES_TO_SET_DOWN` | `want.misses_to_set_down` | `3` | How many times a want reaches for the same thing and does not find it before it is set down. |
+| `WYRDSEKAI_WANT_SET_DOWN_HOURS` | `want.set_down_hours` | `24` | How long she does not take up a want that reaches for the same thing, and the span the misses are counted over. |
 
 ### Room scripts
 

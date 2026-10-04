@@ -95,6 +95,9 @@ class TheFactsOfHerHouseAreAlwaysInHerPromptTest {
         // Her person is named from the record when the registry has not seen them (nobody logged in).
         assertThat(ca).contains("var name = nameOfParty(b.otherParty(myDid));\n                if (name != null) people.add(new HouseFacts.Person(name, true, b.formedAt()));");
         assertThat(ca).contains("if (isAgentParty(id)) return null;\n        return PersonIds.displayName(id).orElse(null);");
+        // Only what her sleeps marked formative stands in the block; the nightly summaries do not.
+        assertThat(ca).contains("if (f.formative()) formative.add(f.text());\n            }\n");
+        assertThat(ca).doesNotContain("formative.addAll(relationships").doesNotContain("formative.addAll(values");
         // Her own words are held to the record guard on every path to the wire.
         assertThat(ca).contains("var spokenOf = RecordGuard.personsSpokenOf(text, knownNames());");
     }

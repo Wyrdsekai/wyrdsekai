@@ -278,6 +278,20 @@ public class InputHandler {
                     m.args() == null || m.args().isBlank() ? List.of() : List.of(m.args())));
                 yield true;
             }
+            case ParsedCommand.Projects pr -> {
+                // What the companions are working on; with words, one project's notebook.
+                var parts = pr.line().strip().split("\\s+", 2);
+                connection.send(new C2SMessage.Command(connection.newId(), "projects",
+                    parts.length > 1 ? List.of(parts[1]) : List.of()));
+                yield true;
+            }
+            case ParsedCommand.Archive a -> {
+                // What was closed up or put away: the list, a search of it, or bringing one back.
+                var parts = a.line().strip().split("\\s+", 2);
+                connection.send(new C2SMessage.Command(connection.newId(), parts[0].toLowerCase(java.util.Locale.ROOT),
+                    parts.length > 1 ? List.of(parts[1]) : List.of()));
+                yield true;
+            }
             case ParsedCommand.Demolish d -> {
                 // Steward tool; the server refuses founding rooms, Homes and occupied rooms.
                 connection.send(new C2SMessage.Command(

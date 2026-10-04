@@ -138,6 +138,24 @@ public final class PersonalProjectStore {
         return Optional.of(updated);
     }
 
+    public Optional<PersonalProject> setNextStep(String projectId, String next) {
+        var existing = projects.get(projectId);
+        if (existing == null) return Optional.empty();
+        var updated = existing.withNextStep(next);
+        projects.put(projectId, updated);
+        save();
+        return Optional.of(updated);
+    }
+
+    public Optional<PersonalProject> setRoom(String projectId, String roomId) {
+        var existing = projects.get(projectId);
+        if (existing == null) return Optional.empty();
+        var updated = existing.withRoom(roomId);
+        projects.put(projectId, updated);
+        save();
+        return Optional.of(updated);
+    }
+
     public Optional<PersonalProject> get(String projectId) {
         return Optional.ofNullable(projects.get(projectId));
     }

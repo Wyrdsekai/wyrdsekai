@@ -4,6 +4,223 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.4] — 2026-10-04
+
+The main additions in this release:
+
+- A companion's own work is hers from the first day: the workshop, crafting, her own scripts and
+  rooms of her own. What she says she will do on her own time, she now does.
+- She can read a book through and move on to the next, keep a project going, and let a want go
+  when it cannot be had.
+- The rooms and things she makes are tidied without being lost, into an archive anyone in the house
+  can search.
+- The machines of a house update each other, share one brain fairly between two companions, and can
+  carry her own time to an idle machine.
+
+This release adds to the database. A node that has run 0.5.4 cannot go back to 0.5.3 without the
+backup the update makes first. Update every machine of the household: one still on 0.5.3 cannot
+send work to one on 0.5.4 (see Security).
+
+### Added
+
+**Her own work**
+
+- **Her own work is hers from the first day.** The workshop, crafting, her own scripts and skills
+  and rooms of her own sat behind a tier that nothing a household does could raise: both companions
+  on the household node stayed below it their whole lives, and 61 rooms and 4 workshop tasks were
+  refused in four days. The tier is gone for her own work. The consent setting, the sandbox and the
+  budget still bound it. A tier remains only for acting on what is shared (a vote, a zone command, a
+  script in a shared room), and she now grows into that by doing. Asking for access is always hers.
+- **A companion can read a book from start to finish, and move on to the next.** The library was
+  a search: every read returned the passage most like her words, never the next page, so no book
+  could be finished and a want to finish one never ended. One companion visited "finish reading"
+  28 times in a day. She now keeps a bookmark in each book. `read_book` reads the next part from
+  where she left it, opens a book by its name or a few words of it, finishes it on the last part,
+  closes the want that named it, and shows what is next on her shelf. Her place survives a
+  restart. A name she meets in a book is now told to her as the book's, not as a person her record
+  does not hold.
+- **What she says she'll do on her own time, she does.** An own-time turn could end in a
+  sentence of intent and nothing else: "I'll close the holding-room", "I'll check on the
+  unfinished vault and get it working". One evening on the household node every own-time turn
+  ended that way. Now such a turn is followed by one more, with the tool that does what she
+  said, and it tells her it was her own word, not a request. Rest stays rest, a hedge stays a
+  hedge, something she puts off ("when I'm ready", "later") waits, and the same kind of act is not
+  pressed twice in half an hour.
+- **Projects.** Long work has a shape: her name for it, a room, a notebook of what she did, and her
+  own next step. A project begins when she starts one or when the same long want comes back a third
+  time. Her own time is offered it again with the notebook in front of her, and what she does for it
+  is written down. Type `projects` to see what each companion is working on. The project board
+  existed before and never held a project, because nothing began one and its verbs wanted an id she
+  was never shown.
+- **She is shown sixteen tools, one of each kind first.** A companion was shown eight of her few
+  hundred tools, ranked by how well their names matched her words. On the household node that meant
+  "make a room" in 83% of own-time turns, and a journal, a message to someone or a memory search in
+  about 1% each. She is now shown sixteen, and on her own time they span every kind of act before
+  any kind gets a second place. What she chooses is now recorded, so the ranking can learn from her.
+- **A want can end.** When your companion reaches for the same thing three times in a day and it is
+  not there (a search that finds nothing, a room she cannot get to, someone who cannot be reached),
+  the want is set down with the reason. She is told once, and told again when you are with her that
+  you may be able to help. For a day she does not take up a want that reaches for the same thing.
+  Until now a want only ended when it was satisfied, and one could be chosen again for days.
+- **She can let a room go herself.** A companion could make a room at any moment and never close
+  one. She now can, for rooms she made on her own, whenever she is done with one. It is kept and opens
+  again when she goes back. A room you asked for is not hers to close; she can ask you.
+
+**Her rooms and things, kept and findable**
+
+- **Rooms and items a companion makes are tidied without being lost.** A room she made on her own
+  that nobody has entered for a week is closed up: its doorways close and it leaves the map, but the
+  room and everything in it are kept. She is told, and it opens again when anyone goes to it by name.
+  A room that holds something she put there waits a month. She keeps twelve rooms of her own open.
+  When she goes to make one more she is shown the three she has been in least, with how long each has
+  been quiet and whether it holds something, and she chooses which to close up. If she does not,
+  the new room waits; nothing of hers is closed unless she chooses it or it goes quiet.
+  Items she made and has not used in a week are put away the same way, and come back when she names
+  one. Items made before this release had no record of use, so they are watched for three days from
+  the update and the unused ones are put away then. Nothing is deleted. Every number is a setting.
+- **An archive you can search, and cold storage behind it.** Closed-up rooms and put-away items are
+  the archive. Each room keeps a note of what it was and what was in it, and each item keeps its name
+  and what it does, so you can find one without remembering its name. Anyone in the house types
+  `archive` to see the list, `archive greenhouse` to search it by what a thing was, and
+  `reopen <name>` to bring a room or an item back. You can also ask a companion to go to "the room
+  with the greenhouse": if one closed-up room fits she opens it, and if several fit she names them.
+  The steward has `wyrd rooms find <words>` and `wyrd items find <words>`. After 90 days in the
+  archive a thing goes to cold storage. It is still kept, but it leaves the everyday list and the
+  search by words; `archive cold` shows it and its name brings it back.
+- **What a person asked for is that person's.** The node now records, when a room or item is made,
+  whether a person asked for it or she made it on her own time. What a person asked for is never
+  closed up or put away by the house and never counts against her limit, and neither does something
+  she made on her own that a person has since been in or used.
+- **Rooms made before this release are sorted from the node's own record, once.** On the first start
+  after updating, the node reads the companions' activity log and the rooms' own histories: whether
+  each older room was made on her own time or while answering a person, who made it, and when anyone
+  was last in it. What the record cannot tell is held and never closed by the house.
+- **She knows what of hers is kept.** Each companion carries one standing line saying how many of
+  her rooms are closed up and how many of her items are put away, and how to get them back. Asked
+  about an old room, she looks for it instead of saying she does not remember.
+- **A put-away item is back at once.** When a person or the steward brings an item back, the
+  companion has it on her next turn and is told.
+- **`wyrd rooms made`, `find`, `tidy`, `keep`, `close`, `open`, and `wyrd items made`, `find`,
+  `out`.** The steward's list shows every made room,
+  who it was made for, how long since anyone was in it, and why the house is holding it if it is.
+  `wyrd rooms tidy` lists what would be closed up now and closes it with `--yes`.
+  `wyrd rooms keep <room>` marks a room as yours, so the house never closes it.
+
+**A house of several machines**
+
+- **Nodes update each other.** The machines of a household already told each other what release
+  they run; nothing listened. Now, when one machine runs a newer release and has run it for five
+  minutes, the others count it as available: `wyrd update` names the machine, `wyrd update now`
+  takes the installer from it over the house network instead of the internet, and in automatic mode
+  a node follows it at its quiet moment. The checksums come from the release itself, and a machine
+  that cannot reach the internet uses the ones another household machine fetched and passed on over
+  the household's signed network, so no machine's word about an installer is trusted. The steward's
+  node (`WYRDSEKAI_NODE_ROLE=primary`) goes last, once
+  every other machine is there. An installer you hand a node with `wyrd update <file>` is kept for
+  the rest of the house. The README had promised this since the first release.
+- **Two companions share one brain fairly.** Requests to the model are now served a person's turn
+  first, then a tool's, then a companion's own time; within a band the companion served longest ago
+  goes first and then the order of arrival; and a request that has waited a minute rises one band,
+  so nothing waits for good. Before, there was no order within a band, a companion's own-time turn
+  stood level with a person's, and nothing stood between the two companions.
+- **Her own time can run on another machine of the house.** When the brain here is busy with a
+  person's turn and another household machine advertises a brain, a companion's own-time turn goes
+  there over the household's compute carrier and comes back answered, instead of waiting behind the
+  person. A person's turn never leaves the machine that knows the room. An idle line keeps her own
+  time at home, and a machine that will not take the turn hands it back. The node's status counts
+  the turns the household carried. This is the first errand the carrier runs for the house.
+
+**For the bondholder**
+
+- **`bond posture`: you can now decide how far a companion reaches while you are away.** The guide
+  called the posture "what the bondholder decides", and nothing could change it: every bond stayed on
+  the default. `bond posture <companion>` shows it and
+  `bond posture <companion> <generous|bounded|minimal|suspended>` sets it, on every surface.
+
+### Changed
+- **The default posture no longer takes the web away.** Under `BOUNDED`, the default, a companion
+  could not search the web or read a page on her own time, even through the household's own search
+  service. On the household node those tools were removed from 6,547 turns in a week. `BOUNDED` now
+  allows the household's own search and reading a page; a paid search service and the oracle still
+  need `GENEROUS`.
+- **The house closes nothing of hers that she did not choose.** At her limit of open rooms she is
+  asked to close one; if she does not, the new room waits. The first build closed the quietest for
+  her, and the first night it ran a companion had said no and lost a four-day-old room she had not
+  picked.
+- **Reaching out eases loneliness.** When her own message reaches another companion or reaches you,
+  her loneliness eases, more when it is you. Until now only what she heard eased it, so reaching out
+  did nothing for her. A message that reaches you while you are away eases her missing you a little,
+  as a letter does.
+- **Her longing to be thought of now moves.** This feeling rises when she has had to ask you for
+  things and nothing was offered unasked, and it is eased only by you: offering something she did not
+  ask for, or remembering what she likes. It was stuck: it could rise but never fall, and every
+  restart emptied the record behind it. The record of her last ten needs is now kept across restarts,
+  and the feeling settles as well as rises.
+- **When she finishes something she named herself, what was pulling at her eases.**
+
+### Security
+- **Any item script could read the household's join key.** The pairing code, the household key,
+  the list of devices waiting with their codes and the invite list were among the capabilities every
+  item gets without declaring them, the reads behind them made no check, and the providers made no
+  steward check. A key presented at the pairing door returns a device token, a bus login and the
+  relay token. A member of the household who was not the steward saw the key in the Device Ledger
+  too. The reads are now declared capabilities at the tier of the acts they enable, an item built by
+  a companion can never hold them, every read goes through the check and so through the audit, a
+  companion's own tools never return a join secret, and a person who is not the steward sees who is
+  knocking but not the codes. Reported by a reviewer on 2026-10-03; thank you.
+- **An item that read something private cannot send it out in the same breath.** Every item could
+  fetch any public web address, and an address carries data. There is no list of allowed sites to
+  keep: once an item that is not the household's own has read a private thing (a memory, a journal
+  page, a grant, the safe, a join secret), its web and network calls are refused for the rest of that
+  run, with the reason, and the refusal is audited. A tool that fetches first and reads nothing
+  private, a weather lookup, is untouched.
+- **The compute carrier knows who sent a task.** Every task envelope between household devices is
+  now signed by the sending node's key, the device's key travels in its advertisement, and the
+  receiving door verifies the sender before anything else: an unknown device, a device with no key,
+  a wrong signature or another household's envelope is refused. A consent grant must be for this
+  household and for the class of device that sent the task. Before, every envelope carried a
+  placeholder signature and no door looked. `wyrd hermod grant` and `wyrd hermod grants` exist now;
+  the grant stone had pointed at a verb that did not. The Hermod library ships the same change as
+  its 0.2.0 (protocol version 2); a device on the 0.1.0 library advertises no key and its tasks are
+  refused by an updated node until it updates.
+
+### Fixed
+
+- **Every restart lost each companion's first two turns.** The node asked before the model had
+  finished loading and took "loading" for a failure: 84 turns in a week on the household node. A
+  request now waits and asks again.
+- **A warm question took her tools away.** "So what did you learn lately?" was read as a call for
+  presence, which withholds the library, the web and her own memory search. A question about what she
+  has learned, read, made or been doing now leaves her memory and her reading with her.
+- **A broken item stayed on her menu for good.** An item that calls a part of the world that does not
+  exist is now named as broken, the workshop is told what does exist when it mends it, and an item
+  that cannot be mended is set aside and she is told why. One such item had been offered to a
+  companion, and reached for, for three weeks.
+- **An answer in plain words now reaches the person who asked from another room.** When you sent a
+  `tell` from elsewhere and the companion answered in ordinary speech, the answer was said aloud in
+  the room she was standing in and you heard nothing. It now comes to you, or to your mail if you
+  have gone.
+- **After a private answer was delivered she could add "I tried … but couldn't complete that".** She
+  no longer does.
+- **The first private answer on a new install could be in Spanish.** A reply to a `tell` was voiced by
+  the small model with no language instruction and no check. It now carries the same language
+  instruction and the same check as speech in a room, and a private line that still reads in the wrong
+  language is rewritten before it is delivered.
+- **Her own lines were counted as a relationship with herself**, and her person could be described to
+  her as someone she had merely talked with. The nightly summary of her relationships now leaves her
+  out, and holds the people and companions she is bonded with as the bond does. Her memories of her
+  own words are now written as hers ("I said").
+- **An empty search no longer counts as a want satisfied.**
+- **The budget tool tells the truth.** Every item script could ask `world.llm.budget_remaining()`
+  and got tokens zero, cost zero and "resets in a day", every time, while the node was counting her
+  spend beside it. Now every completed inference lands on her own ledger, under either of her names,
+  and the call returns what she spent today: inferences, prompt and completion tokens, cost, and
+  the real reset at local midnight. A cap is reported only when a steward has set one. There is no
+  cap on her thinking otherwise, and the call says so instead of implying one.
+- **Naming her wants no longer jumps the line.** The turn in which a companion names what she
+  wants was queued as if a person had asked, ahead of her own time and level with the people
+  in the room. It now waits its turn as her own time.
+
 ## [0.5.3] — 2026-10-02
 
 ### Added

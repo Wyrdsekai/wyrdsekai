@@ -663,6 +663,15 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                     notifySubscribers(event);
                 }
                 cmd.replyTo().tell(new RoomResponse.Ok(localizedSnapshot(newState, cmd.locale())));
+                // When anyone was last in a made room, and whether a person has been (MadeThingsStore):
+                // a room a person has entered is held; one nobody enters is closed up in time.
+                if (!alreadyPresent) {
+                    var made = org.wyrdsekai.core.persistence.MadeThingsStore.shared();
+                    if (made != null) {
+                        made.roomEntered(roomId, System.currentTimeMillis(),
+                            "player".equals(cmd.entityType()) || "visitor".equals(cmd.entityType()));
+                    }
+                }
                 updateParlorOnEnter(cmd.entityId());
                 if (!alreadyPresent) {
                     runScriptHook(newState, cmd.locale(), "onEnter", cmd.entityId(), cmd.entityName(), cmd.fromDirection());

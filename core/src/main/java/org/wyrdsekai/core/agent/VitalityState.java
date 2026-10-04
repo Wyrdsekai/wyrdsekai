@@ -481,6 +481,13 @@ public record VitalityState(
      * the condition decides where she settles, and tau decides how fast she gets there.
      * That separation is what a plain rate cannot express.
      */
+    /** The other direction of {@link #approach}: a value above its target eases toward it, never past. */
+    static double settle(double current, double target, double dt, Duration tau) {
+        if (target >= current || tau == null || tau.isZero()) return current;
+        double fraction = Math.min(1.0, dt / (double) tau.toSeconds());
+        return Math.max(0.0, current - (current - target) * fraction);
+    }
+
     static double approach(double current, double setpoint, double dt, Duration tau) {
         if (setpoint <= current || tau == null || tau.isZero()) return current;
         // The set point may exceed 1.0 for a temperament that feels this acutely — the
@@ -648,10 +655,14 @@ public record VitalityState(
         // and bondholder has not anticipated unspoken needs. Encoded in
         // amaeAnticipationDeficit ∈ [0,1].
         double newAmae = amae;
+        double amaeTarget = AMAE_SETPOINT * ctx.amaeAnticipationDeficit() * genome.sensitivityFor("amae");
         if (ctx.amaeAnticipationDeficit() > 0.5) {
-            newAmae = approach(newAmae, AMAE_SETPOINT * ctx.amaeAnticipationDeficit()
-                * genome.sensitivityFor("amae"), dt, AMAE_TAU);
+            newAmae = approach(newAmae, amaeTarget, dt, AMAE_TAU);
         }
+        // It could only rise. A value above what the record of her asks supports stayed there for
+        // days (the household node, 0.42 on every line of 2026-09-21): it settles toward the same
+        // target at the same pace, so what her person has since given is felt.
+        newAmae = settle(newAmae, amaeTarget, dt, AMAE_TAU);
 
         // §4.2 Saudade — per-bondholder; +0.005/min during prolonged absence (>4h).
         // Tank value is max across bondholders — see SaudadeLedger which CompanionActor owns.

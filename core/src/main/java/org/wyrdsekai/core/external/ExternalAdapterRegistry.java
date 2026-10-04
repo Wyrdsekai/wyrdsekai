@@ -30,6 +30,12 @@ public final class ExternalAdapterRegistry {
 
     public static ExternalAdapterRegistry get() { return INSTANCE; }
 
+    static {
+        // The item checks ask this registry which world.<name> namespaces are adapters of this node,
+        // so a call to a namespace that is neither the world API's nor an adapter's is named as broken.
+        org.wyrdsekai.scripting.api.ItemApiSurface.installDynamicNamespaces(() -> INSTANCE.namespaces());
+    }
+
     /** Register an adapter. Replaces a prior registration with the same namespace. */
     public void register(ExternalAdapter adapter) {
         if (adapter == null || adapter.namespace() == null || adapter.namespace().isBlank()) {

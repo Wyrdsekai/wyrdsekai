@@ -48,6 +48,9 @@ public final class ApiPolicy {
             "GET /api/oauth/openrouter/callback",
             "POST /api/home/grant-requests",
             "GET /api/version",
+            // Nodes update each other: a household peer takes this node's installer and the release's
+            // checksums (public release files) with no login of this node.
+            "GET /api/update/artifact/{name}", "GET /api/update/sums/{version}",
             "GET /api/directory/recent", "GET /api/directory/tag/{tag}",
             "GET /api/directory/capability/{capability}", "GET /api/directory/known-manifests",
             "GET /api/directory/{did}",
@@ -115,6 +118,8 @@ public final class ApiPolicy {
             "GET /api/vault", "POST /api/vault/snapshot", "POST /api/vault/drill", "POST /api/vault/prune",
             "GET /api/items/broken", "POST /api/items/repair",
             "POST /api/rooms/prune", "DELETE /api/rooms/{roomId}",
+            "GET /api/rooms/made", "GET /api/rooms/archive", "POST /api/rooms/{roomId}/close", "POST /api/rooms/{roomId}/open",
+            "GET /api/items/made", "POST /api/items/made/out", "POST /api/rooms/tidy", "POST /api/rooms/{roomId}/keep",
             "GET /api/residency/list", "POST /api/residency/grant", "POST /api/residency/revoke",
             "GET /api/consents", "POST /api/consents/{id}",
             "POST /api/forge/{companion}", "POST /api/repair/{companion}/release",

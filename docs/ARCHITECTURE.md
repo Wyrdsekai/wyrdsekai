@@ -326,7 +326,7 @@ capability and inference gossip, room events, identity replication, the
 
 Roughly 25 layer services run on top: room and soul replication, presence, a
 CRDT layer, a memory layer, inference capacity gossip, placement, a household
-scheduler, observability, mesh update distribution, MCP, and skills. Federation
+scheduler, observability, release discovery between the household's machines (nodes update each other), MCP, and skills. Federation
 is bilateral and revocable — propose, accept, revoke — with transit tokens and
 companion relocation as first-class operations.
 

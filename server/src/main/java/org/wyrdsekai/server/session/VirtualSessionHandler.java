@@ -10,6 +10,8 @@ import org.apache.pekko.actor.typed.Props;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.project.ProjectCommands;
+import org.wyrdsekai.core.room.ArchiveCommands;
 import org.wyrdsekai.core.item.CarriedItemUse;
 import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.soul.BondNaming;
@@ -792,6 +794,16 @@ public final class VirtualSessionHandler {
             // theirs to give, and it is not something to say out loud in the room.
             case ParsedCommand.ResearchYes r -> {
                 sendVisitorProse(session, sessionId, LibraryConsent.researchYes(session.playerId, "en"));
+                return;
+            }
+            // So are the companions' projects.
+            case ParsedCommand.Projects pr -> {
+                sendVisitorProse(session, sessionId, ProjectCommands.command(session.playerId, pr.line(), "en", true));
+                return;
+            }
+            // The archive of closed-up rooms and put-away items is the household's own.
+            case ParsedCommand.Archive a -> {
+                sendVisitorProse(session, sessionId, ArchiveCommands.command(session.playerId, a.line(), "en", true));
                 return;
             }
             // A visitor's own bonds with this household's companions, and the naming ritual.

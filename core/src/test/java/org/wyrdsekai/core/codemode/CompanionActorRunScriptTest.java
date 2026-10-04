@@ -81,7 +81,7 @@ class CompanionActorRunScriptTest {
     void action_policy_wired_for_run_script() {
         var policy = ActionPolicy.forAction("run_script");
         assertThat(policy).isNotNull();
-        assertThat(policy.requiredTier()).isEqualTo(2);
+        assertThat(policy.requiredTier()).as("her own scripts in her own sandbox carry no tier (2026-10-03)").isZero();
         assertThat(policy.domain()).isEqualTo("code");
         assertThat(policy.readOnly()).isFalse();
     }

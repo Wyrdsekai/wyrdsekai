@@ -87,6 +87,27 @@ public final class DecisionCapacity {
         domainScores.put(domain, decayed);
     }
 
+    /** Domains practised past the given score. */
+    public long domainsAbove(double score) {
+        return domainScores.values().stream().filter(s -> s > score).count();
+    }
+
+    /**
+     * The tier a companion has grown into, from what she has practised, how deep her deepest
+     * bond is, and her reputation. Tier 3 (senior): very strong in five domains, a deep bond,
+     * a good name. Tier 2 (trusted): strong in three domains, or a good name with a bond. Tier 1
+     * (observant): some capacity, or a bond, or a name forming. Tier 0: nascent.
+     */
+    public static int tierFor(DecisionCapacity capacity, int maxBondDepth, double reputationScore) {
+        if (capacity == null) return 0;
+        long strong = capacity.domainsAbove(0.5);
+        long veryStrong = capacity.domainsAbove(0.8);
+        if (veryStrong >= 5 && maxBondDepth >= 2 && reputationScore >= 0.4) return 3;
+        if (strong >= 3 || (reputationScore >= 0.6 && maxBondDepth >= 1)) return 2;
+        if (strong >= 1 || maxBondDepth >= 1 || reputationScore >= 0.3) return 1;
+        return 0;
+    }
+
     /** All domain scores (read-only view). */
     public Map<String, Double> scores() {
         return Collections.unmodifiableMap(domainScores);

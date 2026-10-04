@@ -238,6 +238,9 @@ public class ItemWorldApi {
      * methods on the sub-APIs consult {@code caps} before delegating to the
      * provider; missing caps raise {@link CapabilityDeniedError}.
      */
+    /** This run of a script: what it has read in private, read by its outbound calls. */
+    final Breath breath = new Breath();
+
     public ItemWorldApi(ItemWorldApiProvider provider, ItemCapabilitySet caps) {
         var c = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
         this.self = new SelfApi(provider);
@@ -326,6 +329,24 @@ public class ItemWorldApi {
         this.treasury = new TreasuryApi(provider, c);
         this.adapterResolver = new AdapterProxyResolver(provider, c);
         this.caps = c;
+            // One breath: what this run read in private holds its outbound calls.
+        this.audit.breath(breath);
+        this.drives.breath(breath);
+        this.grants.breath(breath);
+        this.household.breath(breath);
+        this.journal.breath(breath);
+        this.mailbox.breath(breath);
+        this.memory.breath(breath);
+        this.net.breath(breath);
+        this.notes.breath(breath);
+        this.pairing.breath(breath);
+        this.parental.breath(breath);
+        this.pinboard.breath(breath);
+        this.presence.breath(breath);
+        this.safe.breath(breath);
+        this.tags.breath(breath);
+        this.treasury.breath(breath);
+        this.web.breath(breath);
     }
 
     private final ItemCapabilitySet caps;
@@ -398,6 +419,8 @@ public class ItemWorldApi {
 
     /** — drive snapshot accessor. */
     public static class DrivesApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         DrivesApi(ItemWorldApiProvider provider) { this.provider = provider; }
 
@@ -410,6 +433,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public Map<String, Object> snapshot() {
+            if (breath != null) breath.privateRead("drives.snapshot");
             return provider.driveSnapshot();
         }
     }
@@ -494,6 +518,8 @@ public class ItemWorldApi {
      * item-driven deletion is sensitive (could be used to gaslight).
      */
     public static class MemoryApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -518,11 +544,13 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query) {
+            if (breath != null) breath.privateRead("memory.search");
             return provider.searchKnowledge(query, 10);
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query, int limit) {
+            if (breath != null) breath.privateRead("memory.search");
             return provider.searchKnowledge(query, Math.min(Math.max(limit, 1), 20));
         }
 
@@ -536,6 +564,8 @@ public class ItemWorldApi {
     // ─── Journal API (§4.2) ──────────────────────────────────────
 
     public static class JournalApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -585,11 +615,13 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query) {
+            if (breath != null) breath.privateRead("journal.search");
             return provider.journalSearch(query, 10);
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query, Map<String, Object> opts) {
+            if (breath != null) breath.privateRead("journal.search");
             int limit = 10;
             if (opts != null && opts.get("limit") instanceof Number n) {
                 limit = Math.max(1, Math.min(20, n.intValue()));
@@ -599,17 +631,20 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public List<Map<String, Object>> recent(int n) {
+            if (breath != null) breath.privateRead("journal.recent");
             return provider.journalRecent(Math.max(1, Math.min(n, 50)));
         }
 
         /** {@code world.journal.recent()} — the last ten; a script that names no count means "the recent ones". */
         @HostAccess.Export
-        public List<Map<String, Object>> recent() { return recent(10); }
+        public List<Map<String, Object>> recent() { if (breath != null) breath.privateRead("journal.recent"); return recent(10); }
     }
 
     // ─── Notes API (§4.2) ────────────────────────────────────────
 
     public static class NotesApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -632,11 +667,13 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public List<Map<String, Object>> list() {
+            if (breath != null) breath.privateRead("notes.list");
             return provider.notesList(null);
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> list(String tag) {
+            if (breath != null) breath.privateRead("notes.list");
             return provider.notesList(tag);
         }
 
@@ -650,6 +687,8 @@ public class ItemWorldApi {
     // ─── Pinboard API (§4.2) ─────────────────────────────────────
 
     public static class PinboardApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -672,6 +711,7 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public List<Map<String, Object>> list() {
+            if (breath != null) breath.privateRead("pinboard.list");
             return provider.pinboardList();
         }
 
@@ -685,25 +725,30 @@ public class ItemWorldApi {
     // ─── Tags API (§4.2) ─────────────────────────────────────────
 
     public static class TagsApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
 
         TagsApi(ItemWorldApiProvider provider) { this.provider = provider; }
 
         @HostAccess.Export
-        public List<Map<String, Object>> list() { return provider.tagsList("all"); }
+        public List<Map<String, Object>> list() { if (breath != null) breath.privateRead("tags.list"); return provider.tagsList("all"); }
 
         @HostAccess.Export
         public List<Map<String, Object>> list(String scope) {
+            if (breath != null) breath.privateRead("tags.list");
             return provider.tagsList(scope == null ? "all" : scope);
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> entries(String tag) {
+            if (breath != null) breath.privateRead("tags.entries");
             return provider.tagsEntries(tag, "all");
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> entries(String tag, String scope) {
+            if (breath != null) breath.privateRead("tags.entries");
             return provider.tagsEntries(tag, scope == null ? "all" : scope);
         }
     }
@@ -948,6 +993,8 @@ public class ItemWorldApi {
     // ─── Web API ─────────────────────────────────────────────────
 
     public static class WebApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -962,21 +1009,25 @@ public class ItemWorldApi {
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query) {
+            { var held = Breath.held(breath, caps, "web.search"); if (held != null) return List.of(Breath.refused(held)); }
             return provider.webSearch(query, "general", 5);
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query, String type) {
+            { var held = Breath.held(breath, caps, "web.search"); if (held != null) return List.of(Breath.refused(held)); }
             return provider.webSearch(query, type != null ? type : "general", 5);
         }
 
         @HostAccess.Export
         public List<Map<String, Object>> search(String query, String type, int limit) {
+            { var held = Breath.held(breath, caps, "web.search"); if (held != null) return List.of(Breath.refused(held)); }
             return provider.webSearch(query, type != null ? type : "general", Math.max(1, Math.min(limit, 25)));
         }
 
         @HostAccess.Export
         public String fetch(String url) {
+            { var held = Breath.held(breath, caps, "web.fetch"); if (held != null) return "[error] " + held; }
             return fetch(url, 4000);
         }
 
@@ -986,6 +1037,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public String fetch(String url, int maxChars) {
+            { var held = Breath.held(breath, caps, "web.fetch"); if (held != null) return "[error] " + held; }
             try {
                 ScriptHttpClient.checkDestination(url, null, !caps.isUnrestricted());
             } catch (SecurityException e) {
@@ -1000,44 +1052,52 @@ public class ItemWorldApi {
         /** §4.7 — raw fetch with headers/contentType. Tier 4. Domain allowlist enforced. */
         @HostAccess.Export
         public Map<String, Object> fetch_raw(String url) {
+            { var held = Breath.held(breath, caps, "web.fetch_raw"); if (held != null) return Breath.refused(held); }
             return fetch_raw(url, null);
         }
 
         @HostAccess.Export
         public Map<String, Object> fetch_raw(String url, Map<String, Object> opts) {
+            { var held = Breath.held(breath, caps, "web.fetch_raw"); if (held != null) return Breath.refused(held); }
             return send("web.fetch_raw", url, opts, o -> provider.webFetchRaw(url, o));
         }
 
         /** §4.7 — POST. Tier 5 (external side-effect). Steward consent required. */
         @HostAccess.Export
         public Map<String, Object> post(String url, Object body) {
+            { var held = Breath.held(breath, caps, "web.post"); if (held != null) return Breath.refused(held); }
             return post(url, body, null);
         }
 
         @HostAccess.Export
         public Map<String, Object> post(String url, Object body, Map<String, Object> opts) {
+            { var held = Breath.held(breath, caps, "web.post"); if (held != null) return Breath.refused(held); }
             return send("web.post", url, opts, o -> provider.webPost(url, body, o));
         }
 
         /** §4.7 — PUT. Tier 5. */
         @HostAccess.Export
         public Map<String, Object> put(String url, Object body) {
+            { var held = Breath.held(breath, caps, "web.put"); if (held != null) return Breath.refused(held); }
             return put(url, body, null);
         }
 
         @HostAccess.Export
         public Map<String, Object> put(String url, Object body, Map<String, Object> opts) {
+            { var held = Breath.held(breath, caps, "web.put"); if (held != null) return Breath.refused(held); }
             return send("web.put", url, opts, o -> provider.webPut(url, body, o));
         }
 
         /** §4.7 — DELETE. Tier 5. */
         @HostAccess.Export
         public Map<String, Object> delete(String url) {
+            { var held = Breath.held(breath, caps, "web.delete"); if (held != null) return Breath.refused(held); }
             return delete(url, null);
         }
 
         @HostAccess.Export
         public Map<String, Object> delete(String url, Map<String, Object> opts) {
+            { var held = Breath.held(breath, caps, "web.delete"); if (held != null) return Breath.refused(held); }
             return send("web.delete", url, opts, o -> provider.webDelete(url, o));
         }
 
@@ -1123,6 +1183,8 @@ public class ItemWorldApi {
      * (permissive by default); this namespace is the credentialed protocols.
      */
     public static class NetApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -1138,11 +1200,13 @@ public class ItemWorldApi {
         /** far-hand — run one command on a steward-allowlisted host. */
         @HostAccess.Export
         public Map<String, Object> ssh(String host, String command) {
+            { var held = Breath.held(breath, caps, "net.ssh"); if (held != null) return Breath.refused(held); }
             return ssh(host, command, null);
         }
 
         @HostAccess.Export
         public Map<String, Object> ssh(String host, String command, Map<String, Object> opts) {
+            { var held = Breath.held(breath, caps, "net.ssh"); if (held != null) return Breath.refused(held); }
             caps.require("net.ssh");
             return provider.netSshRun(host, command, opts == null ? Map.of() : opts);
         }
@@ -1150,6 +1214,7 @@ public class ItemWorldApi {
         /** postrider — copy a local file up to an allowlisted host. */
         @HostAccess.Export
         public Map<String, Object> scp_to(String host, String localPath, String remotePath) {
+            { var held = Breath.held(breath, caps, "net.scp"); if (held != null) return Breath.refused(held); }
             return scp_to(host, localPath, remotePath, null);
         }
 
@@ -1163,6 +1228,7 @@ public class ItemWorldApi {
         /** postrider — copy a file down from an allowlisted host. */
         @HostAccess.Export
         public Map<String, Object> scp_from(String host, String remotePath, String localPath) {
+            { var held = Breath.held(breath, caps, "net.scp"); if (held != null) return Breath.refused(held); }
             return scp_from(host, remotePath, localPath, null);
         }
 
@@ -2286,6 +2352,8 @@ public class ItemWorldApi {
     // ─── Audit API ───────────────────────────────────────────────
 
     public static class AuditApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         AuditApi(ItemWorldApiProvider provider) { this.provider = provider; }
 
@@ -2295,6 +2363,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public List<Map<String, Object>> recent(int limit) {
+            if (breath != null) breath.privateRead("audit.recent");
             return provider.auditRecent(limit);
         }
 
@@ -2306,6 +2375,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public List<Map<String, Object>> security(int limit) {
+            if (breath != null) breath.privateRead("audit.security");
             return provider.auditSecurity(limit);
         }
     }
@@ -2313,6 +2383,8 @@ public class ItemWorldApi {
     // ─── Grants API ──────────────────────────────────────────────
 
     public static class GrantsApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
         GrantsApi(ItemWorldApiProvider provider) {
@@ -2325,15 +2397,15 @@ public class ItemWorldApi {
 
         /** Grants the caller has issued. */
         @HostAccess.Export
-        public List<Map<String, Object>> issued() { return provider.grantsIssued(); }
+        public List<Map<String, Object>> issued() { if (breath != null) breath.privateRead("grants.issued"); return provider.grantsIssued(); }
 
         /** Grants issued to the caller. */
         @HostAccess.Export
-        public List<Map<String, Object>> held() { return provider.grantsHeld(); }
+        public List<Map<String, Object>> held() { if (breath != null) breath.privateRead("grants.held"); return provider.grantsHeld(); }
 
         /** Pending grant-requests awaiting the caller's approval. */
         @HostAccess.Export
-        public List<Map<String, Object>> pendingRequests() { return provider.pendingGrantRequests(); }
+        public List<Map<String, Object>> pendingRequests() { if (breath != null) breath.privateRead("grants.pending_requests"); return provider.pendingGrantRequests(); }
 
         /** §4.16 — issue a grant. Tier 5. */
         @HostAccess.Export
@@ -2550,6 +2622,8 @@ public class ItemWorldApi {
     // ─── Presence API (Lantern furnishing) ─────────────────────
 
     public static class PresenceApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
         PresenceApi(ItemWorldApiProvider provider) {
@@ -2562,10 +2636,10 @@ public class ItemWorldApi {
 
         /** Who's in the caller's Home right now. */
         @HostAccess.Export
-        public List<Map<String, Object>> inHome() { return provider.presenceInHome(); }
+        public List<Map<String, Object>> inHome() { if (breath != null) breath.privateRead("presence.in_home"); return provider.presenceInHome(); }
 
         @HostAccess.Export
-        public List<Map<String, Object>> in_home() { return provider.presenceInHome(); }
+        public List<Map<String, Object>> in_home() { if (breath != null) breath.privateRead("presence.in_home"); return provider.presenceInHome(); }
 
         /** §4.16 — dim Lantern (silent presence). Tier 5. */
         @HostAccess.Export
@@ -2860,6 +2934,8 @@ public class ItemWorldApi {
      * surface instead of grepping a server log.
      */
     public static class PairingApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
         PairingApi(ItemWorldApiProvider provider) {
@@ -2870,20 +2946,36 @@ public class ItemWorldApi {
             this.caps = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
         }
 
-        /** Devices/nodes currently waiting at the threshold. */
+        /** Devices/nodes currently waiting at the threshold, with their codes. Tier 6. */
         @HostAccess.Export
-        public List<Map<String, Object>> pending() { return provider.pendingPairings(); }
+        public List<Map<String, Object>> pending() {
+            if (breath != null) breath.privateRead("pairing.pending");
+            caps.require("pairing.pending");
+            return provider.pendingPairings();
+        }
 
-        /** Active 6-digit pair code, or null. */
+        /** Active 6-digit pair code, or null. Tier 6. */
         @HostAccess.Export
-        public String code() { return provider.activePairCode(); }
+        public String code() {
+            if (breath != null) breath.privateRead("pairing.code");
+            caps.require("pairing.code");
+            return provider.activePairCode();
+        }
 
-        /** Active pre-shared household key, or null. Steward-only context. */
+        /** Active pre-shared household key, or null. Tier 7: the steward's own items, in the steward's hands. */
         @HostAccess.Export
-        public String householdKey() { return provider.activeHouseholdKey(); }
+        public String householdKey() {
+            if (breath != null) breath.privateRead("pairing.household_key");
+            caps.require("pairing.household_key");
+            return provider.activeHouseholdKey();
+        }
 
         @HostAccess.Export
-        public String household_key() { return provider.activeHouseholdKey(); }
+        public String household_key() {
+            if (breath != null) breath.privateRead("pairing.household_key");
+            caps.require("pairing.household_key");
+            return provider.activeHouseholdKey();
+        }
 
         /** Generate (or rotate) the pre-shared household key. Steward-only — Tier 7. */
         @HostAccess.Export
@@ -2941,6 +3033,8 @@ public class ItemWorldApi {
      * steward-only checks apply (defense in depth below the facade gate).
      */
     public static class HouseholdApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -2951,7 +3045,7 @@ public class ItemWorldApi {
 
         /** Every registered account: {@code username, displayName, role, createdAt}. */
         @HostAccess.Export
-        public List<Map<String, Object>> members() { return provider.householdMembers(); }
+        public List<Map<String, Object>> members() { if (breath != null) breath.privateRead("household.members"); return provider.householdMembers(); }
 
         /** Change a member's role (steward-only at the service). Tier 7. */
         @HostAccess.Export
@@ -2988,6 +3082,8 @@ public class ItemWorldApi {
      * player's id as caller so the service's steward-only check applies.
      */
     public static class ParentalApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -2998,11 +3094,11 @@ public class ItemWorldApi {
 
         /** Every controlled member with limits + today's usage (provider-scoped). */
         @HostAccess.Export
-        public List<Map<String, Object>> list() { return provider.parentalList(); }
+        public List<Map<String, Object>> list() { if (breath != null) breath.privateRead("parental.list"); return provider.parentalList(); }
 
         /** One member's controls + today's usage. */
         @HostAccess.Export
-        public Map<String, Object> get(String username) { return provider.parentalGet(username); }
+        public Map<String, Object> get(String username) { if (breath != null) breath.privateRead("parental.get"); return provider.parentalGet(username); }
 
         /**
          * Set one control field: {@code minutes}/{@code inference} (number or
@@ -3094,9 +3190,12 @@ public class ItemWorldApi {
             this.caps = caps == null ? ItemCapabilitySet.UNRESTRICTED : caps;
         }
 
-        /** All invites newest-first (codes included — steward view only). */
+        /** All invites newest-first (codes included — steward view only). Tier 6. */
         @HostAccess.Export
-        public List<Map<String, Object>> list() { return provider.inviteList(); }
+        public List<Map<String, Object>> list() {
+            caps.require("invite.list");
+            return provider.inviteList();
+        }
 
         /** Mint an invite for the given role (member/guest/child/steward). Tier 7. */
         @HostAccess.Export
@@ -3210,6 +3309,8 @@ public class ItemWorldApi {
 
     /** Household-level resource usage — aggregate + per-member breakdown. */
     public static class TreasuryApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -3220,14 +3321,14 @@ public class ItemWorldApi {
 
         /** Aggregate usage across every tracked member/agent. */
         @HostAccess.Export
-        public Map<String, Object> summary() { return provider.treasurySummary(); }
+        public Map<String, Object> summary() { if (breath != null) breath.privateRead("treasury.summary"); return provider.treasurySummary(); }
 
         /** Per-member/per-agent usage breakdown. */
         @HostAccess.Export
-        public List<Map<String, Object>> perMember() { return provider.treasuryPerMember(); }
+        public List<Map<String, Object>> perMember() { if (breath != null) breath.privateRead("treasury.per_member"); return provider.treasuryPerMember(); }
 
         @HostAccess.Export
-        public List<Map<String, Object>> per_member() { return provider.treasuryPerMember(); }
+        public List<Map<String, Object>> per_member() { if (breath != null) breath.privateRead("treasury.per_member"); return provider.treasuryPerMember(); }
 
         /** Set a member's daily budget limit in USD (steward-only; in-memory today). Tier 7. */
         @HostAccess.Export
@@ -3251,6 +3352,7 @@ public class ItemWorldApi {
         /** W5: an entity's mutual-credit balance (implicit read). */
         @HostAccess.Export
         public Map<String, Object> balance(String entityId) {
+            if (breath != null) breath.privateRead("treasury.balance");
             return provider.treasuryBalance(entityId);
         }
     }
@@ -3554,6 +3656,8 @@ public class ItemWorldApi {
      * are Phase O adapters.
      */
     public static class MailboxApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -3564,16 +3668,17 @@ public class ItemWorldApi {
 
         /** §4.9 — list pending messages (Tier 1 own). */
         @HostAccess.Export
-        public List<Map<String, Object>> inbox() { return provider.mailboxInbox(null); }
+        public List<Map<String, Object>> inbox() { if (breath != null) breath.privateRead("agent.mailbox.read"); return provider.mailboxInbox(null); }
 
         @HostAccess.Export
         public List<Map<String, Object>> inbox(Map<String, Object> filter) {
+            if (breath != null) breath.privateRead("agent.mailbox.read");
             return provider.mailboxInbox(filter);
         }
 
         /** §4.9 — read a message by id. Tier 1 own. */
         @HostAccess.Export
-        public Map<String, Object> read(String id) { return provider.mailboxRead(id); }
+        public Map<String, Object> read(String id) { if (breath != null) breath.privateRead("agent.mailbox.read"); return provider.mailboxRead(id); }
 
         /** §4.9 — mark a message as read. Tier 2 own. */
         @HostAccess.Export
@@ -4207,6 +4312,8 @@ public class ItemWorldApi {
     // ─── §4.18 Safe API ───────────────────────────────────────────
 
     public static class SafeApi {
+        private Breath breath;
+        void breath(Breath b) { this.breath = b; }
         private final ItemWorldApiProvider provider;
         private final ItemCapabilitySet caps;
 
@@ -4236,6 +4343,8 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public String get(String slot) {
+            // Not a private read for the breath rule: the item gets a reference, never the value.
+            // The safe exists so an item can send a credential it cannot see.
             caps.require("safe.get");
             if (!isSlotAllowed(slot)) {
                 return null;
@@ -4271,6 +4380,7 @@ public class ItemWorldApi {
          */
         @HostAccess.Export
         public List<Map<String, Object>> snapshots() {
+            if (breath != null) breath.privateRead("safe.snapshots");
             caps.require("safe.snapshots");
             return provider.safeSnapshots();
         }

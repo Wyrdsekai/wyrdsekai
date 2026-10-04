@@ -67,7 +67,13 @@ class HerOwnLineIsNotAPersonSpeakingTest {
         var src = actorSource();
         var stamp = src.indexOf("if (answering != null && isHumanTrigger(answering)) lastAnsweredPersonAt = Instant.now();");
         assertThat(stamp).as("stamped where a line that answers a person goes out").isGreaterThan(-1);
-        assertThat(src.indexOf("roomRef.tell(new RoomCommand.SayInRoom(", stamp) - stamp).isLessThan(200);
+        // The line goes out just below, by one of three ways: to an asker in another room, aloud to
+        // the room, or privately. The stamp stands directly above all three.
+        int toAnAskerElsewhere = src.indexOf("if (askerElsewhere) {", stamp);
+        int aloud = src.indexOf("roomRef.tell(new RoomCommand.SayInRoom(", stamp);
+        assertThat(toAnAskerElsewhere - stamp).isBetween(1, 1400);
+        assertThat(aloud - toAnAskerElsewhere).isBetween(1, 900);
+        assertThat(src.substring(stamp, aloud)).as("nothing returns between the stamp and the send").doesNotContain("return;");
         assertThat(src).contains("if (answersAPerson()) lastAnsweredPersonAt = Instant.now();");
     }
 

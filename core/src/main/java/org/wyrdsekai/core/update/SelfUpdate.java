@@ -14,6 +14,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
@@ -29,6 +30,12 @@ import java.util.function.BooleanSupplier;
  *
  * <p>Never on a dev build, never with a version pinned ({@code WYRDSEKAI_UPDATE_PIN}), and never
  * while a coding task or an inference request is in flight.
+ *
+ * <p>The household is a second source of "latest" ({@link MeshRelease}, 2026-10-03): a release a
+ * connected peer has run, stable, for the stability delay counts like one GitHub announced, and the
+ * installer is taken from that peer ({@code --from}) with the release's own checksums. In
+ * {@code check} mode the status says which peer runs it; in {@code auto} mode the node follows,
+ * inside its window, when idle, once per version per day, the steward's node last.
  */
 public final class SelfUpdate {
 
@@ -40,15 +47,36 @@ public final class SelfUpdate {
     private final Path installRoot;
     private final Path dataDir;
     private final BooleanSupplier idle;
-    private final BooleanSupplier launcher;
+    private final java.util.function.Predicate<String> launcher;   // given the peer url to take the installer from, or null
+    private final java.util.function.Supplier<Optional<MeshRelease.Candidate>> mesh;
     private volatile Map<String, Object> state = new LinkedHashMap<>();
 
     public SelfUpdate(Path installRoot, Path dataDir, BooleanSupplier idle, BooleanSupplier launcher) {
+        this(installRoot, dataDir, idle, from -> launcher.getAsBoolean(), Optional::empty);
+    }
+
+    /** With the household as a second source of releases, and a launcher told where to take the installer from. */
+    public SelfUpdate(Path installRoot, Path dataDir, BooleanSupplier idle, java.util.function.Predicate<String> launcher,
+                      java.util.function.Supplier<Optional<MeshRelease.Candidate>> mesh) {
         this.installRoot = installRoot;
         this.dataDir = dataDir;
         this.idle = idle;
         this.launcher = launcher;
+        this.mesh = mesh == null ? Optional::empty : mesh;
         this.state = readState();
+    }
+
+    /**
+     * The household's clock: every {@code every}, look at the peers, and when one of them runs a
+     * release this node should follow, take the turn the schedule would. Nothing when nothing changed.
+     */
+    public void startMeshWatch(ScheduledExecutorService scheduler, Duration every) {
+        if (ReleaseCheck.mode().equals("off")) return;
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                if (mesh.get().isPresent()) tick();
+            } catch (Throwable t) { log.warn("[self-update] household check failed: {}", t.toString()); }
+        }, every.toMillis(), every.toMillis(), TimeUnit.MILLISECONDS);
     }
 
     public SelfUpdate(Path installRoot, Path dataDir) {
@@ -66,15 +94,29 @@ public final class SelfUpdate {
 
     /** One check; returns what it decided, for the log and the status route. */
     public synchronized String tick() {
-        var status = ReleaseCheck.status(installRoot, dataDir);
+        var github = ReleaseCheck.status(installRoot, dataDir);
         var s = new LinkedHashMap<String, Object>(state);
         s.put("lastCheck", Instant.now().toString());
-        s.put("installed", status.installed());
+        s.put("installed", github.installed());
+        // The household as a second source: a peer's stable release counts like one GitHub announced,
+        // and wins when it is the newer of the two. The installer then comes from that peer.
+        var peer = github.mode().equals("off") ? Optional.<MeshRelease.Candidate>empty() : mesh.get();
+        String latest = github.latest();
+        String fromUrl = null, fromNode = null;
+        if (peer.isPresent() && (latest == null || ReleaseManifest.compareVersions(peer.get().version(), latest) >= 0)) {
+            latest = peer.get().version();
+            fromUrl = peer.get().httpUrl();
+            fromNode = peer.get().nodeId();
+        }
+        var status = new ReleaseCheck.Status(github.installed(), latest, ReleaseCheck.isNewer(github.installed(), latest), github.mode());
         s.put("latest", status.latest() == null ? "" : status.latest());
         s.put("updateAvailable", status.updateAvailable());
+        if (peer.isPresent()) { s.put("peerVersion", peer.get().version()); s.put("peerNode", peer.get().nodeId()); s.put("peerUrl", peer.get().httpUrl() == null ? "" : peer.get().httpUrl()); }
+        else { s.remove("peerVersion"); s.remove("peerNode"); s.remove("peerUrl"); }
+        var where = fromNode == null ? "" : " (runs on " + fromNode + ")";
         String decision;
         if (!status.updateAvailable()) decision = status.latest() == null ? "latest unknown (GitHub not reached)" : "current";
-        else if (!status.mode().equals("auto")) decision = "newer release " + status.latest() + " — wyrd update now";
+        else if (!status.mode().equals("auto")) decision = "newer release " + status.latest() + where + " — wyrd update now";
         else if (!ReleaseCheck.isRelease(status.installed())) decision = "dev build; not auto-updating";
         else if (pinned() != null) decision = "pinned to " + pinned();
         else if (attemptedToday(s, status.latest())) decision = "already attempted " + status.latest() + " today";
@@ -83,8 +125,9 @@ public final class SelfUpdate {
         else {
             s.put("lastAttemptVersion", status.latest());
             s.put("lastAttemptAt", Instant.now().toString());
-            boolean ok = launcher.getAsBoolean();
-            decision = ok ? "installing " + status.latest() + " (the service restarts when it is in)" : "could not launch the updater";
+            if (fromUrl != null) s.put("lastAttemptFrom", fromUrl); else s.remove("lastAttemptFrom");
+            boolean ok = launcher.test(fromUrl);
+            decision = ok ? "installing " + status.latest() + where + " (the service restarts when it is in)" : "could not launch the updater";
             s.put("lastAttemptResult", ok ? "launched" : "launch failed");
         }
         s.put("decision", decision);

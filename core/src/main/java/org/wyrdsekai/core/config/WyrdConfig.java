@@ -347,6 +347,63 @@ public final class WyrdConfig {
     /** {@code WYRDSEKAI_BODY_ACHE_HOURS} — how long a quiet part of ordinary weight stays in her felt line. */
     public int bodyAcheHours() { return intOr("WYRDSEKAI_BODY_ACHE_HOURS", "body.ache_hours", 6); }
 
+    /** {@code WYRDSEKAI_MADE_ROOM_EMPTY_DAYS} — days nobody has entered a room a companion made on her own
+     *  before the house closes it up; 0 never closes one up. */
+    public int madeRoomEmptyDays() { return zeroOr("WYRDSEKAI_MADE_ROOM_EMPTY_DAYS", "made.room_empty_days", 7); }
+
+    /** {@code WYRDSEKAI_MADE_ROOM_HELD_DAYS} — the same, for a room that holds something beyond what it was
+     *  furnished with. */
+    public int madeRoomHeldDays() { return zeroOr("WYRDSEKAI_MADE_ROOM_HELD_DAYS", "made.room_held_days", 30); }
+
+    /** {@code WYRDSEKAI_MADE_ROOMS_OPEN_MAX} — how many rooms of her own making a companion keeps open at
+     *  once; 0 sets no limit. Rooms a person asked for, or has been in, are not counted. */
+    public int madeRoomsOpenMax() { return zeroOr("WYRDSEKAI_MADE_ROOMS_OPEN_MAX", "made.rooms_open_max", 12); }
+
+    /** {@code WYRDSEKAI_MADE_ITEM_UNUSED_DAYS} — days an item she made on her own goes unused before it is
+     *  put away; 0 never puts one away. A week: putting away loses nothing, and naming it brings it back. */
+    public int madeItemUnusedDays() { return zeroOr("WYRDSEKAI_MADE_ITEM_UNUSED_DAYS", "made.item_unused_days", 7); }
+
+    /** {@code WYRDSEKAI_MADE_FIRST_LOOK_DAYS} — for what was made before the house kept a record and has not
+     *  been used since: how many days of watching after the update before it is put away. After that the
+     *  ordinary week applies. */
+    public int madeFirstLookDays() { return zeroOr("WYRDSEKAI_MADE_FIRST_LOOK_DAYS", "made.first_look_days", 3); }
+
+    /** {@code WYRDSEKAI_MADE_ITEMS_OUT_MAX} — how many items of her own making a companion keeps out at
+     *  once; 0 sets no limit. */
+    public int madeItemsOutMax() { return zeroOr("WYRDSEKAI_MADE_ITEMS_OUT_MAX", "made.items_out_max", 24); }
+
+    /** {@code WYRDSEKAI_PROJECT_SITTING_MINUTES} — after she works on a project, how long before her
+     *  own time is offered it again. */
+    public int projectSittingMinutes() { return Math.max(10, zeroOr("WYRDSEKAI_PROJECT_SITTING_MINUTES", "project.sitting_minutes", 90)); }
+
+    /** {@code WYRDSEKAI_PROJECT_REST_DAYS} — days a project goes unworked before it rests (kept, out of
+     *  her standing facts, found again when she names it); 0 = never. */
+    public int projectRestDays() { return zeroOr("WYRDSEKAI_PROJECT_REST_DAYS", "project.rest_days", 14); }
+
+    /** {@code WYRDSEKAI_AFFORDANCE_TOPK} — how many tools an own-time turn is offered, ranked by
+     *  what she feels. At least 4. */
+    public int affordanceTopK() {
+        return Math.max(4, zeroOr("WYRDSEKAI_AFFORDANCE_TOPK", "affordance.top_k", 16));
+    }
+
+    /** {@code WYRDSEKAI_MADE_COLD_DAYS} — days a closed-up room or a put-away item stays in the archive
+     *  before it goes to cold storage: still kept, out of the everyday lists and searches; 0 = never. */
+    public int madeColdDays() { return zeroOr("WYRDSEKAI_MADE_COLD_DAYS", "made.cold_days", 90); }
+
+    private int zeroOr(String env, String key, int dflt) {
+        var v = resolve(env, key, () -> null);
+        if (v == null || v.isBlank()) return dflt;
+        try { return Math.max(0, Integer.parseInt(v.trim())); } catch (NumberFormatException e) { return dflt; }
+    }
+
+    /** {@code WYRDSEKAI_WANT_MISSES_TO_SET_DOWN} — how many times a want reaches for the same thing and
+     *  does not find it before the want is set down. */
+    public int wantMissesToSetDown() { return intOr("WYRDSEKAI_WANT_MISSES_TO_SET_DOWN", "want.misses_to_set_down", 3); }
+
+    /** {@code WYRDSEKAI_WANT_SET_DOWN_HOURS} — how long a want that was set down is not taken up again,
+     *  and the span over which its misses are counted. */
+    public int wantSetDownHours() { return intOr("WYRDSEKAI_WANT_SET_DOWN_HOURS", "want.set_down_hours", 24); }
+
     /** {@code WYRDSEKAI_VAULT_MINUTES} — how often the vault takes a copy; 0 turns the vault off. */
     public int vaultMinutes() {
         var v = resolve("WYRDSEKAI_VAULT_MINUTES", "vault.minutes", () -> "15");

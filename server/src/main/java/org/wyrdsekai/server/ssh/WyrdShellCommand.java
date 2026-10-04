@@ -21,6 +21,8 @@ import org.wyrdsekai.common.protocol.CommandParser;
 import org.wyrdsekai.common.protocol.CommandParser.ParsedCommand;
 import org.wyrdsekai.common.protocol.S2CMessage;
 import org.wyrdsekai.common.util.Json;
+import org.wyrdsekai.core.project.ProjectCommands;
+import org.wyrdsekai.core.room.ArchiveCommands;
 import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.agent.CompanionActor;
 import org.wyrdsekai.core.agent.CrossZoneTellService;
@@ -1384,6 +1386,20 @@ public class WyrdShellCommand implements Command {
             case ParsedCommand.Bond b -> {
                 try {
                     sendLine(BondNaming.command(playerId, playerName, b.args(), locale));
+                } catch (IOException ignored) { }
+            }
+            // What the companions are working on, and a project's notebook.
+            case ParsedCommand.Projects pr -> {
+                try {
+                    for (var l : ProjectCommands.command(playerId, pr.line(), locale, false).split("\n")) sendLine(l);
+                    renderer.sendPrompt(currentRoomName, currentZoneLabel());
+                } catch (IOException ignored) { }
+            }
+            // What was closed up or put away, searched by what it was, and brought back.
+            case ParsedCommand.Archive a -> {
+                try {
+                    for (var l : ArchiveCommands.command(playerId, a.line(), locale, false).split("\n")) sendLine(l);
+                    renderer.sendPrompt(currentRoomName, currentZoneLabel());
                 } catch (IOException ignored) { }
             }
             case ParsedCommand.Demolish d -> {

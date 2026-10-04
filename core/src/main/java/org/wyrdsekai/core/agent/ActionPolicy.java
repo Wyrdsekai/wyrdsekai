@@ -246,6 +246,10 @@ public record ActionPolicy(
         // is a bigger brush. Zones stay FORBIDDEN.
         Map.entry("create_room",          AutonomyTier.CONSENT),
         Map.entry("create_room_from_template", AutonomyTier.VISIBLE),
+        // Closing up a room of her own destroys nothing and is undone by walking back in: hers to
+        // do on her own time, and on the steward's feed like the making.
+        Map.entry("close_room",           AutonomyTier.VISIBLE),
+        Map.entry("read_book",            AutonomyTier.AMBIENT),
 
         // ── FORBIDDEN — irrevocable / identity-altering ──────────────────
         Map.entry("create_zone",          AutonomyTier.FORBIDDEN),
@@ -282,6 +286,16 @@ public record ActionPolicy(
      * gates inner life) or local-only (already gated by SkillCost
      * energy).
      */
+    /** Of the cloud-resource verbs, the ones that reach no paid service when the household searches for itself. */
+    static final Set<String> HOUSEHOLD_REACH = Set.of("web_search", "searching_glass", "read_content");
+
+    /** Whether a web search on this node goes to a paid API. Installed by the search service; true until it is. */
+    private static volatile java.util.function.BooleanSupplier webSearchCostsMoney = () -> true;
+
+    public static void installWebSearchCost(java.util.function.BooleanSupplier costs) {
+        webSearchCostsMoney = costs == null ? () -> true : costs;
+    }
+
     public static final Set<String> CLOUD_RESOURCE_ACTIONS = Set.of(
         "web_search",       // calls Searxng/Brave/Tavily/SerpAPI/DDG
         "query_oracle",     // calls Oracle bridge (external HTTP)
@@ -323,7 +337,15 @@ public record ActionPolicy(
                 || "seek_sanctuary".equals(actionType);
         }
         if (CLOUD_RESOURCE_ACTIONS.contains(actionType)) {
-            return posture.allowsCloudResources();
+            if (posture.allowsCloudResources()) return true;
+            // BOUNDED keeps a companion off what costs her person money by surprise. The household's
+            // own search (a Searxng on the node, or the keyless fallback) and reading a page cost
+            // nothing, and were blocked with the paid ones: under the default posture, which nothing
+            // in the product could change, no companion could search the web or read a link on her
+            // own time, ever (household node, 2026-10-03: 6,547 turns with those tools removed in a
+            // week, the node's own Searxng configured). A paid search API stays behind GENEROUS.
+            return posture == BondholderPosture.BOUNDED && HOUSEHOLD_REACH.contains(actionType)
+                && !webSearchCostsMoney.getAsBoolean();
         }
         // Default permit — local-only actions are gated elsewhere (SkillCost
         // energy budget, AutonomyTier consent, zone aesthetic, etc.).
@@ -410,17 +432,19 @@ public record ActionPolicy(
         entry("suggest_hints",        1, 0.0,  false, true,  "hints"),
 
         // ── Tier 2 — Trusted ──────────────────────────────────────────
-        entry("think_deeply",         2, 0.5,  true,  false, "analysis"),
+        entry("think_deeply",         0, 0.5,  true,  false, "analysis"),
         entry("delegate",             2, 0.3,  false, false, "delegation"),
         entry("delegate_chain",       2, 0.5,  false, false, "delegation"),
-        entry("skill_execute",        2, 0.3,  false, false, "code"),
-        entry("schedule_skill",       2, 0.3,  false, false, "code"),
-        entry("cancel_schedule",      2, 0.1,  false, true,  "code"),
-        entry("create_watcher",       2, 0.2,  false, false, "automation"),
-        entry("cancel_watcher",       2, 0.1,  false, true,  "automation"),
-        entry("request_access",       2, 0.2,  false, true,  "access"),
-        entry("codex_action",         2, 0.3,  false, false, "code"),
-        entry("craft_item",           2, 0.3,  false, false, "creation"),
+        entry("skill_execute",        0, 0.3,  false, false, "code"),
+        entry("schedule_skill",       0, 0.3,  false, false, "code"),
+        entry("cancel_schedule",      0, 0.1,  false, true,  "code"),
+        entry("create_watcher",       0, 0.2,  false, false, "automation"),
+        entry("cancel_watcher",       0, 0.1,  false, true,  "automation"),
+        // Asking is always hers: the refusal of a tier-2 verb tells her to file a request, and the
+        // request itself stood at tier 2, so no companion ever filed one (household node, 2026-10-03).
+        entry("request_access",       0, 0.2,  false, true,  "access"),
+        entry("codex_action",         0, 0.3,  false, false, "code"),
+        entry("craft_item",           0, 0.3,  false, false, "creation"),
         entry("cast_vote",            2, 0.2,  false, true,  "governance"),
 
         // ── Tier 0 — New basic actions ────────────────────────────────
@@ -438,7 +462,7 @@ public record ActionPolicy(
         entry("trade",                1, 0.2,  false, false, "economy"),
 
         // ── Tier 3 — Senior ───────────────────────────────────────────
-        entry("create_room",          3, 0.7,  false, false, "creation"),
+        entry("create_room",          0, 0.7,  false, false, "creation"),
         // ── The DOCUMENTED authoring verbs ────────────────────────────────
         // These three are item-tool builtins, not ActionParser variants, so
         // they were dispatched straight from `toolItem.builtinHandler()` and
@@ -446,12 +470,14 @@ public record ActionPolicy(
         // meaning the path docs/public/AUTHORING.md tells people to use had NO
         // growth gate, while the equivalent parsed action (create_room) is
         // tier 3. Mirrors of their parsed counterparts.
-        entry("craft_from_template",  2, 0.3,  false, false, "creation"),
+        entry("craft_from_template",  0, 0.3,  false, false, "creation"),
         entry("create_room_from_template", 1, 0.5, false, false, "creation"),   // VISIBLE: a template room is hers to make
+        entry("close_room",           1, 0.2,  false, false, "creation"),
+        entry("read_book",            0, 0.0,  true,  true,  "search"),     // AMBIENT: reading is always hers   // VISIBLE: her own room, kept, opens again
         entry("create_zone",          3, 0.8,  false, false, "creation"),
         entry("add_script",           3, 0.7,  false, false, "code"),
-        entry("workbench_submit",     3, 0.7,  false, false, "code"),
-        entry("shape_recipe",         3, 0.6,  false, false, "recipes"),
+        entry("workbench_submit",     0, 0.7,  false, false, "code"),
+        entry("shape_recipe",         0, 0.6,  false, false, "recipes"),
         entry("zone_command",         3, 0.5,  false, false, "governance"),
 
         // ── MUD Basics ───────────────────────────────────────────────
@@ -498,7 +524,7 @@ public record ActionPolicy(
         // controls availability is the WYRDSEKAI_CODE_MODE_ENABLED env flag
         // checked at tool-list build time + handler entry. Budget cost is
         // moderate (composition is research-shaped work, not free).
-        entry("run_script",           2, 0.3,  false, false, "code"),
+        entry("run_script",           0, 0.3,  false, false, "code"),
 
         // ── W6 audit 2026-07-11 — REVIEW: tiers drafted from family
         // siblings. These 24 verbs all have parser records + dispatch but
@@ -512,22 +538,22 @@ public record ActionPolicy(
         // study — mirrors write_journal
         entry("journal_entry",        1, 0.1,  false, true,  "study"),
         // planning — start mirrors create_task_plan; note/finish mirror modify_plan
-        entry("start_project",        1, 0.2,  false, true,  "planning"),
-        entry("project_note",         1, 0.1,  false, true,  "planning"),
-        entry("finish_project",       1, 0.1,  false, true,  "planning"),
+        entry("start_project",        0, 0.2,  false, true,  "planning"),
+        entry("project_note",         0, 0.1,  false, true,  "planning"),
+        entry("finish_project",       0, 0.1,  false, true,  "planning"),
         // recipes — requesting an existing recipe is far lighter than
         // shaping one (shape_recipe is tier 3); cost mirrors request_review
         entry("request_recipe",       1, 0.2,  false, true,  "recipes"),
         // creation — the form family mirrors shape_recipe (tier 3, 0.6);
         // retire_form kept at the same tier (destructive sibling)
-        entry("shape_form",           3, 0.6,  false, false, "creation"),
-        entry("revise_form",          3, 0.6,  false, false, "creation"),
-        entry("retire_form",          3, 0.6,  false, false, "creation"),
+        entry("shape_form",           0, 0.6,  false, false, "creation"),
+        entry("revise_form",          0, 0.6,  false, false, "creation"),
+        entry("retire_form",          0, 0.6,  false, false, "creation"),
         // delegation — familiar/bunshin machinery mirrors delegate (tier 2, 0.3)
-        entry("summon_familiar",      2, 0.3,  false, false, "delegation"),
-        entry("dispatch_bunshin",     2, 0.3,  false, false, "delegation"),
-        entry("create_imprint",       2, 0.3,  false, false, "delegation"),
-        entry("restore_imprint",      2, 0.3,  false, false, "delegation"),
+        entry("summon_familiar",      0, 0.3,  false, false, "delegation"),
+        entry("dispatch_bunshin",     0, 0.3,  false, false, "delegation"),
+        entry("create_imprint",       0, 0.3,  false, false, "delegation"),
+        entry("restore_imprint",      0, 0.3,  false, false, "delegation"),
         entry("give_copy",            2, 0.3,  false, false, "delegation"),
         // check-in is the report leg of a consented dispatch — free, tier 0
         entry("bunshin_check_in",     0, 0.0,  false, true,  "delegation"),
@@ -550,6 +576,34 @@ public record ActionPolicy(
     /**
      * Look up the policy for an action type. Returns {@link #DEFAULT} for unknown actions.
      */
+    /**
+     * Her own work: making, learning, practising, building in her own workshop and sandbox. No tier.
+     *
+     * <p>The tier came from agents deciding on the household's behalf ("judgment is earned per domain,
+     * and a new agent flags everything for review", ). Applied to her own work
+     * it protected nothing: what she may do without checking in is the autonomy tier, what a script or
+     * item may touch is its sandbox and capability list, and how much she may do unprompted is the
+     * budget. Meanwhile the ladder had no rungs (capacity was never fed), and both companions on the
+     * household node stood below the workshop for their whole lives. operator, 2026-10-03: "why are we
+     * tiering these in the household at all" and "drop the tier for self-directed work - yes we need
+     * this now". Held by {@code HerOwnWorkIsNotTieredTest}.
+     */
+    public static final Set<String> SELF_DIRECTED = Set.of(
+        "think_deeply", "skill_execute", "schedule_skill", "cancel_schedule", "create_watcher", "cancel_watcher",
+        "codex_action", "craft_item", "craft_from_template", "run_script", "create_room", "workbench_submit",
+        "shape_recipe", "shape_form", "revise_form", "retire_form", "summon_familiar", "dispatch_bunshin",
+        "create_imprint", "restore_imprint", "dispatch_task", "request_access");
+
+    /**
+     * What stays tiered: acts on what is shared, or on someone else. A vote, a command to the zone, a
+     * new zone with its own inhabitants, a script in a room others walk through, work handed to another
+     * agent, a key to summon her, a tool destroyed, a bond released, her own limits rewritten.
+     */
+    public static final Set<String> ACTS_ON_THE_SHARED = Set.of(
+        "emergency_call", "delegate", "delegate_chain", "cast_vote", "give_copy", "craft_summon_key",
+        "create_zone", "add_script", "zone_command", "revoke_summon_key", "promote_familiar", "destroy_tool",
+        "release_bond", "set_autonomy_preference", "set_deviation_thresholds");
+
     public static ActionPolicy forAction(String actionType) {
         return REGISTRY.getOrDefault(actionType, DEFAULT);
     }

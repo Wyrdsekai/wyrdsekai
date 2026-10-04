@@ -81,7 +81,8 @@ class OperationalGapsE2ETest {
 
         assertEquals(0, ActionPolicy.forAction("go_to_room").requiredTier());
         assertEquals(1, ActionPolicy.forAction("web_search").requiredTier());
-        assertEquals(3, ActionPolicy.forAction("create_room").requiredTier());
+        assertEquals(0, ActionPolicy.forAction("create_room").requiredTier());
+        assertEquals(3, ActionPolicy.forAction("create_zone").requiredTier());
     }
 
     @Test
@@ -89,10 +90,11 @@ class OperationalGapsE2ETest {
         // Tier 0 actions have lower or equal tier than tier 1 actions
         assertTrue(ActionPolicy.forAction("go_to_room").requiredTier()
             <= ActionPolicy.forAction("web_search").requiredTier());
+        // The ladder is for acts on what is shared now (her own work carries no tier, 2026-10-03).
         assertTrue(ActionPolicy.forAction("web_search").requiredTier()
-            <= ActionPolicy.forAction("think_deeply").requiredTier());
-        assertTrue(ActionPolicy.forAction("think_deeply").requiredTier()
-            <= ActionPolicy.forAction("create_room").requiredTier());
+            <= ActionPolicy.forAction("delegate").requiredTier());
+        assertTrue(ActionPolicy.forAction("delegate").requiredTier()
+            <= ActionPolicy.forAction("zone_command").requiredTier());
     }
 
     // -----------------------------------------------------------------------

@@ -988,7 +988,7 @@
   "usage.cmd.version": "  version      Mostrar información de versión",
   "usage.cmd.voice": "  voice        Inspeccionar/editar el VoiceProfile de un compañero: list/set/unset/freeze/revert",
   "usage.cmd.wards": "  wards        Guardas de salas: list / add / remove",
-  "usage.cmd.rooms": "  rooms        Salas creadas: list / demolish <sala> / prune [--duplicates] [--yes]",
+  "usage.cmd.rooms": "  rooms        Salas creadas: list / made / find [palabras] / tidy / keep <room> / close <room> / open <room> / demolish <sala> / prune [--duplicates] [--yes]",
   "usage.cmd.mail": "  mail         Registro del correo del hogar: quién escribió a quién y cuándo (administrador; nunca asuntos ni cuerpos)",
   "usage.cmd.body": "  body         El mapa del cuerpo: cada parte, su pulso y las marcas que dejó (administrador); body gone <id> libera una parte",
   "usage.cmd.web": "  web          Terminal en el navegador en :7071 (enable/disable/status)",
@@ -1424,5 +1424,10 @@
   "brain.move.night_none": "No se pudo escribir ninguna noche (una quincena tranquila, o el entrenador no está instalado); mira {0}.",
   "brain.move.night_no_trainer": "El entrenador nocturno no está instalado en este nodo (wyrd brain setup lo trae), así que su voz no puede llevarse antes del traslado.",
   "brain.move.forced": "--force: la puerta no pasó y pediste el traslado de todos modos. Queda en el registro; la guardia de la mañana la vigila esta semana.",
-  "brain.move.sheet_after": "Para que lo leas: sus respuestas reales y las del modelo grande a las mismas preguntas, mezcladas (A/B). Nada depende de ello; es cómo sonaba, antes y ahora."
+  "brain.move.sheet_after": "Para que lo leas: sus respuestas reales y las del modelo grande a las mismas preguntas, mezcladas (A/B). Nada depende de ello; es cómo sonaba, antes y ahora.",
+  "usage.cmd.hermod": "  hermod       El portador de cómputo: grant <dominio> <clase-de-dispositivo> [--days N] / grants",
+  "update.now.from_peer": "Tomando {0} de {1}, un nodo de esta casa (luego se comprueba con las sumas de la propia versión)...",
+  "update.now.peer_missed": "Ese nodo no lo tenía; se descarga de la versión publicada.",
+  "update.status.peer": "casa: {0} ejecuta {1}; este nodo puede tomarlo de ahí (wyrd update now)",
+  "update.now.sums_from_household": "No se alcanza la versión publicada; se comprueba con las sumas que otra máquina de esta casa obtuvo de ella."
 }

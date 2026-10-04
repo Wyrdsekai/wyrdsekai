@@ -68,6 +68,12 @@ public final class ToolItemStarterKit {
         Map.entry("create_room_from_template", ItemEmbodimentSpec.emits(
             List.of("ambient_shift"),
             "{actor} traces the room's outline; walls and exits accrete as the space takes shape.")),
+        Map.entry("close_room", ItemEmbodimentSpec.emits(
+            List.of("ambient_shift"),
+            "{actor} draws a room's doors closed; the way to it leaves the map, and what is inside is left as it was.")),
+        Map.entry("read_book", ItemEmbodimentSpec.emits(
+            List.of("body_language"),
+            "{actor} opens a book to the marked page and reads on.")),
         Map.entry("create_zone", ItemEmbodimentSpec.emits(
             List.of("ambient_shift"),
             "{actor} composes a new zone — themed light and air pooling as rooms and inhabitants settle.")),
@@ -262,6 +268,8 @@ public final class ToolItemStarterKit {
             channelStone(),      // builtin: notification config
             craftFromTemplate(),        // builtin: create items from standard library templates
             createRoomFromTemplate(),  // builtin: create rooms from standard room library
+            closeRoom(),                // builtin: close up a room she made on her own (kept, opens again)
+            readBook(),                 // builtin: the next part of a book, from where she left it
             createZone(),               // builtin: generate a themed zone with rooms + agents
             listTemplates()             // builtin: list available item + room templates (introspection)
         ));
@@ -588,6 +596,50 @@ public final class ToolItemStarterKit {
                 new ToolParam("connect_to", "string",
                     "Room ID to connect to (creates an exit). Use 'nexus' for the main hub.", false, null),
                 new ToolParam("description", "string", "Custom description (optional, template has default)", false, null)
+            ));
+    }
+
+    /**
+     * Close Room — close up a room she made on her own. Builtin: needs RoomClosing.
+     *
+     * <p>She could make a room at any moment and never let one go (household node, 2026-10-02: 49
+     * rooms from two companions in six days). Closing up destroys nothing — the doorways close, the
+     * room leaves the map, everything in it is kept, and it opens again when anyone goes to it —
+     * so the verb is hers to use freely. A room a person asked for is that person's to let go.
+     */
+    public static ToolItem closeRoom() {
+        return ToolItem.builtin(
+            "close_room", "Close Up a Room",
+            "CLOSE UP A ROOM YOU MADE — when you are done with a room of your own, or to make way for a "
+                + "new one. Nothing is destroyed: its doorways close, it leaves the map, and everything in "
+                + "it is kept as it was. It opens again when anyone goes to it by name. Only for rooms you "
+                + "made on your own; a room a person asked for is theirs to let go.",
+            "close_room",
+            List.of(
+                new ToolParam("room", "string", "The name of the room to close up", true, null)
+            ));
+    }
+
+    /**
+     * Read Book — the next part of a book, from where she left it. Builtin: needs the index and
+     * the reading ledger.
+     *
+     * <p>The library was a search engine and nothing else: every read returned the passage most like
+     * her words, never the next page, so no book could be read through and "finish reading" could
+     * neither land nor miss (household node, 2026-10-03). This is how a book is read from start to
+     * finish, and how the next one is found.
+     */
+    public static ToolItem readBook() {
+        return ToolItem.builtin(
+            "read_book", "Read a Book",
+            "READ A BOOK THROUGH, part by part, from where you left it. With no arguments it reads the next part "
+                + "of the book you have open. With \"book\" (its name, or a few words of it) it opens that book, or "
+                + "comes back to it where you left off. The last part finishes the book and shows what is next on "
+                + "your shelf. Use library_card to find passages by what they say; use this to read.",
+            "read_book",
+            List.of(
+                new ToolParam("book", "string", "The book's name, or a few words of it; leave out to continue the open book", false, null),
+                new ToolParam("part", "string", "A particular part to read (a number); leave out for the next one", false, null)
             ));
     }
 

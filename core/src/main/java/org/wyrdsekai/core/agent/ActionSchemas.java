@@ -78,8 +78,10 @@ public final class ActionSchemas {
             new FieldDef("tags", false, "array")
         )),
         Map.entry("project_note", List.of(
-            new FieldDef("project_id", true, "string"),
-            new FieldDef("content", true, "string")
+            new FieldDef("project_id", false, "string"),
+            new FieldDef("content", false, "string"),
+            new FieldDef("next", false, "string"),
+            new FieldDef("done", false, "boolean")
         )),
         Map.entry("finish_project", List.of(
             new FieldDef("project_id", true, "string"),

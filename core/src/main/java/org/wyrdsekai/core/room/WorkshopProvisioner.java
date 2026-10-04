@@ -38,6 +38,11 @@ public final class WorkshopProvisioner {
     /** The pre-rename room-id prefix. A room already in the world keeps it. */
     public static final String LEGACY_ROOM_ID_PREFIX = "workshop-codeplane-";
 
+    /** A person's Workshop, under the name it has now or the one it had. */
+    public static boolean isWorkshop(String roomId) {
+        return roomId != null && (roomId.startsWith(ROOM_ID_PREFIX) || roomId.startsWith(LEGACY_ROOM_ID_PREFIX));
+    }
+
     /**
      * what the Workshop's ambient state contributes.
      * Per-bondholder coding-familiar workshop; same shape for every bondholder,

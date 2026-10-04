@@ -368,6 +368,7 @@ import org.wyrdsekai.core.substrate.DeepSleepTrainer;
 import org.wyrdsekai.core.substrate.training.PeerTrainingTransport;
 import org.wyrdsekai.core.substrate.training.TrainingPeerService;
 import org.wyrdsekai.core.update.ActivityGauge;
+import org.wyrdsekai.core.update.ReleaseCheck;
 import org.wyrdsekai.core.update.SelfUpdate;
 import org.wyrdsekai.core.update.UpdateChannelPoller;
 import org.wyrdsekai.core.update.UpdateConfig;
@@ -1218,6 +1219,33 @@ public class Main {
         QuietHours.install(() -> authService.getConfig("quiet_hours"));
         var inventoryService = new InventoryService(jdbcUrl, dialect);
         var metadataService = new RoomMetadataService(jdbcUrl, dialect);
+        // What the house keeps about made rooms and items (who for, last entered, closed up). Installed
+        // before the zone starts: the zone does not start a room that is closed up.
+        final var madeThings = new org.wyrdsekai.core.persistence.MadeThingsStore(jdbcUrl);
+        org.wyrdsekai.core.persistence.MadeThingsStore.install(madeThings);
+        // Where each companion is in each book: the bookmark that lets a book be read through.
+        org.wyrdsekai.core.library.ReadingLedger.install(new org.wyrdsekai.core.library.ReadingLedger(jdbcUrl));
+        // Their projects (the Hearth's project board), for a person's `projects` command: each
+        // companion's name and the key her board is kept under.
+        org.wyrdsekai.core.project.ProjectCommands.installCompanions(() -> {
+            var out = new java.util.LinkedHashMap<String, String>();
+            for (var c : new CompanionRegistry(jdbcUrl).all()) {
+                if (c.archived() || c.name() == null) continue;
+                out.put(c.name(), c.did() != null ? c.did() : c.entityId());
+            }
+            return out;
+        });
+        // Once, on the first start after the house began keeping this: who each older room was made
+        // for and when anyone was last in it, read from the trail and the rooms' journals.
+        try {
+            var companionsThen = new java.util.HashSet<String>();
+            for (var c : new CompanionRegistry(jdbcUrl).all()) if (c.name() != null) companionsThen.add(c.name());
+            org.wyrdsekai.core.room.MadeThingsHistory.runOnce(jdbcUrl,
+                SystemPaths.dataSubdir().resolve("agent-activity.jsonl"), companionsThen,
+                org.wyrdsekai.core.identity.PersonIds::canonical);
+        } catch (RuntimeException e) {
+            log.warn("Made rooms: the history was not read: {}", e.toString());
+        }
         var bridgeDataProvider = new BridgeDataProviderImpl(wardService, metadataService, authService);
 
         // Pairing service for phone node onboarding
@@ -1393,6 +1421,10 @@ public class Main {
 
         // The steward's demolition service: founding rooms and Homes are protected by rule.
         RoomDemolition.install(new RoomDemolition(metadataService,
+            foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()),
+            system::tell));
+        // Closing up a made room nobody tends, and opening it again (never deleting it).
+        org.wyrdsekai.core.room.RoomClosing.install(new org.wyrdsekai.core.room.RoomClosing(madeThings,
             foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()),
             system::tell));
         RoomRegistry.get().setScheduler(system.scheduler());
@@ -2415,22 +2447,30 @@ public class Main {
                 // nobody takes it, and the caller falls back to the local
                 // router. taskType inference.chat.full = tools intact.
                 final var meshForDispatch = hermodService;
-                MeshDispatch.install((chatJson, budget) -> {
-                    for (var cls : new String[]{"llm.local-gpu", "llm.local-cpu"}) {
-                        var envelope = new TaskEnvelope(
-                            UUID.randomUUID().toString(),
-                            WyrdConfig.get().zoneId(),
-                            meshForDispatch.deviceId(),
-                            HermodInferenceExecutor.TASK_TYPE_FULL,
-                            "none", cls,
-                            Map.of("chatRequestJson", chatJson),
-                            budget, Instant.now(),
-                            Instant.now().plusSeconds(180),
-                            Optional.empty(), new byte[]{1});
-                        var r = meshForDispatch.mesh().submit(envelope);
-                        if (r.ok()) return r.output();
+                MeshDispatch.install(new MeshDispatch.Carrier() {
+                    @Override public String carryChat(String chatJson, long budget) {
+                        for (var cls : new String[]{"llm.local-gpu", "llm.local-cpu"}) {
+                            // Signed by this node: every door verifies the sender before anything else.
+                            var envelope = org.wyrdsekai.hermod.EnvelopeSigning.sign(new TaskEnvelope(
+                                UUID.randomUUID().toString(),
+                                WyrdConfig.get().zoneId(),
+                                meshForDispatch.deviceId(),
+                                HermodInferenceExecutor.TASK_TYPE_FULL,
+                                "none", cls,
+                                Map.of("chatRequestJson", chatJson),
+                                budget, Instant.now(),
+                                Instant.now().plusSeconds(180),
+                                Optional.empty(), new byte[0]), hermodIdentity::sign);
+                            var r = meshForDispatch.mesh().submit(envelope);
+                            if (r.ok()) return r.output();
+                        }
+                        return null;
                     }
-                    return null;
+                    // The router asks this before sending a companion's own-time turn across.
+                    @Override public boolean someoneElseCanTake() {
+                        return org.wyrdsekai.server.hermod.HouseholdBrains.someoneElseCanTake(
+                            meshForDispatch.table().snapshot(Instant.now()), meshForDispatch.deviceId());
+                    }
                 });
             } catch (Exception hermodErr) {
                 log.warn("hermod gossip failed to start (mesh inert): {}", hermodErr.getMessage());
@@ -4259,7 +4299,12 @@ public class Main {
         var wardRoutes = new WardRoutes(wardService, authService);
         var mailRoutes = new MailRoutes(authService);
         var roomAdminRoutes = new RoomAdminRoutes(authService, metadataService,
-            foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()));
+            foundationRoomSeeds().stream().map(ZoneGuardian.RoomSeed::roomId).collect(Collectors.toSet()),
+            () -> {
+                var byName = new java.util.LinkedHashMap<String, String>();
+                for (var c : new CompanionRegistry(jdbcUrl).all()) if (c.name() != null) byName.put(c.name(), c.entityId());
+                return byName;
+            });
         final var limiter = rateLimiter;
         final var tlsConfig = config;
         final var finalInferenceRouter = inferenceRouter;
@@ -5302,13 +5347,27 @@ public class Main {
             // write running: a consolidation interrupted by a restart is the
             // one thing a restart destroys.
             final var updateRoot = selfUpdateRoot;
+            // Nodes update each other through the mesh: the peers' versions ride in the Between's
+            // heartbeats; a release a peer has run, stable, for the stability delay is one this node
+            // follows (MeshRelease), taking the installer from that peer. The steward's node
+            // (WYRDSEKAI_NODE_ROLE=primary) goes last.
+            final var meshRelease = new org.wyrdsekai.core.update.MeshRelease();
+            final var betweenForUpdates = betweenActor;
+            java.util.function.Supplier<java.util.Optional<org.wyrdsekai.core.update.MeshRelease.Candidate>> household = () -> {
+                if (betweenForUpdates == null) return java.util.Optional.empty();
+                meshRelease.observe(householdPeers(betweenForUpdates, system), Instant.now());
+                return meshRelease.candidate(ReleaseCheck.installedVersion(updateRoot), updateConfig.isPrimary(),
+                    updateConfig.stabilityDelay(), Instant.now());
+            };
             var selfUpdate = new SelfUpdate(updateRoot, SystemPaths.dataDir(),
                 () -> ActivityGauge.idleFor(Duration.ofMinutes(10)) && !SleepWeightWrite.inFlight(),
-                () -> UpdateLauncher.launch(updateRoot, SystemPaths.dataDir()));
+                from -> UpdateLauncher.launch(updateRoot, SystemPaths.dataDir(), from),
+                household);
             var selfUpdateScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 var t = new Thread(r, "self-update"); t.setDaemon(true); return t;
             });
             selfUpdate.start(selfUpdateScheduler, Duration.ofMinutes(15), updateConfig.checkInterval());
+            if (betweenActor != null) selfUpdate.startMeshWatch(selfUpdateScheduler, Duration.ofMinutes(1));
             // A night's watch owed before a restart is owed after it.
             SleepWeightWrite.resumeWatches();
             new UpdateRoutes(updateConfig, updatePoller, selfUpdate, selfUpdateRoot, SystemPaths.dataDir())
@@ -6238,6 +6297,36 @@ public class Main {
             return snapshot.description();
         } catch (Exception e) {
             return "Topology unavailable";
+        }
+    }
+
+    /**
+     * The household's peers as the self-updater reads them: who, what release, connected, and the
+     * HTTP door to take an installer from (the host and port the peer's hello carried; a peer from
+     * before 0.5.4 carried none, and its installer then comes from the release itself).
+     */
+    static java.util.List<org.wyrdsekai.core.update.MeshRelease.Peer> householdPeers(
+            ActorRef<BetweenActor.Command> betweenActor, ActorSystem<?> system) {
+        try {
+            var snapshot = AskPattern.<BetweenActor.Command, BetweenActor.TopologySnapshot>ask(
+                betweenActor, ref -> new BetweenActor.GetTopology(ref), Duration.ofSeconds(2), system.scheduler()
+            ).toCompletableFuture().get(2, TimeUnit.SECONDS);
+            var out = new ArrayList<org.wyrdsekai.core.update.MeshRelease.Peer>();
+            if (snapshot.connections() == null) return out;
+            for (var c : snapshot.connections()) {
+                var caps = c.capabilities() == null ? Map.<String, String>of() : c.capabilities();
+                var host = caps.get("host");
+                // The household door: HTTPS with the household certificate, which the launcher
+                // trusts by the household CA it holds; the plain port answers its own machine only.
+                boolean tls = !"false".equalsIgnoreCase(caps.getOrDefault("tls", "true"));
+                var port = tls ? caps.get("httpsPort") : caps.get("httpPort");
+                String url = host == null || host.isBlank() || port == null || port.isBlank() ? null
+                    : (tls ? "https://" : "http://") + (host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host) + ":" + port;
+                out.add(new org.wyrdsekai.core.update.MeshRelease.Peer(c.remoteNodeId(), c.appVersion(), c.connected(), url));
+            }
+            return out;
+        } catch (Exception e) {
+            return java.util.List.of();
         }
     }
 

@@ -363,6 +363,8 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
     private MdnsDiscovery mdns;
     private final TopologyRegister topology = new TopologyRegister();
     private final ConcurrentHashMap<String, byte[]> peerPublicKeys = new ConcurrentHashMap<>();
+    /** Where this node keeps release installers and checksums ({@code <data>/updates}), for the household. */
+    private java.nio.file.Path updatesDir;
     private final ConcurrentHashMap<String, Long> probeTimestamps = new ConcurrentHashMap<>();
     private final Set<String> knownCrossZoneNodes = ConcurrentHashMap.newKeySet();
     private ActorRef<FederationActor.Command> federationActor;
@@ -503,6 +505,7 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
     private Behavior<Command> onStartBetween(StartBetween msg) {
         this.zoneId = msg.zoneId();
         this.config = msg.config();
+        this.updatesDir = msg.dataDir() == null ? null : msg.dataDir().resolve("updates");
 
         try {
             // 1. Load or generate node identity
@@ -920,6 +923,8 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
             case "ping" -> handlePing(envelope);
             case "pong" -> handlePong(envelope);
             case "relay_config" -> handleRelayConfig(envelope);
+            case "release_sums" -> handleReleaseSums(envelope);
+            case "release_sums_request" -> handleReleaseSumsRequest(envelope);
             default -> log.debug("Between: unknown message type: {}", type);
         }
 
@@ -1608,6 +1613,7 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
         ackPayload.put("type", "hello_ack");
         ackPayload.put("accepted", true);
         natsBridge.send(peerNodeId, "cluster", "hello_ack", ackPayload);
+        exchangeReleaseSums(peerNodeId, peerVersion);
     }
 
     private void handleHelloAck(BetweenEnvelope envelope) {
@@ -1648,6 +1654,7 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
         topology.peerConnected(peerNodeId, caps, peerVersion, peerWireProtocol);
         log.info("Between: peer {} acknowledged our hello (v{})", peerNodeId,
             peerVersion != null ? peerVersion : "?");
+        exchangeReleaseSums(peerNodeId, peerVersion);
     }
 
     private void handleHeartbeat(BetweenEnvelope envelope) {
@@ -1970,6 +1977,85 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
         natsBridge.broadcast("cluster", "hello", payload);
     }
 
+    // ── The release's checksums, carried between the household's machines ──────────────────
+    // A machine that fetched a release's SHA256SUMS from the release passes them to a peer that
+    // runs an older version; a machine that runs an older version asks a newer peer for them.
+    // Both directions, because the two hellos cross and either side may learn the other first.
+    // The receiver keeps them only from a peer whose key it holds and whose signature verifies;
+    // `wyrd update now` uses them only when the release itself cannot be reached (ReleaseSums).
+
+    private void exchangeReleaseSums(String peerNodeId, String peerVersion) {
+        try {
+            var mine = AppVersion.get().version();
+            if (peerVersion == null || peerVersion.isBlank() || natsBridge == null) return;
+            if (org.wyrdsekai.core.update.ReleaseCheck.isNewer(peerVersion, mine)) {
+                offerReleaseSums(peerNodeId, mine);                     // the peer is behind me
+            } else if (org.wyrdsekai.core.update.ReleaseCheck.isNewer(mine, peerVersion)) {
+                var req = MAPPER.createObjectNode();                     // I am behind the peer
+                req.put("type", "release_sums_request");
+                req.put("nodeId", identity.nodeId());
+                req.put("version", peerVersion);
+                natsBridge.send(peerNodeId, "cluster", "release_sums_request", req);
+            }
+        } catch (RuntimeException e) {
+            log.debug("Between: release checksums not exchanged with {}: {}", peerNodeId, e.toString());
+        }
+    }
+
+    private void offerReleaseSums(String peerNodeId, String version) {
+        var sums = org.wyrdsekai.core.update.ReleaseSums.ownSums(updatesDir, version);
+        if (sums.isEmpty()) return;
+        var payload = MAPPER.createObjectNode();
+        payload.put("type", "release_sums");
+        payload.put("nodeId", identity.nodeId());
+        payload.put("version", version);
+        payload.put("sums", sums.get());
+        natsBridge.send(peerNodeId, "cluster", "release_sums", payload);
+        log.info("Between: passed the release's checksums for {} to {}", version, peerNodeId);
+    }
+
+    private void handleReleaseSumsRequest(BetweenEnvelope envelope) {
+        var payload = envelope.payload();
+        var peerNodeId = payload.path("nodeId").asText("");
+        var peerKey = peerPublicKeys.get(peerNodeId);
+        if (peerKey == null || !envelope.verify(peerKey) || !peerNodeId.equals(envelope.src())) {
+            log.debug("Between: release checksums asked by {} without a verifiable signature; ignored", peerNodeId);
+            return;
+        }
+        var version = payload.path("version").asText("");
+        if (org.wyrdsekai.core.update.ReleaseSums.isVersion(version)) offerReleaseSums(peerNodeId, version);
+    }
+
+    private void handleReleaseSums(BetweenEnvelope envelope) {
+        var payload = envelope.payload();
+        var peerNodeId = payload.path("nodeId").asText("");
+        var peerKey = peerPublicKeys.get(peerNodeId);
+        if (peerKey == null || !envelope.verify(peerKey) || !peerNodeId.equals(envelope.src())) {
+            log.debug("Between: release checksums from {} without a verifiable signature; ignored", peerNodeId);
+            return;
+        }
+        var version = payload.path("version").asText("");
+        var sums = payload.path("sums").asText("");
+        var outcome = org.wyrdsekai.core.update.ReleaseSums.storeCarried(updatesDir, version, sums, peerNodeId);
+        switch (outcome) {
+            case STORED -> log.info("Between: the release's checksums for {} arrived from {} and are kept for the day the release cannot be reached", version, peerNodeId);
+            case CONFLICT -> log.warn("Between: {} passed on checksums for {} that differ from what another household machine passed on; neither is kept", peerNodeId, version);
+            case REFUSED -> log.debug("Between: checksums for '{}' from {} refused (shape)", version, peerNodeId);
+            default -> { }
+        }
+    }
+
+    /** The port this node's HTTP API answers on, as a peer on the house network reaches it. */
+    private static int httpPortForPeers() {
+        try { return Integer.parseInt(System.getenv().getOrDefault("WYRDSEKAI_PORT", "7070").trim()); } catch (RuntimeException e) { return 7070; }
+    }
+    private static int httpsPortForPeers() {
+        try { return Integer.parseInt(System.getenv().getOrDefault("WYRDSEKAI_TLS_PORT", "7443").trim()); } catch (RuntimeException e) { return 7443; }
+    }
+    private static boolean tlsForPeers() {
+        return !"false".equalsIgnoreCase(System.getenv().getOrDefault("WYRDSEKAI_TLS_ENABLED", "true").trim());
+    }
+
     private ObjectNode helloPayload() {
         var payload = MAPPER.createObjectNode();
         payload.put("nodeId", identity.nodeId());
@@ -1983,6 +2069,12 @@ public class BetweenActor extends AbstractBehavior<BetweenActor.Command> {
         caps.put("javaVersion", System.getProperty("java.version", "unknown"));
         caps.put("os", System.getProperty("os.name", "unknown") + " "
             + System.getProperty("os.version", ""));
+        // The door a household peer can take this node's installer from (nodes update each other):
+        // HTTPS with the household certificate on the network; the plain port answers this machine only.
+        caps.put("host", getArteryHost());
+        caps.put("httpPort", Integer.toString(httpPortForPeers()));
+        caps.put("httpsPort", Integer.toString(httpsPortForPeers()));
+        caps.put("tls", Boolean.toString(tlsForPeers()));
         payload.set("capabilities", caps);
 
         // Mesh update protocol: full version info in hello handshake

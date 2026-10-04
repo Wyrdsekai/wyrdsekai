@@ -643,8 +643,21 @@ class ZoneBridgeExternalTest {
             this.closeFuture = closeFuture;
         }
 
+        /**
+         * One send at a time, waited for. The JDK socket fails a send issued while the one before
+         * it is still going out, and the failure is in the future it returns: two sends in a row
+         * lost the second without a word on a slow run (2026-10-02, the registration after a
+         * refused broadcast never reached the server).
+         */
         void send(String json) {
-            webSocket.sendText(json.trim(), true);
+            try {
+                webSocket.sendText(json.trim(), true).get(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("send interrupted: " + json.trim(), e);
+            } catch (Exception e) {
+                throw new IllegalStateException("send did not go out: " + json.trim(), e);
+            }
         }
 
         JsonNode receive(Duration timeout) throws InterruptedException {

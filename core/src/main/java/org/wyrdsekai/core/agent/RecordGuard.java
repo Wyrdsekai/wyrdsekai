@@ -97,6 +97,34 @@ public final class RecordGuard {
             + " do not go to find them, wait for them or speak for them. What you know of them is what you read, nothing more.";
     }
 
+    /**
+     * Of the names spoken of as persons, the ones that are a book's: every word of the name is in
+     * the title or author of a book she has read from. Name → book.
+     */
+    public static java.util.Map<String, String> namesThatAreBooks(List<String> names, Set<String> books) {
+        var out = new java.util.LinkedHashMap<String, String>();
+        if (names == null || books == null || books.isEmpty()) return out;
+        for (var name : names) {
+            var words = name.toLowerCase(Locale.ROOT).split("\\s+");
+            for (var book : books) {
+                if (book == null || book.isBlank()) continue;
+                var low = book.toLowerCase(Locale.ROOT);
+                boolean all = true;
+                for (var w : words) if (!low.contains(w)) { all = false; break; }
+                if (all) { out.put(name, book); break; }
+            }
+        }
+        return out;
+    }
+
+    /** The note when a name she spoke of is a book's. */
+    public static String bookNote(java.util.Map<String, String> asBooks) {
+        if (asBooks == null || asBooks.isEmpty()) return null;
+        var parts = new java.util.ArrayList<String>();
+        for (var e : asBooks.entrySet()) parts.add(e.getKey() + " is not a person: \"" + e.getValue() + "\" is a book you have been reading");
+        return String.join(". ", parts) + ". What you know of it is what you read; read_book reads on from where you left it.";
+    }
+
     /** The note for the turn, or null when every name is one she knows. */
     public static String inventionNote(String line, Set<String> known) {
         var unknown = unknownNames(line, known);

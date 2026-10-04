@@ -42,21 +42,25 @@ public final class RelationshipUpdater {
             GenomeProfile genome,
             String selfDid) {
 
-        if (recentSaid == null || recentSaid.isEmpty()) {
-            return existing != null ? existing : List.of();
-        }
+        var social = SocialRecord.forDid(selfDid);
 
-        // Index existing relationships by entity name (case-insensitive)
+        // Index existing relationships by entity name (case-insensitive). She is not one of her own
+        // relationships: an entry the list made from her own lines (SocialRecord) is not carried on.
         var byName = new LinkedHashMap<String, Relationship>();
         if (existing != null) {
             for (var rel : existing) {
+                if (social.isOwnPlaceholder(rel.entityDid())) continue;
                 byName.put(rel.entityName().toLowerCase(), rel);
             }
         }
 
+        if (recentSaid == null || recentSaid.isEmpty()) {
+            return List.copyOf(withBonds(byName, social).values());
+        }
+
         // Group interactions by speaker
         var interactionsByEntity = recentSaid.stream()
-            .filter(s -> !s.entityId().equals(selfDid))
+            .filter(s -> !SocialRecord.isSelf(selfDid, s.entityId()))
             .filter(s -> !"narrator".equals(s.entityId()))
             .filter(s -> !"system".equals(s.entityId()))
             .collect(Collectors.groupingBy(WorldEvent.Said::entityName));
@@ -153,7 +157,31 @@ public final class RelationshipUpdater {
             byName.put(effectiveKey, rel);
         }
 
-        return List.copyOf(byName.values());
+        return List.copyOf(withBonds(byName, social).values());
+    }
+
+    /**
+     * The people and companions she is bonded with are in this list as their bond holds them: the
+     * real DID where the list had a placeholder, the bond's depth where the list's own counting sat
+     * lower, the bond's count of exchanges where it is the larger (the list counts lines spoken in
+     * rooms only), and words that say what they are to her.
+     */
+    private static LinkedHashMap<String, Relationship> withBonds(LinkedHashMap<String, Relationship> byName,
+                                                                  SocialRecord.Of social) {
+        if (social.bonded().isEmpty()) return byName;
+        for (var e : byName.entrySet()) {
+            var rel = e.getValue();
+            var bond = social.bondedByName(rel.entityName());
+            if (bond == null) continue;
+            int depth = Math.max(rel.bondDepth(), bond.depthLevel());
+            int count = Math.max(rel.interactionCount(), bond.interactionCount());
+            var did = rel.entityDid() != null && rel.entityDid().endsWith("-placeholder") && bond.did() != null
+                ? bond.did() : rel.entityDid();
+            e.setValue(new Relationship(did, rel.entityName(), rel.trust(), rel.rapport(), depth, count,
+                rel.lastInteraction(),
+                rel.summaryIsAutomatic() ? SocialRecord.describe(bond, count) : rel.summary()));
+        }
+        return byName;
     }
 
     /**

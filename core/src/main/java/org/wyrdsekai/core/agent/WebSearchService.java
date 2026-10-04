@@ -48,6 +48,9 @@ public class WebSearchService {
 
     public static WebSearchService init() {
         instance = new WebSearchService();
+        // What the default posture reads: the household's own search costs nothing; a paid API does.
+        final var made = instance;
+        ActionPolicy.installWebSearchCost(made::costsMoney);
         return instance;
     }
 
@@ -90,6 +93,13 @@ public class WebSearchService {
     public record SearchResult(String title, String url, String snippet) {}
 
     /** Which backend is active. */
+    /** Whether a search here goes to a paid API (Brave, Tavily, SerpAPI) rather than the household's own. */
+    public boolean costsMoney() {
+        return activeBackend != null && PAID_BACKENDS.contains(activeBackend);
+    }
+
+    private static final java.util.Set<String> PAID_BACKENDS = java.util.Set.of("brave", "tavily", "serpapi", "serp");
+
     public String activeBackend() { return activeBackend; }
 
     // ─── Test seeding ────────────────────────────────────────────

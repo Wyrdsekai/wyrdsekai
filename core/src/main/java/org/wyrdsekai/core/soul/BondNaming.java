@@ -38,8 +38,9 @@ public final class BondNaming {
 
     private static final Pattern NAME = Pattern.compile("^name\\s+(\\S+)\\s+(\\S.*)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern TAKE = Pattern.compile("^take\\s+(\\S+)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern POSTURE = Pattern.compile("^posture\\s+(\\S+)(?:\\s+(\\S+))?$", Pattern.CASE_INSENSITIVE);
     private static final Pattern LINE = Pattern.compile(
-        "^bond(?:\\s+name\\s+\\S+\\s+\\S.*|\\s+take\\s+\\S+)?$", Pattern.CASE_INSENSITIVE);
+        "^bond(?:\\s+name\\s+\\S+\\s+\\S.*|\\s+take\\s+\\S+|\\s+posture\\s+\\S+(?:\\s+\\S+)?)?$", Pattern.CASE_INSENSITIVE);
 
     private BondNaming() {}
 
@@ -76,6 +77,8 @@ public final class BondNaming {
         if (rest.isEmpty()) return list(personId, text);
         var take = TAKE.matcher(rest);
         if (take.matches()) return take(personId, personName, take.group(1), text);
+        var posture = POSTURE.matcher(rest);
+        if (posture.matches()) return posture(personId, posture.group(1), posture.group(2), text);
         var m = NAME.matcher(rest);
         if (!m.matches()) return text.get("bond.usage");
         var who = m.group(1);
@@ -103,6 +106,39 @@ public final class BondNaming {
             case DECIDING -> text.get("bond.name.deciding", who);
             case NO_OFFER, TAKEN -> text.get("bond.name.not_heard", who);
         };
+    }
+
+    /**
+     * How far a companion may reach while her person is away: {@code bond posture <companion>} shows
+     * it, {@code bond posture <companion> <generous|bounded|minimal|suspended>} sets it. Only her
+     * bondholder may. The posture was documented as "what the bondholder decides" and nothing in
+     * the product could change it: every bond stood at the default for its whole life (2026-10-03).
+     */
+    private static String posture(String personId, String who, String level, ScriptMessageCatalog text) {
+        var entityId = ForgeRoomBridge.resolveCompanionEntity(who);
+        var companion = entityId == null ? null : ZoneGuardian.getCompanionRef(null, entityId);
+        if (companion == null) return text.get("bond.no_companion", who);
+        org.wyrdsekai.core.soul.BondholderPosture wanted = null;
+        if (level != null) {
+            try {
+                wanted = org.wyrdsekai.core.soul.BondholderPosture.valueOf(level.strip().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                return text.get("bond.posture.usage");
+            }
+        }
+        var answer = new CompletableFuture<String>();
+        companion.tell(new CompanionActor.BondPosture(personId, wanted, answer));
+        String now;
+        try {
+            now = answer.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return text.get("bond.name.not_heard", who);
+        }
+        if (now == null) return text.get("bond.posture.not_yours", who);
+        log.info("Bond posture of '{}' {} by {}: {}", who, wanted == null ? "read" : "set", personId, now);
+        return text.get(wanted == null ? "bond.posture.is" : "bond.posture.set", who, now.toLowerCase(Locale.ROOT))
+            + " " + text.get("bond.posture." + now.toLowerCase(Locale.ROOT));
     }
 
     /** Take the name the companion offered. */

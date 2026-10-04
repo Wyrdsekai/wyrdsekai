@@ -528,8 +528,11 @@ public final class ItemManifestValidator {
         addAll(m, 1, "audit.recent",
             "grants.issued", "grants.held", "grants.pending_requests",
             "presence.in_home", "notifications.channels",
-            "voice.snapshot", "skill.pending_drafts",
-            "pairing.pending", "pairing.code", "pairing.household_key");
+            "voice.snapshot", "skill.pending_drafts");
+        // The threshold's secrets: who is knocking and the codes they were given, and the key that
+        // pairs with no code at all. Read at the tier of the acts they enable (2026-10-03).
+        addAll(m, 6, "pairing.pending", "pairing.code", "invite.list");
+        addAll(m, 7, "pairing.household_key");
         addAll(m, 5, "grants.issue", "grants.revoke", "grants.approve", "grants.deny",
             "voice.set", "voice.unset", "voice.freeze", "voice.unfreeze",
             "presence.dim", "presence.light",

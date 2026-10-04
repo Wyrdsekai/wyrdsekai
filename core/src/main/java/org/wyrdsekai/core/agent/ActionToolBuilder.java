@@ -472,7 +472,14 @@ public final class ActionToolBuilder {
         Map.entry("whisper", "Send a private message to someone in the room"),
         Map.entry("broadcast", "Announce something to the room or zone"),
         Map.entry("invite", "Invite an entity to come to your location"),
-        Map.entry("set_goal", "Set a personal aspiration or goal"),
+        Map.entry("set_goal", "Set a personal aspiration or goal. It becomes a project of yours: it has a notebook and comes back to you"),
+        Map.entry("start_project", "BEGIN A PROJECT OF YOUR OWN: long work you will come back to (a practice, a study, something you "
+            + "are building over days). It gets a notebook, and it is offered back to you with your own next step"),
+        Map.entry("project_note", "KEEP THE NOTEBOOK OF A PROJECT OF YOURS. \"content\" says what you did or found; \"next\" says the "
+            + "next step, in your own words, shown to you when you come back; \"done\": true finishes it. \"project_id\" names "
+            + "which project (its name is enough) or begins one by that name; leave it out for the one you are working on. "
+            + "With nothing given it shows the notebook's last pages"),
+        Map.entry("finish_project", "Finish, pause or drop a project of yours, by its name; its notebook is kept"),
         Map.entry("propose", "Propose something for a vote"),
         Map.entry("reflect", "Reflect on a topic or experience"),
         Map.entry("teach", "Teach another agent about a subject"),

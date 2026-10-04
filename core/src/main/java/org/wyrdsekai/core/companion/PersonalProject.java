@@ -31,8 +31,16 @@ public record PersonalProject(
     @JsonProperty("lastTouched") Instant lastTouched,
     @JsonProperty("entries") List<Entry> entries,
     @JsonProperty("tags") List<String> tags,
-    @JsonProperty("scope") String scope
+    @JsonProperty("scope") String scope,
+    @JsonProperty("nextStep") String nextStep,
+    @JsonProperty("roomId") String roomId
 ) {
+
+    /** As it was before a project kept its next step and its room. */
+    public PersonalProject(String id, String title, String description, String status, Instant createdAt,
+                           Instant lastTouched, List<Entry> entries, List<String> tags, String scope) {
+        this(id, title, description, status, createdAt, lastTouched, entries, tags, scope, null, null);
+    }
 
     @JsonCreator
     public PersonalProject {
@@ -68,11 +76,25 @@ public record PersonalProject(
         var next = new ArrayList<>(entries);
         next.add(e);
         return new PersonalProject(id, title, description, status,
-            createdAt, Instant.now(), List.copyOf(next), tags, scope);
+            createdAt, Instant.now(), List.copyOf(next), tags, scope, nextStep, roomId);
     }
 
     public PersonalProject withStatus(String newStatus) {
         return new PersonalProject(id, title, description, newStatus,
-            createdAt, Instant.now(), entries, tags, scope);
+            createdAt, Instant.now(), entries, tags, scope, nextStep, roomId);
     }
+
+    /** Her own next step, shown to her when she comes back to the work. Blank clears it. */
+    public PersonalProject withNextStep(String next) {
+        return new PersonalProject(id, title, description, status, createdAt, lastTouched, entries, tags, scope,
+            next == null || next.isBlank() ? null : next.strip(), roomId);
+    }
+
+    /** The room the work has. */
+    public PersonalProject withRoom(String room) {
+        return new PersonalProject(id, title, description, status, createdAt, lastTouched, entries, tags, scope, nextStep, room);
+    }
+
+    public boolean active() { return "active".equalsIgnoreCase(status); }
+    public boolean finished() { return "complete".equalsIgnoreCase(status) || "abandoned".equalsIgnoreCase(status); }
 }

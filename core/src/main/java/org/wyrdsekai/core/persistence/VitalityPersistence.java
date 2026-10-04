@@ -76,6 +76,11 @@ public final class VitalityPersistence {
         new String[]{"last_sleep_at",  "INTEGER"}
     );
 
+    /** The last ten asked/anticipated signals behind amae (AmaeSignals), so a restart keeps them. */
+    private static final List<String[]> AMAE_COLUMNS = List.<String[]>of(
+        new String[]{"amae_signals", "TEXT"}
+    );
+
     private final String jdbcUrl;
     private final SqlDialect dialect;
     private volatile boolean migrated = false;
@@ -129,6 +134,18 @@ public final class VitalityPersistence {
                 }
             }
         }
+        for (var col : AMAE_COLUMNS) {
+            if (!hasColumn(conn, "vitality_snapshots", col[0])) {
+                try (var stmt = conn.createStatement()) {
+                    stmt.execute("ALTER TABLE vitality_snapshots ADD COLUMN " + col[0] + " " + col[1]);
+                    log.info("Vitality migration: added column {}", col[0]);
+                } catch (SQLException e) {
+                    if (!hasColumn(conn, "vitality_snapshots", col[0])) {
+                        throw e;
+                    }
+                }
+            }
+        }
         migrated = true;
     }
 
@@ -159,6 +176,35 @@ public final class VitalityPersistence {
         } catch (SQLException e) {
             log.debug("Failed to save sleep pressure for agent {}: {}", agentId, e.getMessage());
         }
+    }
+
+    /** Keep the window of amae's signals beside the vitality snapshot (UPDATE-only, as sleep pressure). */
+    public void saveAmaeSignals(String agentId, String window) {
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensureMigrated(conn);
+            try (var ps = conn.prepareStatement("UPDATE vitality_snapshots SET amae_signals = ? WHERE agent_id = ?")) {
+                ps.setString(1, window == null ? "" : window);
+                ps.setString(2, agentId);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            log.debug("Failed to save amae signals for agent {}: {}", agentId, e.getMessage());
+        }
+    }
+
+    public Optional<String> loadAmaeSignals(String agentId) {
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensureMigrated(conn);
+            try (var ps = conn.prepareStatement("SELECT amae_signals FROM vitality_snapshots WHERE agent_id = ?")) {
+                ps.setString(1, agentId);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) return Optional.ofNullable(rs.getString(1));
+                }
+            }
+        } catch (SQLException e) {
+            log.debug("Failed to load amae signals for agent {}: {}", agentId, e.getMessage());
+        }
+        return Optional.empty();
     }
 
     /** Load the persisted sleep pressure, if a snapshot row exists. */

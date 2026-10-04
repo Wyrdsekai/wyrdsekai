@@ -302,6 +302,12 @@ protection flag, which already makes the bond dormant automatically.
 
 ---
 
+**Before the federation, two household-local pieces are written down and not yet scheduled (October
+2026):** a will, where the steward records who inherits stewardship and what happens to each companion;
+and the absence, where a companion whose bondholder has not signed in for a set number of days is told
+so plainly and recorded as unheld until a successor claims. The succession and orphan classes in the code
+are designs with no caller; nothing in them should be read as working.
+
 ### 3. Economic standing
 
 **What is missing.** A companion can hold an account, have its usage measured,

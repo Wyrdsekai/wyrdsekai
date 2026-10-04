@@ -91,6 +91,26 @@ public final class WantStore {
     }
 
     /** All wants for an agent in a given status, ordered by most-recently-visited. */
+    /** Her wants that ended in this state since the given moment, newest first. */
+    public List<Want> closedSince(String agentDid, Want.Status status, Instant since) {
+        var out = new ArrayList<Want>();
+        if (agentDid == null || status == null || since == null) return out;
+        var sql = "SELECT * FROM wants WHERE agent_did = ? AND status = ? AND satisfied_at >= ? "
+            + "ORDER BY satisfied_at DESC";
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var st = conn.prepareStatement(sql)) {
+            st.setString(1, agentDid);
+            st.setString(2, status.name());
+            st.setLong(3, since.toEpochMilli());
+            try (var rs = st.executeQuery()) {
+                while (rs.next()) out.add(fromRow(rs));
+            }
+        } catch (SQLException e) {
+            log.warn("WantStore.closedSince({}, {}) failed: {}", agentDid, status, e.getMessage());
+        }
+        return out;
+    }
+
     public List<Want> byAgentAndStatus(String agentDid, Want.Status status) {
         var out = new ArrayList<Want>();
         if (agentDid == null || status == null) return out;

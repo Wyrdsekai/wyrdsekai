@@ -120,6 +120,13 @@ public final class ItemApiSurface {
             + "does the same thing. Read params.args and branch on it, or declare a single command.");
     }
 
+    private static volatile java.util.function.Supplier<Set<String>> DYNAMIC_NAMESPACES;
+
+    /** The node says which outside adapters it has registered as {@code world.<name>}; until it does, an unknown namespace is not judged. */
+    public static void installDynamicNamespaces(java.util.function.Supplier<Set<String>> namespaces) {
+        DYNAMIC_NAMESPACES = namespaces;
+    }
+
     public static List<Unresolved> check(String script) {
         var out = new ArrayList<Unresolved>();
         if (script == null || script.isBlank()) return out;
@@ -129,7 +136,25 @@ public final class ItemApiSurface {
         while (m.find()) {
             var ns = m.group(1); var second = m.group(2); var third = m.group(3);
             var space = SURFACE.get(ns);
-            if (space == null) continue;   // a dynamic adapter namespace, or a member we cannot see: silence
+            if (space == null) {
+                // A namespace the world API does not have. It may be an outside adapter this node
+                // registered (world.hue, world.spotify); when the node has told us which those are
+                // and this is not one, the call reaches for nothing. Silence here let the workshop
+                // build `sightfinder` on world.sightfinder.probe, and let three nights of mending
+                // "fix" it by declaring the invented call as a capability (2026-09-13 → 09-30).
+                var dynamic = DYNAMIC_NAMESPACES;
+                if (dynamic == null) continue;   // not told which adapters exist: silence, as before
+                Set<String> adapters;
+                try { adapters = dynamic.get(); } catch (RuntimeException e) { continue; }
+                if (adapters != null && adapters.contains(ns)) continue;
+                var call = "world." + ns + "." + second;
+                if (seen.add("world." + ns)) {
+                    out.add(new Unresolved(call, call + " does not exist on this node: there is no world." + ns
+                        + ". The world API has: " + String.join(", ", new java.util.TreeSet<>(SURFACE.keySet()))
+                        + ". Do not declare it as a capability. Rewrite the item with calls that exist"));
+                }
+                continue;
+            }
             String call, member, arityKey; Set<String> have;
             if (third != null && space.containsKey(second)) {
                 call = "world." + ns + "." + second + "." + third; member = third; have = space.get(second);

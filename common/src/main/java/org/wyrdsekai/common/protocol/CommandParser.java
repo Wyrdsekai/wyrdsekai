@@ -68,6 +68,14 @@ public final class CommandParser {
         /** "demolish &lt;room&gt;" — a steward takes a made room down. */
         record Demolish(String target) implements ParsedCommand {}
         /**
+         * "archive" — the rooms that were closed up and the items that were put away; "archive
+         * &lt;words&gt;" — search them by what they were; "archive cold" — cold storage; "reopen
+         * &lt;name&gt;" — bring one back. {@code line} is the whole line as typed.
+         */
+        record Archive(String line) implements ParsedCommand {}
+        /** "projects" — what the companions are working on; "projects &lt;words&gt;" — one project's notebook. */
+        record Projects(String line) implements ParsedCommand {}
+        /**
          * "mail" — what has arrived; "mail &lt;who&gt;" — write to them, subject then body,
          * ending with a single dot; "mail read &lt;n&gt;" / "mail archive &lt;n&gt;".
          */
@@ -365,6 +373,14 @@ public final class CommandParser {
         }
         if (trimmed.regionMatches(true, 0, "mail ", 0, 5)) {
             return new ParsedCommand.Mail(trimmed.substring(5).trim());
+        }
+        if (trimmed.equalsIgnoreCase("archive") || trimmed.regionMatches(true, 0, "archive ", 0, 8)
+                || trimmed.equalsIgnoreCase("reopen") || trimmed.regionMatches(true, 0, "reopen ", 0, 7)) {
+            return new ParsedCommand.Archive(trimmed);
+        }
+        if (trimmed.equalsIgnoreCase("projects") || trimmed.equalsIgnoreCase("project")
+                || trimmed.regionMatches(true, 0, "projects ", 0, 9) || trimmed.regionMatches(true, 0, "project ", 0, 8)) {
+            return new ParsedCommand.Projects(trimmed);
         }
         if (trimmed.regionMatches(true, 0, "demolish ", 0, 9)) {
             var target = trimmed.substring(9).trim();

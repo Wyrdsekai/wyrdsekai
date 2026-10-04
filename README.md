@@ -272,9 +272,12 @@ A companion has a body: the computer and services it runs on.
 - **Several machines, one world.** A household is one to twenty machines: a
   laptop, a phone, a NAS, a mini PC. They find each other on your home network,
   share state through **the Between**, the network that links them, and work
-  together without a central server. They also update each other through it.
-  There is no app store for your server. The machines in your house take care
-  of each other.
+  together without a central server. They also update each other through it:
+  when one machine runs a newer release, the others learn it from the
+  heartbeats, take the installer from that machine over the house network,
+  check it against the release's own checksums, and install it at a quiet
+  moment, the steward's node last. There is no app store for your server. The
+  machines in your house take care of each other.
 - **Phones.** A phone that leaves the house keeps the same conversation. Your
   home network and a relay are two doors onto one identity. A relay is a small
   server that lets a phone reach home from the mobile network without a

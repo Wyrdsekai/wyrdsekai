@@ -199,7 +199,8 @@ class NewActionsTest {
 
     @Test
     void new_tier_2_actions_require_trust() {
-        assertEquals(2, ActionPolicy.forAction("craft_item").requiredTier());
+        // Crafting is her own work (no tier since 2026-10-03); a vote acts on what is shared.
+        assertEquals(0, ActionPolicy.forAction("craft_item").requiredTier());
         assertEquals(2, ActionPolicy.forAction("cast_vote").requiredTier());
     }
 

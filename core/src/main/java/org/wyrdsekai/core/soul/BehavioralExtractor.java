@@ -356,7 +356,7 @@ public final class BehavioralExtractor {
 
         for (var event : events) {
             if (event instanceof WorldEvent.Said said) {
-                if (said.entityId().equals(agentEntityId)) {
+                if (SocialRecord.isSelf(agentEntityId, said.entityId())) {
                     if (lastOther != null) {
                         gaps.add(Duration.between(lastOther, said.timestamp()).toMillis());
                     }
@@ -373,7 +373,7 @@ public final class BehavioralExtractor {
     private static float computeAverageResponseLength(String agentEntityId,
                                                          List<WorldEvent> events) {
         return (float) events.stream()
-            .filter(e -> e instanceof WorldEvent.Said said && said.entityId().equals(agentEntityId))
+            .filter(e -> e instanceof WorldEvent.Said said && SocialRecord.isSelf(agentEntityId, said.entityId()))
             .mapToInt(e -> ((WorldEvent.Said) e).text().split("\\s+").length)
             .average()
             .orElse(0.0);

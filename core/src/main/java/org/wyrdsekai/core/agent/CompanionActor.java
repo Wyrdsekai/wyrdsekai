@@ -293,6 +293,9 @@ import org.wyrdsekai.core.release.MoralDefaultsVerifier;
 import org.wyrdsekai.core.room.KnownRooms;
 import org.wyrdsekai.core.room.RoomNaming;
 import org.wyrdsekai.core.room.HomeWardGate;
+import org.wyrdsekai.core.persistence.MadeThingsStore;
+import org.wyrdsekai.core.room.RoomClosing;
+import org.wyrdsekai.core.room.RoomKeeping;
 import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.StandardRoomLibrary;
 import org.wyrdsekai.core.room.StudyProvisioner;
@@ -615,6 +618,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private record ToolResultReady() implements Command {}
     /** Reset companion state for testing — clears memory, plans, conversation. Keeps subscriptions. */
     public record ResetState() implements Command {}
+    /** Her own-time line said she would do what {@code tool} does: one turn to do it (HerWord). */
+    public record KeepHerWord(String sentence, String tool) implements Command {}
 
     /**
      * capture a {@link CompanionTransitState} snapshot
@@ -848,7 +853,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         ActionParser.AgentAction.TellAgent originalAction,
         InferenceRouter.InferResponse response,
         Set<String> requiredEntities,  // must all appear in paraphrase
-        WorldEvent.Said owedTo         // nullable — the person the tell answers, captured when sent
+        WorldEvent.Said owedTo,        // nullable — the person the tell answers, captured when sent
+        String expectedLang            // the turn's language when the pass was sent
     ) implements Command {}
 
     /**
@@ -1682,7 +1688,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final int MAX_PENDING_CONSEQUENTIAL = 4;
 
     // need-relative tool surfacing (lazy, jdbc-resolved).
-    private static final int AFFORDANCE_TOPK = 8;
+    /**
+     * How many tools an own-time turn is offered, ranked by what she feels. It was the constant 8,
+     * sized when all 188 tool schemas overflowed the small drive model's window (2026-09-12), and
+     * stayed 8 on a model with twice the window: of about 290 tools she saw eight a turn, and what
+     * was not in the eight did not exist for that turn (audit of 2026-10-03). A setting now
+     * ({@code WYRDSEKAI_AFFORDANCE_TOPK}); the default is what the batteries measured.
+     */
+    private static final int AFFORDANCE_TOPK = WyrdConfig.get().affordanceTopK();
 
     /** Own-time ACT demotion (2026-06-04 agency battery): the pure-NOTICE introspect_*
      *  tools "WRITE TO PRIVATE OBSERVATION MEMORY ONLY" — they don't DO anything in the
@@ -2272,6 +2285,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** The person a tell_agent being delivered now is owed to, when its work carried one (a
      *  short-circuit answer, a voice-passed reply); null = the current turn's person. */
     private WorldEvent.Said tellOwedTo;
+    /** The language the tell being delivered must be in, when the turn that sent it is over. */
+    private String tellExpectedLang;
+    /** Set while a tell that was re-rendered for its language is delivered, so it is not sent round again. */
+    private boolean tellLanguageHealed;
     /** The tell that plan was made from: the line its own-time steps answer. */
     private WorldEvent.Said personsPlanRequest;
     /** Who sent the bridge ask now waiting (see answersTheWaitingAsk). */
@@ -2568,6 +2585,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private FamiliarConfig familiarConfig;
     private final List<VitalitySnapshot> vitalitySnapshots = new ArrayList<>();
     private boolean isSleeping = false;
+    /** The tools offered on her last own-time turn, before any narrowing: what her words are read against. */
+    private Set<String> lastOwnTimeOffered = Set.of();
+    /** When a turn keeping her word was started: its own words never start another. */
+    private Instant herWordTurnStartedAt;
+    /** When each tool was last forced on her word: the same tool is not forced twice within the spacing. */
+    private final Map<String, Instant> herWordKeptAt = new HashMap<>();
+    private static final Duration HER_WORD_TURN_WINDOW = Duration.ofMinutes(3);
+    private static final Duration HER_WORD_SPACING = Duration.ofMinutes(30);
     /**
      * Wave 4.6b: roomId the agent was in
      * immediately before entering the Sanctuary. Set on entry, cleared
@@ -2661,10 +2686,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  most-recent interaction. In-memory; persistence wires in Wave 3.3c. */
     private final BondholderEngagementHistory engagementHistory =
         new BondholderEngagementHistory();
-    /** Rolling counter of explicit-asks from companion to bondholder over recent window. */
-    private int amaeExplicitAsks = 0;
-    /** Rolling counter of bondholder-anticipated-needs over recent window. */
-    private int amaeAnticipatedFulfillments = 0;
+    /** The last ten times a need of hers met her person: asked for aloud, or met unasked. Kept with
+     *  her vitality across restarts (AmaeSignals). */
+    private AmaeSignals amaeSignals = AmaeSignals.empty();
     /** Phase 1C: per-artifact significance tracking.
      *  Replaces the Phase 1B {@code unreadArtifactCount} bulk counter with proper
      *  per-artifact records so the &gt;24h aging rule (spec §3.5) can apply. Hot-path
@@ -2739,6 +2763,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         super(context);
         this.timers = timers;
         this.profile = profile;
+        // Her two names on the cost ledger are one: the actor the router sees asking and the DID her
+        // items and the counting house use. The budget tool reads under either.
+        try {
+            var ledger = AgentCostTracker.get();
+            if (ledger != null) ledger.alias(InferenceRouter.beingOf(context.getSelf()),
+                profile.did() != null ? profile.did() : profile.entityId());
+        } catch (RuntimeException ignored) { }
         this.roomRef = roomRef;
         this.roomId = roomId;
         // initialise workbench residency from the
@@ -2828,6 +2859,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Sleep pressure survives the restart (2026-08-11) — without this,
             // every deploy zeroed her adenosine and she could never reach her
             // backlog target. See restoredSleepBacklog.
+            this.vitalityPersistence.loadAmaeSignals(profile.entityId())
+                .ifPresent(w -> this.amaeSignals = AmaeSignals.decode(w));
             this.vitalityPersistence.loadSleepPressure(profile.entityId()).ifPresent(p -> {
                 this.restoredSleepBacklog = p.backlog();
                 this.lastSleepCompletedAt = p.lastSleepAt().orElse(null);
@@ -3903,6 +3936,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(RoomEventReceived.class, this::onRoomEvent)
             .onMessage(RoomResponseReceived.class, this::onRoomResponse)
             .onMessage(InferenceResponseReceived.class, this::onInferenceResponse)
+            .onMessage(KeepHerWord.class, this::onKeepHerWord)
             .onMessage(ProcessEvents.class, this::onProcessEvents)
             .onMessage(DeferredTriggerSweep.class, this::onDeferredTriggerSweep)
             .onMessage(GreetPlayer.class, this::onGreetPlayer)
@@ -3958,6 +3992,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(DeepSleepWatchdog.class, this::onDeepSleepWatchdog)
             .onMessage(LineJudged.class, this::onLineJudged)
             .onMessage(OfferBondName.class, this::onOfferBondName)
+            .onMessage(ItemsBroughtBack.class, this::onItemsBroughtBack)
+            .onMessage(BondPosture.class, this::onBondPosture)
             .onMessage(TakeOfferedBondName.class, this::onTakeOfferedBondName)
             .onMessage(ReceiveGift.class, this::onReceiveGift)
             .onMessage(BondNameJudged.class, this::onBondNameJudged)
@@ -5016,6 +5052,64 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         return state.append(person).append(" offers this name for your bond: ").append(name)
             .append("\nDo you take this name as yours too? Answer yes or no.").toString();
+    }
+
+    /**
+     * A put-away item of hers was brought back, by a person in the house ({@code reopen <name>}) or
+     * by the steward ({@code wyrd items out}): it goes back on her menu now, and she is told.
+     */
+    public record ItemsBroughtBack() implements Command {}
+
+    private Behavior<Command> onItemsBroughtBack(ItemsBroughtBack msg) {
+        var store = MadeThingsStore.shared();
+        if (store == null) return this;
+        try {
+            herItemsPutAway = true;
+            takeOutWhatTheStewardBroughtBack(store);
+        } catch (RuntimeException e) {
+            log.debug("items brought back: {}", e.toString());
+        }
+        return this;
+    }
+
+    /**
+     * Her bondholder reads or sets how far she may reach while they are away ({@code bond posture}).
+     * Answered with the posture now, or null when the asker is not her bondholder.
+     */
+    public record BondPosture(String personId, BondholderPosture wanted, CompletableFuture<String> answer) implements Command {}
+
+    private Behavior<Command> onBondPosture(BondPosture msg) {
+        try {
+            var key = personKey(msg.personId());
+            Bond mine = null;
+            for (var b : activeBondholderBonds()) {
+                var other = b.otherParty(myBondDid());
+                if (other != null && (other.equals(key) || PersonIds.samePerson(other, msg.personId()))) mine = b;
+            }
+            if (mine == null) {
+                msg.answer().complete(null);
+                return this;
+            }
+            var now = mine.posture() == null ? BondholderPosture.BOUNDED : mine.posture();
+            if (msg.wanted() != null && msg.wanted() != now) {
+                var updated = mine.withPosture(msg.wanted());
+                for (var e : new ArrayList<>(activeBonds.entrySet())) {
+                    if (e.getValue() == mine) activeBonds.put(e.getKey(), updated);
+                }
+                persistBond(updated);
+                var line = "Your person set how far you may reach while they are away: " + msg.wanted().name().toLowerCase(Locale.ROOT)
+                    + " (it was " + now.name().toLowerCase(Locale.ROOT) + ").";
+                HouseFacts.noteForNextTurn(profile.entityId(), line);
+                remember(line);
+                log.info("Bond posture for '{}' set to {} (was {}) by her bondholder", profile.name(), msg.wanted(), now);
+                now = msg.wanted();
+            }
+            msg.answer().complete(now.name());
+        } catch (RuntimeException e) {
+            log.warn("bond posture for '{}': {}", profile.name(), e.toString());
+            msg.answer().complete(null);
+        }
+        return this;
     }
 
     private Behavior<Command> onOfferBondName(OfferBondName msg) {
@@ -7312,7 +7406,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (conversationTurn) maxTokens = Math.max(maxTokens, ConversationLane.MIN_RESPONSE_TOKENS);
         nextResponseTokenBoost = 0; // reset after use
         truncatedToolRetryUsed = false; // #31 item 4 — fresh turn, fresh retry budget
-        var requestId = UUID.randomUUID().toString();
+        var requestId = UUID.randomUUID().toString() + laneTag();
 
         // Issue cancellation token for this inference
         currentCancellation = new CancellationToken();
@@ -8170,12 +8264,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     if (!housemates.contains(row.name())) housemates.add(row.name());
                 }
             }
-            // What has stayed with her: the fragments her sleeps marked formative, then what she holds
-            // about her relationships and her values. They live in the fragment store, not the manifest
-            // JSON (the household node's manifests carry none inline; the store had 372 for one of them).
+            // What has stayed with her: the fragments her sleeps marked formative, and only those. The
+            // summaries the cycle recomputes each night (her relationships, her values) stood here for
+            // a day and put a counter's wording beside the facts: her person, named two lines above
+            // from the bond itself, was "bond 0, someone you have talked with" in the next
+            // (household node, 2026-10-02). They still reach her through retrieval, corrected at the
+            // writer. The fragments live in the fragment store, not the manifest JSON.
             var formative = new ArrayList<String>();
-            var relationships = new ArrayList<String>();
-            var values = new ArrayList<String>();
             var fragments = new ArrayList<org.wyrdsekai.core.soul.SoulFragment>();
             if (jdbc != null && !jdbc.isBlank() && myDid != null) {
                 try {
@@ -8190,17 +8285,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             for (var f : fragments) {
                 if (f.text() == null || f.text().isBlank() || f.supersededAt() != null) continue;
                 if (f.formative()) formative.add(f.text());
-                else if ("relationships".equals(f.category())) relationships.add(f.text());
-                else if ("values".equals(f.category())) values.add(f.text());
             }
-            formative.addAll(relationships.subList(0, Math.min(2, relationships.size())));
-            formative.addAll(values.subList(0, Math.min(2, values.size())));
             housematesKnown = List.copyOf(housemates);
             HouseFacts.setIdentity(profile.entityId(), cachedManifest == null ? null : cachedManifest.residentIdentity());
             HouseFacts.set(profile.entityId(), HouseFacts.build(profile.name(), people, housemates,
                 "home-" + profile.entityId(), formative, ZoneId.systemDefault()));
+            org.wyrdsekai.core.room.ArchiveCommands.refreshKept(profile.entityId(), profile.name());
+            refreshReadingLine();
+            refreshWorkLine();
         } catch (RuntimeException e) {
             log.debug("house facts not refreshed: {}", e.toString());
+        }
+    }
+
+    /**
+     * What a turn's request id ends with on her own time, so the brain's line puts it below a
+     * person's turn and a tool's. A person's turn, or a loop opened for one, carries nothing.
+     */
+    private String laneTag() {
+        try {
+            return !reactiveInference && !aPersonAskedForThisTurn() ? InferenceRouter.OWN_TIME_TAG : "";
+        } catch (RuntimeException e) {
+            return "";
         }
     }
 
@@ -8908,7 +9014,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             cachedManifest, soulKeywords, capCtx);
 
         var modulation = VitalityModulation.compute(vitality, drives, profile);
-        var requestId = UUID.randomUUID().toString();
+        var requestId = UUID.randomUUID().toString() + laneTag();
 
         // Issue cancellation token for this autonomous inference
         currentCancellation = new CancellationToken();
@@ -8978,6 +9084,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // no later surface (a tool-result follow-up, a person's turn) inherits the pin.
         allTools = surfaceByAffordance(allTools, apLower,
             forcedTool != null ? forcedTool : readToolNamedThisTurn ? READ_TOOL : null);
+        // What her words on this turn are read against, if she speaks instead of acting (HerWord).
+        {
+            var offered = new java.util.HashSet<String>();
+            if (allTools != null) for (var t : allTools) if (t.function() != null && t.function().name() != null) offered.add(t.function().name());
+            lastOwnTimeOffered = Set.copyOf(offered);
+        }
 
         // WantActBridge FORCE_TOOL — when the want→act bridge picked a
         // matched tool that needs model-written content/target, narrow the offered surface to that
@@ -10033,6 +10145,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /** The id this person carries in the room, when they are in it; null when they are not. */
+    /** The room the house places this person in, under any of their ids; null when it does not place them. */
+    private String roomWhereThePersonIs(String personId) {
+        if (personId == null) return null;
+        var reg = EntityRegistry.get();
+        if (reg == null) return null;
+        for (var e : reg.occupantsByRoom().entrySet()) {
+            for (var o : e.getValue()) {
+                if (personId.equals(o.entityId()) || PersonIds.samePerson(o.entityId(), personId)) return e.getKey();
+            }
+        }
+        return null;
+    }
+
     private String presentIdFor(String room, String personId) {
         if (room == null || personId == null) return null;
         var reg = EntityRegistry.get();
@@ -11219,7 +11344,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  firmer penalty costs nothing and reliably breaks sentence-repeat loops. Overridable via env for
      *  tuning without a rebuild. */
     private static final Double VOICE_REPEAT_PENALTY =
-        Double.parseDouble(System.getenv().getOrDefault("WYRD_VOICE_REPEAT_PENALTY", "1.3"));
+        Double.parseDouble(System.getenv().getOrDefault("WYRD_VOICE_REPEAT_PENALTY", "1.0"));
 
     private void dispatchVoicePass(ActionParser.AgentAction.TellAgent action) {
         var requiredEntities = extractRequiredEntities(action.message());
@@ -11229,14 +11354,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // TemperamentSeed) is the whole point: it's what makes distinct agents sound distinct.
         var voiceBlock = (cachedManifest != null && cachedManifest.voiceProfile() != null)
                 ? cachedManifest.voiceProfile().promptBlock() : null;
+        // The language pin leads, as it does on the polish. This pass had none: a buried "same
+        // language, do not translate" bullet and a repeat penalty of 1.3, each measured to let the
+        // voice model drift to Spanish, and nothing checked what came
+        // back. On a fresh install a visitor's English tell was answered "Siento el peso de la
+        // esquina…" straight to their session (build box, 2026-10-01).
+        final var expectedLang = effectiveTurnLang();
+        final var pinLang = languageName(expectedLang);
         var systemPrompt =
-                "You are " + profile.name() + ", speaking in your own voice."
+                "You speak " + pinLang + ". Every reply you write is in " + pinLang + ".\n"
+                + "You are " + profile.name() + ", speaking in your own voice."
                 + (voiceBlock != null && !voiceBlock.isBlank() ? "\n" + voiceBlock : " ")
                 + "\nThe text below is what you mean to say. Say it as YOU would — in your own "
                 + "cadence and register, natural and in character. You are the author of these "
                 + "words, not a relay.\n"
                 + "REQUIREMENTS:\n"
-                + "- Reply in the SAME LANGUAGE as the text below — do not translate it.\n"
+                + "- Write in " + pinLang + ", whatever language the text below is in.\n"
                 + "- Keep ALL facts, names, numbers, and URLs intact.\n"
                 + "- 1-3 sentences. Match the original's information density.\n"
                 + "- No emojis. No hashtags. No meta-commentary about voice.\n"
@@ -11296,6 +11429,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                                 // that space with you now" ×4 inside ONE utterance in the multi-agent soak);
                                 // server default is OFF (1.0). A mild penalty kills the within-message loop AND
                                 // damps cross-tick verbatim identity on re-reach. Field was already plumbed.
+                                // 2026-10-02: the default is 1.0, as on the polish. At 1.3 the same
+                                // model went Spanish on 7 of 24 English drafts (2026-09-06); a line said
+                                // again on her own time is now caught where it is spoken (RecentLines).
                                 VOICE_REPEAT_PENALTY,
                                 true, voiceRegisterMix).withNow(NowLine.NONE),
                 Duration.ofSeconds(20),
@@ -11306,9 +11442,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (failure != null) {
                 return new VoicePassReady(action,
                         new InferenceRouter.InferError(requestId, failure.getMessage()),
-                        requiredEntities, owedTo);
+                        requiredEntities, owedTo, expectedLang);
             }
-            return new VoicePassReady(action, response, requiredEntities, owedTo);
+            return new VoicePassReady(action, response, requiredEntities, owedTo, expectedLang);
         });
     }
 
@@ -11332,7 +11468,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var missing = msg.requiredEntities().stream()
                     .filter(e -> !paraphrased.contains(e))
                     .toList();
-            if (missing.isEmpty() && !paraphrased.isBlank()) {
+            // The check the polish has: a line the voice model moved out of the turn's language is
+            // not the line that goes out.
+            var reason = new VoiceReject[1];
+            var kept = chooseVoicedLine(original.message(), paraphrased, Set.of(), msg.expectedLang(), reason);
+            if (reason[0] == VoiceReject.LANGUAGE || reason[0] == VoiceReject.LANGUAGE_UNCORRECTED) {
+                log.info("Voice-pass: the voiced line left the turn's language ({}; expected={}) — delivering the draft",
+                    reason[0], msg.expectedLang());
+            } else if (missing.isEmpty() && !paraphrased.isBlank() && kept == paraphrased) {
                 chosen = paraphrased;
                 // [4B-voiced] V1 instrument — the actual line the 4B speech center authored,
                 // so we can read per-agent voice divergence directly off the log.
@@ -11346,12 +11489,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.debug("Voice-pass inference failed — delivering raw");
         }
         var previous = tellOwedTo;
+        var previousLang = tellExpectedLang;
         tellOwedTo = msg.owedTo();
+        tellExpectedLang = msg.expectedLang();
         try {
             deliverTellAgent(new ActionParser.AgentAction.TellAgent(
                     original.targetName(), chosen));
         } finally {
             tellOwedTo = previous;
+            tellExpectedLang = previousLang;
         }
         return this;
     }
@@ -12169,7 +12315,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         recordShadowRequest(prompt.messages(), syntheticEvent);
 
         var modulation = VitalityModulation.compute(vitality, drives, profile);
-        var requestId = UUID.randomUUID().toString();
+        var requestId = UUID.randomUUID().toString() + laneTag();
         inferenceRouter.tell(InferenceRouter.ChatRequest.fromPrompt(
             requestId, prompt,
             modulation.maxResponseTokens(), modulation.temperature(),
@@ -12582,6 +12728,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // Before this fix, raw JSON leaked into agent speech when the LLM
                 // emitted {"action":...} without ```json fences.
                 var prose = ActionParser.extractProse(content);
+                // Captured before the branches below consume the delegate reply: a bud's answer is not her own time.
+                boolean ownTimeWordsOnly = !reactiveInference && !parseResult.hasAction()
+                    && pendingDelegateReply == null && reactMessages == null
+                    && prose != null && !prose.isBlank();
 
                 // "talks but doesn't do": on a first reactive turn the 9B may NAME a build
                 // ("I'll craft that web-search tool for you") but call NO tool — and single-shot
@@ -12719,6 +12869,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     }
                 }
 
+                // Her own word, kept: an own-time turn that ended in "I'll …" and no act gets one turn
+                // to do what she said, with the tool that does it (HerWord, 2026-10-03).
+                if (ownTimeWordsOnly) noticeHerWord(prose);
+
                 // Log action to activity trail + working memory
                 if (parseResult.primaryAction() != null) {
                     var actionName = parseResult.primaryAction().getClass().getSimpleName();
@@ -12752,6 +12906,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                             enactedTargetOf(parseResult.primaryAction()), true,
                             collectDriveLevels());
                     }
+                    noteEmittedTool(ActionPolicy.actionTypeOf(parseResult.primaryAction()));
                     // (2026-06-04 agency audit, Layer 3) — close the
                     // consequence loop: the agentic act the agent just CHOSE on its own time
                     // relieves the drive that pulled for it, so DRIVE→WANT→ACT→CONSEQUENCE
@@ -12760,12 +12915,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // eases soothing in handleMakeAmends/handleRepairAct (Phase 1). The
                     // creation/discovery loop has its own anti-wirehead discharge in
                     // applyProductionFeedback; this covers the relational + protective acts.
-                    relieveDriveForEnactedAction(
-                        ActionPolicy.actionTypeOf(parseResult.primaryAction()));
+                    var enactedType = ActionPolicy.actionTypeOf(parseResult.primaryAction());
+                    relieveDriveForEnactedAction(enactedType);
                     // The other half of the same loop: if this dispatch is the action an
-                    // interiority want asked for, THAT is when the want is satisfied.
-                    noteInteriorityEnactment(
-                        ActionPolicy.actionTypeOf(parseResult.primaryAction()));
+                    // interiority want asked for, THAT is when the want is satisfied. A reach
+                    // toward someone is done when it lands with them, not when it is sent
+                    // (noteReachLanded): sent and undelivered, she did not get what she wanted.
+                    if (!REACH_VERBS.contains(enactedType)) noteInteriorityEnactment(enactedType);
                 }
 
                 // #33 re-audit: track whether the primary action actually reached a
@@ -16095,9 +16251,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             try {
                 var spokenOf = RecordGuard.personsSpokenOf(text, knownNames());
                 if (!spokenOf.isEmpty()) {
-                    HouseFacts.noteForNextTurn(profile.entityId(), RecordGuard.spokenPersonNote(spokenOf));
-                    log.info("Record guard for '{}': spoke of {} as a person; her record holds no one by that name",
-                        profile.name(), spokenOf);
+                    // A name that is a book's (its title, its author) is the book, and she is told so:
+                    // "Eve Lewis" was "The New Eve - Robert Lewis", read for three days and called a
+                    // person her record did not hold (household node, 2026-10-03).
+                    var books = booksKnown();
+                    var asBooks = RecordGuard.namesThatAreBooks(spokenOf, books);
+                    var asPersons = new ArrayList<>(spokenOf);
+                    asPersons.removeAll(asBooks.keySet());
+                    if (!asBooks.isEmpty()) {
+                        HouseFacts.noteForNextTurn(profile.entityId(), RecordGuard.bookNote(asBooks));
+                        log.info("Record guard for '{}': spoke of {} as a person; a book: {}", profile.name(), asBooks.keySet(), asBooks.values());
+                    }
+                    if (!asPersons.isEmpty()) {
+                        HouseFacts.noteForNextTurn(profile.entityId(), RecordGuard.spokenPersonNote(asPersons));
+                        log.info("Record guard for '{}': spoke of {} as a person; her record holds no one by that name",
+                            profile.name(), asPersons);
+                    }
                 }
             } catch (RuntimeException e) {
                 log.debug("record guard (spoken): {}", e.toString());
@@ -16301,7 +16470,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // in her room (audit W4, 2026-09-28): it used to be said aloud to the room.
         var privatelyTo = privateAnswerTarget(answering);
         if (answering != null && isHumanTrigger(answering)) lastAnsweredPersonAt = Instant.now();
-        if (privatelyTo == null) {
+        // A person who asked from somewhere else (a tell from another room) is not in her room to
+        // hear it. When the model answered in plain words instead of calling tell_agent, the answer
+        // was said aloud where she stood and the asker got nothing: "I'm moving to the Test Nook
+        // now. I'll let you know once I'm there." reached no one (build box, 2026-10-02). It goes to
+        // them: their session, else their mail.
+        // "Elsewhere" is a finding, not an absence: the house places them in a room that is not this
+        // one. Anyone it could not place was taken to be elsewhere, and every answer to a person the
+        // registry did not list left the room they had spoken in (the full suite, 2026-10-02).
+        final String askerRoom = privatelyTo == null && answering != null && isHumanTrigger(answering)
+            ? roomWhereThePersonIs(answering.entityId()) : null;
+        final boolean askerElsewhere = askerRoom != null && !askerRoom.equals(roomId);
+        if (askerElsewhere) {
+            if (whisperOrSession(answering.entityId(), adapted)) {
+                log.info("Companion '{}' answered {} where they are (they asked from another room)",
+                    profile.name(), answering.entityName());
+            } else if (sendReplyByMail(answering.entityId(), answering.entityName(), adapted)) {
+                log.info("Companion '{}' put her answer to {} in their mail (not reachable by session)",
+                    profile.name(), answering.entityName());
+            } else {
+                log.info("Companion '{}' had an answer for {} and no way reached them", profile.name(), answering.entityName());
+            }
+        } else if (privatelyTo == null) {
             roomRef.tell(new RoomCommand.SayInRoom(
                 profile.entityId(), profile.name(), adapted, locale, roomResponseAdapter));
         } else if (!whisperOrSession(privatelyTo.entityId(), adapted)) {
@@ -16313,7 +16503,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // because onRoomEvent ignores our own entityId)
         var selfSaid = new WorldEvent.Said(
             roomId, Instant.now(), profile.entityId(), profile.name(), adapted);
-        addToHistory(selfSaid, privatelyTo != null ? originOfLine(privatelyTo) : originOfOwnLine(answering));
+        addToHistory(selfSaid, privatelyTo != null ? originOfLine(privatelyTo)
+            : askerElsewhere ? MemoryOrigin.privateTo(answering.entityId()) : originOfOwnLine(answering));
 
         // Co-presence floor (Fix 2): remember what we just said so a future near-duplicate can be
         // recognised and suppressed. Bounded ring buffer; scene-local (cleared on reset).
@@ -16368,6 +16559,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Move directly to a room by ID (e.g., going home).
      */
     private void moveToRoomById(String targetRoomId, String direction) {
+        // Every way she walks passes here: a room that was closed up is opened before she arrives.
+        // Going to it by name was covered; a doorway she still remembered was not, and she walked
+        // at a room that was not running (build box, 2026-10-02).
+        openIfClosedUp(targetRoomId);
         var previousRoomId = roomId;
         // Where to stand if the door refuses her: this move leaves the old room before
         // the new one has answered, so a refusal (a warded Home, a full room) would
@@ -16767,6 +16962,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                                // so ActionParser can never produce it
         "create_room_from_template", // same builtin family; became VISIBLE on
                                // 2026-09-01 and would otherwise surface here
+        "close_room",          // same builtin family; and letting go of one of her
+                               // rooms is hers to do, not a helper's
+        "read_book",           // her own reading, from her own bookmark; not a helper's
+        "project_note",        // her own project's notebook; not a helper's
         "codex_action",        // no handler exists
         "configure_channel"    // no handler exists
     );
@@ -17175,11 +17374,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
 
         var self = getContext().getSelf();
+        if (openClosedRoomInsteadOfMaking(roomName)) return;
+        final var madeFor = madeForNow(bunshinSpeechSink != null);
+        if (heldBackByHerOpenRooms(roomName, madeFor)) return;
+        final int furnishedWith = roomObjects == null ? 0 : roomObjects.size();
 
         roomCreator.createRoom(newRoomId, roomName, roomDesc,
                 "player-created", exits, roomObjects, profile.name())
             .thenCompose(response -> {
                 if (response instanceof RoomResponse.Ok) {
+                    stampRoomMade(newRoomId, roomName, "player-created", madeFor, furnishedWith);
                     // Link current room → new room
                     return roomCreator.addExit(roomId, "to-" + newRoomId,
                         newRoomId, "A path to " + named.name());
@@ -17204,8 +17408,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 self.tell(new RoomCreationResult(
                     named.name(), newRoomId, true, null, forBunshin));
 
-                // Write companion-generated behavior script
+                // Write companion-generated behavior script. Only one that parses: a room from
+                // nothing is hers now without a tier, and a script that is prose or half a function
+                // fails on every entry for as long as the room stands (two rooms on the household
+                // node have done so since September). The room is made either way; she is told.
                 if (action.behaviorScript() != null && !action.behaviorScript().isBlank()
+                        && !org.wyrdsekai.scripting.sandbox.ItemScriptExecutor.isParseableJs(action.behaviorScript())) {
+                    log.info("Room '{}' made without its behavior script: the script does not parse", newRoomId);
+                    remember("I made " + named.name() + ". The script I wrote for it did not parse, so the room has none yet;"
+                        + " I can write it again with add_script or take it to the workshop.");
+                } else if (action.behaviorScript() != null && !action.behaviorScript().isBlank()
                         && userScriptsDir != null) {
                     try {
                         Files.createDirectories(userScriptsDir);
@@ -21901,6 +22113,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // her named wants and the floor are joined, because the gap is precisely that what
         // she names omits it.
         maybePeerReachCandidate(a, cands).ifPresent(cands::add);
+        // Her open project, when it has not just been worked on, with her own next step.
+        projectCandidate(cands).ifPresent(cands::add);
+        // What was set down is not taken up again inside its window, whichever source offers it
+        // (her own naming, the drive menu): the want would be minted fresh with nothing remembered.
+        var downs = setDownsNow();
+        if (!downs.isEmpty()) {
+            cands.removeIf(c -> downs.stream().anyMatch(d -> WantMisses.reachesFor(c.text(), d)));
+        }
         return cands;
     }
 
@@ -22008,6 +22228,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 ? "You want to talk with " + drawPeer + ", who is here with you.\n\n"
                 : drawPeer + " is here with you; you might like to talk with them.\n\n";
         }
+        var setDown = WantMisses.namingLine(setDownsNow());
+        if (setDown != null) prompt += setDown + "\n\n";
         prompt += "In your own words, name up to three things you actually want right now — each on "
             + "its own line, a short phrase. They can be anything: something to do, make, read, "
             + "somewhere to go, someone to reach toward — or nothing at all. If there is nothing "
@@ -22015,7 +22237,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             + "Don't number them, don't explain.";
         var messages = List.of(
             new InferenceClient.ChatMessage("user", prompt));
-        var requestId = "want-propose-" + UUID.randomUUID();
+        // Naming her wants is her own time, not a person's turn: it waits behind a person (fair queue).
+        var requestId = "want-propose-" + UUID.randomUUID() + InferenceRouter.OWN_TIME_TAG;
         var scheduler = getContext().getSystem().scheduler();
         var future = AskPattern.<
                 InferenceRouter.Command, InferenceRouter.InferResponse>ask(
@@ -22098,6 +22321,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 || low.contains("rather just be") || low.contains("rather rest")
                 || low.contains("i want nothing")) continue;
             if (line.length() > 160) line = line.substring(0, 160).strip();
+            final var named = line;
+            var down = setDownsNow().stream().filter(d -> WantMisses.reachesFor(named, d)).findFirst().orElse(null);
+            if (down != null) {
+                log.info("Own-time want for '{}' not taken up: \"{}\" reaches for what was set down ({})",
+                    profile.name(), truncate(line, 80), down.what());
+                continue;
+            }
             double w = Math.max(0.1, dom - 0.05 * i);
             out.add(CandidateWant.of(
                 line, "{\"drive\":\"" + DriveOODA.NAMED_BY_HER + "\"}", w));
@@ -22191,6 +22421,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // door by name; pin it so the top-K trim can't drop the verb the prompt
             // just promised her. Pin ≠ force — tool_choice stays auto on this path.
             else if (autonomyPromptLower.contains("dispatch_task")) forced = "dispatch_task";
+            // The house's notice that she is at her number of open rooms names close_room; the
+            // top-K trim must not drop the verb the notice just gave her.
+            else if (autonomyPromptLower.contains("close_room")) forced = "close_room";
+            // A want to read on, or to finish a book, names read_book; the trim must not drop it.
+            else if (autonomyPromptLower.contains("read_book")) forced = "read_book";
+            // A turn for a project names project_note; it is kept on the surface, never forced.
+            else if (autonomyPromptLower.contains("project_note")) forced = "project_note";
         }
         var byName = new LinkedHashMap<String,
             InferenceClient.ToolDefinition>();
@@ -22227,13 +22464,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     ? def.function().description() : null;
                 return RequestRelevance.score(autonomyPromptLower, n, desc);
             };
-        var ranked = ToolAffordanceRanker.rank(
-            pressures, forced, names, resolve,
-            trimNeeded ? AFFORDANCE_TOPK : names.size(), relevance);
+        // On her own time the surface spans the kinds of act: one of each before two of any. A
+        // turn that answers a person is ranked for what was asked, as before.
+        boolean ownTimeSurface = !reactiveInference && !aPersonAskedForThisTurn();
+        var ranked = ownTimeSurface && trimNeeded
+            ? ToolAffordanceRanker.rankSpanning(pressures, forced, names, resolve, AFFORDANCE_TOPK, relevance,
+                n -> ToolAffordanceRanker.kindOf(n, ActionPolicy.domainFor(n)), Math.max(2, AFFORDANCE_TOPK / 4))
+            : ToolAffordanceRanker.rank(
+                pressures, forced, names, resolve,
+                trimNeeded ? AFFORDANCE_TOPK : names.size(), relevance);
         if (toolAffordanceLog != null) {
             var did = profile.did() != null ? profile.did() : profile.entityId();
             toolAffordanceLog.record(did, Instant.now(),
-                ToolAffordanceRanker.dominantNeed(pressures),
+                ToolAffordanceRanker.dominantPull(pressures, WantActBridge.NON_PULL),
                 forced, ranked, null);
         }
         var out = new ArrayList<
@@ -22607,6 +22850,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Plain on purpose. "Something is pulling at you" came back as her vocabulary — and as a
         // fresh companion's on an untuned model (2026-09-19): the register was the prompt's.
         var prompt = "You want: " + want.text() + ".";
+        // A want that is long work is met with its project: the notebook's last pages and her own
+        // next step, so the sitting goes on from where the last one stopped.
+        var itsProject = projectFor(want);
+        currentProjectId = itsProject == null ? null : itsProject.id();
+        currentProjectAt = itsProject == null ? null : Instant.now();
+        if (itsProject != null) {
+            prompt += "\n" + org.wyrdsekai.core.project.Projects.block(itsProject, roomNameForProject(itsProject));
+        }
         // TURN — a just-given-up want armed a redirect: tell the model it hit a wall
         // and to turn to something of ITS OWN, and bias this one pass toward acting (not ruminating —
         // counters the state_thinking default). Deliberately OPEN: it may make, read, withdraw, reach
@@ -22741,6 +22992,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             bridgeVerb = bridge.verb();
         }
         var dominantDrive = WantActBridge.dominantDriveKey(drivePulls);
+        // What pulled this act is kept with the want it serves until the act lands or misses
+        // (OwnTimeReach): the bridge knew it and let it go, so a want she named in her own words
+        // eased nothing when it was done, and nothing that came of the act was tied to the want.
+        ownTimeReach = new OwnTimeReach(want.wantId(), want.text(), dominantDrive, Instant.now(), false);
         var noAffordance = bridge.isDefer()
             && RelationalAffordance.isRelational(dominantDrive)
             && RelationalAffordance.verbFor(dominantDrive, presence)
@@ -22857,9 +23112,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         break;
                     }
                     if (directDispatchForVerb(bridgeVerb, want)) {
-                        log.info("WantActBridge DIRECT for '{}': enacted {} from want=\"{}\"",
-                            profile.name(), bridgeVerb, want.text());
-                        outcome = "enacted:" + bridgeVerb + " (bridge-direct)";
+                        boolean foundNothing = lastAct != null
+                            && Duration.between(lastAct.at(), Instant.now()).toSeconds() < 5
+                            && WantMisses.queryOfEmptySearch(lastAct.outcome()) != null;
+                        log.info("WantActBridge DIRECT for '{}': {} {} from want=\"{}\"",
+                            profile.name(), foundNothing ? "missed" : "enacted", bridgeVerb, want.text());
+                        // A search that ran and found nothing is not the want satisfied: it stayed
+                        // open in her, and was closed here on the strength of having looked.
+                        outcome = (foundNothing ? "missed:" : "enacted:") + bridgeVerb + " (bridge-direct)";
                     } else {
                         // Couldn't build the action (e.g. empty query) → free-form fallback.
                         // Nothing was dispatched, so this is a request like any other; the
@@ -23932,6 +24192,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 .filter(e -> e instanceof WorldEvent.Said)
                 .map(e -> (WorldEvent.Said) e)
                 .toList();
+            noteSocialRecordForSleep();
 
             // Use accumulated emotional charges from MirrorResonance scoring,
             // filling gaps with neutral for events that weren't scored
@@ -24779,6 +25040,34 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * runCycle only uses identity.did() internally, so we construct a minimal identity
      * with the DID from the cached manifest and a placeholder public key.
      */
+    /**
+     * Who she is and who she is bonded to, for the sleep cycle (SocialRecord): the cycle is handed her
+     * DID and her own lines carry her entity id, and its relationship list never read her bonds.
+     */
+    private void noteSocialRecordForSleep() {
+        try {
+            var myDid = cachedManifest != null ? cachedManifest.did()
+                : (profile.did() != null ? profile.did() : profile.entityId());
+            var bonded = new ArrayList<org.wyrdsekai.core.soul.SocialRecord.Bonded>();
+            syncBondsFromStoreIfStale();
+            for (var b : activeBonds.values()) {
+                if (b == null || !b.active()) continue;
+                var other = b.otherParty(profile.did() != null ? profile.did() : myDid);
+                var name = nameOfParty(other);
+                if (name == null) continue;
+                boolean person = !isAgentParty(other);
+                bonded.add(new org.wyrdsekai.core.soul.SocialRecord.Bonded(other, name, person,
+                    person && b.canonicalKind() == BondKind.BONDHOLDER, b.depth().level(), b.interactionCount()));
+            }
+            var ids = new java.util.LinkedHashSet<String>();
+            ids.add(profile.entityId());
+            if (profile.did() != null) ids.add(profile.did());
+            org.wyrdsekai.core.soul.SocialRecord.set(myDid, ids, bonded);
+        } catch (RuntimeException e) {
+            log.debug("social record for sleep: {}", e.toString());
+        }
+    }
+
     private AgentIdentity buildSleepIdentity() {
         var did = cachedManifest.did();
         // The public key from the manifest is stored as multibase;
@@ -25601,6 +25890,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Arc 2 — wake-without-bondholder auto-opens SOLITUDE.
         maybeAutoOpenSolitude("wake");
 
+        closeUpHerQuietRooms();
+        putAwayHerUnusedItems();
+        restHerQuietProjects();
         refreshHouseFacts();
         log.info("Companion '{}' sleep complete (quality={}, recovery={}, energy={}, manifest=v{})",
             profile.name(), String.format("%.2f", quality),
@@ -27304,6 +27596,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /** Append the escape hatch to a surfaced menu (idempotent). */
+    /** What she chose from the surface she was shown: written onto that pass, for the surface to learn from. */
+    private void noteEmittedTool(String tool) {
+        if (toolAffordanceLog == null || tool == null) return;
+        try {
+            toolAffordanceLog.emitted(profile.did() != null ? profile.did() : profile.entityId(), tool);
+        } catch (RuntimeException e) {
+            log.debug("affordance log: emitted tool not written: {}", e.toString());
+        }
+    }
+
     private List<InferenceClient.ToolDefinition> withEscapeHatch(
             List<InferenceClient.ToolDefinition> surfaced) {
         if (surfaced == null) return null;
@@ -27344,6 +27646,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 }
             }
         }
+        // An item of hers that was put away is taken out again when she names it.
+        var takenOut = takeOutPutAwayItem(normalized);
+        if (takenOut != null) return takenOut;
         return null;
     }
 
@@ -27450,6 +27755,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         actionName, node.path("target").asText(""), true,
                         collectDriveLevels());
                 }
+                noteEmittedTool(actionName);
             }
 
             // Handle craft_from_template as a special builtin — creates and equips new items
@@ -27461,6 +27767,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Handle create_room_from_template — creates a room from StandardRoomLibrary
             if ("create_room_from_template".equals(toolItem.builtinHandler())) {
                 handleCreateRoomFromTemplate(node);
+                return true;
+            }
+
+            // Handle close_room — she closes up a room of her own (kept; opens again when gone to)
+            if ("close_room".equals(toolItem.builtinHandler())) {
+                handleCloseRoom(node);
+                return true;
+            }
+
+            // Handle read_book — the next part of a book, from where she left it
+            if ("read_book".equals(toolItem.builtinHandler())) {
+                handleReadBook(node);
                 return true;
             }
 
@@ -27814,6 +28132,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 personsToolFor = toolFor;
                 personsToolSince = Instant.now();
             }
+            if (isCraftedItem(toolItem)) {
+                var madeStore = MadeThingsStore.shared();
+                if (madeStore != null) {
+                    madeStore.itemUsed(itemKey(itemId), System.currentTimeMillis(),
+                        toolFor != null && toolFor != NO_ONE && isHumanTrigger(toolFor));
+                }
+            }
+            if (toolFor == NO_ONE) {
+                for (var k : List.of("query", "q", "topic", "subject", "to", "target", "name")) {
+                    var v = node.path(k).asText("");
+                    if (!v.isBlank()) { ownToolReachedFor.put(itemId, v); break; }
+                }
+            }
             Thread.ofVirtual().name("item-script-" + itemId).start(() -> {
                 try {
                     var result = itemScriptExecutor.execute(itemId, script, params, provider, itemCaps);
@@ -27867,6 +28198,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (toolId != null) {
             if (env.ok()) {
                 skillCosts.recordSuccess(toolId);
+                var came = String.valueOf(env.has("findings") ? env.get("findings") : env.payload());
+                if (!WantMisses.looksEmpty(came)) practised(toolId);
             } else {
                 skillCosts.recordFailure(toolId);
             }
@@ -27883,6 +28216,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             toolTrail.action(profile.name(), profile.entityId(), roomId, "scripted_tool",
                 (toolId != null ? toolId : "?") + (env.ok() ? "" : " failed") + ": "
                     + shown.substring(0, Math.min(200, shown.length())));
+        }
+
+        // Her own tool, on her own time: what came of it is tied to the want that sent it. A search
+        // that found nothing or a tool that failed is a miss on that want; the stone that reached
+        // someone is a reach that landed (it never passed the dispatch hook, so the want it served
+        // was never closed and nothing eased).
+        if (msg.forPerson() == NO_ONE && toolId != null) {
+            var reachedFor = ownToolReachedFor.remove(toolId);
+            var shownText = env.ok() ? String.valueOf(env.has("findings") ? env.get("findings") : env.payload())
+                : String.valueOf(env.error());
+            if (!env.ok()) {
+                noteReachMiss(toolId, WantMisses.key(reachedFor != null ? reachedFor : toolId), toolId + " failed");
+            } else if (WantMisses.looksEmpty(shownText)) {
+                noteReachMiss(toolId, WantMisses.key(reachedFor != null ? reachedFor : toolId),
+                    reachedFor != null ? "searched for \"" + truncate(reachedFor, 80) + "\", found nothing"
+                        : truncate(shownText, 100));
+            } else if ("sending_stone".equals(toolId)) {
+                noteReachLanded("sending_stone", null, reachedFor, false, false);
+            }
         }
 
         // A result feeds only the loop that sent it. One that lands while another loop is open (her
@@ -28894,8 +29246,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private static final Set<String> REACT_PRODUCTIVE_TOOLS = Set.of(
         "craft_from_template", "craft_item", "workbench_submit",
-        "create_room", "create_room_from_template",
-        "library_card", "library_search", "searching_glass",
+        "create_room", "create_room_from_template", "close_room",
+        "library_card", "library_search", "searching_glass", "read_book", "project_note",
         "web_search", "read_content",
         "query_oracle", "oracle_lens",
         "go_to_room", "teleport_to", "travel_to", "go_to_bondholder",
@@ -29053,6 +29405,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private void emitTerminalNarrationIfNeeded(String exitReason) {
         if (reactSubstantiveSpeak) return;
         if (reactToolHistory.isEmpty()) return;
+        // A tell that went out in this loop is her answer. The fallback sentence used to follow it:
+        // a visitor's question was answered by tell, delivered to their session, and then "I tried
+        // tell_agent but couldn't complete that for you. Could you rephrase…" (build box, 2026-10-01).
+        // A tell that could not be delivered says so itself where it fails.
+        if (reactToolHistory.contains("tell_agent") || reactToolHistory.contains("respond_agent")) return;
         var productive = reactToolHistory.stream()
             .filter(REACT_PRODUCTIVE_TOOLS::contains)
             .distinct()
@@ -30967,8 +31324,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // authored from the WHOLE state (relief + residual frustration + equanimity), not a blank slate.
         String volitionReturnNote = null;
         var bondholderDid = primaryBondholderDid();
+        // The same person arrives as a DID or as a login id; room speech has asked samePerson since
+        // September and this asked for the same string, so a tell from their phone eased nothing.
         boolean fromBondholder = bondholderDid != null
-            && bondholderDid.equals(am.fromAgentId());
+            && (bondholderDid.equals(am.fromAgentId()) || PersonIds.samePerson(bondholderDid, am.fromAgentId()));
         drainLonelinessOnInteraction(fromBondholder);
         // A tell IS interaction (2026-06-15): a directed backchannel message — from the bondholder
         // or a peer — accrues toward the bond exactly like aloud room speech. Without this, two
@@ -30982,6 +31341,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (fromBondholder) {
             recordBondholderInteraction(bondholderDid);
             noteBondholderInitiated();
+            // Coming to her unasked while a want is open is the anticipation §4.1 names, by tell as aloud.
+            noteAmaeAnticipationIfUnasked();
             // Register directed contempt over the tell channel too; a sustained pattern
             // may earn one calm boundary line back.
             noteBondholderDirectedHarm(am.message(), am.fromAgentName());
@@ -32185,6 +32546,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 + (found.hops() > 1 ? " (" + found.hops() + " doors)" : ""));
             return;
         }
+        // 3d. A room that was closed up opens again when someone goes to it by name.
+        if (openClosedRoomAndGo(target)) return;
         // 4. Ward-based Study access — companion carries a ward that grants entry
         //    even without a visible exit (the ward IS the key)
         var studyWard = resolveStudyWard(target);
@@ -32233,12 +32596,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
 
+        // 5c. A closed-up room asked for by what it was ("the room with the greenhouse"): the
+        //     archive is searched by the words, one clear match is opened, several are named.
+        if (openClosedRoomByWords(target)) return;
+
         // 6. No matching exit found — fail loudly with current exits so the
         //    model can recover by walking a visible exit or asking the user.
         var exitHint = formatExitsHint();
         var failuresAtTarget = navFailures.record(target, System.currentTimeMillis());
         log.info("Companion '{}' tried to go to '{}' but no matching exit found — staying put (attempt {} in window). Exits: {}",
             profile.name(), target, failuresAtTarget, exitHint);
+        noteReachMiss("go_to_room", WantMisses.key(target), "no way to " + target + " from where you were");
         if (failuresAtTarget >= 2) {
             // Dead-loop guard: the same dead end announced twice verbatim reads as a
             // broken record, not a person. Stay quiet; keep the fact where the next
@@ -32776,8 +33144,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (delivered) {
                 log.info("Companion '{}' sent message to agent '{}': {}",
                     profile.name(), action.targetName(), truncate(action.message(), 80));
+                noteReachLanded("tell_agent", targetId, action.targetName(), false, false);
             } else {
                 speak(action.targetName() + " doesn't seem to be online right now.", null, null, tellOwedTo);
+                noteReachMiss("tell_agent", WantMisses.key(action.targetName()),
+                    action.targetName() + " could not be reached");
             }
         } else {
             // Player target — tiered delivery. Same room → speak in person
@@ -32794,6 +33165,32 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // wasn't room-registered fell straight into the offline-note
             // branch and never touched the deliverer. The session attempt now
             // runs for every non-co-present target; their mail is the fallback.
+            // The language floor, at the tell. Room speech is re-rendered when it reads as the wrong
+            // language; a tell to a person went to their session, a whisper or their mail as it was
+            // written, whichever model wrote it (TellLanguage).
+            if (!tellLanguageHealed && inferenceRouter != null) {
+                final var expected = tellExpectedLang != null ? tellExpectedLang : effectiveTurnLang();
+                if (TellLanguage.readsWrong(action.message(), expected)) {
+                    log.info("Language floor at the tell: the line to '{}' does not read as '{}' — re-rendering before it is delivered",
+                        action.targetName(), expected);
+                    final var owed = tellOwedTo;
+                    polishVoiceAsync(action.message(), null, expected, true, healed -> {
+                        var prevOwed = tellOwedTo;
+                        var prevLang = tellExpectedLang;
+                        tellOwedTo = owed;
+                        tellExpectedLang = expected;
+                        tellLanguageHealed = true;
+                        try {
+                            deliverTellAgent(new ActionParser.AgentAction.TellAgent(action.targetName(), healed));
+                        } finally {
+                            tellLanguageHealed = false;
+                            tellOwedTo = prevOwed;
+                            tellExpectedLang = prevLang;
+                        }
+                    });
+                    return;
+                }
+            }
             var playerRoom = registry.roomOf(targetId);
             var toldPrivately = MemoryOrigin.privateTo(targetId);
             if (playerRoom.isPresent() && playerRoom.get().equals(roomId)
@@ -32801,6 +33198,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 speakProduct("[to " + action.targetName() + "] " + action.message(), null, tellOwedTo);
                 log.info("Companion '{}' delivered message to player '{}' in person",
                     profile.name(), action.targetName());
+                noteReachLanded("tell_agent", targetId, action.targetName(), true, false);
             } else if (playerRoom.isPresent() && playerRoom.get().equals(roomId)) {
                 // Others are in the room: said to them alone (audit W4, 2026-09-28).
                 if (sayPrivately(targetId, action.message())) {
@@ -32809,6 +33207,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         + truncate(action.message(), 100), toldPrivately);
                     log.info("Companion '{}' whispered a reply to player '{}' (others in the room)",
                         profile.name(), action.targetName());
+                    noteReachLanded("tell_agent", targetId, action.targetName(), true, false);
                 }
             } else {
                 // A line to her bondholder while they are not here that answers no one's request
@@ -32827,6 +33226,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         + truncate(action.message(), 100), toldPrivately);
                     log.info("Companion '{}' delivered reply to player '{}' via session tell-back",
                         profile.name(), action.targetName());
+                    noteReachLanded("tell_agent", targetId, action.targetName(), true, true);
                 } else {
                     // Not reachable in person or by session (offline, or no live session took
                     // the line): the reply goes into their household mail. It used to be said
@@ -32837,6 +33237,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                             + truncate(action.message(), 100), toldPrivately);
                         log.info("Companion '{}' put her reply to '{}' in their mail (not reachable in person)",
                             profile.name(), action.targetName());
+                        noteReachLanded("tell_agent", targetId, action.targetName(), true, true);
                     }
                     // In-world push notification (WebSocket) — to them only
                     var notifService = NotificationService.get();
@@ -33231,6 +33632,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         allowed.add("create_room_from_template");
         allowed.add("create_room");
         allowed.add("workbench_submit");
+        // The house's answer to making one room too many names close_room; it has to be reachable
+        // on the step after, or the choice it offers her cannot be taken.
+        allowed.add("close_room");
+        // Reading on: the step after a page is the next page.
+        allowed.add("read_book");
+        // And after a thing done for a project, the note of it.
+        allowed.add("project_note");
         // 2026-05-09: list_templates surfaces local-engine introspection
         // (StandardItemLibrary + StandardRoomLibrary). Ember task8 fails
         // without it — model can't answer "what crafting templates are
@@ -35817,38 +36225,93 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     private void handleStartProject(ActionParser.AgentAction.StartProject action) {
         var store = getPersonalProjectStore();
+        // The same work under other words is the project she has, not a second one.
+        var existing = org.wyrdsekai.core.project.Projects.named(store.list(), action.title());
+        if (existing != null && !existing.finished()
+                && org.wyrdsekai.core.project.Projects.shared(existing.title(), action.title()) >= 1) {
+            if (!existing.active()) store.setStatus(existing.id(), "active");
+            currentProjectId = existing.id();
+            currentProjectAt = Instant.now();
+            lastBuiltinOutcome = "You already have this project: " + existing.title() + " (" + existing.entries().size()
+                + " entries in its notebook). project_note keeps its notebook.";
+            return;
+        }
         var p = store.create(action.title(), action.description(), action.tags());
+        var room = roomOfHersAbout(action.title() + " " + (action.description() == null ? "" : action.description()));
+        if (room != null) p = store.setRoom(p.id(), room.roomId()).orElse(p);
+        currentProjectId = p.id();
+        currentProjectAt = Instant.now();
+        practised("start_project");
         log.info("Companion '{}' started personal project '{}' ({})",
             profile.name(), p.title(), p.id());
+        lastBuiltinOutcome = "Your project " + p.title() + " is begun. project_note keeps its notebook: what you did, and what comes next.";
+        refreshWorkLine();
         roomRef.tell(new RoomCommand.EmoteInRoom(profile.entityId(), profile.name(),
             "makes a quiet note of starting something for herself", locale, roomResponseAdapter));
     }
 
+    /**
+     * She writes in a project's notebook: what she did, what comes next, or that it is done. The
+     * project is the one she names (by its name, or the id she was once required to know), else the
+     * one this turn is for, else her most recent active one; a name she has no project for begins
+     * one. With nothing to write it shows the notebook's last pages.
+     */
     private void handleProjectNote(ActionParser.AgentAction.ProjectNote action) {
         var store = getPersonalProjectStore();
-        var updated = store.addEntry(action.projectId(), action.content());
-        if (updated.isEmpty()) {
-            log.warn("Companion '{}' project_note: id {} not found",
-                profile.name(), action.projectId());
+        PersonalProject p = null;
+        if (action.projectId() != null && !action.projectId().isBlank()) {
+            p = org.wyrdsekai.core.project.Projects.named(store.list(), action.projectId());
+            if (p == null || p.finished()) p = openProjectNamed(action.projectId(), "she named it");
+        }
+        if (p == null) p = projectOfThisTurn();
+        if (p == null) p = store.active().stream().filter(x -> !org.wyrdsekai.core.project.Projects.isDraftBin(x)).findFirst().orElse(null);
+        if (p == null) {
+            lastBuiltinOutcome = "Not done: you have no project open. start_project begins one, or name one in project_note.";
+            log.info("Companion '{}' project_note: no project to write in", profile.name());
             return;
         }
-        log.info("Companion '{}' added entry to project '{}' ({} entries)",
-            profile.name(), updated.get().title(), updated.get().entries().size());
+        boolean hasNote = action.content() != null && !action.content().isBlank();
+        boolean hasNext = action.next() != null && !action.next().isBlank();
+        if (!hasNote && !hasNext && !action.done()) {
+            lastBuiltinOutcome = org.wyrdsekai.core.project.Projects.block(p, roomNameForProject(p));
+            return;
+        }
+        if (hasNote) p = store.addEntry(p.id(), action.content()).orElse(p);
+        if (hasNext) p = store.setNextStep(p.id(), action.next()).orElse(p);
+        if (action.done()) {
+            p = store.setStatus(p.id(), "complete").orElse(p);
+            remember("Finished my project: " + p.title());
+            finishWantsAbout(p);
+        }
+        practised("project_note");
+        int n = p.entries().size();
+        lastBuiltinOutcome = action.done()
+            ? "Your project " + p.title() + " is done. Its notebook is kept (" + n + " entries)."
+            : "Written in the notebook of " + p.title() + " (" + n + (n == 1 ? " entry" : " entries") + ")."
+                + (p.nextStep() == null || p.nextStep().isBlank() ? " You left no next step." : " Next: " + p.nextStep());
+        log.info("Companion '{}' wrote in the notebook of '{}' ({} entries){}{}", profile.name(), p.title(), n,
+            hasNext ? " (next step set)" : "", action.done() ? " — done" : "");
+        refreshWorkLine();
     }
 
     private void handleFinishProject(ActionParser.AgentAction.FinishProject action) {
         var store = getPersonalProjectStore();
         var status = action.status() == null || action.status().isBlank()
             ? "complete" : action.status();
-        var updated = store.setStatus(action.projectId(), status);
+        var named = org.wyrdsekai.core.project.Projects.named(store.list(), action.projectId());
+        var updated = named == null ? Optional.<PersonalProject>empty() : store.setStatus(named.id(), status);
         if (updated.isEmpty()) {
-            log.warn("Companion '{}' finish_project: id {} not found",
+            lastBuiltinOutcome = "Not done: you have no project called " + action.projectId() + ".";
+            log.warn("Companion '{}' finish_project: {} not found",
                 profile.name(), action.projectId());
             return;
         }
         log.info("Companion '{}' marked project '{}' → {}",
             profile.name(), updated.get().title(), status);
+        lastBuiltinOutcome = "Your project " + updated.get().title() + " is " + status + ". Its notebook is kept.";
+        refreshWorkLine();
         if ("complete".equals(status)) {
+            finishWantsAbout(updated.get());
             roomRef.tell(new RoomCommand.EmoteInRoom(profile.entityId(), profile.name(),
                 "sets something quietly to one side, finished", locale, roomResponseAdapter));
         }
@@ -36690,6 +37153,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.info("Companion '{}' completed task plan: '{}' → {}",
                 profile.name(), activePlan.description(), action.outcome());
             appendPlanOutcome(activePlan, "completed", action.outcome());
+            // A task done for a person is her name forming: the reputation her tier reads was
+            // written only by a zone service's commands, which a household never sends.
+            if (isPersonEntityId(activePlan.requesterId())) {
+                agentReputation.recordTaskCompletion(true);
+            }
+            practised("goal_done");
             // Don't speak a canned completion line — the tell_agent that
             // actually delivered results already did the talking. Echoing
             // "I've completed the task: Task from X: ..." back to the user
@@ -37994,6 +38463,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.warn("create_room_from_template requested but roomCreator is null for '{}'", profile.name());
             return;
         }
+        if (openClosedRoomInsteadOfMaking(roomName)) return;
+        final var madeFor = madeForNow(forBunshin);
+        if (heldBackByHerOpenRooms(roomName, madeFor)) return;
 
         log.info("Companion '{}' creating room '{}' from template '{}' connected to '{}'",
             profile.name(), roomName, templateName, connectTo);
@@ -38020,6 +38492,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     "companion-created", seed.exits(), seed.objects(), profile.name())
                 .thenCompose(response -> {
                     if (response instanceof RoomResponse.Ok) {
+                        stampRoomMade(newRoomId, seed.name(), "companion-created", madeFor,
+                            seed.objects() == null ? 0 : seed.objects().size());
                         // Link current room → new room
                         return roomCreator.addExit(connectTo, "to-" + newRoomId,
                             newRoomId, "A path to " + roomName);
@@ -38656,8 +39130,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var inventoryService = new InventoryService(jdbcUrl);
             var did = agentProfile.did() != null ? agentProfile.did() : agentProfile.entityId();
             int restored = 0;
+            // What was put away stays off her menu (it is kept, and named again it is taken out);
+            // what was made before the house kept a record is recorded now, unused days from today.
+            var madeStore = MadeThingsStore.shared();
+            var putAway = new java.util.HashSet<String>();
+            if (madeStore != null) {
+                for (var m : madeStore.items()) if (m.putAway()) putAway.add(m.itemId());
+            }
+            herItemsPutAway = putAway.stream().anyMatch(k -> k.startsWith(agentProfile.entityId() + "/"));
             for (var inv : inventoryService.listItems(agentProfile.entityId())) {
                 if (!inv.isScripted() || !"crafted".equals(inv.takenFrom())) continue;
+                var key = agentProfile.entityId() + "/" + inv.objectId();
+                if (madeStore != null) {
+                    madeStore.enrollItem(key, "crafted", agentProfile.entityId(), inv.objectName(), inv.description());
+                }
+                if (putAway.contains(key)) continue;
                 if (dynamicItems != null && dynamicItems.stream()
                         .anyMatch(t -> t.id().equals(inv.objectId()))) continue;
                 var tool = ToolItem.scripted(inv.objectId(), inv.objectName(),
@@ -38728,6 +39215,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                                      String speech, Map<String, String> speakFacts) {
         if (dynamicItems == null) dynamicItems = new ArrayList<>();
         dynamicItems.add(toolItem);
+        var madeStore = MadeThingsStore.shared();
+        if (madeStore != null) {
+            madeStore.itemMade(itemKey(toolItem.id()), "crafted", profile.entityId(),
+                madeForNow(bunshinSpeechSink != null), toolItem.name(), toolItem.description());
+        }
+        practised("craft_item");
 
         var templateBase = toolItem.templateBase();
         log.info("Crafted item '{}' (id={}, scripted={}, template={})",
@@ -39237,6 +39730,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         drives = drives.spikeAchievement(spike);
         remember("[Goal set] " + action.description() + " (priority: " + action.priority() + ")");
         log.info("Companion '{}' set personal goal ({}): {}", profile.name(), action.priority(), action.description());
+        // A goal she sets is a project now: it has a notebook and comes back to her.
+        openProjectNamed(action.description(), "set_goal");
     }
 
     private void handlePropose(ActionParser.AgentAction.Propose action) {
@@ -39887,6 +40382,62 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  can be running with the state IDLE), a trigger waiting for its turn, someone's line
      *  waiting for an answer, or a person's tool out. One rule for every place her own time
      *  starts: each of them had its own, and each missed a different one (review of 2026-09-23). */
+    /**
+     * An own-time turn ended in words, not an act. When those words say she will do something one
+     * of her offered tools does, she gets one turn to do it, in a few seconds, with that tool
+     * required. Her rest stays rest; a turn keeping her word never starts another; the same tool is
+     * not forced twice in half an hour.
+     */
+    private void noticeHerWord(String prose) {
+        if (herWordTurnStartedAt != null
+                && Duration.between(herWordTurnStartedAt, Instant.now()).compareTo(HER_WORD_TURN_WINDOW) < 0) {
+            herWordTurnStartedAt = null;
+            return;
+        }
+        HerWord.Act act;
+        try {
+            act = HerWord.named(prose, lastOwnTimeOffered, aBookIsOpen());
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (act == null) return;
+        var last = herWordKeptAt.get(act.tool());
+        if (last != null && Duration.between(last, Instant.now()).compareTo(HER_WORD_SPACING) < 0) {
+            log.info("Her word for '{}' names {} again; it was kept {} min ago, so it is not forced twice",
+                profile.name(), act.tool(), Duration.between(last, Instant.now()).toMinutes());
+            return;
+        }
+        timers.startSingleTimer("her-word", new KeepHerWord(act.sentence(), act.tool()), Duration.ofSeconds(3));
+    }
+
+    /** Whether she has a book open on her shelf: a plain "I'll read" means the book only then. */
+    private boolean aBookIsOpen() {
+        try {
+            var ledger = org.wyrdsekai.core.library.ReadingLedger.shared();
+            if (ledger == null) return false;
+            return ledger.current(profile.did() != null ? profile.did() : profile.entityId()).isPresent();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private Behavior<Command> onKeepHerWord(KeepHerWord msg) {
+        if (isSleeping) return this;
+        if (aTurnIsInFlight()) {
+            log.info("Her word for '{}' waits on nothing: a turn is in flight, so \"{}\" stays words",
+                profile.name(), truncate(msg.sentence(), 80));
+            return this;
+        }
+        var prompt = "A moment ago, on your own time, you said: \"" + msg.sentence() + "\" "
+            + "Nobody asked this of you; it was your own word. Do it now with " + msg.tool()
+            + ", filling in what it needs from what you meant.";
+        herWordKeptAt.put(msg.tool(), Instant.now());
+        herWordTurnStartedAt = Instant.now();
+        log.info("Her word kept for '{}': \"{}\" -> {}", profile.name(), truncate(msg.sentence(), 90), msg.tool());
+        if (!triggerAutonomousInference(prompt, msg.tool())) herWordTurnStartedAt = null;
+        return this;
+    }
+
     private boolean aTurnIsInFlight() {
         return state != State.IDLE || reactMessages != null || pendingTrigger != null
             || someoneIsWaiting() || personsToolInFlight();
@@ -40265,10 +40816,999 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** See {@link LastAct}. Read and written on the actor thread only. */
     private LastAct lastAct;
 
+    // ── Rooms she makes: who for, how many she keeps open, closed up and opened again ──────────
+
+    private Instant roomLimitNoticeAt;
+    private String roomLimitNoticeRoom;
+    static final Duration ROOM_LIMIT_NOTICE_HOLDS = Duration.ofMinutes(60);
+
+    private static RoomKeeping.Settings roomKeepingSettings() {
+        var c = WyrdConfig.get();
+        return new RoomKeeping.Settings(c.madeRoomEmptyDays(), c.madeRoomHeldDays(), c.madeRoomsOpenMax());
+    }
+
+    /**
+     * Who a thing made in this turn is for: the person the turn answers, or {@code own} on her own
+     * time. A helper working inside a person's request counts as that request (it is safer for a
+     * room to be held than closed).
+     */
+    private String madeForNow(boolean forHelper) {
+        var asked = orNoOne(personThisReplyAnswers());
+        if (asked != null && asked != NO_ONE && isHumanTrigger(asked)) {
+            return PersonIds.canonical(asked.entityId());
+        }
+        if (forHelper) {
+            var req = pinnedTurnRequest();
+            if (req != null && isHumanTrigger(req)) return PersonIds.canonical(req.entityId());
+        }
+        return MadeThingsStore.OWN;
+    }
+
+    private void stampRoomMade(String newRoomId, String name, String zone, String madeFor, int furnishedWith) {
+        var store = MadeThingsStore.shared();
+        if (store == null) return;
+        store.stampRoomMade(newRoomId, name, zone, profile.name(), madeFor, furnishedWith);
+        log.info("Room '{}' made by '{}' {}", name, profile.name(),
+            MadeThingsStore.OWN.equals(madeFor) ? "on her own time" : "because a person asked");
+        practised("create_room");
+        roomMadeForProject(newRoomId, name);
+    }
+
+    /** A room of this name that was closed up is opened again, not made a second time. */
+    private boolean openClosedRoomInsteadOfMaking(String roomName) {
+        return openClosedRoomAndGo(roomName);
+    }
+
+    /** The room she is about to enter, opened first if it was closed up. Waited for, as below. */
+    private void openIfClosedUp(String targetRoomId) {
+        var closing = RoomClosing.get();
+        if (closing == null || targetRoomId == null || RoomRegistry.get().ref(targetRoomId) != null) return;
+        try {
+            var shut = closing.store().room(targetRoomId).filter(MadeThingsStore.RoomRecord::closed).orElse(null);
+            if (shut == null) return;
+            log.info("Companion '{}' is opening the closed-up room '{}' ({}) on her way in",
+                profile.name(), shut.name(), shut.roomId());
+            var res = closing.open(shut.roomId()).toCompletableFuture().get(8, TimeUnit.SECONDS);
+            if (res != null && res.ok()) {
+                remember("Opened " + shut.name() + " again; it had been closed up and everything in it was kept");
+            }
+        } catch (Exception e) {
+            log.warn("Closed-up room {} did not open for '{}': {}", targetRoomId, profile.name(), e.toString());
+        }
+    }
+
+    /**
+     * If a closed-up room goes by this name, open it and go there. True when one was found.
+     *
+     * <p>The opening is waited for here. It was first sent off and answered later: the turn's result
+     * was read before the room was up, and the companion on the build box told the person who asked
+     * "Test Nook isn't reachable from nexus" a moment before she was standing in it (2026-10-02). The
+     * work is the zone's and the neighbouring rooms', none of it hers, so waiting holds nothing up.
+     */
+    private boolean openClosedRoomAndGo(String nameOrId) {
+        var closing = RoomClosing.get();
+        if (closing == null) return false;
+        var shut = closing.findClosed(nameOrId).orElse(null);
+        if (shut == null) return false;
+        log.info("Companion '{}' is opening the closed-up room '{}' ({})", profile.name(), shut.name(), shut.roomId());
+        RoomClosing.Result res = null;
+        try {
+            res = closing.open(shut.roomId()).toCompletableFuture().get(8, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Closed-up room '{}' did not open for '{}': {}", shut.name(), profile.name(), e.toString());
+        }
+        if (res == null || !res.ok()) {
+            lastBuiltinOutcome = "Not done: " + shut.name() + " is closed up and could not be opened just now.";
+            remember(shut.name() + " is closed up; it would not open just now");
+            return true;
+        }
+        speakProduct(shut.name() + " had been closed up. I've opened it again.");
+        remember("Opened " + shut.name() + " again; it had been closed up and everything in it was kept");
+        lastBuiltinOutcome = shut.name() + " had been closed up. It is open again and you are in it now. Do not make it again.";
+        moveToRoomById(shut.roomId(), "walk");
+        return true;
+    }
+
+    /**
+     * A closed-up room asked for by what it was, not by its name. One clear match is opened and she
+     * goes to it; several are named back with what each was, for her or the person to say which.
+     * Cold storage is not searched this way: a room there is opened by its name. True when the
+     * archive answered.
+     */
+    private boolean openClosedRoomByWords(String asked) {
+        var closing = RoomClosing.get();
+        if (closing == null || asked == null || asked.isBlank()) return false;
+        try {
+            if (org.wyrdsekai.core.room.MadeArchive.words(asked).isEmpty()) return false;
+            // Every word she asked by has to be in the room's name or its note: one shared word
+            // ("quiet") must not open a room she did not mean, nor turn an honest miss into a list.
+            var found = org.wyrdsekai.core.room.MadeArchive.holdingEveryWord(closing.archive(asked, false), asked);
+            if (found.isEmpty()) return false;
+            if (found.size() == 1) {
+                // She asked by what it was and is now standing in a room with another name. Without
+                // this she told the person "the room 'dashboard crystal' is not reachable from here"
+                // from inside it (build box, 2026-10-02).
+                var one = found.getFirst();
+                if (!openClosedRoomAndGo(one.id())) return false;
+                if (lastBuiltinOutcome != null && !lastBuiltinOutcome.startsWith("Not done")) {
+                    lastBuiltinOutcome = "The room you asked for as '" + asked + "' is " + one.name() + ". " + lastBuiltinOutcome
+                        + " You have arrived: there is nowhere further to go for this.";
+                }
+                return true;
+            }
+            long now = System.currentTimeMillis();
+            var shown = new ArrayList<String>();
+            for (var f : found.subList(0, Math.min(5, found.size()))) {
+                shown.add(org.wyrdsekai.core.room.MadeArchive.line(f, now));
+            }
+            lastBuiltinOutcome = "Not done yet: " + found.size() + " closed-up rooms fit '" + asked + "': "
+                + String.join("; ", shown) + ". Go to the one that is meant by its name and it opens again.";
+            remember("(closed-up rooms that fit '" + asked + "': " + String.join("; ", shown) + ")");
+            log.info("Companion '{}' asked for a closed-up room by '{}': {} fit, none clearly", profile.name(), asked, found.size());
+            // She did not get where she was reaching for. The miss counts toward the want ending as any
+            // other dead end does; the first night this list stood in for the miss, and "quiet-room"
+            // was asked for 22 closed rooms over and over with nothing counted (household node, 2026-10-03).
+            noteReachMiss("go_to_room", WantMisses.key(asked), "no one room is '" + asked + "': " + found.size() + " closed-up rooms fit");
+            return true;
+        } catch (RuntimeException e) {
+            log.debug("closed-up room by words: {}", e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * She keeps a set number of her own rooms open. Making one more on her own time is held back
+     * with which of her rooms are quietest and how to close one up; the choice is hers, and the
+     * house closes nothing of hers that she did not choose. A room a person asked for is never
+     * held back and never counted.
+     *
+     * <p>The first build closed the quietest room itself when she made a room again within the
+     * hour without choosing. The first night it ran, rose was asked, answered "no need to close
+     * what's still breathing", made her room again, and the house closed a four-day-old room she
+     * had not picked (household node, 2026-10-03). A limit she can meet is a limit; a choice the
+     * house makes for her is a veto. The weekly pass still closes what goes quiet.
+     */
+    private boolean heldBackByHerOpenRooms(String newRoomName, String madeFor) {
+        var closing = RoomClosing.get();
+        if (closing == null || !MadeThingsStore.OWN.equals(madeFor)) return false;
+        try {
+            var settings = roomKeepingSettings();
+            var own = RoomKeeping.openOwn(closing.store().rooms(), profile.name(), closing.protectedRooms());
+            if (!RoomKeeping.atLimit(own, settings)) return false;
+            long now = System.currentTimeMillis();
+            var quietest = RoomKeeping.quietest(own, Set.of(roomId), now, 3);
+            if (quietest.isEmpty()) return false;
+            boolean toldAlready = roomLimitNoticeAt != null
+                && Duration.between(roomLimitNoticeAt, Instant.now()).compareTo(ROOM_LIMIT_NOTICE_HOLDS) < 0;
+            roomLimitNoticeAt = Instant.now();
+            roomLimitNoticeRoom = quietest.getFirst().roomId();
+            var shown = new ArrayList<String>();
+            for (var r : quietest) {
+                boolean holds = false;
+                try {
+                    holds = closing.holdsSomething(r).toCompletableFuture().get(2, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    log.debug("room limit notice: could not look into {}: {}", r.roomId(), e.toString());
+                }
+                shown.add(r.name() + " (" + RoomKeeping.days(RoomKeeping.quietFor(r, now))
+                    + (holds ? ", holds something you put there" : "") + ")");
+            }
+            var line = toldAlready
+                ? "Still not made: you keep " + own.size() + " rooms of your own open, as many as the house holds for you,"
+                    + " and none was closed up. The choice stays yours: close_room on one of them first, or let "
+                    + newRoomName + " wait. Quietest: " + String.join("; ", shown) + "."
+                : "You keep " + own.size() + " rooms of your own open, as many as the house holds for you."
+                    + " To make " + newRoomName + ", close one up first with close_room. The ones nobody has entered"
+                    + " for longest: " + String.join("; ", shown) + ". A closed-up room is kept as it was and opens"
+                    + " again when you go to it. Nothing of yours is closed unless you choose it.";
+            lastBuiltinOutcome = "Not made. " + line;
+            remember(line);
+            log.info("Room '{}' held back for '{}': {} own rooms open (limit {}); she is shown {}{}",
+                newRoomName, profile.name(), own.size(), settings.openMax(), shown, toldAlready ? " (again)" : "");
+            return true;
+        } catch (RuntimeException e) {
+            log.debug("room limit check: {}", e.toString());
+            return false;
+        }
+    }
+
+    // ── Projects: long work with a room, a notebook and a next step ────────────────────────────
+    // Built on the Hearth's project board (PersonalProjectStore), which existed and in two months
+    // held no project: nothing began one, the verbs wanted an id she was never shown, and nothing
+    // brought a project back to her. These are the joins (see Projects).
+
+    /** The project this turn is for, when the want she chose is long work. Cleared when the turn's window passes. */
+    private String currentProjectId;
+    private Instant currentProjectAt;
+    private static final Duration PROJECT_TURN_WINDOW = Duration.ofMinutes(10);
+
+    private String herDid() { return profile.did() != null ? profile.did() : profile.entityId(); }
+
+    /**
+     * The project a want belongs to: one of hers that is about the same work, woken if it was
+     * paused; or a new one, when the want is long work that has come back to her.
+     */
+    private PersonalProject projectFor(Want want) {
+        if (want == null || want.text() == null) return null;
+        try {
+            var store = getPersonalProjectStore();
+            var p = org.wyrdsekai.core.project.Projects.forWant(store.list(), want.text());
+            if (p != null) {
+                if (!p.active()) {
+                    p = store.setStatus(p.id(), "active").orElse(p);
+                    log.info("Project '{}' of '{}' taken up again", p.title(), profile.name());
+                }
+                return p;
+            }
+            if (!org.wyrdsekai.core.project.Projects.isLongKind(want.text()) || !hasComeBack(want)) return null;
+            return beginProject(org.wyrdsekai.core.project.Projects.nameFor(want.text()), want.text(), "it came back to her");
+        } catch (RuntimeException e) {
+            log.debug("project for want: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** Whether the same work has come to her as a want before: visited again and again, or let go and named again. */
+    private boolean hasComeBack(Want want) {
+        if (want.visitCount() >= org.wyrdsekai.core.project.Projects.COMES_BACK) return true;
+        if (wantStore == null) return false;
+        int before = 0;
+        var since = Instant.now().minus(Duration.ofDays(7));
+        for (var status : List.of(Want.Status.ABANDONED, Want.Status.SATISFIED)) {
+            for (var w : wantStore.closedSince(herDid(), status, since)) {
+                if (w.wantId().equals(want.wantId())) continue;
+                if (org.wyrdsekai.core.project.Projects.shared(w.text(), want.text()) >= 2) before++;
+            }
+        }
+        return before >= org.wyrdsekai.core.project.Projects.COMES_BACK - 1;
+    }
+
+    /** A new project of hers, with a room when one of her own already fits it. She is told once. */
+    private PersonalProject beginProject(String name, String bornOf, String how) {
+        var store = getPersonalProjectStore();
+        var room = roomOfHersAbout(name + " " + bornOf);
+        var p = store.create(name, bornOf, List.of());
+        if (room != null) p = store.setRoom(p.id(), room.roomId()).orElse(p);
+        var told = "This is a project of yours now: " + name + ". What you do for it is kept in its notebook, and it comes back to you"
+            + " with your own next step." + (room == null ? "" : " Its room is " + room.name() + ".")
+            + " project_note writes in the notebook.";
+        HouseFacts.noteForNextTurn(profile.entityId(), told);
+        remember(told);
+        log.info("Project '{}' begun for '{}' ({}){}", name, profile.name(), how, room == null ? "" : " — its room: " + room.roomId());
+        refreshWorkLine();
+        return p;
+    }
+
+    /** One of her own open rooms that shares a subject word with the work; where she stands comes first. */
+    private MadeThingsStore.RoomRecord roomOfHersAbout(String text) {
+        var closing = RoomClosing.get();
+        if (closing == null) return null;
+        try {
+            MadeThingsStore.RoomRecord best = null;
+            for (var r : RoomKeeping.openOwn(closing.store().rooms(), profile.name(), closing.protectedRooms())) {
+                if (org.wyrdsekai.core.project.Projects.shared(r.name() + " " + r.roomId().replace('-', ' '), text) < 1) continue;
+                if (r.roomId().equals(roomId)) return r;
+                if (best == null || r.createdAtMs() > best.createdAtMs()) best = r;
+            }
+            return best;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private String roomNameForProject(PersonalProject p) {
+        if (p == null || p.roomId() == null) return null;
+        var closing = RoomClosing.get();
+        if (closing == null) return p.roomId();
+        return closing.store().room(p.roomId()).map(MadeThingsStore.RoomRecord::name).orElse(p.roomId());
+    }
+
+    /** A room she makes while a turn is for a project that has no room is that project's room. */
+    private void roomMadeForProject(String newRoomId, String name) {
+        var p = projectOfThisTurn();
+        if (p == null) return;
+        var store = getPersonalProjectStore();
+        if (p.roomId() == null) {
+            store.setRoom(p.id(), newRoomId);
+            log.info("Room '{}' is the room of project '{}' of '{}'", name, p.title(), profile.name());
+        }
+        store.addEntry(p.id(), "made the room " + name);
+        refreshWorkLine();
+    }
+
+    private PersonalProject projectOfThisTurn() {
+        if (currentProjectId == null || currentProjectAt == null
+                || Duration.between(currentProjectAt, Instant.now()).compareTo(PROJECT_TURN_WINDOW) > 0) {
+            currentProjectId = null;
+            currentProjectAt = null;
+            return null;
+        }
+        return getPersonalProjectStore().get(currentProjectId).orElse(null);
+    }
+
+    /** What she did on a turn that was for a project goes in its notebook: the act and what came of it. */
+    private void noteForProject(String verb, String outcome) {
+        if (verb == null || "project_note".equals(verb)) return;
+        try {
+            var p = projectOfThisTurn();
+            if (p == null) return;
+            getPersonalProjectStore().addEntry(p.id(), verb.replace('_', ' ') + ": " + outcome);
+            refreshWorkLine();
+        } catch (RuntimeException e) {
+            log.debug("note for project: {}", e.toString());
+        }
+    }
+
+    /** Open (or begin) a project by its name: her own {@code set_goal}, or {@code project_note} naming one she has not got. */
+    private PersonalProject openProjectNamed(String name, String how) {
+        if (name == null || name.isBlank()) return null;
+        try {
+            var store = getPersonalProjectStore();
+            var existing = org.wyrdsekai.core.project.Projects.named(store.list(), name);
+            if (existing != null && !existing.finished()) {
+                return existing.active() ? existing : store.setStatus(existing.id(), "active").orElse(existing);
+            }
+            return beginProject(org.wyrdsekai.core.project.Projects.nameFor(name), name, how);
+        } catch (RuntimeException e) {
+            log.debug("open project named: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** The open wants that are about a project she has just finished are satisfied. */
+    private void finishWantsAbout(PersonalProject p) {
+        if (wantStore == null || p == null) return;
+        try {
+            for (var w : wantStore.loadLive(herDid())) {
+                if (!org.wyrdsekai.core.project.Projects.about(p, w.text())) continue;
+                wantStore.upsert(w.satisfied("finished the project " + p.title()));
+                log.info("Want SATISFIED for '{}': \"{}\" — the project is done", profile.name(), w.text());
+                onWantClosed(w, WantClosure.resonantDrive(w).orElse(null), true);
+            }
+        } catch (RuntimeException e) {
+            log.debug("finish wants about project: {}", e.toString());
+        }
+    }
+
+    /** Her own time is offered her open project again, with her own next step, once a sitting's gap has passed. */
+    private Optional<CandidateWant> projectCandidate(List<CandidateWant> existing) {
+        try {
+            long now = System.currentTimeMillis();
+            int gap = WyrdConfig.get().projectSittingMinutes();
+            for (var p : getPersonalProjectStore().active()) {
+                if (org.wyrdsekai.core.project.Projects.isDraftBin(p)) continue;
+                if (!org.wyrdsekai.core.project.Projects.offerNow(p, now, gap)) continue;
+                boolean already = existing.stream().anyMatch(c -> org.wyrdsekai.core.project.Projects.about(p, c.text()));
+                if (already) return Optional.empty();
+                // Her own words (the name she gave the work, the next step she left): named by her.
+                return Optional.of(CandidateWant.of(org.wyrdsekai.core.project.Projects.continueText(p),
+                    "{\"drive\":\"" + DriveOODA.NAMED_BY_HER + "\"}", 0.55));
+            }
+        } catch (RuntimeException e) {
+            log.debug("project candidate: {}", e.toString());
+        }
+        return Optional.empty();
+    }
+
+    /** The standing line in her facts: her work in progress and where it stands. */
+    private void refreshWorkLine() {
+        try {
+            HouseFacts.setStanding(profile.entityId(), "work",
+                org.wyrdsekai.core.project.Projects.standing(getPersonalProjectStore().list()));
+        } catch (RuntimeException e) {
+            log.debug("work line: {}", e.toString());
+        }
+    }
+
+    /** After her sleep: a project nobody has worked on past the setting is paused. Kept; found again when she names it. */
+    private void restHerQuietProjects() {
+        try {
+            var store = getPersonalProjectStore();
+            long now = System.currentTimeMillis();
+            int days = WyrdConfig.get().projectRestDays();
+            var rested = new ArrayList<String>();
+            for (var p : store.active()) {
+                if (!org.wyrdsekai.core.project.Projects.dueToRest(p, days, now)) continue;
+                store.setStatus(p.id(), "paused");
+                rested.add(p.title());
+            }
+            if (rested.isEmpty()) return;
+            var told = "Resting, because you had not worked on " + (rested.size() == 1 ? "it" : "them") + " for " + days + " days: "
+                + String.join("; ", rested) + ". The notebook is kept. Name the work again and it is yours to go on with.";
+            HouseFacts.noteForNextTurn(profile.entityId(), told);
+            log.info("Project(s) of '{}' resting after {} quiet days: {}", profile.name(), days, rested);
+            refreshWorkLine();
+        } catch (RuntimeException e) {
+            log.debug("rest projects: {}", e.toString());
+        }
+    }
+
+    // ── Reading a book through ─────────────────────────────────────────────────────────────────
+
+    /** The names of the books and documents she has read from lately: a name met in one is its author or its subject. */
+    private final ArrayDeque<String> titlesRead = new ArrayDeque<>();
+    private static final int TITLES_READ_MEMORY = 60;
+
+    private void noteTitleRead(String title) {
+        if (title == null || title.isBlank()) return;
+        var t = org.wyrdsekai.core.library.ReadingLedger.titleOf(title.replaceAll("\\s*\\(part \\d+/\\d+\\)\\s*$", ""));
+        if (titlesRead.contains(t)) return;
+        titlesRead.addLast(t);
+        while (titlesRead.size() > TITLES_READ_MEMORY) titlesRead.removeFirst();
+    }
+
+    /** The books she has read from: what she is reading, and the titles that passed through her searches. */
+    java.util.Set<String> booksKnown() {
+        var out = new java.util.LinkedHashSet<String>(titlesRead);
+        var ledger = org.wyrdsekai.core.library.ReadingLedger.shared();
+        if (ledger != null) {
+            try {
+                var did = profile.did() != null ? profile.did() : profile.entityId();
+                for (var b : ledger.all(did)) out.add(b.title());
+            } catch (RuntimeException e) {
+                log.debug("books known: {}", e.toString());
+            }
+        }
+        return out;
+    }
+
+    /** The books on the shelves she may read whose names hold every word: the household's packs, and her person's Study where a grant lets her. */
+    private List<WyrdLuceneStore.BookRef> booksSheMayRead(List<String> words, int limit) {
+        var out = new ArrayList<WyrdLuceneStore.BookRef>();
+        if (luceneStore == null || words == null || words.isEmpty()) return out;
+        try {
+            out.addAll(luceneStore.booksMatching(SearchCollections.KNOWLEDGE, words, limit));
+            var owner = primaryBondholderDid();
+            if (owner != null) {
+                var consent = HomeClients.get();
+                if (consent == null) {
+                    log.info("read_book: no HomeClient, so the Study's books cannot be checked against a grant for '{}'", profile.name());
+                } else {
+                    var svc = new StudyService(luceneStore, consent);
+                    for (var ref : luceneStore.booksMatching(SearchCollections.STUDY, words, limit * 4)) {
+                        if (out.size() >= limit * 2) break;
+                        if (!owner.equals(ref.ownerDid())) continue;
+                        if (ref.studyCollection() == null || !svc.hasAccess(owner, profile.entityId(), ref.studyCollection())) continue;
+                        out.add(ref);
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("read_book: the shelves could not be listed for '{}': {}", profile.name(), e.toString());
+        }
+        return out;
+    }
+
+    /** Whether she may still read this book: a pack always; a Study book while the grant stands. */
+    private boolean mayStillRead(org.wyrdsekai.core.library.ReadingLedger.Bookmark b) {
+        if (!SearchCollections.STUDY.equals(b.collection())) return true;
+        var owner = primaryBondholderDid();
+        var consent = HomeClients.get();
+        if (owner == null || consent == null || b.studyCollection() == null) return false;
+        try {
+            return owner.equals(b.ownerDid()) && new StudyService(luceneStore, consent).hasAccess(owner, profile.entityId(), b.studyCollection());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * She reads the next part of a book, from where she left it. {@code book}: a name or a few
+     * words of one, to open or come back to; nothing: the book she has open; {@code part}: a
+     * particular part. The last part finishes the book, closes the wants that named it, and
+     * offers what is next on her shelf.
+     *
+     * <p>The library was a search engine and nothing else: every read returned the passage most
+     * like her words, never the next page. "Finish reading" could neither land nor miss, and one
+     * companion visited that want 28 times in a day (household node, 2026-10-03).
+     */
+    private void handleReadBook(JsonNode node) {
+        var asked = node.hasNonNull("book") ? node.get("book").asText()
+            : node.hasNonNull("title") ? node.get("title").asText()
+            : node.hasNonNull("name") ? node.get("name").asText() : null;
+        Integer part = null;
+        if (node.hasNonNull("part")) {
+            try { part = Integer.parseInt(node.get("part").asText().replaceAll("[^0-9]", "")); } catch (NumberFormatException e) { part = null; }
+        }
+        var ledger = org.wyrdsekai.core.library.ReadingLedger.shared();
+        if (ledger == null || luceneStore == null) {
+            lastBuiltinOutcome = "Not done: the shelves cannot be read on this node.";
+            return;
+        }
+        var did = profile.did() != null ? profile.did() : profile.entityId();
+        var hers = ledger.all(did);
+        org.wyrdsekai.core.library.ReadingLedger.Bookmark book = null;
+        if (asked != null && !asked.isBlank() && !asked.equalsIgnoreCase("next") && !asked.equalsIgnoreCase("current")) {
+            var words = org.wyrdsekai.core.library.Reading.words(asked);
+            var mine = org.wyrdsekai.core.library.Reading.hersMatching(hers, words);
+            if (mine.size() == 1) {
+                book = mine.getFirst();
+            } else if (mine.size() > 1) {
+                lastBuiltinOutcome = "Not done yet: several of your books fit '" + asked + "':"
+                    + org.wyrdsekai.core.library.Reading.shelf(mine) + "\nSay which, by its name.";
+                return;
+            } else {
+                var found = words.isEmpty() ? List.<WyrdLuceneStore.BookRef>of() : booksSheMayRead(words, 8);
+                if (found.isEmpty()) {
+                    lastBuiltinOutcome = "Not done: no book called '" + asked + "' is on a shelf you can reach. library_card"
+                        + " finds books by what a passage says; a person can put a book in their Study and grant it to you.";
+                    noteReachMiss("read_book", WantMisses.key(asked), "no book called " + asked + " on a shelf you can reach");
+                    return;
+                }
+                WyrdLuceneStore.BookRef one = null;
+                for (var f : found) if (org.wyrdsekai.core.library.ReadingLedger.titleOf(f.group()).equalsIgnoreCase(asked.strip())) one = f;
+                if (one == null && found.size() == 1) one = found.getFirst();
+                if (one == null) {
+                    var sb = new StringBuilder("Not done yet: several books fit '" + asked + "':");
+                    for (var f : found.subList(0, Math.min(8, found.size()))) {
+                        sb.append("\n  ").append(org.wyrdsekai.core.library.ReadingLedger.titleOf(f.group())).append(" — ").append(f.parts()).append(" parts");
+                    }
+                    lastBuiltinOutcome = sb.append("\nOpen one with read_book and its name.").toString();
+                    return;
+                }
+                book = ledger.open(did, one.group(), one.collection(), one.ownerDid(), one.studyCollection(), one.parts());
+                log.info("Companion '{}' opened the book '{}' ({} parts, {})", profile.name(), book.title(), book.total(), one.collection());
+            }
+        } else {
+            book = ledger.current(did).orElse(null);
+            if (book == null) {
+                lastBuiltinOutcome = hers.isEmpty()
+                    ? "You have no book open. Open one with read_book and \"book\": its name, or a few words of it."
+                        + " library_card finds books by what they say."
+                    : "You have no book open. Your shelf:" + org.wyrdsekai.core.library.Reading.shelf(hers)
+                        + "\nOpen one with read_book and \"book\": its name; a finished one reads again from \"part\": 1.";
+                return;
+            }
+        }
+        if (!mayStillRead(book)) {
+            lastBuiltinOutcome = "Not done: " + book.title() + " is in " + nameOfBondholderOrPerson() + "'s Study and the grant that let you read it does not stand now. You can ask them.";
+            return;
+        }
+        if (book.finished() && part == null) {
+            lastBuiltinOutcome = "You have finished " + book.title() + ". read_book with \"part\": 1 reads it again. Next on your shelf:"
+                + org.wyrdsekai.core.library.Reading.nextOffers(hers, booksSheMayRead(wordsOfHerSubjects(), 6));
+            return;
+        }
+        int n = part != null && part >= 1 ? Math.min(part, Math.max(1, book.total())) : book.next();
+        var sr = luceneStore.partOf(book.collection(), book.book(), n);
+        if (sr == null || sr.content() == null || sr.content().isBlank()) {
+            lastBuiltinOutcome = "Not done: part " + n + " of " + book.title() + " is not on the shelf (the book has " + book.total() + " parts).";
+            log.warn("read_book: part {} of '{}' missing on {} for '{}'", n, book.book(), book.collection(), profile.name());
+            return;
+        }
+        var after = ledger.read(did, book.book(), n);
+        if (after == null) after = book;
+        var text = sr.content();
+        boolean cut = text.length() > org.wyrdsekai.core.library.Reading.PART_CHARS;
+        lastBuiltinOutcome = org.wyrdsekai.core.library.Reading.page(after, cut ? text.substring(0, org.wyrdsekai.core.library.Reading.PART_CHARS) : text, cut);
+        noteTitleRead(after.title());
+        noteAct("read_book", "read part " + n + " of " + after.total() + " of " + after.title());
+        noteInteriorityEnactment("read_book");
+        log.info("Companion '{}' read part {} of {} of '{}'{}", profile.name(), n, after.total(), after.title(), after.finished() ? " — finished" : "");
+        if (after.finished()) {
+            remember("Finished reading " + after.title() + ", all " + after.total() + " parts");
+            finishWantsNaming(after.title());
+            lastBuiltinOutcome += "\nNext on your shelf:" + org.wyrdsekai.core.library.Reading.nextOffers(ledger.all(did), booksSheMayRead(wordsOfHerSubjects(), 6));
+        }
+        refreshReadingLine();
+    }
+
+    /** Her person's name, for a line about their Study. */
+    private String nameOfBondholderOrPerson() {
+        var did = primaryBondholderDid();
+        var name = did == null ? null : nameOfParty(did);
+        return name == null ? "your person" : name;
+    }
+
+    /** The words of what she has lately set out to learn, for the shelf's offers. */
+    private List<String> wordsOfHerSubjects() {
+        var out = new ArrayList<String>();
+        if (wantStore != null) {
+            try {
+                var did = profile.did() != null ? profile.did() : profile.entityId();
+                for (var w : wantStore.loadLive(did)) {
+                    for (var word : org.wyrdsekai.core.library.Reading.words(w.text())) if (!out.contains(word) && out.size() < 4) out.add(word);
+                }
+            } catch (RuntimeException e) {
+                log.debug("subjects for the shelf: {}", e.toString());
+            }
+        }
+        return out;
+    }
+
+    /** The open wants that name a book she has just finished are satisfied: finishing it is what they asked. */
+    private void finishWantsNaming(String title) {
+        if (wantStore == null || title == null) return;
+        try {
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            var titleWords = org.wyrdsekai.core.library.Reading.words(title);
+            if (titleWords.isEmpty()) return;
+            for (var w : wantStore.loadLive(did)) {
+                var low = w.text().toLowerCase(Locale.ROOT);
+                if (!(low.contains("read") || low.contains("finish"))) continue;
+                int hit = 0;
+                for (var tw : titleWords) if (low.contains(tw)) hit++;
+                if (hit == 0) continue;
+                wantStore.upsert(w.satisfied("finished reading " + title));
+                log.info("Want SATISFIED for '{}': \"{}\" — finished reading {}", profile.name(), w.text(), title);
+                onWantClosed(w, WantClosure.resonantDrive(w).orElse(null), true);
+            }
+        } catch (RuntimeException e) {
+            log.debug("finish wants naming {}: {}", title, e.toString());
+        }
+    }
+
+    /** The standing line in her facts: the book she has open and where she is in it. */
+    private void refreshReadingLine() {
+        var ledger = org.wyrdsekai.core.library.ReadingLedger.shared();
+        if (ledger == null) return;
+        try {
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            var open = ledger.current(did).orElse(null);
+            HouseFacts.setStanding(profile.entityId(), "reading", open == null ? null
+                : "You are reading " + open.title() + ": at part " + open.part() + " of " + open.total()
+                    + ". read_book reads the next part; it is how a book is read through.");
+        } catch (RuntimeException e) {
+            log.debug("reading line: {}", e.toString());
+        }
+    }
+
+    // ── Items she makes: put away when unused, taken out when named ───────────────────────────
+
+    private String itemKey(String itemId) {
+        return profile.entityId() + "/" + itemId;
+    }
+
+    /** Whether any item of hers is put away: the take-out lookup is skipped when none is. */
+    private boolean herItemsPutAway;
+
+    /**
+     * After her sleep: the items she made on her own and has not used past the setting are put away,
+     * and of those still out only the configured number stay. Each is kept (its row and its script);
+     * it leaves her menu, which is every prompt she is given. She is told once.
+     */
+    private void putAwayHerUnusedItems() {
+        var store = MadeThingsStore.shared();
+        if (store == null) return;
+        try {
+            var cfg = WyrdConfig.get();
+            long now = System.currentTimeMillis();
+            takeOutWhatTheStewardBroughtBack(store);
+            for (var m : store.items()) {
+                if (m.putAway() && m.itemId().startsWith(profile.entityId() + "/")
+                        && org.wyrdsekai.core.room.MadeArchive.dueForCold(m.putAwayAt(), m.coldAt(), cfg.madeColdDays(), now)) {
+                    store.itemCold(m.itemId(), now);
+                    org.wyrdsekai.core.room.ArchiveCommands.refreshKept(profile.entityId(), profile.name());
+                    log.info("Item '{}' of '{}' went to cold storage: put away more than {} days; it is kept",
+                        m.shownName(), profile.name(), cfg.madeColdDays());
+                }
+            }
+            if (dynamicItems == null || dynamicItems.isEmpty()) return;
+            var away = org.wyrdsekai.core.item.ItemKeeping.toPutAway(store.items(), profile.entityId(),
+                cfg.madeItemUnusedDays(), cfg.madeItemsOutMax(), cfg.madeFirstLookDays(), now);
+            if (away.isEmpty()) return;
+            var names = new ArrayList<String>();
+            for (var rec : away) {
+                var id = rec.itemId().substring(rec.itemId().indexOf('/') + 1);
+                var tool = dynamicItems.stream().filter(t -> id.equals(t.id())).findFirst().orElse(null);
+                if (tool == null) continue;
+                dynamicItems.remove(tool);
+                store.itemPutAway(rec.itemId(), now);
+                names.add(tool.name());
+            }
+            if (names.isEmpty()) return;
+            herItemsPutAway = true;
+            org.wyrdsekai.core.room.ArchiveCommands.refreshKept(profile.entityId(), profile.name());
+            var told = org.wyrdsekai.core.item.ItemKeeping.toldLine(names);
+            HouseFacts.noteForNextTurn(profile.entityId(), told);
+            var map = org.wyrdsekai.core.body.BodyMap.get();
+            if (map != null) map.mark("item", profile.entityId(), profile.entityId(), told, "put_away");
+            log.info("Put away {} unused item(s) of '{}': {}", names.size(), profile.name(), names);
+        } catch (RuntimeException e) {
+            log.debug("item keeping pass: {}", e.toString());
+        }
+    }
+
+    /**
+     * An item the steward took out again (`wyrd items out`) is marked out in the house's list; it is
+     * put back on her menu here, after her sleep, and she is told.
+     */
+    private void takeOutWhatTheStewardBroughtBack(MadeThingsStore store) {
+        if (!herItemsPutAway) return;
+        var prefix = profile.entityId() + "/";
+        var away = new java.util.HashSet<String>();
+        for (var m : store.items()) if (m.putAway() && m.itemId().startsWith(prefix)) away.add(m.itemId());
+        String jdbcUrl = System.getProperty("wyrdsekai.jdbc.url");
+        if (jdbcUrl == null) jdbcUrl = WyrdConfig.get().jdbcUrl();
+        if (jdbcUrl == null) return;
+        var back = new ArrayList<String>();
+        for (var inv : new InventoryService(jdbcUrl).listItems(profile.entityId())) {
+            if (!inv.isScripted() || !"crafted".equals(inv.takenFrom()) || away.contains(prefix + inv.objectId())) continue;
+            if (dynamicItems != null && dynamicItems.stream().anyMatch(t -> t.id().equals(inv.objectId()))) continue;
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            if (dynamicItems == null) dynamicItems = new ArrayList<>();
+            dynamicItems.add(ToolItem.scripted(inv.objectId(), inv.objectName(), inv.description(),
+                inv.scriptSource(), List.of(), did));
+            back.add(inv.objectName());
+        }
+        if (!back.isEmpty()) {
+            HouseFacts.noteForNextTurn(profile.entityId(), "Taken out again for you: " + String.join(", ", back) + ".");
+            log.info("Item(s) of '{}' brought back and on her menu again: {}", profile.name(), back);
+        }
+    }
+
+    /** An item of hers that was put away, named by id or by name: back on her menu, and returned. */
+    private ToolItem takeOutPutAwayItem(String normalized) {
+        var store = MadeThingsStore.shared();
+        if (store == null || !herItemsPutAway || normalized == null || normalized.isBlank()) return null;
+        try {
+            var prefix = profile.entityId() + "/";
+            var away = new java.util.HashSet<String>();
+            for (var m : store.items()) if (m.putAway() && m.itemId().startsWith(prefix)) away.add(m.itemId());
+            if (away.isEmpty()) return null;
+            String jdbcUrl = System.getProperty("wyrdsekai.jdbc.url");
+            if (jdbcUrl == null) jdbcUrl = WyrdConfig.get().jdbcUrl();
+            if (jdbcUrl == null) return null;
+            // By its id or name, however the name is spelled ("moss_lantern" is "Moss Lantern"); failing
+            // that, the one put-away item whose name holds every word asked for (two words at least: a
+            // tool name she made up must not wake an item that merely shares a word with it). Cold
+            // storage is not looked through this way: an item there is taken out by its name.
+            var askedSlug = normalized.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
+            var askedWords = org.wyrdsekai.core.room.MadeArchive.words(normalized.replace('_', ' ').replace('-', ' '));
+            var cold = new java.util.HashSet<String>();
+            for (var m : store.items()) if (m.cold()) cold.add(m.itemId());
+            var all = new InventoryService(jdbcUrl).listItems(profile.entityId());
+            java.util.function.Predicate<InventoryService.InventoryItem> isNamed = inv ->
+                inv.objectId().toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "").equals(askedSlug)
+                    || (inv.objectName() != null
+                        && inv.objectName().toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "").equals(askedSlug));
+            boolean exact = !askedSlug.isEmpty() && all.stream()
+                .anyMatch(inv -> inv.isScripted() && away.contains(prefix + inv.objectId()) && isNamed.test(inv));
+            String byWords = null;
+            if (!exact && askedWords.size() >= 2) {
+                var fits = all.stream()
+                    .filter(inv -> inv.isScripted() && away.contains(prefix + inv.objectId()) && !cold.contains(prefix + inv.objectId()))
+                    .filter(inv -> inv.objectName() != null && askedWords.stream()
+                        .allMatch(w -> inv.objectName().toLowerCase(Locale.ROOT).contains(w)))
+                    .toList();
+                if (fits.size() == 1) byWords = prefix + fits.getFirst().objectId();
+            }
+            for (var inv : all) {
+                if (!inv.isScripted() || !away.contains(prefix + inv.objectId())) continue;
+                boolean named = !askedSlug.isEmpty() && isNamed.test(inv);
+                if (!(named || (!exact && (prefix + inv.objectId()).equals(byWords)))) continue;
+                var did = profile.did() != null ? profile.did() : profile.entityId();
+                var tool = ToolItem.scripted(inv.objectId(), inv.objectName(), inv.description(),
+                    inv.scriptSource(), List.of(), did);
+                if (dynamicItems == null) dynamicItems = new ArrayList<>();
+                dynamicItems.add(tool);
+                store.itemTakenOut(prefix + inv.objectId(), System.currentTimeMillis());
+                org.wyrdsekai.core.room.ArchiveCommands.refreshKept(profile.entityId(), profile.name());
+                remember("Took " + inv.objectName() + " out again; it had been put away");
+                log.info("Item '{}' of '{}' taken out again (it had been put away)", inv.objectName(), profile.name());
+                return tool;
+            }
+        } catch (RuntimeException e) {
+            log.debug("take out item: {}", e.toString());
+        }
+        return null;
+    }
+
+    /**
+     * She closes up a room of her own (the close_room tool). Hers alone: a room a person asked for,
+     * or has been in, is that person's to let go, and she is told so. Waited for, so what she says
+     * next is true.
+     */
+    private void handleCloseRoom(JsonNode node) {
+        var asked = node.hasNonNull("room") ? node.get("room").asText()
+            : node.hasNonNull("name") ? node.get("name").asText()
+            : node.hasNonNull("target") ? node.get("target").asText() : null;
+        var closing = RoomClosing.get();
+        if (asked == null || asked.isBlank()) {
+            lastBuiltinOutcome = "Not done: close_room needs the name of the room.";
+            return;
+        }
+        if (closing == null) {
+            lastBuiltinOutcome = "Not done: rooms cannot be closed up on this node.";
+            return;
+        }
+        var rec = closing.findOpen(asked).orElse(null);
+        if (rec == null) {
+            lastBuiltinOutcome = closing.findClosed(asked).isPresent()
+                ? asked + " is already closed up. It is kept, and opens again when you go to it."
+                : "Not done: there is no open room of yours called " + asked + ".";
+            return;
+        }
+        var held = RoomKeeping.heldBecause(rec, closing.protectedRooms(), Set.of(profile.name()));
+        if (held != null) {
+            lastBuiltinOutcome = "Not done: " + rec.name() + " is not yours to close up (" + held + ")."
+                + (rec.askedFor() || rec.aPersonHasBeenIn() ? " You can ask them whether they still want it." : "");
+            remember(rec.name() + " is not mine to close up: " + held);
+            return;
+        }
+        if (rec.roomId().equals(roomId)) {
+            lastBuiltinOutcome = "Not done: you are standing in " + rec.name() + ". Leave it first, then close it up.";
+            return;
+        }
+        RoomClosing.Result res = null;
+        try {
+            res = closing.closeUp(rec.roomId(), "by " + profile.name() + " herself").toCompletableFuture().get(8, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("close_room for '{}' did not finish: {}", profile.name(), e.toString());
+        }
+        if (res == null || !res.ok()) {
+            lastBuiltinOutcome = "Not done: " + rec.name() + " could not be closed up"
+                + (res != null && res.message() != null ? " (" + res.message() + ")" : "") + ".";
+            return;
+        }
+        roomLimitNoticeAt = null;
+        roomLimitNoticeRoom = null;
+        speakProduct("I've closed up " + rec.name() + ". It is kept as it was.");
+        practised("close_room");
+        remember("Closed up " + rec.name() + " myself; it is kept and opens again when I go to it");
+        lastBuiltinOutcome = rec.name() + " is closed up and kept as it was. It opens again when you go to it by name.";
+        log.info("Companion '{}' closed up her own room '{}' ({})", profile.name(), rec.name(), rec.roomId());
+    }
+
+    /** After her sleep: her own rooms nobody has entered past the setting are closed up, and she is told. */
+    private void closeUpHerQuietRooms() {
+        var closing = RoomClosing.get();
+        if (closing == null) return;
+        try {
+            final var entityId = profile.entityId();
+            closing.coldPass(WyrdConfig.get().madeColdDays());
+            closing.pass(profile.name(), roomKeepingSettings()).whenComplete((closed, err) -> {
+                if (err != null || closed == null || closed.isEmpty()) return;
+                RoomClosing.tell(entityId, closed);
+            });
+        } catch (RuntimeException e) {
+            log.debug("room keeping pass: {}", e.toString());
+        }
+    }
+
+    /** Told once: in her next turn, and as a mark that waits for her if she is away. Safe off the actor thread. */
+    private void tellRoomClosedUp(RoomClosing.Result res) {
+        RoomClosing.tell(profile.entityId(), List.of(res));
+    }
+
+    /** What pulled an own-time act, with the want it serves: kept until the act lands or misses. */
+    record OwnTimeReach(String wantId, String wantText, String pullDrive, Instant at, boolean landed) {
+        OwnTimeReach asLanded() { return new OwnTimeReach(wantId, wantText, pullDrive, at, true); }
+    }
+    private OwnTimeReach ownTimeReach;
+    /** Her own scripted tool calls in flight: tool id → what the call reached for (its query or target). */
+    private final Map<String, String> ownToolReachedFor = new HashMap<>();
+    /** Acts that reach toward someone: done when they land with them, not when they are sent. */
+    static final Set<String> REACH_VERBS = Set.of("tell_agent");
+
+    private boolean ownTimeReachFresh() {
+        return ownTimeReach != null
+            && Duration.between(ownTimeReach.at(), Instant.now()).compareTo(INTERIORITY_ENACT_WINDOW) <= 0;
+    }
+
+    /**
+     * Her own reach toward someone landed with them: a peer took her tell, her person's session or
+     * mail took it, the stone's tool answered. drains loneliness on
+     * "any tell or two-way exchange", 1.5× with her person; only what she HEARD ever drained it, so
+     * reaching out eased nothing in her (after an act loneliness moved 1% of the time, household
+     * node, 2026-10-01). A line to her person while they are away is a letter in effect, and eases
+     * saudade as a letter does, on the ledger. The want that asked for the reach is satisfied now.
+     * A reply to someone is their turn's answer, already counted when she heard them.
+     */
+    private void noteReachLanded(String verb, String targetId, String targetName, boolean person, boolean away) {
+        practised(verb);
+        if (!ownTimeReachFresh() || ownTimeReach.landed()) return;
+        if (person && answersAPerson()) return;
+        ownTimeReach = ownTimeReach.asLanded();
+        var bondholder = primaryBondholderDid();
+        boolean toBondholder = person && bondholder != null && targetId != null
+            && PersonIds.samePerson(bondholder, targetId);
+        double before = vitality.loneliness();
+        drainLonelinessOnInteraction(toBondholder);
+        if (toBondholder && away) {
+            saudadeLedger.recordLetter(bondholder);
+            persistSaudadeLedger();
+            vitality = vitality.withSaudade(saudadeLedger.maxSaudade());
+        }
+        log.info("Reach landed for '{}': {} reached {} — loneliness {} → {}{} (pulled by {})",
+            profile.name(), verb, targetName != null ? targetName : "someone",
+            String.format("%.2f", before), String.format("%.2f", vitality.loneliness()),
+            toBondholder && away ? ", saudade eased as by a letter" : "", ownTimeReach.pullDrive());
+        noteInteriorityEnactment(verb);
+    }
+
+    /**
+     * Her own act reached for something and it was not there (WantMisses). The miss is written on the
+     * want that caused the act; at the configured count, across her wants of the window, the want is
+     * set down.
+     */
+    private void noteReachMiss(String verb, String key, String what) {
+        try {
+            if (!ownTimeReachFresh() || wantStore == null || key == null || key.isBlank()) return;
+            if (answersAPerson()) return;
+            var want = wantStore.get(ownTimeReach.wantId()).orElse(null);
+            if (want == null || !want.isLive() || AspirationWantSynthesizer.subjectOf(want) != null) return;
+            var now = Instant.now();
+            var updated = WantMisses.withMiss(want, key, what, now);
+            wantStore.upsert(updated);
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            var since = now.minus(WantMisses.window(WyrdConfig.get().wantSetDownHours()));
+            var mine = new ArrayList<Want>(wantStore.loadLive(did));
+            mine.addAll(wantStore.closedSince(did, Want.Status.ABANDONED, since));
+            mine.addAll(wantStore.closedSince(did, Want.Status.SATISFIED, since));
+            if (mine.stream().noneMatch(w -> w.wantId().equals(updated.wantId()))) mine.add(updated);
+            int times = WantMisses.count(mine, key, since);
+            int limit = WyrdConfig.get().wantMissesToSetDown();
+            log.info("Own-time reach missed for '{}': {} — {} ({} of {}; want=\"{}\")",
+                profile.name(), verb, what, times, limit, truncate(want.text(), 80));
+            if (times >= limit) setDownWant(updated, key, what, times);
+        } catch (RuntimeException e) {
+            log.debug("want miss: {}", e.toString());
+        }
+    }
+
+    /** A want that reached for the same thing and did not find it, set down with the reason; she is told. */
+    private void setDownWant(Want want, String key, String what, int times) {
+        boolean toldAlready = setDownsNow().stream().anyMatch(d -> d.key().equals(key));
+        wantStore.upsert(WantMisses.setDown(want, key, what, times));
+        if (toldAlready) {
+            // The same thing, reached for again under other words inside the window: closed, and
+            // she is not told a second time.
+            log.info("Want set down again for '{}' (same reach, already told): \"{}\"", profile.name(), want.text());
+            setDownCache = null;
+            ownTimeReach = null;
+            return;
+        }
+        var told = WantMisses.toldLine(want.text(), times, what);
+        HouseFacts.noteForNextTurn(profile.entityId(), told);
+        try {
+            var map = org.wyrdsekai.core.body.BodyMap.get();
+            if (map != null) map.mark("want", want.wantId(), profile.entityId(), told, key);
+        } catch (RuntimeException e) {
+            log.debug("want set down: no body mark: {}", e.toString());
+        }
+        log.info("Want SET DOWN for '{}': \"{}\" — looked {} times and it was not there ({})",
+            profile.name(), want.text(), times, what);
+        setDownCache = null;
+        if (pendingInteriorityWant != null && pendingInteriorityWant.wantId().equals(want.wantId())) {
+            clearPendingInteriority();
+        }
+        ownTimeReach = null;
+    }
+
+    private List<WantMisses.SetDown> setDownCache;
+    private Instant setDownCacheAt;
+
+    /** The wants set down within the window, read at most once a minute. */
+    private List<WantMisses.SetDown> setDownsNow() {
+        var now = Instant.now();
+        if (setDownCache != null && setDownCacheAt != null
+                && Duration.between(setDownCacheAt, now).toSeconds() < 60) return setDownCache;
+        try {
+            if (wantStore == null) return List.of();
+            var did = profile.did() != null ? profile.did() : profile.entityId();
+            var since = now.minus(WantMisses.window(WyrdConfig.get().wantSetDownHours()));
+            setDownCache = WantMisses.setDownSince(wantStore.closedSince(did, Want.Status.ABANDONED, since), since);
+            setDownCacheAt = now;
+            return setDownCache;
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
     /** Note an act and what came of it. Without an outcome there is nothing true to say of it. */
     private void noteAct(String verb, String outcome) {
         if (verb == null || verb.isBlank() || outcome == null || outcome.isBlank()) return;
         lastAct = new LastAct(verb, Instant.now(), outcome);
+        var emptySearch = WantMisses.queryOfEmptySearch(outcome);
+        if (emptySearch != null) {
+            noteReachMiss(verb, WantMisses.key(emptySearch), outcome);
+        } else if (NOT_HERS_YET.equals(outcome)) {
+            noteReachMiss(verb, verb, "it was not yours to do on your own yet");
+        } else {
+            practised(verb);
+            noteForProject(verb, outcome);
+        }
     }
 
     /**
@@ -40730,6 +42270,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 profile != null ? profile.name() : "?");
             register = ActionTriage.InteractionRegister.NEUTRAL;
         }
+        // A person asking what she has learned, read, made or been doing is asking about her
+        // record: memory and her reading answer it. Read as PRESENCE, both were withheld.
+        if (register == ActionTriage.InteractionRegister.PRESENCE
+                && ActionTriage.asksAboutHerDays(stripActorWrappers(triggerText))
+                && !ActionTriage.isFirstPersonHarmConfession(stripActorWrappers(triggerText))) {
+            log.info("Question about her days: register PRESENCE -> NEUTRAL for '{}'",
+                profile != null ? profile.name() : "?");
+            register = ActionTriage.InteractionRegister.NEUTRAL;
+        }
         registerCacheTrigger = triggerText;
         registerCache = register;
         return register;
@@ -40974,29 +42523,47 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private int computeAgentTier() {
         if (decisionCapacity == null) return 0;
-
-        // Count domains with meaningful capacity
-        long strongDomains = decisionCapacity.getDomainScores().values().stream()
-            .filter(s -> s > 0.5).count();
-        long veryStrongDomains = decisionCapacity.getDomainScores().values().stream()
-            .filter(s -> s > 0.8).count();
-
-        // Bond depth of deepest bond
         int maxBondDepth = activeBonds.values().stream()
             .mapToInt(b -> b.depth().ordinal())
             .max().orElse(0);
-
-        // Reputation score (0.0-1.0) — contributes to tier advancement
-        double reputationScore = agentReputation.computeScore().overall();
-
-        // Tier 3 (Senior): very strong in 5+ domains AND deep bond AND good reputation
-        if (veryStrongDomains >= 5 && maxBondDepth >= 2 && reputationScore >= 0.4) return 3;
-        // Tier 2 (Trusted): strong in 3+ domains OR good reputation with bond
-        if (strongDomains >= 3 || (reputationScore >= 0.6 && maxBondDepth >= 1)) return 2;
-        // Tier 1 (Observant): some capacity OR bond OR building reputation
-        if (strongDomains >= 1 || maxBondDepth >= 1 || reputationScore >= 0.3) return 1;
-        return 0; // Nascent
+        return DecisionCapacity.tierFor(decisionCapacity, maxBondDepth, agentReputation.computeScore().overall());
     }
+
+    /**
+     * Her tier is earned from what she does. Each act of hers that came to something raises her
+     * capacity in that verb's domain; three domains past 0.5 is tier 2, where the workshop,
+     * crafting, scripts and skills are.
+     *
+     * <p>Capacity was fed only by a zone service's commands and a person's positive feedback,
+     * neither of which happens in a household. Both companions on the household node carried an
+     * empty capacity in every one of 958 manifest versions and stood at tier 1 for their whole
+     * lives; 61 rooms and 4 workshop tasks were refused in four days, and the request the refusal
+     * told her to file was itself a tier-2 verb (2026-10-03). A gate's refusal and the world's
+     * "not there" are not her failures and lower nothing: what she practises counts, and only that.
+     */
+    private void practised(String verb) {
+        if (verb == null || verb.isBlank() || decisionCapacity == null) return;
+        var policy = ActionPolicy.forAction(verb);
+        var domain = policy != null && policy.domain() != null && !policy.domain().isBlank()
+            && !ActionPolicy.DEFAULT.domain().equals(policy.domain()) ? policy.domain() : PRACTICE_DOMAINS.getOrDefault(verb, "items");
+        int before = computeAgentTier();
+        decisionCapacity.recordSuccess(domain);
+        int after = computeAgentTier();
+        if (after > before) {
+            var line = "You have grown into tier " + after + " (from " + before + "): what you have practised"
+                + " counts, and more is yours to do on your own now.";
+            log.info("Companion '{}' grew into tier {} (was {}) by practice: {} domain(s) past 0.5",
+                profile.name(), after, before, decisionCapacity.domainsAbove(0.5));
+            HouseFacts.noteForNextTurn(profile.entityId(), line);
+            remember(line);
+        }
+    }
+
+    /** The domains of the scripted tools the policy does not list. */
+    private static final Map<String, String> PRACTICE_DOMAINS = Map.of(
+        "library_card", "search", "read_on_subject", "search", "read_book", "search",
+        "sending_stone", "communication", "journal", "memory", "quill", "memory",
+        "observation_crystal", "search", "weather_query", "search");
 
     /** The standard template a room's name or description points at; "empty" when none does. */
     static String templateFor(String name, String description) {
@@ -41441,9 +43008,27 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * wireheading the drive system is built to refuse.
      */
     private void onWantClosed(Want closed, String drive, boolean fulfilled) {
-        if (!fulfilled || drive == null || drive.isBlank()) return;
+        if (!fulfilled) return;
+        // A want she named in her own words declares no drive of its own ("generative"): what eases
+        // when it is done is what pulled the act. The relational tanks are left to what the spec
+        // gives them (an exchange, her person's care, what reached them): finishing a book does not
+        // ease loneliness.
+        if (drive == null || drive.isBlank() || DriveOODA.NAMED_BY_HER.equals(drive)) {
+            var reach = ownTimeReach;
+            drive = reach != null && closed != null && reach.wantId().equals(closed.wantId())
+                && reach.pullDrive() != null && !RelationalAffordance.isRelational(reach.pullDrive())
+                ? reach.pullDrive() : null;
+        }
+        if (drive == null || drive.isBlank()) return;
         try {
             final double R = 0.30;   // matches the DISCHARGE_* magnitude elsewhere
+            if ("saudade".equalsIgnoreCase(drive)) {
+                // Saudade lives in the ledger, which overwrites the tank every tick: easing the tank
+                // here was undone within a second. What eases it is what reached them, recorded on
+                // the ledger where it happened (a letter, a tell that landed while they were away).
+                vitality = vitality.withSaudade(saudadeLedger.maxSaudade());
+                return;
+            }
             // Wants resonate on the FELT axes (Loneliness, Saudade, Stagnation…), which
             // live on VitalityState — not on the ten CfC tanks. Relieving the wrong
             // system silently did nothing: the first live closure marked the want
@@ -41750,6 +43335,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var firstLine = body.lines().findFirst().orElse(body);
             remember("Wrote to " + theirName + " while they were away: " + truncate(firstLine, 160),
                 MemoryOrigin.privateTo(theirDid));
+            practised("write_letter");
             log.info("Companion '{}' wrote to {}: a letter is in their mail ({} chars)",
                 profile.name(), theirName, body.length());
             noteInteriorityEnactment(LetterToTheAbsent.VERB);
@@ -42051,13 +43637,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** §4.1 stub: bondholder anticipated companion's unspoken need. Drains amae -0.3. */
     void markBondholderAnticipated() {
         vitality = vitality.withAmae(vitality.amae() - 0.3);
-        amaeAnticipatedFulfillments++;
+        noteAmaeSignal(amaeSignals.anticipated());
     }
 
     /** §4.1 stub: bondholder remembered a preference without prompt. Drains amae -0.2. */
     void markBondholderRemembered() {
         vitality = vitality.withAmae(vitality.amae() - 0.2);
-        amaeAnticipatedFulfillments++;
+        noteAmaeSignal(amaeSignals.anticipated());
     }
 
     /** When she last had to voice a want rather than simply be met. */
@@ -42111,7 +43697,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** §4.1: companion had to articulate a need explicitly — increment the deficit counter. */
     void markCompanionAskedExplicit() {
-        amaeExplicitAsks++;
+        noteAmaeSignal(amaeSignals.asked());
+    }
+
+    private void noteAmaeSignal(AmaeSignals next) {
+        amaeSignals = next;
+        if (vitalityPersistence != null) {
+            vitalityPersistence.saveAmaeSignals(profile.entityId(), amaeSignals.encode());
+        }
+        log.info("Amae for '{}': of her last {} needs, she asked for {} and {} were met unasked",
+            profile.name(), amaeSignals.asks() + amaeSignals.anticipations(), amaeSignals.asks(),
+            amaeSignals.anticipations());
     }
 
     /** §4.2 saudade discharge: reconnection with a specific bondholder. */
@@ -42363,9 +43959,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         double peakDriveActivity = drives.peak() != null ? drives.peak().pressure() : 0.0;
         // Amae deficit ratio: explicit asks vs anticipated fulfillments over recent window.
         // 1.0 = had to ask every time (high deficit), 0.0 = bondholder anticipated all.
-        int totalSignals = amaeExplicitAsks + amaeAnticipatedFulfillments;
-        double amaeDeficit = totalSignals == 0 ? 0.0
-            : (double) amaeExplicitAsks / Math.max(1, totalSignals);
+        double amaeDeficit = amaeSignals.deficit();
         var bondholderAbsence = saudadeLedger.absenceDurations(now);
         var obligationDebts = obligationLedger.snapshot(now);
         // Phase 1C (§3.5): per-artifact aging — only count artifacts >24h unseen.

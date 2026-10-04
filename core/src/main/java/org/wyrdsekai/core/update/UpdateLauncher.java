@@ -36,34 +36,54 @@ public final class UpdateLauncher {
      * is what asks them (their update contract, 2026-09-28).</p>
      */
     public static List<String> command(String os, Path wyrd, Path logFile) {
+        return command(os, wyrd, logFile, null);
+    }
+
+    /**
+     * The same, taking the installer from a household peer first ({@code --from <its http url>}): the
+     * bytes come over the house network, the checksums still from the release itself.
+     */
+    public static List<String> command(String os, Path wyrd, Path logFile, String fromUrl) {
         var o = os.toLowerCase(Locale.ROOT);
+        var from = fromUrl == null || fromUrl.isBlank() ? List.<String>of() : List.of("--from", fromUrl.trim());
         if (o.contains("win")) {
             var ps1 = wyrd.resolveSibling("wyrd.ps1");
-            return List.of("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1.toString(), "update", "stage");
+            var cmd = new ArrayList<>(List.of("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1.toString(), "update", "stage"));
+            cmd.addAll(from);
+            return cmd;
         }
         if (o.contains("mac") || o.contains("darwin")) {
-            return List.of("launchctl", "submit", "-l", "com.wyrdsekai.self-update", "-o", logFile.toString(), "-e", logFile.toString(),
-                "--", wyrd.toString(), "update", "now", "--yes", "--no-siblings");
+            var cmd = new ArrayList<>(List.of("launchctl", "submit", "-l", "com.wyrdsekai.self-update", "-o", logFile.toString(), "-e", logFile.toString(),
+                "--", wyrd.toString(), "update", "now", "--yes", "--no-siblings"));
+            cmd.addAll(from);
+            return cmd;
         }
         var cmd = new ArrayList<String>();
         if (Files.isExecutable(Path.of("/usr/bin/systemd-run")) || Files.isExecutable(Path.of("/bin/systemd-run"))) {
             cmd.addAll(List.of("systemd-run", "--unit", "wyrdsekai-self-update-" + System.currentTimeMillis(), "--collect", "--quiet",
                 "--property=StandardOutput=append:" + logFile, "--property=StandardError=append:" + logFile));
             cmd.addAll(List.of(wyrd.toString(), "update", "now", "--yes", "--no-siblings"));
+            cmd.addAll(from);
         } else {
-            cmd.addAll(List.of("setsid", "-f", "sh", "-c", "exec " + wyrd + " update now --yes --no-siblings >> " + logFile + " 2>&1"));
+            var tail = "update now --yes --no-siblings" + (from.isEmpty() ? "" : " --from " + from.get(1));
+            cmd.addAll(List.of("setsid", "-f", "sh", "-c", "exec " + wyrd + " " + tail + " >> " + logFile + " 2>&1"));
         }
         return cmd;
     }
 
     /** Launch it; the outcome is in the log file, and in the next boot's version. */
     public static boolean launch(Path installRoot, Path dataDir) {
+        return launch(installRoot, dataDir, null);
+    }
+
+    /** Launch it, taking the installer from {@code fromUrl} (a household peer) first when given. */
+    public static boolean launch(Path installRoot, Path dataDir, String fromUrl) {
         var os = System.getProperty("os.name", "");
         var wyrd = installRoot.resolve("bin").resolve(os.toLowerCase(Locale.ROOT).contains("win") ? "wyrd.ps1" : "wyrd");
         var logFile = dataDir.resolve("logs").resolve("self-update.log");
         try {
             Files.createDirectories(logFile.getParent());
-            var cmd = command(os, wyrd, logFile);
+            var cmd = command(os, wyrd, logFile, fromUrl);
             log.info("[self-update] launching: {}", String.join(" ", cmd));
             var pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);

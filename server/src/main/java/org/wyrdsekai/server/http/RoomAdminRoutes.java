@@ -32,6 +32,15 @@ public final class RoomAdminRoutes {
     private final RoomMetadataService metadata;
     private final Set<String> protectedRooms;
 
+    /** The companions of this node: name → entity id. */
+    private java.util.function.Supplier<Map<String, String>> companions = Map::of;
+
+    public RoomAdminRoutes(AuthService auth, RoomMetadataService metadata, Set<String> protectedRooms,
+                           java.util.function.Supplier<Map<String, String>> companions) {
+        this(auth, metadata, protectedRooms);
+        if (companions != null) this.companions = companions;
+    }
+
     public RoomAdminRoutes(AuthService auth, RoomMetadataService metadata, Set<String> protectedRooms) {
         this.auth = auth;
         this.metadata = metadata;
@@ -42,6 +51,14 @@ public final class RoomAdminRoutes {
         app.get("/api/rooms", this::handleList);
         app.delete("/api/rooms/{roomId}", this::handleDemolish);
         app.post("/api/rooms/prune", this::handlePrune);
+        app.get("/api/rooms/made", this::handleMade);
+        app.get("/api/items/made", this::handleItemsMade);
+        app.post("/api/items/made/out", this::handleItemOut);
+        app.get("/api/rooms/archive", this::handleArchive);
+        app.post("/api/rooms/tidy", this::handleTidy);
+        app.post("/api/rooms/{roomId}/keep", this::handleKeep);
+        app.post("/api/rooms/{roomId}/close", this::handleCloseUp);
+        app.post("/api/rooms/{roomId}/open", this::handleOpen);
     }
 
     record ErrorResponse(String error) {}
@@ -59,6 +76,221 @@ public final class RoomAdminRoutes {
 
     private void handleList(Context ctx) {
         ctx.json(rows());
+    }
+
+    /**
+     * A made room as the steward sees it: who it was made for, how long since anyone was in it,
+     * whether the house holds it and why, whether it is closed up.
+     */
+    public record MadeRow(String roomId, String name, String madeBy, String madeFor, long quietDays,
+                          boolean aPersonHasBeenIn, boolean closed, long closedDays, String held, boolean cold) {}
+
+    /** The rows of {@code GET /api/rooms/made}, from the store's records. Pure. */
+    static List<MadeRow> madeRows(List<org.wyrdsekai.core.persistence.MadeThingsStore.RoomRecord> records,
+                                  Set<String> protectedRooms, Set<String> companions, long now) {
+        var out = new ArrayList<MadeRow>();
+        for (var r : records) {
+            var held = org.wyrdsekai.core.room.RoomKeeping.heldBecause(r, protectedRooms, companions);
+            // Founding rooms, Homes and Studies are not "made rooms" for this list.
+            if (held != null && !held.equals("a person asked for it") && !held.equals("a person has been in it")
+                    && !held.equals("nobody recorded who it was made for")) continue;
+            var forWhom = r.madeFor() == null ? "not recorded"
+                : org.wyrdsekai.core.persistence.MadeThingsStore.OWN.equals(r.madeFor()) ? "her own" : "a person";
+            out.add(new MadeRow(r.roomId(), r.name(), r.createdBy(), forWhom,
+                org.wyrdsekai.core.room.RoomKeeping.quietFor(r, now).toDays(), r.aPersonHasBeenIn(), r.closed(),
+                r.closed() ? Math.max(0, (now - r.closedAt()) / DAY_MS) : 0, held == null ? "" : held, r.cold()));
+        }
+        return out;
+    }
+
+    private void handleMade(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var closing = org.wyrdsekai.core.room.RoomClosing.get();
+        if (closing == null) { ctx.status(503).json(new ErrorResponse("room keeping not available")); return; }
+        var cfg = org.wyrdsekai.core.config.WyrdConfig.get();
+        ctx.json(Map.of("rooms", madeRows(closing.store().rooms(), protectedRooms, companions.get().keySet(), System.currentTimeMillis()),
+            "emptyDays", cfg.madeRoomEmptyDays(), "heldDays", cfg.madeRoomHeldDays(), "openMax", cfg.madeRoomsOpenMax()));
+    }
+
+    /** A made item as the steward sees it. */
+    public record MadeItemRow(String item, String madeBy, String madeFor, long unusedDays,
+                              boolean aPersonHasUsed, boolean putAway, String held, boolean cold) {}
+
+    /** The rows of {@code GET /api/items/made}. Pure. */
+    static List<MadeItemRow> madeItemRows(List<org.wyrdsekai.core.persistence.MadeThingsStore.ItemRecord> records, long now) {
+        var out = new ArrayList<MadeItemRow>();
+        for (var i : records) {
+            var forWhom = i.madeFor() == null ? "not recorded"
+                : org.wyrdsekai.core.persistence.MadeThingsStore.OWN.equals(i.madeFor()) ? "her own" : "a person";
+            var held = i.askedFor() ? "a person asked for it" : i.aPersonHasUsed() ? "it has been used for a person" : "";
+            out.add(new MadeItemRow(i.shownName(), i.madeBy(), forWhom,
+                org.wyrdsekai.core.item.ItemKeeping.unusedFor(i, now).toDays(), i.aPersonHasUsed(), i.putAway(), held, i.cold()));
+        }
+        return out;
+    }
+
+    /**
+     * The steward takes a put-away item out again: {@code ?item=<name>} and, when two companions have
+     * one of that name, {@code &of=<companion entity id>}. It is back on her menu when she next names
+     * it, or after her next sleep.
+     */
+    private void handleItemOut(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var store = org.wyrdsekai.core.persistence.MadeThingsStore.shared();
+        if (store == null) { ctx.status(503).json(new ErrorResponse("item keeping not available")); return; }
+        var item = ctx.queryParam("item");
+        var of = ctx.queryParam("of");
+        if (item == null || item.isBlank()) { ctx.status(400).json(new ErrorResponse("item=<name> is required")); return; }
+        if (of == null || of.isBlank()) {
+            var b = org.wyrdsekai.core.room.ArchiveCommands.bringBack(item, "en", false, true);
+            if (b.ok()) { ctx.json(Map.of("ok", true, "message", b.message())); return; }
+            if (b.several().isEmpty()) { ctx.status(404).json(Map.of("ok", false, "message", b.message())); return; }
+        }
+        var matches = store.items().stream()
+            .filter(org.wyrdsekai.core.persistence.MadeThingsStore.ItemRecord::putAway)
+            .filter(i -> i.itemId().substring(i.itemId().indexOf('/') + 1).equalsIgnoreCase(item.strip())
+                || i.shownName().equalsIgnoreCase(item.strip()))
+            .filter(i -> of == null || of.isBlank() || i.madeBy().equalsIgnoreCase(of.strip()))
+            .toList();
+        if (matches.isEmpty()) { ctx.status(404).json(Map.of("ok", false, "message", "No put-away item called '" + item + "'.")); return; }
+        if (matches.isEmpty() && (of == null || of.isBlank())) {
+            ctx.status(409).json(Map.of("ok", false, "message",
+                org.wyrdsekai.core.room.ArchiveCommands.bringBack(item, "en", false, true).message()));
+            return;
+        }
+        if (matches.size() > 1) {
+            ctx.status(409).json(Map.of("ok", false, "message", "More than one companion has a put-away item called '" + item
+                + "': add --of " + String.join(" or --of ", matches.stream().map(org.wyrdsekai.core.persistence.MadeThingsStore.ItemRecord::madeBy).toList())));
+            return;
+        }
+        var brought = org.wyrdsekai.core.room.ArchiveCommands.bringBack(matches.getFirst().shownName(), "en", false, true);
+        if (!brought.ok()) {
+            // Two companions hold one of this name: the one asked for is taken out by its own record.
+            store.itemTakenOut(matches.getFirst().itemId(), System.currentTimeMillis());
+            var ref = org.wyrdsekai.core.room.ZoneGuardian.getCompanionRef(null, matches.getFirst().madeBy());
+            if (ref != null) ref.tell(new org.wyrdsekai.core.agent.CompanionActor.ItemsBroughtBack());
+        }
+        ctx.json(Map.of("ok", true, "message", brought.ok() ? brought.message() : item + " is out again. She has it back."));
+    }
+
+    /** One thing in the archive, as the steward's search shows it. */
+    public record ArchiveRow(String name, String id, String madeBy, long days, String what) {}
+
+    static List<ArchiveRow> archiveRows(List<org.wyrdsekai.core.room.MadeArchive.Found> found, long now) {
+        return archiveRows(found, now, Map.of());
+    }
+
+    /** {@code names}: a companion's entity id to her name, so an item's maker reads as a room's does. */
+    static List<ArchiveRow> archiveRows(List<org.wyrdsekai.core.room.MadeArchive.Found> found, long now, Map<String, String> names) {
+        var out = new ArrayList<ArchiveRow>();
+        for (var f : found) {
+            out.add(new ArchiveRow(f.name(), f.id(), f.madeBy() == null ? "" : names.getOrDefault(f.madeBy(), f.madeBy()),
+                Math.max(0, (now - f.archivedAtMs()) / DAY_MS), f.what() == null ? "" : f.what()));
+        }
+        return out;
+    }
+
+    /**
+     * The archive, searched: {@code ?q=<words>} by what a thing was (all of the tier when empty),
+     * {@code &cold=true} for cold storage. Rooms and items both.
+     */
+    private void handleArchive(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var cold = "true".equalsIgnoreCase(ctx.queryParam("cold"));
+        var q = ctx.queryParam("q");
+        var found = org.wyrdsekai.core.room.ArchiveCommands.find(q == null ? "" : q, cold);
+        if (found == null) { ctx.status(503).json(new ErrorResponse("the archive is not kept on this node")); return; }
+        long now = System.currentTimeMillis();
+        var names = new java.util.HashMap<String, String>();
+        for (var c : companions.get().entrySet()) names.put(c.getValue(), c.getKey());
+        ctx.json(Map.of("cold", cold, "query", found.query(), "rooms", archiveRows(found.rooms(), now, names),
+            "items", archiveRows(found.items(), now, names), "coldRooms", found.coldRooms(), "coldItems", found.coldItems(),
+            "coldDays", org.wyrdsekai.core.config.WyrdConfig.get().madeColdDays()));
+    }
+
+    private void handleItemsMade(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var store = org.wyrdsekai.core.persistence.MadeThingsStore.shared();
+        if (store == null) { ctx.status(503).json(new ErrorResponse("item keeping not available")); return; }
+        var cfg = org.wyrdsekai.core.config.WyrdConfig.get();
+        ctx.json(Map.of("items", madeItemRows(store.items(), System.currentTimeMillis()),
+            "unusedDays", cfg.madeItemUnusedDays(), "outMax", cfg.madeItemsOutMax(), "firstLookDays", cfg.madeFirstLookDays()));
+    }
+
+    /**
+     * Close up, now, every room the nightly pass would: each companion's own rooms that nobody has
+     * entered past the setting. {@code dry=true} only lists them. Each companion is told what was closed.
+     */
+    private void handleTidy(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var closing = org.wyrdsekai.core.room.RoomClosing.get();
+        if (closing == null) { ctx.status(503).json(new ErrorResponse("room keeping not available")); return; }
+        boolean dry = !"false".equalsIgnoreCase(ctx.queryParam("dry"));
+        var cfg = org.wyrdsekai.core.config.WyrdConfig.get();
+        var settings = new org.wyrdsekai.core.room.RoomKeeping.Settings(
+            cfg.madeRoomEmptyDays(), cfg.madeRoomHeldDays(), cfg.madeRoomsOpenMax());
+        long now = System.currentTimeMillis();
+        var rows = new ArrayList<Map<String, Object>>();
+        try {
+            for (var c : companions.get().entrySet()) {
+                if (dry) {
+                    for (var r : closing.dueFor(c.getKey(), settings).toCompletableFuture().get(120, TimeUnit.SECONDS)) {
+                        rows.add(Map.of("maker", c.getKey(), "roomId", r.roomId(), "name", r.name() == null ? r.roomId() : r.name(),
+                            "quietDays", org.wyrdsekai.core.room.RoomKeeping.quietFor(r, now).toDays()));
+                    }
+                } else {
+                    var closed = closing.pass(c.getKey(), settings).toCompletableFuture().get(300, TimeUnit.SECONDS);
+                    org.wyrdsekai.core.room.RoomClosing.tell(c.getValue(), closed);
+                    for (var r : closed) {
+                        rows.add(Map.of("maker", c.getKey(), "roomId", r.roomId(), "name", r.name(), "quietDays", r.quietDays()));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            ctx.status(500).json(new ErrorResponse("tidy did not finish: " + e.getMessage()));
+            return;
+        }
+        ctx.json(Map.of("dry", dry, "rooms", rows, "emptyDays", cfg.madeRoomEmptyDays(), "heldDays", cfg.madeRoomHeldDays()));
+    }
+
+    /** The steward says a made room is theirs to keep: the house holds it from then on. Open or closed up. */
+    private void handleKeep(Context ctx) {
+        var who = requireSteward(ctx);
+        if (who == null) return;
+        var closing = org.wyrdsekai.core.room.RoomClosing.get();
+        if (closing == null) { ctx.status(503).json(new ErrorResponse("room keeping not available")); return; }
+        var asked = ctx.pathParam("roomId");
+        var rec = closing.findOpen(asked).or(() -> closing.findClosed(asked)).orElse(null);
+        if (rec == null) { ctx.status(404).json(Map.of("ok", false, "message", "No made room called '" + asked + "'.")); return; }
+        boolean ok = closing.store().keepRoom(rec.roomId(), who);
+        ctx.status(ok ? 200 : 409).json(Map.of("ok", ok, "message", ok
+            ? rec.name() + " is kept: the house will not close it up." + (rec.closed() ? " It is closed up now; open it with: wyrd rooms open" : "")
+            : rec.name() + " could not be marked."));
+    }
+
+    private void handleCloseUp(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var closing = org.wyrdsekai.core.room.RoomClosing.get();
+        if (closing == null) { ctx.status(503).json(new ErrorResponse("room keeping not available")); return; }
+        var r = awaitClosing(closing.closeUp(ctx.pathParam("roomId"), "by the steward"));
+        ctx.status(r.ok() ? 200 : 409).json(Map.of("ok", r.ok(), "message", r.message()));
+    }
+
+    private void handleOpen(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var closing = org.wyrdsekai.core.room.RoomClosing.get();
+        if (closing == null) { ctx.status(503).json(new ErrorResponse("room keeping not available")); return; }
+        var b = org.wyrdsekai.core.room.ArchiveCommands.bringBack(ctx.pathParam("roomId"), "en", true, false);
+        ctx.status(b.ok() ? 200 : 409).json(Map.of("ok", b.ok(), "message", b.message()));
+    }
+
+    private static org.wyrdsekai.core.room.RoomClosing.Result awaitClosing(
+            CompletionStage<org.wyrdsekai.core.room.RoomClosing.Result> stage) {
+        try {
+            return stage.toCompletableFuture().get(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return new org.wyrdsekai.core.room.RoomClosing.Result(false, "did not finish: " + e.getMessage(), null, null, 0);
+        }
     }
 
     private void handleDemolish(Context ctx) {
@@ -140,7 +372,7 @@ public final class RoomAdminRoutes {
             // companion made — the seed set is what tells them apart.
             boolean protectedRoom = madeBy == null || protectedRooms.contains(node.roomId())
                 || node.roomId().startsWith("home-") || node.roomId().startsWith("study-")
-                || node.roomId().startsWith("workshop-codeplane-");
+                || org.wyrdsekai.core.room.WorkshopProvisioner.isWorkshop(node.roomId());
             out.add(new RoomRow(node.roomId(), node.name(), madeBy == null ? "founding" : madeBy,
                 i == null ? 0 : i.createdAt(), node.exits().size(),
                 occupants.getOrDefault(node.roomId(), List.of()),
@@ -159,6 +391,8 @@ public final class RoomAdminRoutes {
     }
 
     private String requireSteward(Context ctx) {
+        // The node's own launcher, run by the person who looks after the machine, is the steward's hand.
+        if (ApiAuth.isOperator(ctx)) return "operator";
         var token = AuthRoutes.extractToken(ctx);
         if (token == null) { ctx.status(401).json(new ErrorResponse("Authentication required")); return null; }
         var user = auth.validateSession(token);

@@ -55,10 +55,14 @@ public final class ItemCapabilitySet {
         "audit.recent", "audit.security",
         "grants.issued", "grants.held", "grants.pending_requests",
         "presence.in_home", "notifications.channels",
-        "pairing.pending", "pairing.code", "pairing.household_key",
+        // Join secrets are never implicit. pairing.code, pairing.household_key, pairing.pending
+        // (each waiting device with its code) and invite.list (codes included) stood here, so
+        // every item script could read the household's join key with no capability check and no
+        // audit line, and web.fetch stood here too (2026-10-03). They are declared capabilities at
+        // the tier of their writes, held by the steward's own items; a crafted item never has them.
         "pairing.devices",
         // Study control-panel reads (provider-side scoping applies).
-        "household.members", "invite.list", "ward.list", "nodes.list",
+        "household.members", "ward.list", "nodes.list",
         "parental.list", "parental.get",
         "maintenance.status",
         "treasury.summary", "treasury.per_member", "treasury.balance",
@@ -334,6 +338,12 @@ public final class ItemCapabilitySet {
         deniedCalls.incrementAndGet();
         if (auditHook != null) auditHook.accept(capability, false);
         throw new CapabilityDeniedError(capability);
+    }
+
+    /** A call refused by a rule other than the set itself (the breath rule): counted and audited as a denial. */
+    public void refuse(String capability) {
+        deniedCalls.incrementAndGet();
+        if (auditHook != null) auditHook.accept(capability, false);
     }
 
     /** Non-throwing predicate variant. */

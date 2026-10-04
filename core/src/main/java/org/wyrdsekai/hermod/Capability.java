@@ -16,5 +16,13 @@ public record Capability(
     boolean charging,
     boolean idle,
     double loadFactor,             // 0..1
-    Instant advertisedAt) {
+    Instant advertisedAt,
+    byte[] publicKey) {            // the device's Ed25519 key (SPKI), what its envelopes are verified against
+
+    /** An advert as it was before devices carried their key: no key, so no envelope of its is verifiable. */
+    public Capability(String deviceId, String householdId, String capabilityClass, List<String> models,
+                      List<String> residentDataDomains, boolean charging, boolean idle, double loadFactor,
+                      Instant advertisedAt) {
+        this(deviceId, householdId, capabilityClass, models, residentDataDomains, charging, idle, loadFactor, advertisedAt, null);
+    }
 }

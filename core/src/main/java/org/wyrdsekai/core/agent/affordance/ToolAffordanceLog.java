@@ -61,6 +61,24 @@ public final class ToolAffordanceLog {
         } catch (Exception ignored) { }
     }
 
+    /**
+     * The tool she used after a surfacing pass, written onto that pass. The column existed and was
+     * never written: 29,831 passes on the household node, every {@code emitted_tool} null, so the
+     * tuner that was to learn the surface from her own choices never had one (2026-10-03).
+     */
+    public void emitted(String agentDid, String tool) {
+        if (jdbcUrl == null || agentDid == null || tool == null || tool.isBlank()) return;
+        try (var c = conn();
+             var ps = c.prepareStatement(
+                 "UPDATE tool_affordance_log SET emitted_tool = ? WHERE rowid = (SELECT rowid FROM tool_affordance_log "
+                 + "WHERE agent_did = ? AND emitted_tool IS NULL AND at >= ? ORDER BY at DESC LIMIT 1)")) {
+            ps.setString(1, tool);
+            ps.setString(2, agentDid);
+            ps.setString(3, Instant.now().minusSeconds(600).toString());
+            ps.executeUpdate();
+        } catch (Exception ignored) { }
+    }
+
     /** Recent passes for the report / tuner, newest first. */
     public List<Row> recent(String agentDidOrNull, int limit) {
         var out = new ArrayList<Row>();

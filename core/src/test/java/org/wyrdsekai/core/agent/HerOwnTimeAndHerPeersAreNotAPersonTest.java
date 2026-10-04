@@ -351,7 +351,7 @@ class HerOwnTimeAndHerPeersAreNotAPersonTest {
             .contains("new DispatchTaskCompleted(taskDescription, result, failure, taskFor)")
             .contains("speak(narration, null, ActivityLogger.AUTHORED_REPORT, msg.requester());")
             .contains("return new OutcomeVoiceReady(response, outcomeFact, requiredValue, owedTo);")
-            .contains("return new VoicePassReady(action, response, requiredEntities, owedTo);");
+            .contains("return new VoicePassReady(action, response, requiredEntities, owedTo, expectedLang);");
         assertThat(body(src, "private Behavior<Command> onBunshinReportReceived("))
             .contains("speakDirect(narration, ActivityLogger.AUTHORED_REPORT, owedTo);");
         assertThat(src).contains("reactRequester = planStepTurn ? personsPlanRequest : null;");

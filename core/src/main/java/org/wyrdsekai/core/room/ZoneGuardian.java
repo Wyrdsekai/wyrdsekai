@@ -263,6 +263,9 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
     /** A demolished room: stop its actor and forget it. Doorways and metadata are the caller's. */
     public record RetireRoom(String roomId) implements Command {}
 
+    /** Start a closed-up room again: its actor recovers from its journal with everything in it. */
+    public record ReopenRoom(String roomId) implements Command {}
+
     /** Internal: seed timeout — no view received, seed everything. */
     private record SeedTimeout() implements Command {}
 
@@ -601,6 +604,11 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
             .onMessage(RebuildRoom.class, this::onRebuildRoom)
             .onMessage(CreateNewRoom.class, this::onCreateNewRoom)
             .onMessage(RetireRoom.class, this::onRetireRoom)
+            .onMessage(ReopenRoom.class, cmd -> {
+                getOrSpawnRoom(cmd.roomId());
+                log.info("ZoneGuardian: room {} opened again", cmd.roomId());
+                return this;
+            })
             .onMessage(SeedTimeout.class, this::onSeedTimeout)
             .onMessage(DelegateToCompanion.class, this::onDelegateToCompanion)
             .onMessage(SetRoomEventListener.class, this::onSetRoomEventListener)
@@ -709,8 +717,13 @@ public class ZoneGuardian extends AbstractBehavior<ZoneGuardian.Command> {
         if (metadataService == null) return;
         try {
             int respawned = 0, repaired = 0;
+            // A closed-up room stays down until someone goes to it (RoomClosing): starting it here
+            // would recover it, teach the map about it, and undo the closing at every boot.
+            var made = org.wyrdsekai.core.persistence.MadeThingsStore.shared();
+            var closedUp = made == null ? Set.<String>of() : made.closedRoomIds();
             for (var info : metadataService.listRooms()) {
                 if (peerClaimed.contains(info.roomId())) continue;
+                if (closedUp.contains(info.roomId())) continue;
                 if (RoomRegistry.get().ref(info.roomId()) != null) continue;
                 var ref = getOrSpawnRoom(info.roomId());
                 respawned++;

@@ -158,7 +158,7 @@ public final class MemoryConsolidator {
 
             String id = "mem-" + said.timestamp().toEpochMilli() + "-" + said.entityId().hashCode();
             String content;
-            if (said.entityId().equals(agentEntityId)) {
+            if (SocialRecord.isSelf(agentEntityId, said.entityId())) {
                 content = "I said: " + said.text();
             } else {
                 content = said.entityName() + " said: " + said.text();

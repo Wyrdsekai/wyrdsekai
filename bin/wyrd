@@ -4654,6 +4654,14 @@ _update_status() {
     if [[ "$mode" == "off" ]]; then echo "$(_t update.status.mode "$mode")"; return 0; fi
     latest="$(_release_latest "$WYRDSEKAI_RELEASE_REPO")"
     if [[ -n "$latest" ]]; then echo "$(_t update.status.latest "$latest")"; else echo "$(_t update.status.latest_unknown)"; fi
+    # The household: a peer that runs a newer release (the node's own view, from the heartbeats).
+    local peer_json peer_v peer_n
+    peer_json="$(curl -sf -m 3 "http://localhost:${PORT:-7070}/api/update/status" 2>/dev/null || true)"
+    if [[ -n "$peer_json" ]]; then
+        peer_v="$(printf '%s' "$peer_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("selfUpdate",{}).get("peerVersion",""))' 2>/dev/null || true)"
+        peer_n="$(printf '%s' "$peer_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("selfUpdate",{}).get("peerNode",""))' 2>/dev/null || true)"
+        [[ -n "$peer_v" ]] && echo "$(_t update.status.peer "$peer_n" "$peer_v")"
+    fi
     echo "$(_t update.status.mode "$mode")"
     if [[ -n "$latest" ]] && _version_newer "$latest" "$installed"; then
         if [[ "$mode" == "auto" ]] && _is_release_version "$installed"; then echo "$(_t update.status.newer_auto "$latest" "$(_update_window)")"
@@ -4665,23 +4673,72 @@ _update_status() {
 }
 
 # Download the release artifact for this platform and its SHA256SUMS, verify, and print the path.
-_release_download_verify() {   # <version>
-    local v="$1" art base dir
+# With a second argument, a household node's http url (nodes update each other): the installer's
+# bytes are taken from that node first, over the house network, and only then from the release;
+# the SHA256SUMS always come from the release itself, so no node's word is what is trusted.
+_release_download_verify() {   # <version> [<from-url>]
+    local v="$1" from="${2:-}" art base dir
     art="$(_release_artifact "$v")"; base="https://github.com/$WYRDSEKAI_RELEASE_REPO/releases/download/v$v"
     dir="$DATA_DIR/updates"; mkdir -p "$dir"
+    if [[ ! -f "$dir/$art" && -n "$from" ]]; then
+        # The household door is HTTPS with the household certificate; this node trusts it by the
+        # household CA it was given when it joined. A peer we cannot verify is passed over.
+        local -a peer_tls=()
+        case "$from" in
+            https://*) if [[ -f "$DATA_DIR/tls/household-ca.pem" ]]; then peer_tls=(--cacert "$DATA_DIR/tls/household-ca.pem"); else from=""; fi ;;
+        esac
+    fi
+    if [[ ! -f "$dir/$art" && -n "$from" ]]; then
+        log "$(_t update.now.from_peer "$art" "$(printf '%s' "$from" | sed -E 's#^https?://##')")" >&2
+        if curl -fL --progress-bar "${peer_tls[@]}" -o "$dir/$art.partial" "${from%/}/api/update/artifact/$art"; then mv "$dir/$art.partial" "$dir/$art"
+        else rm -f "$dir/$art.partial"; log "$(_t update.now.peer_missed)" >&2; fi
+    fi
     if [[ ! -f "$dir/$art" ]]; then
         log "$(_t update.now.downloading "$art")" >&2
         curl -fL --progress-bar -o "$dir/$art.partial" "$base/$art" || { err "download failed: $base/$art"; rm -f "$dir/$art.partial"; return 1; }
         mv "$dir/$art.partial" "$dir/$art"
     fi
-    curl -fsSL -o "$dir/SHA256SUMS.$v" "$base/SHA256SUMS" || { err "the release has no SHA256SUMS — refusing an unverified install"; return 1; }
+    # The checksums: from the release itself; when the release cannot be reached, the copy another
+    # household machine fetched from it and passed on over the signed Between (SHA256SUMS.<v>.household).
+    local sums="$dir/SHA256SUMS.$v"
+    if ! curl -fsSL -o "$sums.fetch" "$base/SHA256SUMS"; then
+        rm -f "$sums.fetch"
+        if [[ -f "$dir/SHA256SUMS.$v.household" ]]; then sums="$dir/SHA256SUMS.$v.household"; log "$(_t update.now.sums_from_household)" >&2
+        else err "the release has no SHA256SUMS — refusing an unverified install"; return 1; fi
+    else
+        mv -f "$sums.fetch" "$sums"
+    fi
     log "$(_t update.now.verifying)" >&2
     local expected actual
-    expected="$(grep -E "[[:space:]]\*?$art\$" "$dir/SHA256SUMS.$v" | awk '{print $1}' | head -1)"
+    expected="$(grep -E "[[:space:]]\*?$art\$" "$sums" | awk '{print $1}' | head -1)"
     [[ -n "$expected" ]] || { err "$art is not listed in the release's SHA256SUMS"; return 1; }
     if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$dir/$art" | awk '{print $1}')"; else actual="$(shasum -a 256 "$dir/$art" | awk '{print $1}')"; fi
     if [[ "$actual" != "$expected" ]]; then err "$(_t update.now.mismatch)"; rm -f "$dir/$art"; return 1; fi
     echo "$dir/$art"
+}
+
+# A release installer handed to this node by a person (`wyrd update <file>`) is kept in the updates
+# folder, where the node serves it to household peers that learn of the newer release from the
+# heartbeats. Only release-named files; a dev build is not what a household follows.
+_keep_for_household() {   # <installer path>
+    local f="$1" dir="$DATA_DIR/updates" name
+    name="$(basename "$f")"
+    case "$name" in
+        wyrdsekai_[0-9]*_amd64.deb|wyrdsekai-[0-9]*.tar.gz|Wyrdsekai-[0-9]*.pkg|Wyrdsekai-[0-9]*.msi) ;;
+        *) return 0 ;;
+    esac
+    case "$name" in *~dev*|*-dev*|*SNAPSHOT*) return 0 ;; esac
+    [[ -f "$dir/$name" ]] && return 0
+    mkdir -p "$dir" 2>/dev/null || return 0
+    cp -f "$f" "$dir/$name.partial" 2>/dev/null && mv -f "$dir/$name.partial" "$dir/$name" 2>/dev/null || rm -f "$dir/$name.partial"
+    # And the release's checksums for it, when the release can be reached, so this node can pass
+    # them to household machines that cannot.
+    local v; v="$(printf '%s' "$name" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [[ -n "$v" && ! -f "$dir/SHA256SUMS.$v" ]]; then
+        curl -fsSL -m 30 -o "$dir/SHA256SUMS.$v.fetch" "https://github.com/$WYRDSEKAI_RELEASE_REPO/releases/download/v$v/SHA256SUMS" 2>/dev/null \
+            && mv -f "$dir/SHA256SUMS.$v.fetch" "$dir/SHA256SUMS.$v" || rm -f "$dir/SHA256SUMS.$v.fetch"
+    fi
+    return 0
 }
 
 # Install a .deb. `dpkg -i` ignores Recommends, so a node installed that way had no
@@ -4829,9 +4886,12 @@ _update_siblings() {
     return 0
 }
 
-_update_now() {   # [VERSION] [--yes] [--no-siblings]
-    local want="" yes=0 a
-    for a in "$@"; do case "$a" in --yes|-y) yes=1 ;; --no-siblings) WYRDSEKAI_UPDATE_SIBLINGS=0 ;; [0-9]*) want="$a" ;; esac; done
+_update_now() {   # [VERSION] [--yes] [--no-siblings] [--from <household node's http url>]
+    local want="" yes=0 from="" prev="" a
+    for a in "$@"; do
+        if [[ "$prev" == "--from" ]]; then from="$a"; prev=""; continue; fi
+        case "$a" in --yes|-y) yes=1 ;; --no-siblings) WYRDSEKAI_UPDATE_SIBLINGS=0 ;; --from) prev="--from" ;; --from=*) from="${a#--from=}" ;; [0-9]*) want="$a" ;; esac
+    done
     if [[ "$MODE" == "source" ]]; then
         log "$(_t update.pulling)"
         cd "$PROJECT_ROOT"
@@ -4855,7 +4915,7 @@ _update_now() {   # [VERSION] [--yes] [--no-siblings]
         local ans; _drain_stdin; read -r -p "$(_t update.now.confirm "$want" "$installed") [y/N] " ans
         [[ "$ans" =~ ^[Yy] ]] || { log "$(_t update.now.cancelled)"; return 0; }
     fi
-    local file; file="$(_release_download_verify "$want")" || return 1
+    local file; file="$(_release_download_verify "$want" "$from")" || return 1
     do_update "$file" || return 1
     # The siblings through the launcher just installed: its sibling step is the current one.
     WYRDSEKAI_UPDATE_SIBLINGS="${WYRDSEKAI_UPDATE_SIBLINGS:-1}" "$REAL_BIN/wyrd" update siblings
@@ -4886,6 +4946,7 @@ do_update() {
     # pkg: preinstall snapshot → payload → postinstall kickstart; msi:
     # snapshot + MajorUpgrade). Data + config are preserved by all three.
     [ -f "$artifact" ] || { err "$(_t update.no_file "$artifact")"; return 1; }
+    _keep_for_household "$artifact"
     case "$artifact" in
         *.deb)
             log "$(_t update.installing "$artifact")"
@@ -12100,11 +12161,55 @@ for p in d.get("after",[]): print("    still: " + p)
 '
             done
             ;;
+        made)
+            # The items companions made: who each was made for, how long unused, whether it is put away.
+            local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local made code
+            made=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/items/made") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${made##*$'\n'}"; made="${made%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward sees this list."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $made"; return 1; }
+            printf '%s' "$made" | python3 -c '
+import json,sys
+d=json.load(sys.stdin); rows=d.get("items",[])
+print("%-34s %-16s %-12s %7s  %-8s %s" % ("ITEM","MADE BY","FOR","UNUSED","STATE","HELD BECAUSE"))
+for r in sorted(rows, key=lambda r: (r.get("putAway"), -r.get("unusedDays",0))):
+    name=r.get("item") or ""; name=name if len(name)<=34 else name[:31]+"..."
+    print("%-34s %-16s %-12s %5dd   %-8s %s" % (name,(r.get("madeBy") or "")[:16],r.get("madeFor") or "",r.get("unusedDays",0),("cold" if r.get("cold") else "away") if r.get("putAway") else "out",r.get("held") or ""))
+print("%d made item(s); %d put away. An item unused for %s days is put away (%s days of watching for ones made before the record); it is kept, and named again it is taken out. %s stay out per companion." % (len(rows), sum(1 for r in rows if r.get("putAway")), d.get("unusedDays"), d.get("firstLookDays"), d.get("outMax") or "all"))
+'
+            ;;
+        find)
+            _wyrd_archive_find items "$@"
+            ;;
+        out)
+            # Take a put-away item out again: wyrd items out <item> [--of <companion-id>]
+            local item="${1:-}" of="" prev=""
+            for a in "${@:2}"; do [[ "$prev" == "--of" ]] && of="$a"; prev="$a"; done
+            [[ -n "$item" && "$item" != --* ]] || { err "Usage: wyrd items out <item> [--of <companion-id>]"; return 2; }
+            local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local q resp code
+            q=$(python3 -c 'import sys,urllib.parse; print("item="+urllib.parse.quote(sys.argv[1],safe="")+("&of="+urllib.parse.quote(sys.argv[2],safe="") if sys.argv[2] else ""))' "$item" "$of")
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/items/made/out?$q") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
+            ;;
         *)
-            echo "Usage: wyrd items check [--quiet] [dir…] | broken | repair <name>|--all"
+            echo "Usage: wyrd items check [--quiet] [dir…] | broken | repair <name>|--all | made | find [words] [--cold] | out <item>"
             echo "  broken  household items the contract gate would refuse today, with their problems"
             echo "  repair  repair a placed item through the coding backend; the placed file changes only if the copy comes out whole"
             echo "  check   every item script's world.* calls against the API this build serves (bundled + the household's items by default)"
+            echo "  made    the items companions made: who for, how long unused, out or put away"
+            echo "  find    search the put-away items by what they were; --cold looks in cold storage"
+            echo "  out     take a put-away item out again, by its name or by what it was: wyrd items out <item> [--of <companion-id>]"
             [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 1
             ;;
     esac
@@ -13786,6 +13891,88 @@ else:
     esac
 }
 
+# wyrd rooms find / wyrd items find: search the archive (closed-up rooms, put-away items) by what a
+# thing was. No words lists the whole tier; --cold looks in cold storage instead.
+_wyrd_archive_find() {
+    local kind="$1"; shift
+    local cold=false words="" a
+    for a in "$@"; do case "$a" in --cold) cold=true ;; *) words="$words $a" ;; esac; done
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token)
+    [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+    local q resp code
+    q=$(python3 -c 'import sys,urllib.parse; print("q="+urllib.parse.quote(sys.argv[2].strip(),safe="")+"&cold="+sys.argv[1])' "$cold" "$words")
+    resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/rooms/archive?$q") \
+        || { err "The server did not answer at $api — is it running?"; return 1; }
+    code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+    [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+    [[ "$code" == "403" ]] && { err "Only the steward searches the archive from here. In the house, anyone can type: archive"; return 1; }
+    [[ "$code" == "200" ]] || { err "The server answered $code: $resp"; return 1; }
+    printf '%s' "$resp" | python3 -c '
+import json,sys
+kind=sys.argv[1]; other="items" if kind=="rooms" else "rooms"
+d=json.load(sys.stdin); rows=d.get(kind,[]); cold=d.get("cold"); q=d.get("query") or ""
+where="cold storage" if cold else "the archive"
+if not rows:
+    print(("No %s in %s fit \"%s\"." % (kind[:-1], where, q)) if q else ("No %s in %s." % (kind, where)))
+else:
+    print("%-34s %-12s %6s  %s" % ("ROOM" if kind=="rooms" else "ITEM","MADE BY","AWAY","WHAT IT WAS"))
+    for r in rows:
+        name=r.get("name") or r.get("id") or ""; name=name if len(name)<=34 else name[:31]+"..."
+        what=" ".join((r.get("what") or "").split()); what=what if len(what)<=100 else what[:99]+"…"
+        print("%-34s %-12s %5dd  %s" % (name,(r.get("madeBy") or "")[:12],r.get("days",0),what))
+    print("Bring one back with: wyrd rooms open <name>" if kind=="rooms" else "Bring one back with: wyrd items out <name>")
+if d.get(other): print("%d %s %s: wyrd %s find%s%s" % (len(d[other]), other[:-1]+"(s)", "fit too" if q else ("in %s too" % where), other, (" "+q) if q else "", " --cold" if cold else ""))
+n=d.get("coldRooms" if kind=="rooms" else "coldItems",0)
+if not cold and n: print("%d more in cold storage (where a thing goes after %s days in the archive): add --cold" % (n, d.get("coldDays")))
+' "$kind"
+}
+
+# wyrd hermod: the household's compute carrier. `grant <domain> <device-class> [--days N]` lets tasks
+# from that class of device into that data domain, signed by this node's key; `grants` lists them.
+# The grant stone in the Ward Room pointed at `wyrd hermod-grant`, which did not exist (2026-10-03).
+do_hermod() {
+    local sub="${1:-help}"
+    # The node's own jars, data dir and zone, so the grant is signed by the node's key and lands
+    # where the node reads grants from.
+    local lib_dir
+    for d in "$REAL_BIN/../lib/server" "$REAL_BIN/../lib" "$PROJECT_ROOT/server/build/install/server/lib"; do
+        [[ -d "$d" ]] && ls "$d"/server-*.jar >/dev/null 2>&1 && { lib_dir="$d"; break; }
+    done
+    local data_dir="${WYRDSEKAI_DATA_DIR:-$DATA_DIR}"
+    if [[ -f "$ENV_FILE" ]]; then set -a; source "$ENV_FILE"; set +a; fi
+    find_java >/dev/null 2>&1 || true
+    case "$sub" in
+        grant)
+            local domain="${2:-}" cls="${3:-}" days=30 prev=""
+            for a in "${@:4}"; do [[ "$prev" == "--days" ]] && days="$a"; [[ "$a" == --days=* ]] && days="${a#--days=}"; prev="$a"; done
+            [[ -n "$domain" && -n "$cls" && "$days" =~ ^[0-9]+$ ]] || { err "Usage: wyrd hermod grant <domain> <device-class> [--days N]"; return 2; }
+            [[ -z "${lib_dir:-}" ]] && { err "No Wyrdsekai install found to mint with."; return 1; }
+            WYRDSEKAI_DATA_DIR="$data_dir" WYRDSEKAI_ZONE_ID="${WYRDSEKAI_ZONE_ID:-home}" \
+                "${JAVA_CMD:-java}" -cp "$lib_dir/*" org.wyrdsekai.server.hermod.GrantMintMain "$domain" "$cls" "$days"
+            ;;
+        grants|list)
+            local dir="$data_dir/hermod-grants"
+            if [[ ! -d "$dir" ]] || ! ls "$dir"/*.json >/dev/null 2>&1; then echo "No hermod grants on this node. Mint one with: wyrd hermod grant <domain> <device-class> [--days N]"; return 0; fi
+            python3 - "$dir" <<'PY2'
+import json,sys,glob,os,datetime
+print("%-16s %-18s %-22s %s" % ("DOMAIN","DEVICE CLASS","EXPIRES","FILE"))
+for f in sorted(glob.glob(os.path.join(sys.argv[1], "*.json"))):
+    try: g=json.load(open(f))
+    except Exception as e: print("  (unreadable: %s)" % f); continue
+    exp=g.get("expiresAt"); exp=exp if isinstance(exp,str) else str(exp)
+    print("%-16s %-18s %-22s %s" % (g.get("dataDomain",""), g.get("grantedToDeviceClass",""), exp[:19], os.path.basename(f)))
+PY2
+            ;;
+        *)
+            echo "Usage: wyrd hermod grant <domain> <device-class> [--days N] | grants"
+            echo "  grant   let tasks from a class of device into a data domain, for N days (default 30); signed by this node"
+            echo "  grants  the grants this node has minted"
+            [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 2
+            ;;
+    esac
+}
+
 do_rooms() {
     local sub="${1:-list}"
     local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
@@ -13860,7 +14047,74 @@ import json,sys
 for r in json.load(sys.stdin).get("results",[]): print(("ok   " if r["ok"] else "kept ") + (r.get("name") or r["roomId"]) + " — " + r["message"])
 '
             ;;
-        *) echo "Usage: wyrd rooms [list] | demolish <room> [--with-objects] | prune [--duplicates] [--stale <days>] [--with-objects] [--yes]"; return 64 ;;
+        made)
+            # The rooms companions made: who each was made for, how long since anyone was in it, whether
+            # the house holds it (a person asked for it, or has been in it), and which are closed up.
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local made code
+            made=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/rooms/made") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${made##*$'\n'}"; made="${made%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward sees this list."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $made"; return 1; }
+            printf '%s' "$made" | python3 -c '
+import json,sys
+d=json.load(sys.stdin); rows=d.get("rooms",[])
+print("%-34s %-8s %-12s %7s  %-9s %s" % ("NAME","MADE BY","FOR","QUIET","STATE","HELD BECAUSE"))
+for r in sorted(rows, key=lambda r: (r.get("closed"), -r.get("quietDays",0))):
+    name=r.get("name") or r["roomId"]; name=name if len(name)<=34 else name[:31]+"..."
+    state=(("cold %dd" if r.get("cold") else "closed %dd") % r.get("closedDays",0)) if r.get("closed") else "open"
+    print("%-34s %-8s %-12s %5dd   %-9s %s" % (name,(r.get("madeBy") or "")[:8],r.get("madeFor") or "",r.get("quietDays",0),state,r.get("held") or ""))
+own=[r for r in rows if not r.get("held") and not r.get("closed")]
+print("%d made room(s); %d closed up; %d open and counted against a companion (limit %s each)" % (len(rows), sum(1 for r in rows if r.get("closed")), len(own), d.get("openMax") or "none"))
+print("A room nobody enters is closed up after %s days (%s when it holds something). Closed-up rooms are kept; go to one by name, or: wyrd rooms open <room>. Search them by what they were: wyrd rooms find <words>" % (d.get("emptyDays"), d.get("heldDays")))
+'
+            ;;
+        tidy)
+            # Close up, now, what the nightly pass would: each companion's own rooms nobody has entered past
+            # the setting. Lists them first; --yes closes them. Nothing is deleted; each opens again when
+            # someone goes to it.
+            local yes=false; for a in "${@:2}"; do case "$a" in --yes|-y) yes=true ;; esac; done
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local plan code
+            plan=$(curl -s -m 180 -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/rooms/tidy?dry=true") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${plan##*$'\n'}"; plan="${plan%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            [[ "$code" == "403" ]] && { err "Only the steward tidies rooms."; return 1; }
+            [[ "$code" == "200" ]] || { err "The server answered $code: $plan"; return 1; }
+            printf '%s' "$plan" | python3 -c '
+import json,sys
+d=json.load(sys.stdin); rooms=d.get("rooms",[])
+if not rooms: print("Nothing to close up: no room of a companion has been quiet past the setting."); sys.exit(3)
+print("Would close up %d room(s) (kept as they are; each opens again when someone goes to it):" % len(rooms))
+for r in sorted(rooms, key=lambda r: (r.get("maker"), -r.get("quietDays",0))):
+    print("  %-8s %-40s quiet %d d" % (r.get("maker") or "", (r.get("name") or r["roomId"])[:40], r.get("quietDays",0)))
+' || { local rc=$?; [[ $rc -eq 3 ]] && return 0; return $rc; }
+            if [[ "$yes" != true ]]; then echo "Run again with --yes to close them up. Each companion is told which of hers were closed."; return 0; fi
+            curl -s -m 600 -X POST -H "Authorization: Bearer $token" "$api/api/rooms/tidy?dry=false" \
+                | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error") or ("Closed up %d room(s)." % len(d.get("rooms",[]))))'
+            ;;
+        find)
+            _wyrd_archive_find rooms "${@:2}"
+            ;;
+        close|open|keep)
+            local room="${2:-}"
+            [[ -n "$room" ]] || { err "Usage: wyrd rooms $sub <room-id-or-name>"; return 2; }
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local resp code enc
+            enc=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$room")
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/rooms/$enc/$sub") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
+            ;;
+        *) echo "Usage: wyrd rooms [list] | made | find [words] [--cold] | tidy [--yes] | keep <room> | close <room> | open <room> | demolish <room> [--with-objects] | prune [--duplicates] [--stale <days>] [--with-objects] [--yes]"; return 64 ;;
     esac
 }
 
@@ -16540,6 +16794,7 @@ case "${1:-help}" in
     logout)     do_logout ;;
     passwd)     do_passwd ;;
     grants)     do_grants "${@:2}" ;;
+    hermod)     do_hermod "${@:2}" ;;
     home)       do_home "${@:2}" ;;
     skill)      do_skill "${@:2}" ;;
     wards)      do_wards "${@:2}" ;;
@@ -16619,6 +16874,7 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.blocks)"
         echo "$(_t usage.cmd.safety)"
         echo "$(_t usage.cmd.grants)"
+        echo "$(_t usage.cmd.hermod)"
         echo "$(_t usage.cmd.feed)"
         echo "$(_t usage.cmd.home)"
         echo "$(_t usage.cmd.skill)"

@@ -832,6 +832,31 @@ public final class ActionTriage {
      * calendar, the web). Those ran for the first time in 0.5.0 (before, a call to one did nothing)
      * and were not withheld on a grief turn the way the built-in library tools are (2026-09-29).
      */
+    // A question to her about her own days: what she learned, read, made, found, has been doing.
+    private static final java.util.regex.Pattern ASKS_ABOUT_HER_DAYS = java.util.regex.Pattern.compile(
+        "\\b(?:what|how|which|where|anything|something|tell me)\\b[^.!]{0,80}\\b(?:you|u|ya|y'?all|you guys|u guys|both of (?:you|u))\\b[^.!]{0,60}"
+            + "\\b(?:learn(?:ed|ing|t)?|read(?:ing)?|stud(?:y|ied|ying)|explor(?:e|ed|ing)|discover(?:ed|ing)?|f(?:ind|ound)|"
+            + "ma(?:ke|de|king)|buil(?:d|t|ding)|work(?:ed|ing)? on|been (?:up to|doing|working|reading|exploring|learning)|"
+            + "remember (?:learning|reading)|figur(?:e|ed|ing) out)\\b",
+        java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern ASKS_ABOUT_HER_DAYS_SHORT = java.util.regex.Pattern.compile(
+        "\\b(?:how (?:have )?(?:you|u|ya|you guys|u guys) been (?:exploring|learning|reading|doing|working)|"
+            + "what (?:have|did|do) (?:you|u|you guys|u guys) (?:been )?(?:learn\\w*|read\\w*|explor\\w*|mak\\w*|made|buil\\w*|found|find|discover\\w*|remember learning))\\b",
+        java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Whether a person is asking her about her own days: what she learned, read, made, has been
+     * exploring. A warm check-in of that kind was read as a call for presence, and presence
+     * withholds the library, the web and her own memory search: "so what did you guys learn of
+     * late?" took 45 tools from her and left her to answer from nothing (172 turns in a week on
+     * the household node, 2026-10-03). It is a question about her record, and her record answers it.
+     */
+    public static boolean asksAboutHerDays(String text) {
+        if (text == null || text.isBlank()) return false;
+        var t = text.strip();
+        return ASKS_ABOUT_HER_DAYS_SHORT.matcher(t).find() || (t.contains("?") && ASKS_ABOUT_HER_DAYS.matcher(t).find());
+    }
+
     public static boolean isExploratory(String name) {
         return name != null && (EXPLORATORY_TOOL_NAMES.contains(name) || name.startsWith("mcp__"));
     }

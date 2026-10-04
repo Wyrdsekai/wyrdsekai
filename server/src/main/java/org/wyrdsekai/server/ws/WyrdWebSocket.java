@@ -16,6 +16,8 @@ import org.wyrdsekai.common.protocol.C2SMessage;
 import org.wyrdsekai.common.protocol.ClientCommandMapper;
 import org.wyrdsekai.common.protocol.CommandParser;
 import org.wyrdsekai.common.protocol.S2CMessage;
+import org.wyrdsekai.core.project.ProjectCommands;
+import org.wyrdsekai.core.room.ArchiveCommands;
 import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.room.ZoneTopology;
 import org.wyrdsekai.common.util.Json;
@@ -1281,6 +1283,16 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                         return;
                     }
                 }
+                // "projects" and "projects <words>": what the companions are working on, not speech.
+                if (ProjectCommands.isCommand(say.text())) {
+                    sendProse(sessionRef, "system", ProjectCommands.command(playerId, say.text(), locale, false));
+                    return;
+                }
+                // "archive", "archive <words>" and "reopen <name>": what was closed up or put away, not speech.
+                if (ArchiveCommands.isCommand(say.text())) {
+                    sendProse(sessionRef, "system", ArchiveCommands.command(playerId, say.text(), locale, false));
+                    return;
+                }
                 // "bond" and "bond name <companion> <name>" are the person's own verb too, not speech.
                 if (BondNaming.isCommand(say.text())) {
                     sendProse(sessionRef, "system", BondNaming.command(playerId,
@@ -2036,6 +2048,19 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                     case NOT_CARRIED -> gcatalog.get("telnet.give_not_found", gift[0]);
                     case NOT_HERE -> gcatalog.get("telnet.give_target_not_here", gift[1]);
                 });
+                return;
+            }
+            case "projects", "project" -> {
+                var pargs = cmd.args() != null ? cmd.args() : List.<String>of();
+                sendProse(sessionRef, "system", ProjectCommands.command(playerId,
+                    (command + " " + String.join(" ", pargs)).strip(), locale, false));
+                return;
+            }
+            case "archive", "reopen" -> {
+                // What was closed up or put away, searched by what it was, and brought back.
+                var aargs = cmd.args() != null ? cmd.args() : List.<String>of();
+                sendProse(sessionRef, "system", ArchiveCommands.command(playerId,
+                    (command + " " + String.join(" ", aargs)).strip(), locale, false));
                 return;
             }
             case "bond" -> {

@@ -29,7 +29,7 @@ class BunshinToolSurfaceTest {
     private static final Set<String> EXCLUDED = Set.of(
         "dispatch_bunshin", "delegate", "voluntary_sleep",
         "emergency_call", "go_to_bondholder",
-        "craft_from_template", "create_room_from_template", "codex_action", "configure_channel");
+        "craft_from_template", "create_room_from_template", "close_room", "codex_action", "configure_channel");
 
     /** Mirrors CompanionActor.BUNSHIN_HUMAN_DIRECTED_VERBS. */
     private static final Set<String> HUMAN_DIRECTED = Set.of("create_room");

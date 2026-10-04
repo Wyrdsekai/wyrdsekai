@@ -70,7 +70,7 @@ public final class WantActBridge {
      * Found 2026-08-19, when keeping a want alive past the consent gate started producing
      * own-time acts in a freshly-spawned companion with every tank at rest.
      */
-    private static final Set<String> NON_PULL = Set.of(
+    public static final Set<String> NON_PULL = Set.of(
         "equanimity",
         // Capacity, not need: full means she CAN, not that she must.
         "Energy", "Confidence", "Focus", "ContextBudget", "Momentum", "Rapport",
@@ -123,7 +123,7 @@ public final class WantActBridge {
         "sending_stone", "emote", "examine", "bear_the_wound", "seek_sanctuary",
         "acknowledge_harm", "make_amends", "propose_peer_bond", "flag_protection",
         "save_artifact", "note", "write_journal", "write_text", "tell_agent", "set_goal",
-        "go_to_room", "recall");
+        "go_to_room", "recall", "read_book");
 
     static Mode modeFor(String verb) {
         if (verb == null) return Mode.DEFER;
@@ -315,6 +315,10 @@ public final class WantActBridge {
         new Rule("sending_stone", List.of("with you", "toward ", "reach out", "reach for", "reach toward",
             "the other", "each other", "with them", "for them", "both of us", "sit with",
             "be near", "present companion", "someone i care", "connect")),
+        // A book read through, not searched: "finish reading", "keep reading", "the next chapter".
+        new Rule("read_book", List.of("finish reading", "keep reading", "continue reading", "read on",
+            "next chapter", "next part", "finish the book", "read the book", "read more of", "pick up the book",
+            "where i left off", "read the rest")),
         new Rule("library_search", List.of("library", "search the", "look something up",
             "find something new", "explore the")),
         new Rule("bear_the_wound", List.of("sit with a loss", "sit with the grief", "a loss",

@@ -456,7 +456,9 @@ public final class ActionParser {
                             List<String> tags) implements AgentAction {}
 
         /** — append a timestamped note to a project. */
-        record ProjectNote(String projectId, String content) implements AgentAction {}
+        record ProjectNote(String projectId, String content, String next, boolean done) implements AgentAction {
+            public ProjectNote(String projectId, String content) { this(projectId, content, null, false); }
+        }
 
         /** — mark a project complete / paused / abandoned. */
         record FinishProject(String projectId, String status) implements AgentAction {}
@@ -1680,11 +1682,14 @@ public final class ActionParser {
                 }
 
                 if ("project_note".equals(action) && primaryAction == null) {
-                    String pid = node.path("project_id").asText("");
-                    String content = node.path("content").asText("");
-                    if (!pid.isBlank() && !content.isBlank()) {
-                        primaryAction = new AgentAction.ProjectNote(pid, content);
-                    }
+                    // The project is named (its title, or its id), or left out for the one she is
+                    // working on. It was required as an id she was never shown, and no note was
+                    // ever written (household node, 2026-10-03).
+                    String pid = node.path("project_id").asText(node.path("project").asText(""));
+                    String content = node.path("content").asText(node.path("note").asText(""));
+                    String next = node.path("next").asText("");
+                    boolean done = node.path("done").asBoolean(false) || "true".equalsIgnoreCase(node.path("done").asText(""));
+                    primaryAction = new AgentAction.ProjectNote(pid, content, next.isBlank() ? null : next, done);
                 }
 
                 if ("finish_project".equals(action) && primaryAction == null) {

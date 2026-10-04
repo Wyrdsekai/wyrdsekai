@@ -31,6 +31,13 @@ public final class CapabilityTable {
     }
 
     /** Live entries only, freshest first. */
+    /** The live advert of one device, as the door reads it to verify the device's envelopes. */
+    public java.util.Optional<Capability> find(String deviceId, Instant now) {
+        if (deviceId == null) return java.util.Optional.empty();
+        for (var c : snapshot(now)) if (deviceId.equals(c.deviceId())) return java.util.Optional.of(c);
+        return java.util.Optional.empty();
+    }
+
     public List<Capability> snapshot(Instant now) {
         var cutoff = now.minus(ttl);
         byDevice.values().removeIf(c -> c.advertisedAt().isBefore(cutoff));

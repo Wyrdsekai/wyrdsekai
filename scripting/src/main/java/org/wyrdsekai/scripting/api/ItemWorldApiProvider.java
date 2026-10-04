@@ -971,11 +971,13 @@ public interface ItemWorldApiProvider {
     }
 
     /**
-     * §4.4 — current LLM token+cost budget snapshot. Returns
-     * {@code {tokens, costUsd, dailyResetAt}}.
+     * §4.4 — the being's spend today: {@code {tracked, tokens, costUsd, dailyResetAt,
+     * inferencesToday, promptTokensToday, completionTokensToday, tokensAllTime, capped[, budgetUsd,
+     * remainingUsd]}}. There is no cap unless a steward set one; {@code capped} says which. A
+     * provider that tracks nothing says {@code tracked: false}.
      */
     default Map<String, Object> llmBudgetRemaining() {
-        return Map.of("tokens", 0L, "costUsd", 0.0, "dailyResetAt", 0L);
+        return Map.of("tracked", false, "tokens", 0L, "costUsd", 0.0, "dailyResetAt", 0L, "capped", false);
     }
 
     /**

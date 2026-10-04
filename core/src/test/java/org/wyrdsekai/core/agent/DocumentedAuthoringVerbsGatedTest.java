@@ -29,11 +29,14 @@ class DocumentedAuthoringVerbsGatedTest {
             var pol = ActionPolicy.forAction(verb);
             assertEquals(verb, pol.actionType(),
                 verb + " must have its own registry row");
-            assertNotEquals(defaultTier, pol.requiredTier(),
-                verb + " still has the DEFAULT tier — the growth gate is inert");
-            // A template room is hers at tier 1 (Observant); crafting and zones stay 2+.
-            int floor = "create_room_from_template".equals(verb) ? 1 : 2;
+            // Its own row is what gates it now: the consent axis and the budget read the row. The
+            // growth tier went for her own work on 2026-10-03 (HerOwnWorkIsNotTieredTest): a room
+            // and a crafted item are hers; a zone, with inhabitants of its own, is shared and
+            // keeps its tier.
+            assertNotEquals(ActionPolicy.DEFAULT, pol, verb + " falls through to DEFAULT");
+            int floor = "create_zone".equals(verb) ? 3 : defaultTier;
             assertTrue(pol.requiredTier() >= floor, verb + " tier too low: " + pol.requiredTier());
+            assertTrue(pol.budgetCost() > 0.0, verb + " must cost something from her budget");
             assertEquals("creation", pol.domain());
         }
     }
@@ -47,9 +50,11 @@ class DocumentedAuthoringVerbsGatedTest {
         // running (2026-09-06). A template room is deliberately the smaller brush on
         // BOTH axes now: tier 1 against raw create_room's 3, VISIBLE against CONSENT.
         // Raw authoring is not made cheaper by it.
-        assertEquals(3, ActionPolicy.forAction("create_room").requiredTier());
-        assertTrue(ActionPolicy.forAction("create_room_from_template").requiredTier()
-                < ActionPolicy.forAction("create_room").requiredTier(),
+        // Since 2026-10-03 her own rooms carry no tier (HerOwnWorkIsNotTieredTest); the smaller
+        // brush is on the consent axis alone.
+        assertEquals(0, ActionPolicy.forAction("create_room").requiredTier());
+        assertTrue(ActionPolicy.autonomyTierFor("create_room_from_template").ordinal()
+                < ActionPolicy.autonomyTierFor("create_room").ordinal(),
             "a template room is the smaller brush");
         var templated = new ActionParser.AgentAction.CreateRoom("q", "d", null, null, "empty");
         var raw = new ActionParser.AgentAction.CreateRoom("q", "d", null, null, null);

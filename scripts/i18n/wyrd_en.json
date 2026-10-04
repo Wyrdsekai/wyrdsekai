@@ -988,7 +988,7 @@
   "usage.cmd.version": "  version      Show version info",
   "usage.cmd.voice": "  voice        Inspect/edit a companion's VoiceProfile: list/set/unset/freeze/revert",
   "usage.cmd.wards": "  wards        Room wards: list / add / remove",
-  "usage.cmd.rooms": "  rooms        Made rooms: list / demolish <room> / prune [--duplicates] [--yes]",
+  "usage.cmd.rooms": "  rooms        Made rooms: list / made / find [words] / tidy / keep <room> / close <room> / open <room> / demolish <room> / prune [--duplicates] [--yes]",
   "usage.cmd.mail": "  mail         Household mail log: who wrote to whom and when (steward; never subjects or bodies)",
   "usage.cmd.body": "  body         The body map: every part, its pulse, and the marks it left (steward); body gone <id> releases a part",
   "usage.cmd.web": "  web          Browser terminal on :7071 (enable/disable/status)",
@@ -1424,5 +1424,10 @@
   "brain.move.night_none": "No night could be written (a quiet fortnight, or the trainer is not set up); see {0}.",
   "brain.move.night_no_trainer": "The night trainer is not set up on this node (wyrd brain setup brings it), so her voice cannot be carried over before the move.",
   "brain.move.forced": "--force: the gate did not pass and you asked for the move anyway. Kept in the record; the morning guard watches her this week.",
-  "brain.move.sheet_after": "For you to read: her real replies and the large model's on the same prompts, mixed (A/B). Nothing hangs on it; it is how she sounded, then and now."
+  "brain.move.sheet_after": "For you to read: her real replies and the large model's on the same prompts, mixed (A/B). Nothing hangs on it; it is how she sounded, then and now.",
+  "usage.cmd.hermod": "  hermod       The compute carrier: grant <domain> <device-class> [--days N] / grants",
+  "update.now.from_peer": "Taking {0} from {1}, a node of this household (then checked against the release's own checksums)...",
+  "update.now.peer_missed": "That node did not have it; downloading from the release instead.",
+  "update.status.peer": "household: {0} runs {1}; this node can take it from there (wyrd update now)",
+  "update.now.sums_from_household": "The release cannot be reached; checking against the checksums another machine of this household fetched from it."
 }

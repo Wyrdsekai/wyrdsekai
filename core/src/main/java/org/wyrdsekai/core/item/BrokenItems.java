@@ -172,12 +172,58 @@ public final class BrokenItems {
         var state = load(itemsDir);
         var out = new ArrayList<Entry>();
         for (var e : all) {
-            var node = state.path(e.item());
-            boolean sameFile = fileHash(e.file()).equals(node.path("fileHash").asText(""));
-            if (sameFile && node.path("attempts").asInt(0) >= MAX_ATTEMPTS) continue;
+            if (triedOut(e, state.path(e.item()))) continue;
             out.add(e);
         }
         return out;
+    }
+
+    /**
+     * Broken in her hands, and the workshop has tried {@link #MAX_ATTEMPTS} times on the file as it
+     * stands: mending has given up on it. Such an item is set aside (off her menu, kept on disk), so a
+     * tool that will fail is not one of the tools she is shown: `sightfinder` took a place on a
+     * companion's surface and was reached for, for three weeks after the last attempt (2026-10-03).
+     */
+    public static List<Entry> givenUp(Path itemsDir) {
+        var out = new ArrayList<Entry>();
+        var all = find(itemsDir);
+        if (all.isEmpty()) return out;
+        var state = load(itemsDir);
+        for (var e : all) {
+            if (e.failsOnUse() && triedOut(e, state.path(e.item()))) out.add(e);
+        }
+        return out;
+    }
+
+    /**
+     * Whether mending has spent its tries on this item as it stands: the same file and the same
+     * diagnosis. A diagnosis that changed (the checks learned to name what is wrong) is a new thing
+     * to try, so the count starts again.
+     */
+    private static boolean triedOut(Entry e, com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.path("attempts").asInt(0) < MAX_ATTEMPTS) return false;
+        if (!fileHash(e.file()).equals(node.path("fileHash").asText(""))) return false;
+        return hash(String.join("|", e.problems())).equals(node.path("problemsHash").asText(""));
+    }
+
+    /** Tell her once that an item was set aside, and why. Returns whether she was told now. */
+    public static boolean tellSetAside(Entry e, BodyMap map) {
+        if (e == null || map == null) return false;
+        var itemsDir = e.file().getParent();
+        var state = load(itemsDir);
+        var hash = fileHash(e.file());
+        if (hash.equals(state.path(e.item()).path("setAsideTold").asText(""))) return false;
+        try {
+            map.mark("item", e.item(), null, "The " + e.item().replace('_', ' ') + " could not be mended after "
+                + MAX_ATTEMPTS + " tries, so it is set aside: it will not be offered to me, and nothing is lost."
+                + " A person or the workshop can still mend it.", String.join(" | ", e.problems()));
+        } catch (RuntimeException ex) {
+            log.debug("broken-items: set-aside mark not written: {}", ex.toString());
+            return false;
+        }
+        state.with(e.item()).put("setAsideTold", hash);
+        save(itemsDir, state);
+        return true;
     }
 
     /** Record one mending attempt against the file as it was BEFORE the attempt. */
@@ -188,9 +234,12 @@ public final class BrokenItems {
         if (fixed) {
             node.remove("attempts"); node.remove("fileHash"); node.remove("told");
         } else {
-            boolean same = fileHashBefore.equals(node.path("fileHash").asText(""));
+            var problemsHash = hash(String.join("|", e.problems()));
+            boolean same = fileHashBefore.equals(node.path("fileHash").asText(""))
+                && problemsHash.equals(node.path("problemsHash").asText(""));
             node.put("attempts", same ? node.path("attempts").asInt(0) + 1 : 1);
             node.put("fileHash", fileHashBefore);
+            node.put("problemsHash", problemsHash);
         }
         node.put("lastAttempt", Instant.now().toString());
         save(itemsDir, state);

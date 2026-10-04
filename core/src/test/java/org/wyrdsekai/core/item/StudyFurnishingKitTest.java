@@ -786,10 +786,16 @@ class StudyFurnishingKitTest {
         assertThat(String.valueOf(result.get("text"))).contains("rests quietly");
     }
 
+    /** The threshold's secrets are the steward's: a provider acting for the household's steward. */
+    private HomeOwnerItemProvider stewardProvider() {
+        var auth = new org.wyrdsekai.core.persistence.AuthService(org.wyrdsekai.core.test.TestDb.createInMemory());
+        var stewardId = auth.register("operator", "password123", "Operator").orElseThrow().userId();   // the first account is the steward
+        return new HomeOwnerItemProvider("alpha", "alpha", stewardId, homeClient, testKit.system()).withAuth(auth);
+    }
+
     @Test void threshold_lists_pending_pairings_with_code() {
         var executor = new ItemScriptExecutor();
-        var provider = new HomeOwnerItemProvider("alpha", "alpha",
-            OWNER, homeClient, testKit.system())
+        var provider = stewardProvider()
             .withPendingPairings(() -> List.of(
                 new HashMap<>(Map.of(
                     "challengeId", "ch-001",
@@ -813,8 +819,7 @@ class StudyFurnishingKitTest {
 
     @Test void threshold_shows_household_key_when_present() {
         var executor = new ItemScriptExecutor();
-        var provider = new HomeOwnerItemProvider("alpha", "alpha",
-            OWNER, homeClient, testKit.system())
+        var provider = stewardProvider()
             .withPendingPairings(List::of)
             .withActivePairCode(() -> null)
             .withActiveHouseholdKey(() -> "wyrd_hk_deadbeef00112233");
@@ -824,6 +829,29 @@ class StudyFurnishingKitTest {
         assertThat(text).contains("household key");
         assertThat(text).contains("wyrd_hk_deadbeef00112233");
         assertThat(text).contains("wyrdsekai join --key");
+    }
+
+    /**
+     * A member who is not the steward sees who is knocking and nothing that lets anyone in: not the
+     * codes, not the key. The Device Ledger said "steward-only" in its text and showed the key to any
+     * member of the household (2026-10-03).
+     */
+    @Test void threshold_hides_the_codes_and_the_key_from_a_member() {
+        var executor = new ItemScriptExecutor();
+        var auth = new org.wyrdsekai.core.persistence.AuthService(org.wyrdsekai.core.test.TestDb.createInMemory());
+        auth.register("operator", "password123", "Operator");
+        var memberId = auth.register("kaz", "password123", "Kaz").orElseThrow().userId();
+        var provider = new HomeOwnerItemProvider("alpha", "alpha", memberId, homeClient, testKit.system()).withAuth(auth)
+            .withPendingPairings(() -> List.of(new HashMap<>(Map.of("challengeId", "ch-001", "code", "482931", "deviceName", "test-node", "deviceType", "node"))))
+            .withActivePairCode(() -> "482931")
+            .withActiveHouseholdKey(() -> "wyrd_hk_deadbeef00112233");
+        assertThat(provider.activeHouseholdKey()).isNull();
+        assertThat(provider.activePairCode()).isNull();
+        assertThat(provider.pendingPairings()).hasSize(1);
+        assertThat(provider.pendingPairings().getFirst()).doesNotContainKey("code").containsEntry("deviceName", "test-node");
+        var threshold = StudyFurnishingKit.threshold();
+        var text = String.valueOf(executor.execute(threshold.id(), threshold.script(), Map.of(), provider).get("text"));
+        assertThat(text).contains("test-node").doesNotContain("482931").doesNotContain("wyrd_hk_");
     }
 
     @Test void threshold_rotates_household_key_on_request() {

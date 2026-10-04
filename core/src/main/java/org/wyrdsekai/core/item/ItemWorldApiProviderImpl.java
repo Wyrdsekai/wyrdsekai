@@ -1360,9 +1360,10 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
             var entries = pairingService.listPendingChallenges();
             var out = new ArrayList<Map<String, Object>>(entries.size());
             for (var p : entries) {
+                // This is a companion's provider. She may know who is knocking; the codes that let
+                // them in are a person's to read and to speak (2026-10-03).
                 var m = new HashMap<String, Object>();
                 m.put("challengeId", p.challengeId());
-                m.put("code", p.code());
                 m.put("deviceName", p.deviceName());
                 m.put("deviceType", p.deviceType());
                 m.put("createdAt", p.createdAt() != null ? p.createdAt().toString() : null);
@@ -1376,30 +1377,20 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         }
     }
 
+    /**
+     * A companion never holds a join secret. The pair code and the household key let a device into
+     * the household; they are a person's to read, and a companion has no use for them that is hers.
+     * Through this provider they were returned to any item script, with no check and no audit line
+     * (2026-10-03). Null here is the answer, whoever holds her.
+     */
     @Override
     public String activePairCode() {
-        if (pairingService == null) return null;
-        try {
-            return pairingService.getPendingChallenge()
-                .map(PairingService.PairingChallenge::code)
-                .orElse(null);
-        } catch (Exception e) {
-            log.warn("activePairCode failed: {}", e.getMessage());
-            return null;
-        }
+        return null;
     }
 
     @Override
     public String activeHouseholdKey() {
-        if (pairingService == null) return null;
-        try {
-            return pairingService.getActiveHouseholdKey()
-                .map(PairingService.HouseholdKey::key)
-                .orElse(null);
-        } catch (Exception e) {
-            log.warn("activeHouseholdKey failed: {}", e.getMessage());
-            return null;
-        }
+        return null;
     }
 
     @Override
@@ -2507,26 +2498,16 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
     }
 
     /**
-     * Tier 1 — token+cost budget snapshot. Reads from the per-agent
-     * {@link AgentCostTracker} and returns the absolute remaining budget.
+     * Tier 1 — the being's real spend today from the per-agent {@link AgentCostTracker}, and a cap
+     * only if a steward set one ({@link org.wyrdsekai.core.agent.BudgetSnapshot}).
      */
     @Override
     public Map<String, Object> llmBudgetRemaining() {
         try {
-            var tracker = AgentCostTracker.get();
-            // The tracker's API is per-agent — pull a summary if available.
-            // We don't have a hard budget surface here so we return the
-            // observed-spend snapshot so scripts can apply their own gate.
-            var summary = new HashMap<String, Object>();
-            summary.put("tokens", 0L);
-            summary.put("costUsd", 0.0);
-            summary.put("dailyResetAt",
-                Instant.now().plus(Duration.ofDays(1)).toEpochMilli());
-            // If the tracker exposes per-agent spend later, fold it in here.
-            return summary;
+            return org.wyrdsekai.core.agent.BudgetSnapshot.of(AgentCostTracker.get(), agentId,
+                java.time.ZoneId.systemDefault(), Instant.now());
         } catch (Exception _) {
-            return Map.of("tokens", 0L, "costUsd", 0.0,
-                "dailyResetAt", Instant.now().plus(Duration.ofDays(1)).toEpochMilli());
+            return org.wyrdsekai.core.agent.BudgetSnapshot.of(null, agentId, java.time.ZoneId.systemDefault(), Instant.now());
         }
     }
 

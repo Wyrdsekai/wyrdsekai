@@ -20,6 +20,8 @@ import java.util.Map;
  *   GET /api/update/status    — current version, channel status, peer versions
  *   GET /api/update/manifest  — serve our release manifest to mesh peers
  *   GET /api/update/package   — download the universal update package
+ *   GET /api/update/artifact/{name} — the release installer this node kept, for a household peer
+ *   GET /api/update/sums/{version}  — the release's SHA256SUMS this node kept, for a household peer
  *   GET /api/update/health    — post-update health status
  */
 public final class UpdateRoutes {
@@ -53,7 +55,54 @@ public final class UpdateRoutes {
         app.post("/api/update/check", this::handleCheck);
         app.get("/api/update/manifest", this::handleManifest);
         app.get("/api/update/package", this::handlePackageDownload);
+        app.get("/api/update/artifact/{name}", this::handleArtifact);
+        app.get("/api/update/sums/{version}", this::handleSums);
         app.get("/api/update/health", this::handleHealth);
+    }
+
+    /** A release artifact's file name as the releases ship them, and nothing else: no path in it. */
+    static final java.util.regex.Pattern ARTIFACT =
+        java.util.regex.Pattern.compile("(wyrdsekai_[0-9][0-9A-Za-z.~+-]*_amd64\\.deb|wyrdsekai-[0-9][0-9A-Za-z.~+-]*\\.tar\\.gz|Wyrdsekai-[0-9][0-9A-Za-z.~+-]*\\.(pkg|msi))");
+    static final java.util.regex.Pattern VERSION = java.util.regex.Pattern.compile("[0-9]+\\.[0-9]+\\.[0-9]+");
+
+    /** The folder {@code wyrd update now} downloads into, and {@code wyrd update <file>} keeps a copy in. */
+    Path updatesDir() { return dataDir == null ? null : dataDir.resolve("updates"); }
+
+    /**
+     * Nodes update each other through the mesh: a household peer that has learned (from the
+     * heartbeats) that this node runs a newer release takes the installer from here instead of the
+     * internet. The bytes are public release files; the peer checks them against the release's own
+     * checksums, never against this node's word.
+     */
+    private void handleArtifact(Context ctx) {
+        var name = ctx.pathParam("name");
+        var dir = updatesDir();
+        if (dir == null || !ARTIFACT.matcher(name).matches()) { ctx.status(404).json(Map.of("error", "no such artifact")); return; }
+        var f = dir.resolve(name);
+        if (!Files.isRegularFile(f)) { ctx.status(404).json(Map.of("error", "this node does not hold " + name)); return; }
+        try {
+            ctx.header("Content-Type", "application/octet-stream");
+            ctx.header("Content-Length", Long.toString(Files.size(f)));
+            ctx.header("Content-Disposition", "attachment; filename=\"" + name + "\"");
+            ctx.result(Files.newInputStream(f));
+        } catch (Exception e) {
+            ctx.status(500).json(Map.of("error", "could not serve " + name + ": " + e.getMessage()));
+        }
+    }
+
+    /** The release's SHA256SUMS as this node fetched it from the release, so a peer can see what the release says it shipped. */
+    private void handleSums(Context ctx) {
+        var version = ctx.pathParam("version");
+        var dir = updatesDir();
+        if (dir == null || !VERSION.matcher(version).matches()) { ctx.status(404).json(Map.of("error", "no such version")); return; }
+        var f = dir.resolve("SHA256SUMS." + version);
+        if (!Files.isRegularFile(f)) { ctx.status(404).json(Map.of("error", "this node does not hold the checksums of " + version)); return; }
+        try {
+            ctx.header("Content-Type", "text/plain; charset=utf-8");
+            ctx.result(Files.readString(f, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            ctx.status(500).json(Map.of("error", e.getMessage()));
+        }
     }
 
     private void handleStatus(Context ctx) {

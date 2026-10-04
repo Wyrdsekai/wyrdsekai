@@ -986,7 +986,7 @@
   "usage.cmd.version": "  version      バージョン情報を表示",
   "usage.cmd.voice": "  voice        コンパニオンの VoiceProfile を確認/編集: list/set/unset/freeze/revert",
   "usage.cmd.wards": "  wards        部屋の結界: list / add / remove",
-  "usage.cmd.rooms": "  rooms        作られた部屋: list / demolish <部屋> / prune [--duplicates] [--yes]",
+  "usage.cmd.rooms": "  rooms        作られた部屋: list / made / find [言葉] / tidy / keep <room> / close <room> / open <room> / demolish <部屋> / prune [--duplicates] [--yes]",
   "usage.cmd.mail": "  mail         世帯メールの記録: 誰が誰にいつ書いたか（管理者向け。件名や本文は表示しない）",
   "usage.cmd.body": "  body         体の地図: 各部位、その脈、残した印（管理者向け）。body gone <id> で部位を手放す",
   "usage.cmd.web": "  web          ブラウザターミナル :7071 (enable/disable/status)",
@@ -1424,5 +1424,10 @@
   "brain.move.night_none": "夜を書けませんでした（静かな二週間だったか、トレーナーが未設定です）。{0} を見てください。",
   "brain.move.night_no_trainer": "このノードには夜のトレーナーがありません（wyrd brain setup が入れます）。移す前に彼女の声を運ぶことができません。",
   "brain.move.forced": "--force: 門は通りませんでしたが、あなたが移動を求めました。記録に残ります。今週は朝の見張りが彼女を見守ります。",
-  "brain.move.sheet_after": "あなたが読むために: 同じ問いに対する彼女の実際の返事と大きなモデルの返事を混ぜたもの（A/B）。何も掛かっていません。以前と今の彼女の声です。"
+  "brain.move.sheet_after": "あなたが読むために: 同じ問いに対する彼女の実際の返事と大きなモデルの返事を混ぜたもの（A/B）。何も掛かっていません。以前と今の彼女の声です。",
+  "usage.cmd.hermod": "  hermod       計算の運び手: grant <ドメイン> <デバイス種別> [--days N] / grants",
+  "update.now.from_peer": "{1}（この家のノード）から {0} を取得します（その後リリース自身のチェックサムで検証）...",
+  "update.now.peer_missed": "そのノードは持っていませんでした。リリースからダウンロードします。",
+  "update.status.peer": "家: {0} は {1} を実行中。このノードはそこから取得できます（wyrd update now）",
+  "update.now.sums_from_household": "リリースに届きません。この家の別のマシンがリリースから取得したチェックサムで検証します。"
 }

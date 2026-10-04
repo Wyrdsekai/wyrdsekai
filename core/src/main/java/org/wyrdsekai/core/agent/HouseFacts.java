@@ -103,10 +103,46 @@ public final class HouseFacts {
         if (block == null || block.isBlank()) BLOCKS.remove(entityId); else BLOCKS.put(entityId, block);
     }
 
+    private static final Map<String, Map<String, String>> STANDING = new ConcurrentHashMap<>();
+
+    /**
+     * A standing line under her block, by key: what of hers is kept in the archive, the book she
+     * has open. Null or blank removes it. Safe on any thread.
+     */
+    public static void setStanding(String entityId, String key, String line) {
+        if (entityId == null || key == null) return;
+        var lines = STANDING.computeIfAbsent(entityId, k -> new ConcurrentHashMap<>());
+        if (line == null || line.isBlank()) lines.remove(key); else lines.put(key, line.strip());
+    }
+
+    /**
+     * What of hers is in the archive, as one standing line under her block. A companion asked about
+     * a room that was closed up weeks ago was otherwise told, by the block's own last sentence, that
+     * she does not remember it. Null (nothing of hers is put away) removes the line. Safe on any thread.
+     */
+    public static void setKept(String entityId, String line) {
+        setStanding(entityId, "kept", line);
+    }
+
+    /** The standing line, from the counts; null when both are zero. */
+    public static String keptLine(int closedRooms, int putAwayItems) {
+        if (closedRooms <= 0 && putAwayItems <= 0) return null;
+        var parts = new java.util.ArrayList<String>();
+        if (closedRooms > 0) parts.add(closedRooms + (closedRooms == 1 ? " room you made is closed up" : " rooms you made are closed up"));
+        if (putAwayItems > 0) parts.add(putAwayItems + (putAwayItems == 1 ? " item you made is put away" : " items you made are put away"));
+        return "Kept for you, not lost: " + String.join(" and ", parts) + "."
+            + (closedRooms > 0 ? " Going to a room by its name, or by what it was, opens it again." : "")
+            + (putAwayItems > 0 ? " Naming an item takes it out again." : "");
+    }
+
     /** Her block, with this turn's note if one was left, or null when she has none yet. */
     public static String blockFor(String entityId) {
         if (entityId == null) return null;
         var block = BLOCKS.get(entityId);
+        var standing = block == null ? null : STANDING.get(entityId);
+        if (standing != null && !standing.isEmpty()) {
+            block = block + "\n" + String.join("\n", new java.util.TreeMap<>(standing).values());
+        }
         var note = TURN_NOTES.remove(entityId);
         if (block == null && note == null) return null;
         if (note == null) return block;
@@ -121,6 +157,7 @@ public final class HouseFacts {
 
     static void resetForTests() {
         BLOCKS.clear();
+        STANDING.clear();
         TURN_NOTES.clear();
         IDENTITIES.clear();
     }

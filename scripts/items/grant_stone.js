@@ -34,7 +34,7 @@ function usageFooter() {
     "  use grant stone                       — the data-domain grants this household holds",
     "  use grant stone revoke <id|domain-class> — tombstone one (steward only)",
     "  use grant stone help                  — this help",
-    "New grants are a spoken steward act at the node: wyrd hermod-grant <domain> <class> <days>.",
+    "New grants are a spoken steward act at the node: wyrd hermod grant <domain> <class> [--days N].",
     "Revoking stops NEW distribution; a copy a device already carries stays valid until its own expiry."
   ].join("\n");
 }

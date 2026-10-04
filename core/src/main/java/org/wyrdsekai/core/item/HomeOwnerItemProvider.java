@@ -471,18 +471,20 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
 
     @Override
     public List<Map<String, Object>> pendingPairings() {
+        // Anyone of the house may see who is knocking; the codes that let them in are the steward's.
         if (pendingPairingsSupplier != null) {
-            return callSupplier(pendingPairingsSupplier, "pendingPairings");
+            return withoutCodesUnlessSteward(callSupplier(pendingPairingsSupplier, "pendingPairings"));
         }
         var svc = PairingService.get();
         if (svc == null) return List.of();
         try {
             var entries = svc.listPendingChallenges();
             var out = new ArrayList<Map<String, Object>>(entries.size());
+            boolean steward = isSteward();
             for (var p : entries) {
                 var m = new HashMap<String, Object>();
                 m.put("challengeId", p.challengeId());
-                m.put("code", p.code());
+                if (steward) m.put("code", p.code());
                 m.put("deviceName", p.deviceName());
                 m.put("deviceType", p.deviceType());
                 m.put("createdAt", p.createdAt() != null ? p.createdAt().toString() : null);
@@ -498,6 +500,9 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
 
     @Override
     public String activePairCode() {
+        // A join secret is the steward's to read. The Device Ledger said "steward-only" in its text
+        // and any member of the household read the key through it (2026-10-03).
+        if (!isSteward()) return null;
         if (activePairCodeSupplier != null) {
             try { return activePairCodeSupplier.get(); }
             catch (Exception e) { return null; }
@@ -515,6 +520,7 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
 
     @Override
     public String activeHouseholdKey() {
+        if (!isSteward()) return null;
         if (activeHouseholdKeySupplier != null) {
             try { return activeHouseholdKeySupplier.get(); }
             catch (Exception e) { return null; }
@@ -1483,6 +1489,18 @@ public final class HomeOwnerItemProvider extends VisitorItemProvider {
             // Signatures cannot be recalled — say so where the steward acts.
             "note", "household copy tombstoned; a copy already carried by a "
                 + "device stays valid until its own expiry");
+    }
+
+    /** The rows as given, their codes removed unless the acting person is the steward. */
+    private List<Map<String, Object>> withoutCodesUnlessSteward(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty() || isSteward()) return rows;
+        var out = new ArrayList<Map<String, Object>>(rows.size());
+        for (var r : rows) {
+            var m = new HashMap<String, Object>(r);
+            m.remove("code");
+            out.add(m);
+        }
+        return out;
     }
 
     /** True when the acting player's account holds the steward role. */

@@ -64,7 +64,9 @@ public final class RoomDemolition {
         if (roomId.startsWith("study-")) return "a person's Study is theirs — it is not demolished";
         // The CodePlane workshop the coder makes for a person is theirs the same way; the first
         // stale dry run on the household node listed the steward's own (2026-09-26).
-        if (roomId.startsWith("workshop-codeplane-")) return "a person's Workshop is theirs — it is not demolished";
+        // Under its present name too: the rule named only the old one, so a stale prune could list a
+        // person's Workshop made since the rename (seen on the build box, 2026-10-02).
+        if (WorkshopProvisioner.isWorkshop(roomId)) return "a person's Workshop is theirs — it is not demolished";
         if (protectedRooms.contains(roomId)) return "a founding room of the zone stays";
         if (info == null) return "no record of who made it — a founding room stays";
         if (info.createdBy() == null || info.createdBy().isBlank()) return "a founding room of the zone stays";

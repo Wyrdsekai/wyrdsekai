@@ -15,6 +15,12 @@ public final class MeshDispatch {
     public interface Carrier {
         /** @return serialized ChatResponse JSON, or null if no device would take it. */
         String carryChat(String chatRequestJson, long tokenBudget);
+        /**
+         * Whether another machine of the household advertises a brain right now: what the router
+         * asks before sending a companion's own-time turn across, so a turn is not thrown at an
+         * empty mesh and then waited for. Default false: a node without the mesh keeps everything.
+         */
+        default boolean someoneElseCanTake() { return false; }
     }
 
     private static final AtomicReference<Carrier> INSTALLED = new AtomicReference<>();

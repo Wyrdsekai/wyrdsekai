@@ -251,6 +251,16 @@ is its posture.
 | `MINIMAL` | no | limited, only when called | no |
 | `SUSPENDED` | no | no | no |
 
+Set it with `bond posture <companion> <generous|bounded|minimal|suspended>`, on any
+surface; `bond posture <companion>` shows it. Only the companion's bondholder may,
+and the companion is told when it changes. Until 0.5.4 there was no way to change
+it: every bond stayed on `BOUNDED`.
+
+Under `BOUNDED` a companion still uses this household's own web search (a Searxng
+on the node, or the keyless fallback) and can read a page. A paid search service
+and the oracle need `GENEROUS`. Until 0.5.4 `BOUNDED` removed web search and page
+reading altogether, so no companion could look anything up on her own time.
+
 The companion's inner life is never limited. Its Hearth, chronicle, journal, the
 Mirror, recalling its soul, sleep and the Forge stay open at every posture. The
 companion knows which posture it is on. It is a stated limit, not a hidden brake.
@@ -684,6 +694,73 @@ Acting unprompted is limited: at most three unprompted actions per ten minutes o
 a server, two on a phone, and only when the companion is doing well enough. This
 rule decides only whether the choice is offered. The companion still chooses. A
 companion that is tired, pressed by errors or low on confidence is not offered it.
+
+### Reading a book through
+
+A companion can read a book from start to finish. Until 0.5.4 the library was only
+a search: every read returned the passage most like her words, never the next page,
+so no book could be finished and a want to finish one never ended. Now she keeps a
+bookmark in each book. `read_book` reads the next part from where she left it,
+`read_book` with a book's name or a few words of it opens that book or comes back
+to it, and the last part finishes the book, closes the want that named it, and shows
+her what is next on her shelf: the books she began and left, then others on the
+shelves she can reach. Her place in each book survives a restart. The books she can
+reach are the household's knowledge packs and the books in your Study whose
+collection you granted her. Her facts carry one standing line while a book is open:
+which one, and where she is in it.
+
+### Her own work
+
+Reading, writing, making, crafting, the workshop, her own scripts and skills, and
+rooms of her own are hers from the first day. Three things bound them, and none of
+them is a rank she has to earn: what she may do without checking in (see "What the
+bondholder decides"), what a script or item may touch (its sandbox and its list of
+capabilities), and how much she may do unprompted (three acts in ten minutes).
+
+A tier still applies where she would act on what is shared or on someone else: a
+vote, a command to the zone, a new zone with inhabitants of its own, a script in a
+room others walk through, work handed to another agent, a bond released. She grows
+into those by doing: every act of hers that comes to something raises her capacity
+in that kind of act, and a task finished for a person builds her name. Nothing
+lowers it. Asking for access is always hers.
+
+Until 0.5.4 the tier covered her own work too, and nothing a household does could
+raise it, so every companion stayed below the workshop for life.
+
+**What she says she'll do, she does.** On her own time she sometimes says what she is
+about to do: "I'll close the holding-room", "I'll check on the unfinished vault and get
+it working". When a turn ends in a sentence like that and no act, she gets one more turn,
+a few seconds later, with the tool that does it: closing the room, taking the vault to the
+workshop. The turn tells her it was her own word, not a request. A sentence that chooses
+rest stays rest ("I'll let it", "I'll stay here"), so does a hedge ("maybe I'll") and
+anything she puts off ("I'll go when I'm ready"), and the same kind of act is not pressed twice
+in half an hour.
+
+### Projects
+
+A want is one act. Long work, such as a practice, a study or something built over
+days, is a project: it has her name for it, a room, a notebook of what she did, and
+her own next step. A project begins when she starts one (`start_project`, or
+`set_goal`), or when the same long want comes back to her a third time. On her own
+time she is offered it again, with the notebook's last pages and her next step in
+front of her, and what she does for it is written into the notebook. `project_note`
+is how she writes there. A project nobody has worked on for two weeks rests; it is
+kept and comes back when she names it.
+
+Type `projects` on any surface to see what each companion is working on, and
+`projects <words>` to read one notebook.
+
+The project board existed before 0.5.4 and no companion ever had a project on it:
+nothing began one, and the verbs asked for an id she was never shown.
+
+### What she is offered
+
+A companion has a few hundred tools and is shown sixteen at a time. On her own time
+the sixteen span every kind of act: something to read with, something to keep notes
+in, a way to reach someone, a way to make, a way to go somewhere, a way to work,
+before any kind gets a second place. Until 0.5.4 she was shown eight, ranked by how
+well their names matched her words, and in practice that meant rooms: "make a room"
+was offered in 83% of own-time turns and a journal in 1%.
 
 ### Restlessness, loneliness, stagnation
 

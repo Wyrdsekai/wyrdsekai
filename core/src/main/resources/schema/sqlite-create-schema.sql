@@ -117,7 +117,46 @@ CREATE TABLE IF NOT EXISTS rooms(
   name        TEXT NOT NULL,
   zone        TEXT NOT NULL DEFAULT 'foundation',
   created_by  TEXT,
-  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+  -- What the house keeps about a made room (MadeThingsStore; added to older databases by migration 20).
+  made_for          TEXT,
+  last_entered_at   BIGINT,
+  last_person_at    BIGINT,
+  closed_at         BIGINT,
+  closed_exits      TEXT,
+  baseline_objects  INTEGER,
+  closed_summary    TEXT,
+  cold_at           BIGINT
+);
+
+-- Items a companion made: who for, last used, put away (MadeThingsStore).
+CREATE TABLE IF NOT EXISTS made_items(
+  item_id         TEXT PRIMARY KEY,
+  kind            TEXT NOT NULL,
+  made_by         TEXT NOT NULL,
+  made_for        TEXT,
+  made_at         BIGINT NOT NULL,
+  last_used_at    BIGINT,
+  last_person_at  BIGINT,
+  put_away_at     BIGINT,
+  name            TEXT,
+  summary         TEXT,
+  cold_at         BIGINT
+);
+
+-- Where each companion is in each book (0.5.4): the bookmark that lets a book be read through.
+CREATE TABLE IF NOT EXISTS reading_bookmarks (
+  agent_did        TEXT NOT NULL,
+  book             TEXT NOT NULL,
+  collection       TEXT NOT NULL,
+  owner_did        TEXT,
+  study_collection TEXT,
+  part             INTEGER NOT NULL DEFAULT 0,
+  total            INTEGER NOT NULL DEFAULT 0,
+  started_at       BIGINT NOT NULL,
+  last_read_at     BIGINT NOT NULL,
+  finished_at      BIGINT,
+  PRIMARY KEY (agent_did, book)
 );
 
 -- Inventory (per-entity carried objects)

@@ -160,14 +160,16 @@ class ActionTriageTest {
 
     @Test
     void full_pipeline_respects_tier_filtering() {
-        // Tier 0 agent should not see tier 2+ actions
+        // A tier 0 agent does not see what still carries a tier: acts on what is shared. Her own
+        // work (a room, her own thinking) carries none since 2026-10-03.
         var ctx = new ActionTriage.TriageContext(
             "create a room", "player_tell", null, "nexus",
             false, false, null, 0, false, 13, false, null);
         var result = ActionTriage.select(ctx);
 
-        assertThat(result).doesNotContain("create_room"); // tier 3
-        assertThat(result).doesNotContain("think_deeply"); // tier 2
+        assertThat(result).doesNotContain("create_zone"); // tier 3
+        assertThat(result).doesNotContain("zone_command"); // tier 3
+        assertThat(result).doesNotContain("delegate"); // tier 2
     }
 
     @Test

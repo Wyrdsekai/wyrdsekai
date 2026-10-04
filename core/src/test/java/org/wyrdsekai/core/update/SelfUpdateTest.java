@@ -71,6 +71,36 @@ class SelfUpdateTest {
     }
 
     @Test
+    void a_release_a_household_peer_runs_counts_like_one_github_announced_and_is_taken_from_that_peer(@TempDir Path root, @TempDir Path data) throws Exception {
+        Files.writeString(root.resolve("VERSION"), "0.5.3");
+        Map<String, String> env = new HashMap<>();
+        ReleaseCheck.env = env::get;
+        ReleaseCheck.latestSource = repo -> Optional.empty();   // GitHub not reached: the household still knows
+        var peer = new MeshRelease.Candidate("0.5.4", "laptop", "http://laptop:7070", Instant.now().minusSeconds(600));
+        var from = new java.util.concurrent.atomic.AtomicReference<String>("unset");
+        var su = new SelfUpdate(root, data, () -> true, url -> { from.set(url); return true; }, () -> Optional.of(peer));
+        assertEquals("newer release 0.5.4 (runs on laptop) — wyrd update now", su.tick());
+        assertEquals("0.5.4", su.state().get("peerVersion"));
+        assertEquals("laptop", su.state().get("peerNode"));
+        env.put("WYRDSEKAI_UPDATE", "auto"); env.put("WYRDSEKAI_UPDATE_WINDOW", "00:00-00:00");
+        assertTrue(su.tick().startsWith("installing 0.5.4 (runs on laptop)"), su.state().toString());
+        assertEquals("http://laptop:7070", from.get());
+        assertEquals("http://laptop:7070", su.state().get("lastAttemptFrom"));
+        // GitHub ahead of the household: GitHub's release, from the release itself
+        Files.writeString(root.resolve("VERSION"), "0.5.4");
+        Files.deleteIfExists(ReleaseCheck.cacheFile(ReleaseCheck.REPO, data));
+        ReleaseCheck.latestSource = repo -> Optional.of("0.5.6");
+        var su2 = new SelfUpdate(root, data, () -> true, url -> { from.set(url); return true; }, () -> Optional.of(peer));
+        assertTrue(su2.tick().startsWith("installing 0.5.6 (the service restarts"), su2.state().toString());
+        assertNull(from.get());
+        // Nothing newer anywhere
+        ReleaseCheck.latestSource = repo -> Optional.of("0.5.4");
+        Files.deleteIfExists(ReleaseCheck.cacheFile(ReleaseCheck.REPO, data));
+        var su3 = new SelfUpdate(root, data, () -> true, url -> true, Optional::empty);
+        assertEquals("current", su3.tick());
+    }
+
+    @Test
     void check_mode_says_so_and_never_launches_and_a_dev_build_or_a_pin_holds(@TempDir Path root, @TempDir Path data) throws Exception {
         Map<String, String> env = new HashMap<>();
         ReleaseCheck.env = env::get;
