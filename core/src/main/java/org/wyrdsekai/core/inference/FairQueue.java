@@ -71,6 +71,14 @@ public final class FairQueue<T> {
         return a.seq() < b.seq();
     }
 
+    /** Take every waiting request the test names out of the line; how many were taken. */
+    public int removeIf(java.util.function.Predicate<T> test) {
+        int n = 0;
+        for (var it = entries.iterator(); it.hasNext(); ) {
+            if (test.test(it.next().item())) { it.remove(); n++; }
+        }
+        return n;
+    }
     /** The waiting requests, for a snapshot. */
     public List<Entry<T>> entries() { return List.copyOf(entries); }
 }

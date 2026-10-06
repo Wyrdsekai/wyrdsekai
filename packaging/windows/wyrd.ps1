@@ -522,6 +522,20 @@ function Get-ApiToken {
     return $null
 }
 
+# One call to this node's /api whose answer we read whatever its status: the code and the body,
+# or code 0 when nothing answered. Windows PowerShell 5.1 has no -SkipHttpErrorCheck and throws
+# on a 4xx; the body is then in ErrorDetails and the status on the response of the exception.
+function Read-WyrdApi($Method, $Uri, $Token) {
+    try {
+        $r = Invoke-WebRequest -Method $Method -Uri $Uri -Headers @{ Authorization = "Bearer $Token" } -UseBasicParsing -TimeoutSec 20
+        return @{ Code = [int]$r.StatusCode; Content = [string]$r.Content }
+    } catch {
+        $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        $body = ''; try { $body = [string]$_.ErrorDetails.Message } catch { }
+        return @{ Code = $code; Content = $body }
+    }
+}
+
 function Get-AdminHeaders {
     $h = @{}
     if ($env:WYRDSEKAI_ADMIN_TOKEN) { $h['X-Wyrdsekai-Admin-Token'] = $env:WYRDSEKAI_ADMIN_TOKEN }
@@ -3151,11 +3165,17 @@ function Update-Siblings {
     if ($rz) { Invoke-SiblingUpdate 'ResearchZosho' $rz 'Wyrdsekai/researchzosho' 'version' }
 }
 
+function Show-UpdateUsage {
+    foreach ($k in @('status', 'now', 'auto', 'siblings', 'stage', 'file')) { Write-Host (_T "update.usage.$k") }
+}
+
 function Invoke-Update {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "status" }
     $repoRoot = Join-Path $AppDir "..\.."
     $sourceMode = (Test-Path (Join-Path $repoRoot ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)
+    if ($sub -eq 'now' -and ($Rest | Where-Object { $_ -in @('help', '-h', '--help') })) { Show-UpdateUsage; return }
     switch ($sub) {
+        { $_ -in @('help', '-h', '--help') } { Show-UpdateUsage; return }
         "status" { Show-UpdateStatus; return }
         "siblings" { Update-Siblings; return }
         "auto" {
@@ -3613,10 +3633,48 @@ function Invoke-State {
 # this node keeps. Renaming changes the name on the manifest; the server resolves a
 # configured name to the soul that answers to it, so a renamed companion is spawned,
 # not reborn. Parity with bin/wyrd do_soul.
+# `wyrd soul language <companion> [heal]` — what the language healer sees in her soul, and the
+# steward's word to mend the notes now. Parity with bin/wyrd _soul_language. Returns the exit code.
+function Invoke-SoulLanguage($who, $verb) {
+    if (-not $who) { Write-Err2 (_T 'soul.language.usage'); return 64 }
+    if ($verb -and $verb -ne 'heal') { Write-Err2 (_T 'soul.language.usage'); return 64 }
+    $token = Get-ApiToken
+    if (-not $token) { Write-Err2 (_T 'soul.language.login'); return 1 }
+    $api = Get-ApiBase
+    $path = [uri]::EscapeDataString($who).Replace('%3A', ':')
+    $r = if ($verb -eq 'heal') { Read-WyrdApi 'Post' "$api/api/soul/$path/language/heal" $token }
+         else { Read-WyrdApi 'Get' "$api/api/soul/$path/language" $token }
+    $code = [int]$r.Code
+    if ($code -eq 0) { Write-Err2 (_T 'api.no_answer' $api); return 1 }
+    switch ($code) {
+        200 { }
+        202 { Write-Host (_T 'soul.language.healing'); Write-Host (_T 'soul.language.follow' $who) }
+        409 { Write-Err2 (_T 'soul.language.not_running' $who); return 1 }
+        { $_ -in 401, 403 } { Write-Err2 (_T 'soul.language.only_steward'); return 1 }
+        404 { Write-Err2 (_T 'soul.language.not_found' $who); return 1 }
+        default { Write-Err2 (_T 'api.answered' $code $r.Content); return 1 }
+    }
+    try { $d = $r.Content | ConvertFrom-Json } catch { Write-Host $r.Content; return 0 }
+    $note = if (Get-JProp $d 'verifiable' $false) { '' } else { (_T 'soul.language.unverifiable') }
+    Write-Host (_T 'soul.language.household' (Get-JProp $d 'household' '?') $note)
+    Write-Host (_T 'soul.language.counts' (Get-JProp $d 'fragments' 0) (Get-JProp $d 'memoryNodes' 0))
+    foreach ($it in @(Get-JProp $d 'items' @())) {
+        $strikes = [int](Get-JProp $it 'strikes' 0)
+        $tag = if (Get-JProp $it 'mercied' $false) { (_T 'soul.language.mercied') } elseif ($strikes -gt 0) { (_T 'soul.language.strikes' $strikes) } else { (_T 'soul.language.untried') }
+        Write-Host (_T 'soul.language.item' (Get-JProp $it 'kind' '') (Get-JProp $it 'id' '') (Get-JProp $it 'detected' '') $tag)
+        Write-Host ("      " + (Get-JProp $it 'text' ''))
+    }
+    return 0
+}
+
 function Invoke-Soul {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "list" }
+    if ($sub -eq 'language') {
+        $rc = Invoke-SoulLanguage $(if ($Rest.Count -ge 2) { $Rest[1] } else { $null }) $(if ($Rest.Count -ge 3) { $Rest[2] } else { $null })
+        exit $rc
+    }
     if ($sub -notin @('list', 'rename', 'archive')) {
-        Write-Host "Usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason]"
+        Write-Host "Usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason] | language <name> [heal]"
         exit 64
     }
     if ($sub -ne 'list' -and (Get-ServerPid)) {
@@ -4888,6 +4946,7 @@ function Invoke-Researcher {
         }
         "update" {
             # The librarian's own updater (researchzosho 0.1.2+): the latest release, verified, service restarted.
+            if ($args2 | Where-Object { $_ -in @('help', '-h', '--help') }) { Write-Host (_T 'researcher.update.usage'); return }
             $rz = Get-ResearchZoshoCmd
             if (-not $rz) { Write-Err2 "ResearchZosho is not installed here (wyrd researcher setup). A librarian on another machine updates itself there: researchzosho update now"; exit 1 }
             & $rz update now @args2
@@ -5010,11 +5069,46 @@ function Invoke-Researcher {
     }
 }
 
+# `wyrd library reembed [study|status]` — every passage on the shelf that carries a vector gets it
+# again from its own text, in the background. Parity with bin/wyrd do_library reembed. Returns the exit code.
+function Invoke-LibraryReembed($coll) {
+    if (-not $coll) { $coll = 'study' }
+    if ($coll -notin @('study', 'status')) { Write-Err2 (_T 'library.reembed.usage'); return 64 }
+    $token = Get-ApiToken
+    if (-not $token) { Write-Err2 (_T 'soul.language.login'); return 1 }
+    $api = Get-ApiBase
+    $r = if ($coll -eq 'status') { Read-WyrdApi 'Get' "$api/api/library/reembed" $token }
+         else { Read-WyrdApi 'Post' "$api/api/library/reembed?collection=$coll" $token }
+    $code = [int]$r.Code
+    if ($code -eq 0) { Write-Err2 (_T 'api.no_answer' $api); return 1 }
+    switch ($code) {
+        { $_ -in 401, 403 } { Write-Err2 (_T 'library.reembed.only_steward'); return 1 }
+        409 { Write-Host (_T 'library.reembed.running') }
+        202 { Write-Host (_T 'library.reembed.started' $coll) }
+        200 { }
+        default { Write-Err2 (_T 'api.answered' $code $r.Content); return 1 }
+    }
+    try { $d = $r.Content | ConvertFrom-Json } catch { Write-Host $r.Content; return 0 }
+    $startedAt = [string](Get-JProp $d 'startedAt' '')
+    $finishedAt = [string](Get-JProp $d 'finishedAt' '')
+    $state = if (Get-JProp $d 'running' $false) { (_T 'library.reembed.state.running') } elseif ($finishedAt) { (_T 'library.reembed.state.finished') } else { (_T 'library.reembed.state.never') }
+    $started = if ($startedAt) { (_T 'library.reembed.started_at' $startedAt.Substring(0, [Math]::Min(19, $startedAt.Length))) } else { '' }
+    $finished = if ($finishedAt) { (_T 'library.reembed.finished_at' $finishedAt.Substring(0, [Math]::Min(19, $finishedAt.Length))) } else { '' }
+    Write-Host (_T 'library.reembed.status' $state (Get-JProp $d 'done' 0) (Get-JProp $d 'collection' '-') $started $finished)
+    $err = [string](Get-JProp $d 'error' '')
+    if ($err) { Write-Host ("  error: " + $err) }
+    return 0
+}
+
 function Invoke-Library {
     $sub = if ($Rest.Count -ge 1) { $Rest[0] } else { "help" }
     $api = Get-ApiBase
     $subArgs = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count-1)]) } else { @() }
     switch ($sub) {
+        "reembed" {
+            $rc = Invoke-LibraryReembed $(if ($subArgs.Count -ge 1) { $subArgs[0] } else { $null })
+            if ($rc -ne 0) { exit $rc }
+        }
         { $_ -in 'reader','readers' } {
             # Readers of the library door (LIBRARY_PROTOCOL.md, "Serving it"): a peer librarian speaks /v1 with a token this issues.
             $f = Join-Path $DataDir "library-readers.json"
@@ -5182,6 +5276,7 @@ function Invoke-Library {
             Write-Host "  available                       (registry packs)"
             Write-Host "  status                          (installed packs + chunk counts)"
             Write-Host "  bundle [--dest <dir>] [--packs <csv> | --langs <csv>]   (air-gap pre-download)"
+            Write-Host "  reembed [study|status]          (every passage there that carries a vector gets it again)"
             Write-Host "  compact <snapshot|merge|prune|reembed|probe> ..."
             Write-Host "  freshness <enumerate|prune-ids> ..."
         }

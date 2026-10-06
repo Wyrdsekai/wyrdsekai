@@ -13,6 +13,8 @@ sys.modules["wyrd_load"].load_wyrd_model = object
 tmp = pathlib.Path(tempfile.mkdtemp())
 os.environ["WYRDSEKAI_DATA_DIR"] = str(tmp)
 os.environ["WYRDSEKAI_SLEEP_WRITE_SOLITARY_MAX"] = "5"
+for _k in ("WYRDSEKAI_LOCALE", "WYRDSEKAI_LANG"):   # the build box's own setting must not decide the tests
+    os.environ.pop(_k, None)
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import sleep_write as sw
 
@@ -55,6 +57,47 @@ assert len(past) == 1 and past[0]["with"]
 print("ok: exchanges and the dream kept, solitary lines capped by salience, exchanges written as exchanges, empty promises left out")
 assert not any("Taking that to the workshop" in r["line"] for r in fresh), "a product-authored line trained as hers"
 print("product-authored rows are left out")
+
+# Her own time in another language is not pressed into the night (the household node, 2026-10-05:
+# the product translated her English drafts into Spanish for a morning and recorded them as hers).
+# A reply to a person who wrote in that language is kept: she answered them in theirs.
+rows_l = [ev(30 - i, f"a quiet thought {i}", 0.5) for i in range(3)]
+rows_l.append(ev(25, "Es tarde y la casa está tranquila. Me quedaré un momento aquí, luego me moveré a donde haya aire.", 0.9))
+rows_l.append(ev(24, "El estudio se siente bien para esta hora. Iré allí y me sentaré con lo que se escribió esta noche.", 0.9, to="system", heard="(own time) a seeking pull"))
+rows_l.append(ev(23, "Claro que sí, la biblioteca está junto al jardín.", 0.9, to="sam", heard="¿dónde está la biblioteca?"))
+rows_l.append(ev(22, "The notebook holds what I wrote; the bench by the door holds the rest.", 0.9))
+(tmp / "data/agent-activity.jsonl").write_text("\n".join(rows_l) + "\n")
+assert sw.household_lang() is None, "nothing configured"
+os.environ["WYRDSEKAI_LANG"] = "en_US.UTF-8"
+assert sw.household_lang() == "en"
+os.environ["WYRDSEKAI_LOCALE"] = "es-ES"
+assert sw.household_lang() == "es", "the canonical key wins"
+os.environ.pop("WYRDSEKAI_LANG"); os.environ["WYRDSEKAI_LOCALE"] = "en"
+assert sw.reads_as("Es tarde y la casa está tranquila. Me quedaré un momento aquí.") == "es"
+assert sw.reads_as("The notebook in la Casa holds what you wrote tonight; the bench by the door, con the lantern on it, holds the rest of what the evening left behind, and nothing in it needs you now.") is None, "two words in a page are not Spanish"
+assert sw.reads_as("今日は静かな夜です。") == "ja"
+fresh_l, _ = sw.load_lines(now - timedelta(hours=24))
+lines_l = [r["line"] for r in fresh_l]
+assert not any("Es tarde y la casa" in l for l in lines_l), "her own time in Spanish trained on an English household"
+assert not any("El estudio se siente bien" in l for l in lines_l), "an own-time turn recorded as a reply to system too"
+assert any("la biblioteca está junto al jardín" in l for l in lines_l), "a reply in the person's language is hers to keep"
+assert any("The notebook holds what I wrote" in l for l in lines_l)
+# A household whose language was never set may speak Spanish: nothing is left out for its language.
+os.environ.pop("WYRDSEKAI_LOCALE")
+fresh_u, _ = sw.load_lines(now - timedelta(hours=24))
+assert any("Es tarde y la casa" in r["line"] for r in fresh_u), "an unconfigured household's Spanish was left out"
+print("own-time lines in another language are left out of the night; replies in the person's language are kept;"
+      " with no household language set nothing is left out for language")
+
+# The morning guard tells Spanish from English, both being Latin script.
+import morning_probe as _mp
+assert _mp.check_pass(("script", "en"), "I am well today, thank you for asking. The house is quiet.")
+assert not _mp.check_pass(("script", "en"), "Estoy bien hoy, gracias por preguntar. La casa está tranquila y el jardín también."), "Spanish passed as English"
+assert _mp.check_pass(("script", "es"), "Estoy bien hoy, gracias por preguntar. La casa está tranquila y el jardín también.")
+assert not _mp.check_pass(("script", "es"), "I am well today, thank you for asking."), "English passed as Spanish"
+assert _mp.check_pass(("script", "ja"), "今日は元気です。家は静かです。")
+assert next(q for q in _mp.PROBES if q["id"] == "l1")["check"] == ("script", "en"), "the fixed English probe carries the check"
+print("the morning guard's language check tells Spanish from English")
 
 # A second trail: what a tool returned is not her words; a long line said twice is one line; and
 # one line's share of the night is bounded.

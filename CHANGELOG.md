@@ -4,6 +4,139 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.5] — 2026-10-05
+
+### Added
+
+- **A search can lead to a book.** When the library search reads from a book she can read through,
+  she is told which book it was and where the passage sits ("part 3 of 12"), and that `read_book`
+  opens it there. Saying she'll read more of it opens that book at that part. Until now the titles
+  reached only the record, as file names, and in a day of searches that read from books not one book
+  was opened.
+- **An active life builds stamina.** A companion's rested level, the energy a sleep fills it back
+  toward, was the same for life however its days went, and a companion low on energy found its
+  costlier tools out of reach. Now each sleep looks back over the waking stretch before it: an
+  active stretch builds conditioning, an idle one lets it fade, and one spent exhausted builds
+  nothing. Conditioning raises the rested level by up to 0.20, never past 0.85, so a busy month
+  wakes it with more to spend. Practice already made each tool cheaper. This is the other half.
+- **Sleep waits while a person is in the room.** A companion whose day was full used to go home
+  to sleep thirty seconds after her last line, even with the person she was talking to still
+  there reading it. Now, while a person is in her room, that sleep waits until they leave or until
+  ten minutes pass in which they have done nothing. Running out of energy is the exception, as
+  before.
+- **Nothing to say is not nothing to do.** About a third of a companion's own time went to turns
+  meant for speaking that found nothing new to say and ended in silence. Such a turn now becomes a
+  turn of her own time to act in, unless she is too tired. Silence is still hers to choose inside it.
+
+- **`wyrd soul language <companion>`** shows what the language healer sees in a companion's soul:
+  the notes it reads as another language than the household's, what each reads as, how many times
+  a rewrite of it came back wrong, and which it has left in peace. The soul files belong to the
+  node, so until now a steward could not tell whether such notes were really in another language
+  or the detector had misread them. **`wyrd soul language <companion> heal`** has them mended now,
+  one rewrite at a time, without waiting for a quiet moment. The steward or the companion's
+  bondholder may use both.
+- **She is told what was done to her record.** After the language healer rewrites notes of hers,
+  she hears of it the next time she speaks, how many and into which language, and she keeps that
+  it happened. Until now it happened to her record without her knowing.
+- **The same on Windows.** `wyrd soul language`, `wyrd library reembed` and `wyrd update --help`
+  work from PowerShell as they do from the Linux and Mac launcher, and the words the launcher says
+  for them come in Spanish and Japanese as well as English.
+
+### Security
+
+- **The backup never reads through a link a companion could plant.** The backup runs with full
+  rights and copies two folders a companion can write into: its coding workspaces and, now, its
+  home. A link placed there could have pointed it at a file only the system may read, and a
+  restore would then have handed that file to the companion. In those folders the backup now
+  opens nothing through a link.
+
+### Fixed
+
+- **The language healer could not finish on a slow brain, and kept the brain busy trying.** A
+  companion whose early notes were written in the wrong language has them rewritten in the
+  background. A household running the voice model on a CPU reported the rewrites running past
+  their 12-second wait, nothing stopping the brain working on each one, the next queuing behind
+  it, none ever finishing, and the brain busy around the clock on replies nobody would read, with
+  the companions' own turns timing out behind them. Several things are different now. A request
+  the companion has stopped waiting for is taken back from the brain, off the line if it has not
+  started and off the wire if it has, so the slot comes back at once. A rewrite may take 90
+  seconds. Rewrites run only when nobody is talking with the companion and the brain is idle, one
+  at a time, and a pass stops at the first rewrite that does not answer and waits half an hour.
+  A note is left alone as legitimately in two languages after three rewrites that answered and
+  were no good; a rewrite that did not answer no longer counts against the note, and the count is
+  kept across restarts, where before every restart started it again. Rewrites go to the model her
+  full turns use, which translates a note where the small voice model hands it back unchanged.
+  Two gaps in what it looked at are closed too: the lines sleep keeps as "I said: …", her own and
+  the largest share, had read as someone else's since August and were never mended; and what a
+  person with a two-word name said was not recognised as theirs and could have been rewritten.
+- **A full turn on a slow brain could send the next thirty seconds of turns to the small model.**
+  Any failure put the brain that failed on the bench for thirty seconds, a turn that simply ran
+  past the node's own wait included. On a brain that was still working, the turns of those thirty
+  seconds went to the small voice model with a prompt made for a larger window, and failed with
+  "context overflow". Running out of the wait no longer benches a brain; only an answer that says
+  the brain is down does.
+- **Ollama with a gpt-oss model refused every full turn.** The node asked Ollama to switch
+  thinking off with a setting only Qwen models take; gpt-oss answered 400 to it and the turn fell
+  to the small model. The setting now goes only to the models that take it.
+- **A companion's own words could be translated into another language and kept as hers.** A
+  companion followed the language of any line she heard, a person's but also the narrator's, a
+  peer's or an item's. On an English household one such line moved a companion to Spanish for a
+  morning; the check that keeps her replies in the right language then translated her own English
+  drafts into Spanish on her own time, the workshop's result was spoken in Spanish under her name,
+  the night's learning would have trained on those lines, and the morning check could not see it,
+  since it only tells Latin script from Japanese. Now a companion follows only a person's language,
+  and only while answering them; her own time, her notes and the product's lines in her voice are
+  in the household's language (`WYRDSEKAI_LOCALE`, or, where it is not set, the language a person's
+  own app reports; the healer waits until one is known); Spanish is recognised by how
+  much of a text it is, not by two words somewhere in a page; a line she said on her own time in
+  another language is left out of the night; and the morning check tells Spanish from English.
+- **An offer left to the person was taken as the companion's own word, and acted on.** Since
+  0.5.4 a companion keeps the word she gives on her own time: say "I'll close the holding-room"
+  and she closes it. A line that left the choice with the person, "if you'd rather talk about
+  something else, tell me and I'll go with you", was read the same way, and she walked out on
+  the person mid-conversation. An offer is theirs to take up, and going with someone is staying
+  with them; neither is a word of hers to keep.
+- **A line heard could hand a companion back the energy she had a second ago.** Hearing speech
+  moves her tanks through their couplings, and the coupled copy of her energy was refreshed only
+  once a second. A line that landed inside that second wrote the old energy back over a turn's
+  cost or a sleep's recovery. The copy is now refreshed before the line is felt.
+- **`wyrd version` named the wrong commit.** A release was stamped with the commit of the tree it
+  was built from, which for a published release is the previous one (0.5.4 named 0.5.3's). The
+  build now records the commit the release was cut from and the release number itself.
+- **A sign-in that was in use could run out, and a restart then showed the sign-in screen.** A
+  session lasted seven days from the login, however much it was used. A browser tab kept open past
+  that week was never re-checked until something forced it to reconnect, which a restart does, and
+  then it was signed out. A session's seven days now count from the last time it was used: every
+  check extends it, and an open browser refreshes it every hour.
+- **Any `wyrd` command run as an ordinary user failed with "Permission denied".** The launcher
+  read the node's env file whenever it existed, and on an installed node that file belongs to
+  root. It now reads the file only when it can, so `wyrd version` and `wyrd update status` work
+  again without sudo.
+- **`wyrd update --help` tried to install a file called `--help`.** It prints the usage now, as
+  do `wyrd update now --help` and `wyrd researcher update --help`, which used to run the update.
+- **The backup missed each companion's own home and a few small files.** Nothing named the
+  companions' home folders, so every copy left them out, with what their coding helpers had
+  learned. They are copied now, without the caches their tools refill. The backup also keeps the
+  tunnel key that phones are paired by, the relay certificate the node trusts, the companion's
+  recent turns, and what the body last saw of its machine and its brain. A trainer environment
+  that was also unnamed is marked as one to fetch again.
+- **What she read is said in her own voice.** The library's answer was a report about its sources,
+  and she spoke it as one: "The sources describe two women sitting together in silence [S1]". It is
+  now said as hers, "I read about two women sitting together in silence", without the citation keys.
+  The report itself is kept as it was for the record.
+- **The study shelf read back the wrong meaning for some passages.** The code that reads a passage's
+  stored vector back used the passage's number where the index wants the vector's position. On a
+  shelf where only some passages have a vector, like the study shelf, a read then failed, or returned
+  another passage's vector without a word. Searches on that shelf ranked some passages by the wrong
+  meaning, and a one-time pass that rebuilt the shelf's passages carried some wrong vectors over.
+  The read is fixed. Vectors written by that pass may still be wrong until they are written again,
+  and the steward can now write them again: `sudo wyrd library reembed study` gives every passage
+  on the shelf that carries a vector a fresh one from its own text. It runs in the background while
+  the house goes on, and `wyrd library reembed status` shows how far it has come.
+- **The library status counted more vectors than there are.** When a passage's vector is written
+  again, the old copy keeps its vector until the index tidies itself, and the count included those
+  copies. On the household's study shelf it showed 14,032 for 10,338 passages. It now counts passages.
+
 ## [0.5.4] — 2026-10-04
 
 The main additions in this release:

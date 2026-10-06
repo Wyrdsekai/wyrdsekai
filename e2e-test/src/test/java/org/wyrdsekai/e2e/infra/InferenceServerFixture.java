@@ -72,13 +72,14 @@ public interface InferenceServerFixture {
      * @return the appropriate fixture
      */
     static InferenceServerFixture create(String modelId, int port, int contextSize) {
-        var backend = System.getenv().getOrDefault("WYRDSEKAI_E2E_BACKEND", "sglang");
+        // llama.cpp unless another engine is named: the default engine and the harness's own
+        // auto-start (compose profile "drive") agree; an SGLang fixture is asked for by name.
+        var backend = System.getenv().getOrDefault("WYRDSEKAI_E2E_BACKEND", "llama-drive");
         return switch (backend) {
+            case "sglang" -> new SGLangServerFixture(modelId, port, contextSize);
             case "vllm" -> new VLLMServerFixture(modelId, port);
-            case "llama-server", "llama" -> new LlamaServerFixture(
-                Path.of(modelId), port, contextSize);
             case "claude" -> new ClaudeCliFixture();
-            default -> new SGLangServerFixture(modelId, port, contextSize);
+            default -> new LlamaServerFixture(Path.of(modelId), port, contextSize);
         };
     }
 
@@ -87,7 +88,7 @@ public interface InferenceServerFixture {
      */
     static InferenceServerFixture create(
             Path modelPath, int port, int contextSize) {
-        var backend = System.getenv().getOrDefault("WYRDSEKAI_E2E_BACKEND", "sglang");
+        var backend = System.getenv().getOrDefault("WYRDSEKAI_E2E_BACKEND", "llama-drive");
         return switch (backend) {
             case "sglang" -> new SGLangServerFixture(modelPath.toString(), port, contextSize);
             case "vllm" -> new VLLMServerFixture(modelPath.toString(), port);

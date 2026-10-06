@@ -12,11 +12,16 @@ import org.wyrdsekai.core.persistence.BackupOrchestrator;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.channels.Channels;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SecureDirectoryStream;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.sql.DriverManager;
@@ -254,11 +259,15 @@ public final class Vault {
         "world.db", "library.db", "node-identity.json", "credentials.safe", "profile.toml", "wyrdsekai.conf",
         "env", "nats.conf", "mcp-services.json", "operator.token", "session.token", "data-version.json",
         "embedding-model.txt", "latest-wyrdsekai.txt", "latest-codezaiku.txt", "latest-researchzosho.txt",
-        "self-update.json", "ssh_host_key", "ssh_host_key.pub", "steward-feed.jsonl", "brainstem/events.jsonl");
+        "self-update.json", "ssh_host_key", "ssh_host_key.pub", "steward-feed.jsonl", "brainstem/events.jsonl",
+        // Unclassified until 2026-10-04, so never copied: the tunnel's key (phones pair again without it),
+        // the relay certificate the node pinned, what the body last saw of its machine and of its brain
+        // (a restore onto a new machine is noticed), and her last turns, which the move gate reads.
+        "tunnel-key.json", "relay-tls-seen", "hardware-seen.json", "serving-profile.last", "shadow.jsonl");
     static final List<String> SELF_DIRS = List.of(
         "agents", "classifiers", "souls", "substrate", "items", "recipes", "adapters",
         "data/story", "data/biography", "data/study", "study", "household",
-        "chronicles", "coding-workspaces", "skills", "scripts", "sleepwrite", "training", "library",
+        "chronicles", "skills", "scripts", "sleepwrite", "training", "library",
         "vault",    // the Vault room's shelf of scrolls, not this store
         "tls", "nats");   // the household CA phones and machines pin, and the bus's logins (W2)
     /**
@@ -281,7 +290,28 @@ public final class Vault {
         "data/search/knowledge", "data/search/study");
     /** Fetched again by hash: weights, bundles, knowledge packs, and the copies themselves. */
     static final List<String> REPLACEABLE = List.of("models", "coding-cli-bundle", "backups", "vault-store", "packs",
-        "mlx-venv", "sleepwrite-venv", "venv", ".venv");   // trainer environments are rebuilt, never copied
+        "mlx-venv", "sleepwrite-venv", "brainwrite-venv", "venv", ".venv");   // trainer environments are rebuilt, never copied
+
+    /**
+     * Trees a being writes into, walked so that nothing is read through a link (see {@link #storeTree}):
+     * her coding workspaces, and her home under {@code beings/<slug>/} with the line naming who she is.
+     * Her home holds what her tools keep, her familiars' memory among it; it was never copied before
+     * 2026-10-04 because nothing named it.
+     */
+    static final List<String> BEING_TREES = List.of("coding-workspaces", "beings");
+
+    /** What a being's tools refill on their own: fetched again, never copied. */
+    static boolean beingCache(String rel) {
+        if (!rel.startsWith("beings/")) return false;
+        var parts = rel.split("/");
+        for (var part : parts) if (part.equals("node_modules") || part.equals("__pycache__")) return true;
+        if (parts.length < 4 || !parts[2].equals("home")) return false;
+        var inHome = String.join("/", Arrays.copyOfRange(parts, 3, parts.length));
+        return inHome.equals(".cache") || inHome.startsWith(".cache/")
+            || inHome.equals(".npm") || inHome.startsWith(".npm/")
+            || inHome.equals(".local/lib") || inHome.startsWith(".local/lib/")
+            || inHome.equals(".local/bin") || inHome.startsWith(".local/bin/");
+    }
 
     static Class classify(String rel) {
         for (var p : REPLACEABLE) if (rel.equals(p) || rel.startsWith(p + "/")) return Class.REPLACEABLE;
@@ -347,6 +377,13 @@ public final class Vault {
                     }
                 });
             }
+            var refilled = new ArrayList<String>();
+            for (var rel : BEING_TREES) {
+                seenTop.add(rel);
+                var d = dataDir.resolve(rel);
+                if (!Files.isDirectory(d, LinkOption.NOFOLLOW_LINKS)) continue;
+                storeTree(d, rel, entries, previous, refilled);
+            }
             for (var rel : TRAILS) {
                 var trail = dataDir.resolve(rel);
                 seenTop.add(rel.substring(0, rel.indexOf('/')));
@@ -393,6 +430,7 @@ public final class Vault {
             }
             classes.put("dear", dear);
             classes.put("derivable", derivable);
+            replaceable.addAll(refilled);
             classes.put("replaceable", replaceable);
             classes.put("unclassified", unclassified);
             var m = new Manifest(id, at, reason == null ? "continuous" : reason, keep, List.copyOf(entries), classes, null);
@@ -413,29 +451,104 @@ public final class Vault {
 
     /** Chunk one file into the store; unchanged chunks cost a read and a hash, never a write. */
     private Entry store(String rel, Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            var e = store(rel, in, 0);
+            return new Entry(rel, e.size(), Files.getLastModifiedTime(file).toMillis(), e.chunks());
+        }
+    }
+
+    private Entry store(String rel, InputStream in, long mtime) throws IOException {
         var chunks = new ArrayList<String>();
         long size = 0;
-        try (InputStream in = Files.newInputStream(file)) {
-            var buf = new byte[MAX_CHUNK];
-            int filled = readFully(in, buf, 0);
-            while (filled > 0) {
-                int n = cutPoint(buf, filled);
-                size += n;
-                var sha = sha256(buf, n);
-                var dest = chunkPath(sha);
-                if (!Files.exists(dest)) {
-                    Files.createDirectories(dest.getParent());
-                    var tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
-                    Files.write(tmp, cipher.seal(buf, 0, n));
-                    Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                }
-                chunks.add(sha);
-                System.arraycopy(buf, n, buf, 0, filled - n);
-                filled -= n;
-                filled += readFully(in, buf, filled);
+        var buf = new byte[MAX_CHUNK];
+        int filled = readFully(in, buf, 0);
+        while (filled > 0) {
+            int n = cutPoint(buf, filled);
+            size += n;
+            var sha = sha256(buf, n);
+            var dest = chunkPath(sha);
+            if (!Files.exists(dest)) {
+                Files.createDirectories(dest.getParent());
+                var tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
+                Files.write(tmp, cipher.seal(buf, 0, n));
+                Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            }
+            chunks.add(sha);
+            System.arraycopy(buf, n, buf, 0, filled - n);
+            filled -= n;
+            filled += readFully(in, buf, filled);
+        }
+        return new Entry(rel, size, mtime, List.copyOf(chunks));
+    }
+
+    /**
+     * Store a tree a being can write into. The vault reads as root and a being decides what is in
+     * her tree, so nothing here is read through a symbolic link: each directory is opened relative to
+     * the one above it and each file without following a link, and a link, socket or pipe is passed
+     * over. A link planted or swapped in mid-walk then fails to open instead of handing the store a
+     * file only root may read, which a restore would put back in her home as hers. What her tools
+     * refill on their own ({@link #beingCache}) is named in {@code refilled} and not copied.
+     */
+    private void storeTree(Path dir, String rel, List<Entry> entries, Map<String, Entry> previous,
+                           List<String> refilled) throws IOException {
+        try (var ds = Files.newDirectoryStream(dir)) {
+            if (ds instanceof SecureDirectoryStream<Path> sds) {
+                storeTree(sds, rel, entries, previous, refilled, 0);
+                return;
             }
         }
-        return new Entry(rel, size, Files.getLastModifiedTime(file).toMillis(), List.copyOf(chunks));
+        // No directory handles on this system (Windows): no being users there either. Still no links.
+        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+            @Override public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                var r = (rel + "/" + dir.relativize(d).toString().replace('\\', '/')).replaceAll("/$", "");
+                if (!d.equals(dir) && beingCache(r)) { refilled.add(r); return FileVisitResult.SKIP_SUBTREE; }
+                return FileVisitResult.CONTINUE;
+            }
+            @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                var r = rel + "/" + dir.relativize(file).toString().replace('\\', '/');
+                if (attrs.isRegularFile() && !beingCache(r)) {
+                    try { entries.add(store(r, file, previous)); }
+                    catch (IOException e) { log.warn("vault: skipped {}: {}", file, e.getMessage()); }
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private void storeTree(SecureDirectoryStream<Path> dir, String rel, List<Entry> entries, Map<String, Entry> previous,
+                           List<String> refilled, int depth) {
+        if (depth > 64) { log.warn("vault: {} is nested past 64 levels; the rest is skipped", rel); return; }
+        for (var p : dir) {
+            var name = p.getFileName();
+            var childRel = rel + "/" + name;
+            BasicFileAttributes attrs;
+            try {
+                attrs = dir.getFileAttributeView(name, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS).readAttributes();
+            } catch (IOException e) {
+                continue;
+            }
+            if (attrs.isDirectory()) {
+                if (beingCache(childRel)) { refilled.add(childRel); continue; }
+                try (var sub = dir.newDirectoryStream(name, LinkOption.NOFOLLOW_LINKS)) {
+                    storeTree(sub, childRel, entries, previous, refilled, depth + 1);
+                } catch (IOException e) {
+                    log.warn("vault: skipped {}: {}", childRel, e.getMessage());
+                }
+            } else if (attrs.isRegularFile() && !beingCache(childRel) && !"write.lock".equals(name.toString())) {
+                var prev = previous == null ? null : previous.get(childRel);
+                if (prev != null && prev.size() == attrs.size() && prev.mtime() == attrs.lastModifiedTime().toMillis()
+                        && chunksPresent(prev)) {
+                    entries.add(prev);
+                    continue;
+                }
+                try (var ch = dir.newByteChannel(name, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+                     var in = Channels.newInputStream(ch)) {
+                    entries.add(store(childRel, in, attrs.lastModifiedTime().toMillis()));
+                } catch (IOException e) {
+                    log.warn("vault: skipped {}: {}", childRel, e.getMessage());
+                }
+            }
+        }
     }
 
     /** The previous copy's entries by path, so an unchanged file costs a stat and not a read. */

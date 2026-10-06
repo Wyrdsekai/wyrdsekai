@@ -81,6 +81,11 @@ public final class VitalityPersistence {
         new String[]{"amae_signals", "TEXT"}
     );
 
+    /** Her conditioning (Conditioning): stamina built by regular activity, kept across restarts. */
+    private static final List<String[]> CONDITIONING_COLUMNS = List.<String[]>of(
+        new String[]{"conditioning", "REAL NOT NULL DEFAULT 0.0"}
+    );
+
     private final String jdbcUrl;
     private final SqlDialect dialect;
     private volatile boolean migrated = false;
@@ -135,6 +140,18 @@ public final class VitalityPersistence {
             }
         }
         for (var col : AMAE_COLUMNS) {
+            if (!hasColumn(conn, "vitality_snapshots", col[0])) {
+                try (var stmt = conn.createStatement()) {
+                    stmt.execute("ALTER TABLE vitality_snapshots ADD COLUMN " + col[0] + " " + col[1]);
+                    log.info("Vitality migration: added column {}", col[0]);
+                } catch (SQLException e) {
+                    if (!hasColumn(conn, "vitality_snapshots", col[0])) {
+                        throw e;
+                    }
+                }
+            }
+        }
+        for (var col : CONDITIONING_COLUMNS) {
             if (!hasColumn(conn, "vitality_snapshots", col[0])) {
                 try (var stmt = conn.createStatement()) {
                     stmt.execute("ALTER TABLE vitality_snapshots ADD COLUMN " + col[0] + " " + col[1]);
@@ -203,6 +220,35 @@ public final class VitalityPersistence {
             }
         } catch (SQLException e) {
             log.debug("Failed to load amae signals for agent {}: {}", agentId, e.getMessage());
+        }
+        return Optional.empty();
+    }
+
+    /** Keep her conditioning beside the vitality snapshot (UPDATE-only, as sleep pressure). */
+    public void saveConditioning(String agentId, double level) {
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensureMigrated(conn);
+            try (var ps = conn.prepareStatement("UPDATE vitality_snapshots SET conditioning = ? WHERE agent_id = ?")) {
+                ps.setDouble(1, level);
+                ps.setString(2, agentId);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            log.debug("Failed to save conditioning for agent {}: {}", agentId, e.getMessage());
+        }
+    }
+
+    public Optional<Double> loadConditioning(String agentId) {
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensureMigrated(conn);
+            try (var ps = conn.prepareStatement("SELECT conditioning FROM vitality_snapshots WHERE agent_id = ?")) {
+                ps.setString(1, agentId);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) return Optional.of(rs.getDouble(1));
+                }
+            }
+        } catch (SQLException e) {
+            log.debug("Failed to load conditioning for agent {}: {}", agentId, e.getMessage());
         }
         return Optional.empty();
     }

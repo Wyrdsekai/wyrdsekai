@@ -59,6 +59,13 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
         @Override
         public String name() { return "openai"; }
 
+        /** The models Ollama lets us switch thinking off with {@code reasoning_effort: "none"}: Qwen's. */
+        static boolean takesReasoningEffortNone(String model) {
+            if (model == null) return false;
+            var m = model.toLowerCase(java.util.Locale.ROOT);
+            return m.contains("qwen") || m.startsWith("wyrdsekai");
+        }
+
         @Override
         public HttpRequest buildChatRequest(String baseUrl, String apiKey,
                                              InferenceClient.ChatRequest request, Duration timeout) {
@@ -72,8 +79,14 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
                     if (isOllama) {
                         // Pin model in GPU memory between inference calls.
                         obj.put("keep_alive", System.getenv().getOrDefault("OLLAMA_KEEP_ALIVE", "-1"));
-                        // Disable thinking for Qwen3.x (Ollama uses reasoning_effort).
-                        obj.put("reasoning_effort", "none");
+                        // Disable thinking for Qwen3.x (Ollama uses reasoning_effort). Only for the
+                        // models that take "none": gpt-oss on Ollama takes low, medium or high and
+                        // answers 400 to "none", and every full turn then fell back to the small
+                        // voice model with a prompt made for a larger window (a household's 0.5.4
+                        // report, 2026-10-05).
+                        if (takesReasoningEffortNone(request.model())) {
+                            obj.put("reasoning_effort", "none");
+                        }
                         // Context window + generation limits.
                         if (!obj.has("num_ctx")) {
                             var optionsNode = obj.has("options")

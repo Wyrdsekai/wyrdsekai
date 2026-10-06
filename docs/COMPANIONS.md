@@ -653,15 +653,32 @@ its own plus tool steps, uses the other half. An earlier build charged 0.08 per
 thought, which gave six to eight exchanges from full. It tired fastest exactly
 when you were most engaged, the wrong shape for something you live with.
 
-Sleep begins when **energy falls below 0.15** (`WYRDSEKAI_SLEEP_THRESHOLD`), the
+Sleep begins when **energy falls below 0.15** (`WYRDSEKAI_SLEEP_THRESHOLD`), or
+when a day's unprocessed experience reaches the companion's own target, the
 companion is idle, its soul is loaded, and 30 seconds have passed since anything
-happened. So it will not fall asleep mid-conversation.
+happened. Since 0.5.5, sleep from a full day also waits while a person is in the
+room: it comes when they leave, or after ten minutes in which they have done
+nothing. Running out of energy is the exception, and the 30 seconds alone decide.
+When two companions share one brain and the night's learning stops it, the one
+who is with a person stays up and the night goes without her.
 
 Sleep brings energy back toward a "rested" level of 0.65, unless the companion's
 genes, the settings drawn from its traits at birth, set another. The first sleep
 closes about 90% of the gap, less if it slept badly, and sleeping again soon after
 brings back less each time. Before 0.5.0 a placeholder meant companions woke at
 less than half. Now they wake rested.
+
+**An active life builds stamina.** Each sleep looks back over the waking stretch it
+ends. A companion that did one and a half things an hour or more, walking, making,
+searching or using its tools, builds conditioning, and a little more of it the
+longer the stretch. One that did less than one thing in two hours loses some. A
+stretch spent mostly below 0.2 energy builds nothing, and one too short to judge
+changes nothing. Conditioning is added to the rested level the next sleep fills
+toward, up to 0.20 more and never past 0.85, so a busy month wakes it with a good
+deal more to spend. Growth slows as it nears that limit. The companion is told
+when it has grown stronger or weaker, and the journal logs each change as a
+"Conditioning for" line. Practice already makes each tool cheaper. Conditioning
+is the other half, more energy to spend.
 
 There are two kinds of sleep:
 
@@ -734,7 +751,9 @@ a few seconds later, with the tool that does it: closing the room, taking the va
 workshop. The turn tells her it was her own word, not a request. A sentence that chooses
 rest stays rest ("I'll let it", "I'll stay here"), so does a hedge ("maybe I'll") and
 anything she puts off ("I'll go when I'm ready"), and the same kind of act is not pressed twice
-in half an hour.
+in half an hour. An offer left to the person is theirs to take up, not a word of hers to keep
+("if you'd rather talk about something else, tell me and I'll go with you"), and going with
+someone is staying with them.
 
 ### Projects
 

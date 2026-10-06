@@ -193,8 +193,10 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     done
 fi
 
-# Source env if exists
-if [[ -f "$ENV_FILE" ]]; then
+# Source env when it can be read. On an installed node it is root-owned: an ordinary user
+# running `wyrd version` or `wyrd update status` has no business in it and used to get
+# "Permission denied" from bash for every subcommand (0.5.4 report, 2026-10-05).
+if [[ -r "$ENV_FILE" ]]; then
     set -a; source "$ENV_FILE"; set +a
 fi
 # Also source the canonical service conf when it's a DIFFERENT file. On an
@@ -4888,6 +4890,7 @@ _update_siblings() {
 
 _update_now() {   # [VERSION] [--yes] [--no-siblings] [--from <household node's http url>]
     local want="" yes=0 from="" prev="" a
+    for a in "$@"; do case "$a" in -h|--help|help) _update_usage; return 0 ;; esac; done
     for a in "$@"; do
         if [[ "$prev" == "--from" ]]; then from="$a"; prev=""; continue; fi
         case "$a" in --yes|-y) yes=1 ;; --no-siblings) WYRDSEKAI_UPDATE_SIBLINGS=0 ;; --from) prev="--from" ;; --from=*) from="${a#--from=}" ;; [0-9]*) want="$a" ;; esac
@@ -4921,9 +4924,15 @@ _update_now() {   # [VERSION] [--yes] [--no-siblings] [--from <household node's 
     WYRDSEKAI_UPDATE_SIBLINGS="${WYRDSEKAI_UPDATE_SIBLINGS:-1}" "$REAL_BIN/wyrd" update siblings
 }
 
+_update_usage() {
+    local k
+    for k in status now auto siblings stage file; do echo "$(_t update.usage.$k)"; done
+}
+
 do_update() {
     local artifact="${1:-}"
     case "$artifact" in
+        -h|--help|help) _update_usage; return 0 ;;
         ""|status) _update_status; return 0 ;;
         now)       shift; _update_now "$@"; return $? ;;
         auto)
@@ -7241,11 +7250,58 @@ do_naming_admin() {
 # node by name. A rename keeps the soul (same DID, same entity id, same history) and
 # changes the name on the manifest; the server resolves a configured name to the soul
 # that answers to it, so a renamed companion is spawned, not reborn (2026-09-13).
+# wyrd soul language <companion>: what the language healer sees in her soul — the notes it reads
+# as another language than the household's, with their strikes. Read from the running node.
+_soul_language() {
+    local who="${1:-}" verb="${2:-}" api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}" token resp code path
+    [[ -n "$who" ]] || { err "$(_t soul.language.usage)"; return 64; }
+    case "$verb" in ""|heal) ;; *) err "$(_t soul.language.usage)"; return 64 ;; esac
+    token=$(wyrd_session_token || true)
+    [[ -z "$token" ]] && { err "$(_t soul.language.login)"; return 1; }
+    # The node takes a name or a DID in the path and resolves the name itself.
+    path=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=':'))" "$who" 2>/dev/null || printf '%s' "$who")
+    if [[ "$verb" == "heal" ]]; then
+        resp=$(curl -s -w '\n%{http_code}' -m 20 -X POST -H "Authorization: Bearer $token" "$api/api/soul/$path/language/heal") \
+            || { err "$(_t api.no_answer "$api")"; return 1; }
+    else
+        resp=$(curl -s -w '\n%{http_code}' -m 20 -H "Authorization: Bearer $token" "$api/api/soul/$path/language") \
+            || { err "$(_t api.no_answer "$api")"; return 1; }
+    fi
+    code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+    case "$code" in
+        200) ;;
+        202) echo "$(_t soul.language.healing)"
+             echo "$(_t soul.language.follow "$who")" ;;
+        409) err "$(_t soul.language.not_running "$who")"; return 1 ;;
+        401|403) err "$(_t soul.language.only_steward)"; return 1 ;;
+        404) err "$(_t soul.language.not_found "$who")"; return 1 ;;
+        *) err "$(_t api.answered "$code" "$resp")"; return 1 ;;
+    esac
+    # The words come from the language files; python only fills them in.
+    printf '%s' "$resp" | \
+    T_HOUSEHOLD="$(_t soul.language.household '{0}' '{1}')" T_UNVERIFIABLE="$(_t soul.language.unverifiable)" \
+    T_COUNTS="$(_t soul.language.counts '{0}' '{1}')" T_ITEM="$(_t soul.language.item '{0}' '{1}' '{2}' '{3}')" \
+    T_MERCIED="$(_t soul.language.mercied)" T_STRIKES="$(_t soul.language.strikes '{0}')" T_UNTRIED="$(_t soul.language.untried)" \
+    python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+e = os.environ
+note = '' if d.get('verifiable') else e['T_UNVERIFIABLE']
+print(e['T_HOUSEHOLD'].replace('{0}', d['household']).replace('{1}', note))
+print(e['T_COUNTS'].replace('{0}', str(d['fragments'])).replace('{1}', str(d['memoryNodes'])))
+for it in d['items']:
+    tag = e['T_MERCIED'] if it['mercied'] else (e['T_STRIKES'].replace('{0}', str(it['strikes'])) if it['strikes'] else e['T_UNTRIED'])
+    print(e['T_ITEM'].replace('{0}', it['kind']).replace('{1}', it['id']).replace('{2}', it['detected']).replace('{3}', tag))
+    print('      %s' % it['text'])
+" 2>/dev/null || printf '%s\n' "$resp"
+}
+
 do_soul() {
     local sub="${1:-list}"
     case "$sub" in
+        language) _soul_language "${2:-}" "${3:-}"; return $? ;;
         list|rename|archive) ;;
-        *) echo "Usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason]"; return 64 ;;
+        *) echo "Usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason] | language <name> [heal]"; return 64 ;;
     esac
     if [[ "$sub" != "list" ]] && is_server_running 2>/dev/null; then
         err "Stop the server first (wyrd stop): a running companion holds her name."
@@ -11983,6 +12039,9 @@ do_researcher() {
         gpu) _rz_gpu "$@" ;;
         update)
             # The librarian's own updater (researchzosho 0.1.2+): the latest release, verified against its sums, service restarted.
+            case "${1:-}" in -h|--help|help)
+                echo "$(_t researcher.update.usage)"; return 0 ;;
+            esac
             local rz; rz="$(_rz_bin 2>/dev/null || true)"
             [[ -n "$rz" ]] || { err "ResearchZosho is not installed here (wyrd researcher setup). A librarian on another machine updates itself there: researchzosho update now"; return 1; }
             "$rz" update now "$@" ;;
@@ -12386,6 +12445,40 @@ json.dump({"readers": kept}, open(p, "w"), indent=2)' "$f" "$1"
                     err "unknown action: $action"; return 1 ;;
             esac
             ;;
+        # wyrd library reembed [study|status]: every passage on the shelf that carries a vector gets it
+        # again from its own text, in the background (the repair after the vector-read fix, 2026-10-04).
+        reembed)
+            local coll="${1:-study}" token resp code
+            token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "$(_t soul.language.login)"; return 1; }
+            case "$coll" in study|status) ;; *) err "$(_t library.reembed.usage)"; return 64 ;; esac
+            if [[ "$coll" == "status" ]]; then
+                resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" "$api/api/library/reembed") \
+                    || { err "$(_t api.no_answer "$api")"; return 1; }
+            else
+                resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/library/reembed?collection=$coll") \
+                    || { err "$(_t api.no_answer "$api")"; return 1; }
+            fi
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            case "$code" in
+                401|403) err "$(_t library.reembed.only_steward)"; return 1 ;;
+                409) echo "$(_t library.reembed.running)" ;;
+                202) echo "$(_t library.reembed.started "$coll")" ;;
+                200) ;;
+                *) err "$(_t api.answered "$code" "$resp")"; return 1 ;;
+            esac
+            printf '%s' "$resp" | \
+            T_STATUS="$(_t library.reembed.status '{0}' '{1}' '{2}' '{3}' '{4}')" T_RUNNING="$(_t library.reembed.state.running)" \
+            T_FINISHED="$(_t library.reembed.state.finished)" T_NEVER="$(_t library.reembed.state.never)" \
+            T_STARTED="$(_t library.reembed.started_at '{0}')" T_FINISHED_AT="$(_t library.reembed.finished_at '{0}')" \
+            python3 -c 'import json, os, sys
+d = json.load(sys.stdin); e = os.environ
+state = e["T_RUNNING"] if d.get("running") else (e["T_FINISHED"] if d.get("finishedAt") else e["T_NEVER"])
+started = e["T_STARTED"].replace("{0}", d["startedAt"][:19]) if d.get("startedAt") else ""
+finished = e["T_FINISHED_AT"].replace("{0}", d["finishedAt"][:19]) if d.get("finishedAt") else ""
+print(e["T_STATUS"].replace("{0}", state).replace("{1}", str(d.get("done", 0))).replace("{2}", d.get("collection", "-")).replace("{3}", started).replace("{4}", finished))
+if d.get("error"): print("  error: " + d["error"])' 2>/dev/null || printf '%s\n' "$resp"
+            ;;
         freshness)
             # #1139 — library-freshness seam. enumerate reads chunk
             # provenance for source-liveness checks; prune-ids deletes dead chunks.
@@ -12697,6 +12790,8 @@ for row in r["rows"]:
             echo "                                     metadata.db; --full-text extracts everything, resumable)"
             echo "    available                       (registry packs)"
             echo "    status                          (installed packs + chunk counts + proposals waiting)"
+            echo "    reembed [study|status]          (every passage there that carries a vector gets it again"
+            echo "                                     from its own text, in the background; status shows how far)"
             echo "    publish <collection>            (project a Study shelf zone-wide, private to the household)"
             echo "    grant|revoke <companion> <shelf> (let a companion read a Study shelf)"
             echo "    prune-sidecars <collection>     (drop metadata sidecars an older ingest swept in)"

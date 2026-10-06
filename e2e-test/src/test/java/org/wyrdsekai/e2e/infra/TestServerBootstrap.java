@@ -58,6 +58,7 @@ import org.wyrdsekai.core.room.RoomRegistry;
 import org.wyrdsekai.core.room.ZoneGuardian;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 import org.wyrdsekai.core.soul.SqlSoulStore;
+import org.wyrdsekai.server.http.SoulRoutes;
 import org.wyrdsekai.core.update.UpdateConfig;
 import org.wyrdsekai.scripting.loader.ScriptLoader;
 import org.wyrdsekai.server.http.ApiAuth;
@@ -513,6 +514,9 @@ public final class TestServerBootstrap implements AutoCloseable {
                 luceneStore, homeClient);
             var docIndexer = new DocumentIndexer(studyService);
             new StudyRoutes(studyService, docIndexer).register(cfg.routes);
+            // Soul routes as in production (no bond store here: steward and operator only), so the
+            // steward's verbs on a soul can be exercised against this node.
+            new SoulRoutes(soulStore, authService, pairingService, null).register(cfg.routes);
             // Resident bridge routes — uses default companion's entityId
             new ResidentRoutes(
                 "companion-wyrd", finalResidentToken, system).register(cfg.routes);

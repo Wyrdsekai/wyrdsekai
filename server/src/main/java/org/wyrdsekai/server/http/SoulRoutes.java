@@ -3,6 +3,11 @@ package org.wyrdsekai.server.http;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import io.javalin.http.Context;
+import org.wyrdsekai.core.agent.CompanionActor;
+import org.wyrdsekai.core.room.ZoneGuardian;
+import org.wyrdsekai.core.agent.LanguageHealLedger;
+import org.wyrdsekai.core.agent.LanguageHealth;
+import org.wyrdsekai.core.config.WyrdConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.common.util.Json;
@@ -65,6 +70,8 @@ public final class SoulRoutes {
         app.get("/api/soul/{did}", this::getLatest);
         app.get("/api/soul/{did}/history", this::getHistory);
         app.get("/api/soul/{did}/version/{version}", this::getVersion);
+        app.get("/api/soul/{did}/language", this::languageHealth);
+        app.post("/api/soul/{did}/language/heal", this::healLanguageNow);
         app.post("/api/soul/{did}", this::syncManifest);
         app.post("/api/soul/{did}/identity", this::setIdentity);
     }
@@ -112,6 +119,108 @@ public final class SoulRoutes {
             .toList();
 
         ctx.json(entries);
+    }
+
+    /**
+     * GET /api/soul/{did}/language — what the language healer sees in this soul: the notes it
+     * reads as another language than the household's, each with its strikes and whether it has
+     * been left in peace. A steward whose node was busy re-rendering could not tell whether the
+     * notes were really in another language or the detector misread them, since the soul files
+     * are the node's own (a household's 0.5.4 report, 2026-10-05). Scoped like the manifest.
+     */
+    private void languageHealth(Context ctx) {
+        var who = ctx.pathParam("did");
+        // On the household machine the steward's hand is `sudo wyrd …` with the machine's operator
+        // token, which the policy layer resolves as the steward. The soul routes otherwise take a
+        // person's login or a paired device, scoped to the steward or the companion's bondholder.
+        String userId = null;
+        if (!ApiAuth.isOperator(ctx)) {
+            userId = requireAuth(ctx);
+            if (userId == null) return;
+        }
+        var did = resolveDid(who);
+        if (did == null) {
+            ctx.status(404).json(new ErrorResponse("No soul found for: " + who));
+            return;
+        }
+        if (userId != null && !mayAccessSoul(userId, did)) {
+            log.warn("Soul access denied: user={} did={}", userId, did);
+            ctx.status(403).json(new ErrorResponse("Not authorized for this soul"));
+            return;
+        }
+        var manifest = soulStore.latest(did);
+        if (manifest.isEmpty()) {
+            ctx.status(404).json(new ErrorResponse("No manifest found for DID: " + did));
+            return;
+        }
+        var ledger = LanguageHealLedger.inMemory();
+        try {
+            var p = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(), did);
+            if (p != null) ledger = LanguageHealLedger.load(p);
+        } catch (RuntimeException e) {
+            log.debug("Language heal ledger for {} not read: {}", did, e.toString());
+        }
+        var m = manifest.get();
+        var name = m.profile() != null ? m.profile().name() : null;
+        ctx.json(LanguageHealth.of(m, LanguageHealth.householdLanguage(), ledger, name));
+    }
+
+    /**
+     * POST /api/soul/{did}/language/heal — mend her off-language notes now (`wyrd soul language
+     * <name> heal`): the running companion runs the healer's passes back to back, without waiting
+     * for the interval or a quiet lane, one rewrite at a time as always. Answers 202 with what the
+     * healer sees at this moment; 409 when she is not running here. Scoped like the view.
+     */
+    private void healLanguageNow(Context ctx) {
+        var who = ctx.pathParam("did");
+        String userId = null;
+        if (!ApiAuth.isOperator(ctx)) {
+            userId = requireAuth(ctx);
+            if (userId == null) return;
+        }
+        var did = resolveDid(who);
+        if (did == null) {
+            ctx.status(404).json(new ErrorResponse("No soul found for: " + who));
+            return;
+        }
+        if (userId != null && !mayAccessSoul(userId, did)) {
+            ctx.status(403).json(new ErrorResponse("Not authorized for this soul"));
+            return;
+        }
+        var manifest = soulStore.latest(did);
+        if (manifest.isEmpty()) {
+            ctx.status(404).json(new ErrorResponse("No manifest found for DID: " + did));
+            return;
+        }
+        var m = manifest.get();
+        var entityId = m.profile() != null ? m.profile().entityId() : null;
+        var ref = entityId != null ? ZoneGuardian.getCompanionRef(null, entityId) : null;
+        if (ref == null) {
+            ctx.status(409).json(new ErrorResponse("That companion is not running on this node"));
+            return;
+        }
+        ref.tell(new CompanionActor.HealLanguageNow());
+        var ledger = LanguageHealLedger.inMemory();
+        try {
+            var p = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(), did);
+            if (p != null) ledger = LanguageHealLedger.load(p);
+        } catch (RuntimeException ignored) { }
+        var name = m.profile() != null ? m.profile().name() : null;
+        log.info("Language healing asked for now on '{}' by {}", name, userId == null ? "the operator" : userId);
+        ctx.status(202).json(LanguageHealth.of(m, LanguageHealth.householdLanguage(), ledger, name));
+    }
+
+    /** A DID as given, or the DID of the companion with this name, case-blind; null for neither. */
+    private String resolveDid(String who) {
+        if (who == null || who.isBlank()) return null;
+        if (who.startsWith("did:")) return who;
+        var want = who.strip();
+        for (var m : soulStore.listLatest()) {
+            if (m.profile() != null && m.profile().name() != null && m.profile().name().equalsIgnoreCase(want)) {
+                return m.did();
+            }
+        }
+        return null;
     }
 
     /**

@@ -58,6 +58,11 @@ public final class TestWebSocketClient implements AutoCloseable {
      * client behavior in WyrdWebSocket §locale handling).
      */
     public static TestWebSocketClient connect(String baseUrl, String authToken, String locale) throws Exception {
+        return connect(baseUrl, authToken, locale, null);
+    }
+
+    /** Connect and start in {@code room} (the server's {@code ?room=} parameter), e.g. the companion's room. */
+    public static TestWebSocketClient connect(String baseUrl, String authToken, String locale, String room) throws Exception {
         var wsUrl = baseUrl.replace("http://", "ws://")
                           .replace("https://", "wss://") + "/ws";
         var sep = '?';
@@ -67,6 +72,10 @@ public final class TestWebSocketClient implements AutoCloseable {
         }
         if (locale != null && !locale.isBlank()) {
             wsUrl += sep + "locale=" + locale;
+            sep = '&';
+        }
+        if (room != null && !room.isBlank()) {
+            wsUrl += sep + "room=" + room;
         }
 
         var client = HttpClient.newHttpClient();

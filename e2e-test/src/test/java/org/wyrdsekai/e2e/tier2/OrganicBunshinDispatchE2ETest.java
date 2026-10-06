@@ -137,8 +137,14 @@ class OrganicBunshinDispatchE2ETest {
                 if (text.isBlank()) continue;
                 seen.add(text.length() > 140 ? text.substring(0, 140) + "…" : text);
                 var lower = text.toLowerCase();
+                // The split itself is an emote, "splits in two — a translucent copy settles nearby"
+                // (CompanionActor dispatch), which never says "bunshin"; matching only on that word
+                // left the test to a later spoken line that may not come in time (flaked once in
+                // the 0.5.5 release suite, 2026-10-05).
                 if (openingLine == null
-                        && ((lower.contains("split") && lower.contains("bunshin"))
+                        && (lower.contains("splits in two")
+                            || lower.contains("translucent copy")
+                            || (lower.contains("split") && lower.contains("bunshin"))
                             || lower.contains("a bunshin is now")
                             || lower.contains("bunshin is focusing"))) {
                     openingLine = text;

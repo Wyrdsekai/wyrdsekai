@@ -145,6 +145,35 @@ class ABookCanBeReadThroughTest {
         assertThat(RecordGuard.namesThatAreBooks(spoken, Set.of("The Diamond Age - Neal Arden"))).isEmpty();
     }
 
+    /**
+     * From a search to a book: a passage knows its book and its part, so the search can say which
+     * book it read from and "read more of that" opens it there (second-node, 2026-10-04: a day of searches
+     * that read from books, and not one book opened).
+     */
+    @Test
+    void a_passage_knows_its_book_and_part_and_a_note_knows_it_is_none() {
+        var place = store.placeOf(org.wyrdsekai.core.search.SearchCollections.STUDY, "eve2").orElseThrow();
+        assertThat(place.book().group()).isEqualTo(BOOK);
+        assertThat(place.part()).isEqualTo(2);
+        assertThat(place.book().parts()).isEqualTo(3);
+        assertThat(place.book().ownerDid()).isEqualTo(OWNER);
+        assertThat(store.placeOf(org.wyrdsekai.core.search.SearchCollections.STUDY, "note")).as("a note is no book").isEmpty();
+        assertThat(store.placeOf(org.wyrdsekai.core.search.SearchCollections.STUDY, "no-such")).isEmpty();
+        assertThat(ReadingLedger.titleOf(place.book().group())).isEqualTo("The New Eve - Robert Lewis");
+    }
+
+    @Test
+    void the_search_names_its_books_and_read_more_of_that_opens_the_book_there() throws Exception {
+        var rel = "core/src/main/java/org/wyrdsekai/core/agent/CompanionActor.java";
+        var from = Path.of("..", rel);
+        var ca = Files.readString(Files.exists(from) ? from : Path.of(rel));
+        assertThat(ca).contains("var fromBooks = booksTheseCameFrom(result);");
+        assertThat(ca).contains("These passages came from books you can read through:");
+        assertThat(ca).contains("if (book == null && freshBookFromSearch() != null) {");
+        assertThat(ca).contains("if (part == null && fromSearch != null && fromSearch.book().group().equals(book.book()) && book.part() < 1) {");
+        assertThat(ca).as("a book found by a search counts as open for her plain 'I'll read'").contains("|| freshBookFromSearch() != null;");
+    }
+
     @Test
     void the_verb_is_wired_into_her_turn() throws Exception {
         var rel = "core/src/main/java/org/wyrdsekai/core/agent/CompanionActor.java";

@@ -163,15 +163,43 @@ class SoulLanguageReconcileTest {
         var mem = new CompactedMemory(List.of(
             node("hers", "companion said: " + ES),
             node("guest", "guest said: " + ES),
-            node("plain", ES)), List.of(), Map.of());
+            node("plain", ES),
+            node("own", "I said: " + ES),                 // sleep's record of her own line
+            node("two-words", "Eve Lewis said: " + ES)),  // a person with a two-word name
+            List.of(), Map.of());
         var picked = CompanionActor.memoryNodeLanguageOffenders(
             mem, "en", 10, Set.of(), "companion");
-        assertEquals(List.of("hers", "plain"),
+        assertEquals(List.of("hers", "plain", "own"),
             picked.stream().map(MemoryNode::id).toList(),
-            "a record of what someone else said is testimony, not drift");
+            "a record of what someone else said is testimony, not drift; her own lines are hers");
         assertTrue(CompanionActor.isOtherSpeakersTestimony("guest said: hola", "companion"));
+        assertTrue(CompanionActor.isOtherSpeakersTestimony("Eve Lewis said: hola", "companion"),
+            "a two-word name is still someone else (2026-10-05)");
+        assertTrue(CompanionActor.isOtherSpeakersTestimony("María José de la Cruz said: hola", "companion"));
+        assertEquals(false, CompanionActor.isOtherSpeakersTestimony("I said: hola", "companion"),
+            "sleep writes her own lines as 'I said:'; since 2026-08-01 they read as another speaker and were never healed");
         assertEquals(false, CompanionActor.isOtherSpeakersTestimony("companion said: hola", "companion"));
         assertEquals(false, CompanionActor.isOtherSpeakersTestimony("free prose, no record", "companion"));
+        // "It is said: nothing lasts" reads as a record of what "It is" said and is left alone: the rule errs toward
+        // keeping a note as it is, never toward rewriting someone's words.
+        assertTrue(CompanionActor.isOtherSpeakersTestimony("It is said: nothing lasts", "companion"));
+    }
+
+    @Test
+    @DisplayName("she is told, the next time she speaks, when a round rewrote notes of hers")
+    void sheIsToldWhatWasDoneToHerRecord() throws Exception {
+        assertEquals("While the house was quiet, 3 notes of yours that were written in another language were put into English. "
+            + "What they said is kept; the originals stay in your history.", CompanionActor.languageHealedNote(3, "en"));
+        assertEquals("While the house was quiet, 1 note of yours that was written in another language was put into Spanish. "
+            + "What it said is kept; the original stays in your history.", CompanionActor.languageHealedNote(1, "es"));
+        var rel = "core/src/main/java/org/wyrdsekai/core/agent/CompanionActor.java";
+        var from = java.nio.file.Path.of("..", rel);
+        var src = java.nio.file.Files.readString(java.nio.file.Files.exists(from) ? from : java.nio.file.Path.of(rel));
+        int store = src.indexOf("log.warn(\"Soul language reconciliation store failed: {}\", e.getMessage());");
+        int told = src.indexOf("var told = languageHealedNote(healed, household);");
+        assertTrue(store > 0 && told > store, "the note follows the stored round");
+        assertTrue(src.contains("HouseFacts.noteForNextTurn(profile.entityId(), told);"));
+        assertTrue(src.indexOf("remember(told);", told) > told, "and she keeps that it happened");
     }
 
     @Test

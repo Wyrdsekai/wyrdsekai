@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.4}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.5}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -36,7 +36,7 @@ mkdir -p "$DIST_DIR"
 # rather than tail-truncating so the actual error is in the build log.
 info "Building server, cli, daemon-desktop..."
 cd "$PROJECT_DIR"
-./gradlew :server:installDist :cli:installDist :clients:daemon-desktop:installDist \
+./gradlew -PwyrdsekaiRelease="$VERSION" :server:installDist :cli:installDist :clients:daemon-desktop:installDist \
     :rendezvous:installDist \
     --no-daemon
 gradle_rc=${PIPESTATUS[0]:-$?}

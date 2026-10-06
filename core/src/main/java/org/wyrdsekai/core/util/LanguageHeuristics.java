@@ -39,11 +39,19 @@ public final class LanguageHeuristics {
         if (hasSpanishChar) return true;
         var padded = (" " + text.toLowerCase(Locale.ROOT) + " ")
             .replaceAll("[^\\p{L}]", " ");   // non-letters → spaces so markers match near punctuation
+        // Density, not a count: a Spanish sentence is a quarter function words, so two markers in a
+        // dozen words is Spanish and two in a page is not. A companion's own-time prompt (a page of
+        // English with "la" and "con" somewhere in it) read as Spanish, and her English draft was
+        // then translated into Spanish and recorded as hers (the household node, 2026-10-05).
         int esHits = 0;
         for (var m : SPANISH_MARKERS) {
-            if (padded.contains(m)) { esHits++; if (esHits >= 2) return true; }
+            int at = 0;
+            while ((at = padded.indexOf(m, at)) >= 0) { esHits++; at += m.length() - 1; }
         }
-        return false;
+        if (esHits < 2) return false;
+        int words = 0;
+        for (var w : padded.trim().split("\\s+")) if (!w.isEmpty()) words++;
+        return esHits * 12 >= words;   // at least one marker in every 12 words: a Spanish sentence has one in four
     }
 
     /**

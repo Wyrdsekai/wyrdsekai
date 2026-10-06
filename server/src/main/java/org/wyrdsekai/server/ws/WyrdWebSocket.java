@@ -195,6 +195,8 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
     private final Map<String, String> sessionUserIds = new ConcurrentHashMap<>();
     /** The login session token a socket authenticated with (kept when it changes the password). */
     private final Map<String, String> sessionTokens = new ConcurrentHashMap<>();
+    /** When each open socket last gave its session its life back (once an hour is plenty). */
+    private final Map<String, Long> sessionTouchedAt = new ConcurrentHashMap<>();
     private final Map<String, String> sessionLocales = new ConcurrentHashMap<>();
     private final Map<String, SessionRateLimiter> sessionRateLimiters = new ConcurrentHashMap<>();
     private final int rateLimitPerSecond = 10;
@@ -1136,6 +1138,18 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
         ws.onMessage(ctx -> {
             var sessionId = (String) ctx.attribute("sessionId");
             if (connectionRegistry != null) connectionRegistry.touch(sessionId);
+            // A socket that stays open for days never asks the session store anything, so its
+            // session would run out under it and the next reconnect, which a restart forces, would
+            // sign the person out. Every hour of use gives the session its full life again.
+            var sessionToken = sessionTokens.get(sessionId);
+            if (sessionToken != null && authService != null) {
+                long nowMs = System.currentTimeMillis();
+                var last = sessionTouchedAt.get(sessionId);
+                if (last == null || nowMs - last > 3_600_000L) {
+                    sessionTouchedAt.put(sessionId, nowMs);
+                    authService.touchSession(sessionToken);
+                }
+            }
             var limiter = sessionRateLimiters.get(sessionId);
             if (limiter != null && !limiter.tryConsume()) {
                 log.warn("Rate limited session {}", sessionId);
@@ -1168,6 +1182,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             var playerDisplayName = sessionPlayerNames.remove(sessionId);
             sessionUserIds.remove(sessionId);
             sessionTokens.remove(sessionId);
+            sessionTouchedAt.remove(sessionId);
             wsContexts.remove(sessionId);
             if (playerId != null) {
                 // Drop only THIS session's sink; keep the account's other surfaces.

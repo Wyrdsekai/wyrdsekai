@@ -31,6 +31,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.HashSet;
 import java.time.Instant;
 import java.util.List;
@@ -405,6 +406,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * backend isn't configured.</p>
      */
     public record SetBackendHealth(String name, boolean healthy) implements Command {}
+    /** A caller that has stopped waiting takes its request back: off the line, or off the wire. */
+    public record CancelRequest(String requestId) implements Command {}
 
     /** Set the NATS remote caller. Must be set before any {@code nats://} AddRemoteBackend. */
     public record SetNatsRemoteCaller(InferenceBackend.NatsRemote.RemoteCaller caller) implements Command {}
@@ -613,6 +616,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     private static volatile String pauseReason;
     private static final InferenceMetrics.Aggregator LATENCY = new InferenceMetrics.Aggregator(500, Duration.ofMinutes(10));
     private final Map<String, Long> startedAt = new HashMap<>();
+    /** What is on the wire, by request, so a caller that has stopped waiting can take it back. */
+    private final Map<String, CompletableFuture<?>> onTheWire = new HashMap<>();
+    /** Requests their caller cancelled: the failure that follows is the end of them, never a fallback. */
+    private final Set<String> cancelled = new HashSet<>();
     /** Requests another machine of the household is answering: they hold no local slot. */
     private final Set<String> carriedByHousehold = new HashSet<>();
     private long householdCarried;
@@ -974,6 +981,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         return newReceiveBuilder()
                 .onMessage(InferRequest.class, this::onInferRequest)
                 .onMessage(ChatRequest.class, this::onChatRequest)
+                .onMessage(CancelRequest.class, this::onCancelRequest)
                 .onMessage(StreamingChatRequest.class, this::onStreamingChatRequest)
                 .onMessage(ToolInferRequest.class, this::onToolInferRequest)
                 .onMessage(ListBackends.class, this::onListBackends)
@@ -1042,7 +1050,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 req.maxTokens(), req.temperature(), null, null, req.grammar());
         var self = getContext().getSelf();
 
-        backend.chatCompletion(chatReq)
+        var call = backend.chatCompletion(chatReq);
+        onTheWire.put(req.requestId(), call);
+        call
                 .thenAccept(resp -> {
                     var rawContent = resp.choices() != null && !resp.choices().isEmpty()
                             ? resp.choices().getFirst().message().content()
@@ -1217,7 +1227,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 req.registerMix());
         var self = getContext().getSelf();
 
-        backend.chatCompletion(chatReq)
+        var call = backend.chatCompletion(chatReq);
+        onTheWire.put(req.requestId(), call);
+        call
                 .thenAccept(resp -> {
                     // Think-tag strip + tool-call fold — single source shared
                     // with the retry path and the hermod mesh path.
@@ -1353,7 +1365,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         var self = getContext().getSelf();
         final String modelForCost = effectiveModel;
 
-        effectiveBackend.chatCompletion(chatReq)
+        var call = effectiveBackend.chatCompletion(chatReq);
+        onTheWire.put(req.requestId(), call);
+        call
                 .thenAccept(resp -> {
                     var content = resp.choices() != null && !resp.choices().isEmpty()
                             ? resp.choices().getFirst().message().content()
@@ -1383,6 +1397,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
     private Behavior<Command> onInferResult(InferResult result) {
         loadingRetries.remove(result.requestId());
+        onTheWire.remove(result.requestId());
+        cancelled.remove(result.requestId());
         var usage = result.usage();
         int promptTokens = usage != null ? usage.promptTokens() : 0;
         int completionTokens = usage != null ? usage.completionTokens() : 0;
@@ -1470,10 +1486,26 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     private Behavior<Command> onInferFailure(InferFailure failure) {
-        // Mark the failed backend as unhealthy
-        healthStatus.put(failure.failedBackend(), false);
-        log.warn("Backend '{}' failed for {}: {}",
-                failure.failedBackend(), failure.requestId(), failure.error());
+        onTheWire.remove(failure.requestId());
+        // Its caller took it back (CancelRequest): the slot comes back, nothing is retried, and the
+        // backend is not blamed for a request nobody waited for.
+        if (cancelled.remove(failure.requestId())) {
+            loadingRetries.remove(failure.requestId());
+            recordLatency(failure.requestId(), failure.failedBackend(), false, 0, 0);
+            endRequest();
+            failure.replyTo().tell(new InferError(failure.requestId(), "cancelled by its caller"));
+            drainQueue();
+            return this;
+        }
+        // Mark the failed backend as unhealthy, unless it was our own clock that gave up: a backend
+        // that is slow is not down, and benching it sent the next half minute of full turns to the
+        // first backend by priority, a small voice model with a smaller window (a household's 0.5.4
+        // report, 2026-10-05). The request still falls back once, below.
+        boolean clientTimeout = isClientTimeout(failure.error());
+        if (!clientTimeout) healthStatus.put(failure.failedBackend(), false);
+        log.warn("Backend '{}' {} for {}: {}",
+                failure.failedBackend(), clientTimeout ? "did not answer in time" : "failed",
+                failure.requestId(), failure.error());
 
         // Permanent-error detection (post-2026-04-27 test-node incident).
         // Some failures are deterministic given the prompt — retrying on a
@@ -1648,6 +1680,13 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         }
         dispatchWithRetry(backend, f.chatReq(), f.requestId(), f.replyTo(), f.localOnly(), f.compactRounds(), f.fallbackAttempted());
         return this;
+    }
+
+    /** Our HTTP client gave up waiting; the backend may still be working. */
+    static boolean isClientTimeout(String errMsg) {
+        if (errMsg == null) return false;
+        var m = errMsg.toLowerCase(java.util.Locale.ROOT);
+        return m.contains("httptimeoutexception") || m.contains("request timed out") || m.contains("timed out");
     }
 
     private static boolean isPermanentInferenceError(String errMsg) {
@@ -2061,6 +2100,55 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * fallback previously read only {@code content} and silently dropped any tool_call,
      * which turned a 9B failure into a companion that talks about acting without acting.
      */
+    /**
+     * A caller that has stopped waiting takes its request back: off the line if it is still
+     * waiting, off the wire if it is being answered. Before this a request ran on after its
+     * caller gave up on it. On a one-slot lane every later request then started its clock
+     * behind a reply nobody would read, and none could finish (a household's 0.5.4 report of
+     * the language healer on a CPU voice lane, 2026-10-05).
+     */
+    private Behavior<Command> onCancelRequest(CancelRequest c) {
+        var id = c.requestId();
+        if (id == null) return this;
+        for (var e : inferenceQueue.entries()) {
+            if (id.equals(requestIdOf(e.item()))) {
+                var r = replyToOf(e.item());
+                if (r != null) r.tell(new InferError(id, "cancelled by its caller"));
+            }
+        }
+        int waiting = inferenceQueue.removeIf(cmd -> id.equals(requestIdOf(cmd)));
+        if (waiting > 0) {
+            log.info("Request {} cancelled by its caller while waiting in line", id);
+            updateSnapshot();
+            return this;
+        }
+        var f = onTheWire.get(id);
+        if (f != null && !f.isDone()) {
+            cancelled.add(id);
+            log.info("Request {} cancelled by its caller; taking it off the wire", id);
+            f.cancel(true);   // its failure ends it in onInferFailure: slot back, no fallback
+        }
+        return this;
+    }
+
+    private static String requestIdOf(Command cmd) {
+        return switch (cmd) {
+            case InferRequest r -> r.requestId();
+            case ChatRequest r -> r.requestId();
+            case ToolInferRequest r -> r.requestId();
+            default -> null;
+        };
+    }
+
+    private static ActorRef<InferResponse> replyToOf(Command cmd) {
+        return switch (cmd) {
+            case InferRequest r -> r.replyTo();
+            case ChatRequest r -> r.replyTo();
+            case ToolInferRequest r -> r.replyTo();
+            default -> null;
+        };
+    }
+
     private void dispatchWithRetry(InferenceBackend backend,
                                    InferenceClient.ChatRequest chatReq,
                                    String requestId,
@@ -2070,7 +2158,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                    boolean fallbackAttempted) {
         var self = getContext().getSelf();
         startedAt.putIfAbsent(requestId, System.nanoTime());
-        backend.chatCompletion(chatReq)
+        var call = backend.chatCompletion(chatReq);
+        onTheWire.put(requestId, call);
+        call
             .thenAccept(resp -> self.tell(new InferResult(requestId,
                     renderContent(resp), backend.name(), resp.usage(), replyTo)))
             .exceptionally(ex -> {

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 val jacksonVersion: String by extra
 
 dependencies {
@@ -30,6 +32,8 @@ val generateVersionProperties = tasks.register("generateVersionProperties") {
     // state (found 2026-08-16 while verifying the 0.2.0 second-node artifact). A
     // dirty flag that is always on protects nothing.
     inputs.property("gitDirtyState", gitOutput("status", "--porcelain", "-uno").map { it.isNotBlank() })
+    inputs.property("sourceCommit", providers.provider { File(rootDir, ".source-commit").let { if (it.isFile) it.readText() else "" } })
+    inputs.property("wyrdsekaiRelease", providers.provider { (project.findProperty("wyrdsekaiRelease") as String?) ?: (System.getenv("WYRDSEKAI_VERSION") ?: "") })
     doLast {
         val dir = outputDir.get().asFile
         dir.mkdirs()
@@ -43,15 +47,31 @@ val generateVersionProperties = tasks.register("generateVersionProperties") {
             val out = p.inputStream.bufferedReader().readText().trim()
             if (p.waitFor() == 0) out else null
         } catch (_: Exception) { null }
-        val gitHashShort = git("rev-parse", "--short", "HEAD") ?: "unknown"
-        val gitSha = git("rev-parse", "HEAD") ?: "unknown"
-        val gitDirty = git("status", "--porcelain", "-uno")?.isNotBlank() ?: false
+        // An exported tree carries .source-commit: the private commit it was cut from, written by
+        // scripts/export-public.sh. The exported tree's own git HEAD is the PREVIOUS public commit
+        // (the public commit comes after the install tests), which is how 0.5.4 reported 0.5.3's
+        // hash (2026-10-05). The source commit is what was built; prefer it.
+        val sourceFile = File(rootDir, ".source-commit")
+        val source: Properties? = if (sourceFile.isFile) {
+            val props = Properties()
+            sourceFile.reader().use { reader -> props.load(reader) }
+            props
+        } else null
+        val gitHashShort = source?.getProperty("sourceShort") ?: git("rev-parse", "--short", "HEAD") ?: "unknown"
+        val gitSha = source?.getProperty("sourceSha") ?: git("rev-parse", "HEAD") ?: "unknown"
+        val gitDirty = source?.getProperty("sourceDirty")?.toBoolean() ?: (git("status", "--porcelain", "-uno")?.isNotBlank() ?: false)
+        // The release this build is packaged as, when the packager says (-PwyrdsekaiRelease or
+        // WYRDSEKAI_VERSION); the project version is the jar's, not the release's.
+        val release = (project.findProperty("wyrdsekaiRelease") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("WYRDSEKAI_VERSION")?.takeIf { it.isNotBlank() } ?: ""
         val now = System.currentTimeMillis().toString()
         propsFile.writeText(
             "version=${project.version}\n" +
+            "release=$release\n" +
             "buildHash=$gitHashShort\n" +
             "gitSha=$gitSha\n" +
             "gitDirty=$gitDirty\n" +
+            "sourceCommit=${source != null}\n" +
             "buildTimestamp=$now\n")
     }
 }

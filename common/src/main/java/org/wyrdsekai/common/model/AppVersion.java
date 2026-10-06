@@ -29,14 +29,17 @@ public final class AppVersion {
     private static final AppVersion INSTANCE = load();
 
     private final String version;
+    /** The release this build was packaged as (0.5.5), or the project version when unpackaged. */
+    private final String release;
     private final String buildHash;
     private final String gitSha;
     private final boolean gitDirty;
     private final Instant buildTimestamp;
 
-    private AppVersion(String version, String buildHash, String gitSha,
+    private AppVersion(String version, String release, String buildHash, String gitSha,
                        boolean gitDirty, Instant buildTimestamp) {
         this.version = version;
+        this.release = release == null || release.isBlank() ? version : release;
         this.buildHash = buildHash;
         this.gitSha = gitSha;
         this.gitDirty = gitDirty;
@@ -48,6 +51,7 @@ public final class AppVersion {
     }
 
     public String version() { return version; }
+    public String release() { return release; }
     /** Short git hash (7 chars) — operator-friendly. */
     public String buildHash() { return buildHash; }
     /** Full 40-char git SHA — unambiguous for drift comparisons. F14. */
@@ -59,9 +63,10 @@ public final class AppVersion {
     /** F14: federation handshake compatibility version. */
     public int federationSchema() { return FEDERATION_SCHEMA; }
 
+    /** The release first when there is one ("0.5.5 (a1b2c3d)"); the jar's own version otherwise. */
     @Override
     public String toString() {
-        return version + " (" + buildHash + (gitDirty ? "+dirty" : "") + ")";
+        return release + " (" + buildHash + (gitDirty ? "+dirty" : "") + ")";
     }
 
     private static AppVersion load() {
@@ -75,6 +80,7 @@ public final class AppVersion {
 
         var version = props.getProperty("version",
             System.getProperty("wyrdsekai.version", "0.1.0-SNAPSHOT"));
+        var release = props.getProperty("release", System.getProperty("wyrdsekai.release", ""));
         var buildHash = props.getProperty("buildHash",
             System.getProperty("wyrdsekai.build.hash", "unknown"));
         var gitSha = props.getProperty("gitSha",
@@ -96,6 +102,6 @@ public final class AppVersion {
             timestamp = Instant.now();
         }
 
-        return new AppVersion(version, buildHash, gitSha, gitDirty, timestamp);
+        return new AppVersion(version, release, buildHash, gitSha, gitDirty, timestamp);
     }
 }

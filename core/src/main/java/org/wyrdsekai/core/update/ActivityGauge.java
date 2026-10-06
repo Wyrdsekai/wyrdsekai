@@ -33,7 +33,10 @@ public final class ActivityGauge {
     // A companion's sleep is a junction the updater must not land on: a
     // consolidation interrupted by a restart is the one thing a restart destroys.
     private static final AtomicInteger SLEEPING = new AtomicInteger();
-    public static void sleepStarted() { SLEEPING.incrementAndGet(); lastBusyMillis = System.currentTimeMillis(); }
+    public static void sleepStarted() { SLEEPING.incrementAndGet(); SLEEPS_STARTED.incrementAndGet(); lastBusyMillis = System.currentTimeMillis(); }
+    /** Every sleep begun since this process started: a count a test or a doctor can compare across a moment. */
+    public static long sleepsStarted() { return SLEEPS_STARTED.get(); }
+    private static final java.util.concurrent.atomic.AtomicLong SLEEPS_STARTED = new java.util.concurrent.atomic.AtomicLong();
     public static void sleepFinished() { SLEEPING.updateAndGet(n -> Math.max(0, n - 1)); lastBusyMillis = System.currentTimeMillis(); }
     public static int sleeping() { return SLEEPING.get(); }
 

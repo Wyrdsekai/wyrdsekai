@@ -33,7 +33,7 @@ Write-Host ""
 
 # --- Version ---
 if (-not $Version) {
-    $Version = "0.5.4"
+    $Version = "0.5.5"
     Write-Host "[info] No version specified, using default: $Version"
 }
 Write-Host "[info] Building Wyrdsekai v$Version"
@@ -121,7 +121,9 @@ if (-not $libDir) {
     # packaging/build-dist.sh, so lib\cli / lib\daemon-desktop / lib\wyrd-rendezvous
     # can be staged below. With -InputDir (windows-node flow) this branch is skipped and
     # the module-lib staging below picks up whatever install dirs already exist.
-    & ./gradlew :server:installDist :cli:installDist :clients:daemon-desktop:installDist :rendezvous:installDist --no-daemon
+    # -PwyrdsekaiRelease stamps the release number into the jar, so `wyrd version` names
+    # this release and not only the commit of the tree it was built from (0.5.4 named 0.5.3's).
+    & ./gradlew "-PwyrdsekaiRelease=$Version" :server:installDist :cli:installDist :clients:daemon-desktop:installDist :rendezvous:installDist --no-daemon
     $gradleExit = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
     if ($gradleExit -ne 0) {

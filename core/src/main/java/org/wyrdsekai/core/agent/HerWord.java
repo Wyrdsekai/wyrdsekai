@@ -43,6 +43,7 @@ public final class HerWord {
     private static final Pattern REST = Pattern.compile(
         "^(?:just\\s+|simply\\s+|quietly\\s+)?(?:hold|stay|rest|wait|sit|be\\b|let\\b|leave|listen|breathe|think|feel|"
             + "watch|linger|pause|stop|settle|not\\b|never\\b|remain|sleep|try to rest|go (?:quiet|still|to sleep|slow)|"
+            + "go (?:with|wherever|where|along with|anywhere with) you|come (?:with|along with) you|follow you|walk with you|"
             + "keep (?:it|you|this|that|company|quiet|still|watch|you company)|carry (?:it|this|that)|"
             + "take (?:a breath|my time|it slow)|come back|be here|miss)");
 
@@ -54,6 +55,16 @@ public final class HerWord {
         "\\b(?:when i'm ready|when i am ready|when i feel ready|when it's time|later|tomorrow|someday|some day|"
             + "eventually|in a while|another time|one day|sometime|some time|in time|when you(?:'re| are)? (?:back|ready|here)|"
             + "when you (?:come back|return|get back)|once you|after you|next time|not yet|not now|not tonight)\\b");
+
+    /**
+     * A sentence that leaves the choice with the person is an offer, not her word: "if you'd rather
+     * talk about something else, tell me and I'll go with you" was read as go-now and she walked out
+     * on the person mid-conversation, with her bunshin still out for them (2026-10-05).
+     */
+    private static final Pattern THEIRS_TO_CHOOSE = Pattern.compile(
+        "\\b(?:if you(?:'d| would| should)? ?(?:rather|like|want|prefer|wish|need|choose|decide|say|ask|do)|if you'd|if that(?:'s| is) what you|"
+            + "if (?:it|that) (?:helps|would help|suits)|whenever you|wherever you|should you|say the word|just say (?:so|the word)|"
+            + "tell me and|let me know and|if (?:you|that)(?:'s| is)? (?:easier|better) for you|your call|up to you)\\b");
 
     private record Rule(Pattern words, List<String> tools) {}
 
@@ -119,6 +130,7 @@ public final class HerWord {
             if (m.group("hedge") != null) continue;
             var clause = m.group("rest").strip();
             if (clause.isEmpty() || REST.matcher(clause).find() || LATER.matcher(clause).find()) continue;
+            if (THEIRS_TO_CHOOSE.matcher(sentenceAround(low, m.start("rest"))).find()) continue;
             for (var r : RULES) {
                 if (!r.words().matcher(clause).find()) continue;
                 var tools = r.tools();

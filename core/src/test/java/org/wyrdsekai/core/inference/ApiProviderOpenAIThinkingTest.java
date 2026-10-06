@@ -110,6 +110,31 @@ class ApiProviderOpenAIThinkingTest {
         assertThat(body.has("chat_template_kwargs")).isFalse();
     }
 
+    private static InferenceClient.ChatRequest requestFor(String model) {
+        return new InferenceClient.ChatRequest(model,
+            List.of(new InferenceClient.ChatMessage("user", "Hello.")), 256, 0.7);
+    }
+
+    /**
+     * gpt-oss on Ollama takes {@code low|medium|high} and answers 400 to {@code "none"}; a
+     * household on 0.5.4 saw every full turn fail that way and fall back to the small voice
+     * model (2026-10-05). Only the models that take "none" get it.
+     */
+    @Test
+    void ollama_sends_reasoning_effort_none_only_to_models_that_take_it() throws Exception {
+        var provider = new ApiProvider.OpenAI("ollama");
+        for (var model : List.of("gpt-oss:20b", "gpt-oss:120b", "llama3.1:8b", "gemma3:12b", "mistral")) {
+            var body = bodyOf(provider.buildChatRequest("http://localhost:11434", null, requestFor(model), Duration.ofSeconds(30)));
+            assertThat(body.has("reasoning_effort")).as(model).isFalse();
+            assertThat(body.path("options").path("num_ctx").asInt()).as(model + " keeps its window").isEqualTo(8192);
+        }
+        for (var model : List.of("qwen3.5:9b", "Qwen3.6-35B-A3B", "wyrdsekai-3.5-4b-v10-q4km", "hf.co/wyrdsekai/qwen-voice")) {
+            var body = bodyOf(provider.buildChatRequest("http://localhost:11434", null, requestFor(model), Duration.ofSeconds(30)));
+            assertThat(body.path("reasoning_effort").asText()).as(model).isEqualTo("none");
+        }
+        assertThat(ApiProvider.OpenAI.takesReasoningEffortNone(null)).isFalse();
+    }
+
     @Test
     void generic_openai_does_not_inject_thinking_disable() throws Exception {
         // Backend-hint=null is generic OpenAI (or unknown provider). We don't

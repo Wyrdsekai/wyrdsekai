@@ -319,26 +319,88 @@ public final class AuthService {
      */
     public Optional<User> validateSession(String token) {
         try (var conn = getConnection()) {
-            var sql = "SELECT u.id, u.username, u.display_name, u.role, u.created_at"
+            var sql = "SELECT u.id, u.username, u.display_name, u.role, u.created_at, s.expires_at"
                 + " FROM sessions s JOIN users u ON s.user_id = u.id"
                 + " WHERE s.token = ? AND s.expires_at > " + dialect.currentEpoch();
+            User user;
+            long expiresAt;
             try (var stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, token);
                 var rs = stmt.executeQuery();
                 if (!rs.next()) return Optional.empty();
-
                 var role = rs.getString("role");
-                return Optional.of(new User(
+                user = new User(
                     rs.getString("id"),
                     rs.getString("username"),
                     rs.getString("display_name"),
                     role != null ? role : "member",
                     Instant.ofEpochSecond(rs.getLong("created_at"))
-                ));
+                );
+                expiresAt = rs.getLong("expires_at");
             }
+            // A session in use stays alive: its seven days count from the last time it was seen,
+            // not from the login. A browser tab kept open past a week was signed out at the first
+            // reconnect, which a restart forces (0.5.4 report, 2026-10-05). The write happens only
+            // when more than half a day of its life is gone, and a failed write never fails the
+            // check: a check is a read, and on SQLite a write in its path waits on every other
+            // writer (nine socket tests fell over that, 2026-10-05).
+            if (extensionDue(expiresAt)) {
+                try {
+                    touchSession(conn, token);
+                } catch (SQLException e) {
+                    log.debug("Session not extended: {}", e.getMessage());
+                }
+            }
+            return Optional.of(user);
         } catch (SQLException e) {
             throw new RuntimeException("Session validation failed", e);
         }
+    }
+
+    /**
+     * Give a live session its full life again, counted from now. Only a session that is still
+     * valid is extended, and only when it has used up more than half a day of its life, so a busy
+     * session costs one write every twelve hours rather than one per request.
+     */
+    public void touchSession(String token) {
+        if (token == null) return;
+        try (var conn = getConnection()) {
+            touchSession(conn, token);
+        } catch (SQLException e) {
+            log.debug("Session touch failed: {}", e.getMessage());
+        }
+    }
+
+    /** More than half a day of the session's life has been used: worth a write to give it back. */
+    static boolean extensionDue(long expiresAtEpochSeconds) {
+        long full = Instant.now().getEpochSecond() + SESSION_DURATION_SECONDS;
+        return expiresAtEpochSeconds < full - 12 * 3600;
+    }
+
+    private void touchSession(Connection conn, String token) throws SQLException {
+        long now = Instant.now().getEpochSecond();
+        long full = now + SESSION_DURATION_SECONDS;
+        try (var stmt = conn.prepareStatement(
+                "UPDATE sessions SET expires_at = ? WHERE token = ? AND expires_at > ? AND expires_at < ?")) {
+            stmt.setLong(1, full);
+            stmt.setString(2, token);
+            stmt.setLong(3, now);
+            stmt.setLong(4, full - 12 * 3600);
+            stmt.executeUpdate();
+        }
+    }
+
+    /** When this session ends unless it is used again; empty for no such session. */
+    public Optional<Instant> sessionExpiry(String token) {
+        try (var conn = getConnection();
+             var stmt = conn.prepareStatement("SELECT expires_at FROM sessions WHERE token = ?")) {
+            stmt.setString(1, token);
+            var rs = stmt.executeQuery();
+            if (rs.next()) return Optional.of(Instant.ofEpochSecond(rs.getLong(1)));
+        } catch (SQLException e) {
+            log.debug("Session expiry read failed: {}", e.getMessage());
+        }
+        return Optional.empty();
     }
 
     /** End every session of {@code userId} except {@code keepToken} (null ends them all). */

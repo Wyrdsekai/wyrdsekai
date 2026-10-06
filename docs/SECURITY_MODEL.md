@@ -383,7 +383,8 @@ On `open`, the handler opens a **loopback** WebSocket to the zone's own `/ws`
 carrying the session token, so the tunnel authorizes exactly what that token
 authorizes — it makes no authorization decision of its own. Token validation
 happens in the WebSocket layer, which closes with 4001 on an invalid or expired
-token; session tokens live 7 days. Live sessions are capped at 64 per zone
+token; session tokens live 7 days from their last use (a session that is used is
+extended, an idle one runs out). Live sessions are capped at 64 per zone
 (excess gets a `tunnel_busy` frame) because household phones share one relay
 NATS account — otherwise a buggy or hostile device could exhaust the zone's
 memory and loopback sockets. Pending uplink frames are capped at 64 per session.
@@ -615,6 +616,11 @@ write it. Anyone who can write to the vault folder could have put it there.
 Only `WYRDSEKAI_VAULT_ALLOW_UNSEALED=true` reads such files, and every use is
 logged. A restore also refuses a file whose path would land outside the
 restore folder.
+The vault reads as root, and a companion can write into two of the folders it copies: its home
+and its coding workspaces. There the vault never follows a symbolic link. It opens each folder
+from the one above it and each file without following a link, so a link the companion plants or
+swaps in while the copy runs fails to open. Otherwise a file only root may read could land in
+the vault, and a restore would put it in the companion's home.
 
 **Recovery Seed.** `wyrd seed generate` seals a companion's soul manifest, bond
 rows, a hash of her chronicle and her Ed25519 signing key into one file:

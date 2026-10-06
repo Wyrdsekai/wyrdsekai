@@ -266,6 +266,10 @@ public final class InferenceClient {
             }
             var httpReq = provider.buildChatRequest(baseUrl, apiKey, request, timeout);
 
+            // Cancelling the returned future cancels the exchange itself (verified on JDK 25,
+            // 2026-10-05: the JDK ends it with a CancellationException and closes the connection),
+            // so a model server sees the client gone and can stop generating. The router cancels
+            // a call whose caller has stopped waiting; see InferenceRouter.CancelRequest.
             return httpClient.sendAsync(httpReq, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> {
                     if (resp.statusCode() != 200) {

@@ -77,6 +77,8 @@ public final class LibraryKnowledgeRoutes {
         app.post("/api/library/install", this::handleInstall);
         app.post("/api/library/share-collection", this::handleShareCollection);
         app.post("/api/library/prune-sidecars", this::handlePruneSidecars);
+        app.post("/api/library/reembed", this::handleReembed);
+        app.get("/api/library/reembed", this::handleReembedStatus);
         app.delete("/api/library/packs/{name}", this::handleRemovePack);
 
         // Steward proposal endpoints
@@ -279,6 +281,46 @@ public final class LibraryKnowledgeRoutes {
      * older ingest swept into a Study collection, and from the pack published
      * from it. Runs in-server because Lucene has one writer.
      */
+    // ── Re-embed a shelf's vectors (the steward's repair after the vector-read fix, 2026-10-04) ──
+    private static final java.util.concurrent.atomic.AtomicBoolean reembedRunning = new java.util.concurrent.atomic.AtomicBoolean();
+    private static volatile Map<String, Object> reembedState = Map.of("running", false);
+
+    /** POST /api/library/reembed?collection=study: every passage there that carries a vector gets it again, in the background. */
+    private void handleReembed(Context ctx) {
+        var collection = ctx.queryParamAsClass("collection", String.class).getOrDefault(org.wyrdsekai.core.search.SearchCollections.STUDY);
+        var svc = org.wyrdsekai.core.search.EmbeddingService.get();
+        if (svc == null) { ctx.status(503).json(Map.of("error", "no embedder on this node")); return; }
+        if (!reembedRunning.compareAndSet(false, true)) { ctx.status(409).json(reembedState); return; }
+        var started = java.time.Instant.now().toString();
+        reembedState = Map.of("running", true, "collection", collection, "startedAt", started, "done", 0L);
+        var t = new Thread(() -> {
+            long n = 0;
+            String error = null;
+            try {
+                n = store.reembedStoredVectors(collection, svc::embedBatch, 64, done ->
+                    reembedState = Map.of("running", true, "collection", collection, "startedAt", started, "done", done));
+            } catch (RuntimeException e) {
+                error = e.toString();
+            } finally {
+                var end = new java.util.LinkedHashMap<String, Object>();
+                end.put("running", false); end.put("collection", collection); end.put("startedAt", started);
+                end.put("finishedAt", java.time.Instant.now().toString()); end.put("done", n);
+                if (error != null) end.put("error", error);
+                reembedState = Map.copyOf(end);
+                reembedRunning.set(false);
+            }
+        }, "library-reembed-" + collection);
+        t.setDaemon(true);
+        t.setPriority(Thread.MIN_PRIORITY);
+        t.start();
+        ctx.status(202).json(reembedState);
+    }
+
+    /** GET /api/library/reembed: how the last or current re-embed stands. */
+    private void handleReembedStatus(Context ctx) {
+        ctx.json(reembedState);
+    }
+
     private void handlePruneSidecars(Context ctx) {
         var body = ctx.bodyAsClass(ShareRequest.class);
         if (body.collection() == null || body.collection().isBlank()) {

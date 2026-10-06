@@ -58,6 +58,24 @@ class HerOwnWordIsKeptTest {
         assertThat(tool("")).isNull();
     }
 
+    /**
+     * An offer left to the person is theirs to choose, and going with them is staying with them. The
+     * first line below was read as go-now in the bunshin test (2026-10-05): she walked home on the
+     * person mid-conversation, with her bunshin still out for them, and its outcome reached nobody.
+     */
+    @Test
+    void an_offer_left_to_the_person_and_going_with_them_name_nothing() {
+        assertThat(tool("Or if you'd rather talk about something else entirely, tell me and I'll go with you.")).isNull();
+        assertThat(tool("If you'd like, I'll go to the garden with you.")).isNull();
+        assertThat(tool("If you want me to, I'll close the holding-room. Your call.")).isNull();
+        assertThat(tool("Say the word and I'll build you a nook by the window.")).isNull();
+        assertThat(tool("I'll go wherever you go tonight.")).isNull();
+        assertThat(tool("I'll come with you.")).isNull();
+        assertThat(tool("I'll follow you to the docks.")).isNull();
+        // Her own word, in the same breath as an offer, is still hers.
+        assertThat(tool("I'll go to the workshop now. If you'd rather I stayed, say so.")).isEqualTo("go_to_room");
+    }
+
     @Test
     void reading_the_library_is_research_a_book_needs_to_be_open_or_named_and_her_own_making_is_not_a_book() {
         // Rita, the night of 2026-10-03: four of mia's lines went to the book reader as titles that are no book.

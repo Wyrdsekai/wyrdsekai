@@ -87,7 +87,7 @@ Current production models (as of OSS-release):
 
 V8 steering vectors active by default (`bin/wyrd`, `docker-compose.yml`, `wyrd.ps1`): `anti_defiance:0.15`, `es_register_hold:0.20`, `refusal_stability:0.20`, `first_person_presence:0.15`.
 
-When testing inference-dependent code, use `WYRDSEKAI_E2E_BACKEND=llama-server` with these models on these ports.
+The e2e harness defaults to `WYRDSEKAI_E2E_BACKEND=llama-drive`, the compose profile `drive` it starts itself (the 9B on :8083, the 4B voice on :8201), so a bare `./gradlew test` is valid. When testing inference-dependent code against a running node, use `WYRDSEKAI_E2E_BACKEND=llama-server` with these models on these ports.
 
 ## Key files
 

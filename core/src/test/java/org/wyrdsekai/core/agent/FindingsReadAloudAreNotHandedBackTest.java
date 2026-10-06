@@ -83,7 +83,7 @@ class FindingsReadAloudAreNotHandedBackTest {
             .as("so does a bridge ask").contains("!(pendingAskReply != null && owedFindings.entityId().equals(pendingAskSenderId))");
         assertThat(between(s, "speakDirect(p, ActivityLogger.AUTHORED_TOOL, owed)", "Recited verbatim findings"))
             .contains("findingsSpoken = heardInTheRoom;");
-        assertThat(between(s, "speakFindings(spoken, forPerson);", "Spoke tool findings directly"))
+        assertThat(between(s, "speakFindings(ReadInHerVoice.of(spoken), forPerson);", "Spoke tool findings directly"))
             .contains("findingsSpoken = heardInTheRoom;");
         assertThat(between(s, "absenceHeldThisTurn = true;", "} else {"))
             .as("a held absence was never said").doesNotContain("findingsSpoken");

@@ -842,10 +842,19 @@ public class WyrdLuceneStore implements Closeable {
             var sm = getSearcherManager(collection);
             var searcher = sm.acquire();
             try {
+                // Passages, not copies: a vector written back replaces its passage, and the old copy
+                // keeps its vector in its segment until a merge. The raw size counted those copies
+                // (second-node's study read 14,032 for 10,338 passages after the re-embed, 2026-10-04).
                 long n = 0;
                 for (var leaf : searcher.getIndexReader().leaves()) {
                     var values = leaf.reader().getFloatVectorValues(FIELD_VECTOR);
-                    if (values != null) n += values.size();
+                    if (values == null) continue;
+                    var live = leaf.reader().getLiveDocs();
+                    if (live == null) { n += values.size(); continue; }   // nothing replaced in this segment
+                    var iter = values.iterator();
+                    for (int d = iter.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = iter.nextDoc()) {
+                        if (live.get(d)) n++;
+                    }
                 }
                 return n;
             } finally {
@@ -1860,7 +1869,7 @@ public class WyrdLuceneStore implements Closeable {
      * document has no vector — which is every Study chunk until write-back has
      * touched it.</p>
      */
-    private List<Float> storedVector(String collection, String docId) {
+    List<Float> storedVector(String collection, String docId) {
         if (collection == null || docId == null) return null;
         try {
             var sm = getSearcherManager(collection);
@@ -2131,8 +2140,16 @@ public class WyrdLuceneStore implements Closeable {
     /**
      * The stored document never contains the vector; the index does. Walk the
      * leaves to find the one holding this doc and read its float vector.
+     *
+     * <p>{@code vectorValue} takes the vector's ORDINAL, the position among the documents of the
+     * segment that have a vector, which the iterator's {@code index()} gives. Until 2026-10-04 the
+     * document number was passed instead. On a shelf where every document has a vector the two are
+     * the same; on the Study, where vectors arrive one search at a time, they are not. A read then
+     * either ran past the end ("seek past EOF", 81 times on the household node in two days) or
+     * quietly returned another document's vector: wrong scores in every reranked Study search, and
+     * wrong vectors carried by the passes that rebuild documents with what this returns.</p>
      */
-    private List<Float> readVector(IndexReader reader, int docId) {
+    List<Float> readVector(IndexReader reader, int docId) {
         try {
             for (var leaf : reader.leaves()) {
                 int base = leaf.docBase;
@@ -2142,18 +2159,13 @@ public class WyrdLuceneStore implements Closeable {
                 if (values == null) return null;
                 int target = docId - base;
                 var iter = values.iterator();
-                for (int d = iter.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS;
-                        d = iter.nextDoc()) {
-                    if (d == target) {
-                        var raw = values.vectorValue(d);
-                        if (raw == null) return null;
-                        var out = new ArrayList<Float>(raw.length);
-                        for (var f : raw) out.add(f);
-                        return out;
-                    }
-                    if (d > target) break;
-                }
-                return null;
+                int d = iter.advance(target);
+                if (d != target) return null;   // this document has no vector
+                var raw = values.vectorValue(iter.index());
+                if (raw == null) return null;
+                var out = new ArrayList<Float>(raw.length);
+                for (var f : raw) out.add(f);
+                return out;
             }
         } catch (Exception e) {
             log.debug("Could not recover vector for doc {}: {}", docId, e.toString());
@@ -3130,6 +3142,121 @@ public class WyrdLuceneStore implements Closeable {
         }
         if (parts <= 0) parts = searcher.count(q);
         return new BookRef(group, collection, d.get("user_did"), d.get("collection"), parts);
+    }
+
+    /**
+     * Every passage on a shelf that carries a vector gets it again, from its own text.
+     *
+     * <p>The repair for the read that used a document's number where the index wants the vector's
+     * position (fixed 2026-10-04): the pass that gave the Study's passages their place in a book
+     * re-attached vectors through that read, so some passages carried another passage's meaning, and
+     * nothing could tell which. Re-embedding every passage that has a vector puts each one right; a
+     * passage with none is left for the search to embed when it first needs it. Resumable in effect:
+     * a run that stops leaves the rest as they were, and a second run does them all again.</p>
+     *
+     * @param embed    texts in, one vector per text out (the node's embedder)
+     * @param batch    how many passages per embedder call
+     * @param progress told the running count after each batch
+     * @return how many passages were given their vector again
+     */
+    public long reembedStoredVectors(String collection, Function<List<String>, List<List<Float>>> embed,
+                                     int batch, LongConsumer progress) {
+        if (collection == null || embed == null) return 0;
+        var ids = new ArrayList<String>();
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                for (var leaf : searcher.getIndexReader().leaves()) {
+                    var values = leaf.reader().getFloatVectorValues(FIELD_VECTOR);
+                    if (values == null) continue;
+                    var live = leaf.reader().getLiveDocs();
+                    var stored = leaf.reader().storedFields();
+                    var iter = values.iterator();
+                    for (int d = iter.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = iter.nextDoc()) {
+                        if (live != null && !live.get(d)) continue;
+                        var id = stored.document(d).get(FIELD_ID);
+                        if (id != null) ids.add(id);
+                    }
+                }
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Re-embed on '{}': could not list the passages that carry a vector: {}", collection, e.toString());
+            return 0;
+        }
+        log.info("Re-embed on '{}': {} passage(s) carry a vector and will get it again from their own text", collection, ids.size());
+        long done = 0;
+        int size = Math.max(1, batch);
+        for (int start = 0; start < ids.size(); start += size) {
+            var slice = ids.subList(start, Math.min(ids.size(), start + size));
+            var texts = new ArrayList<String>(slice.size());
+            var kept = new ArrayList<String>(slice.size());
+            try {
+                var sm = getSearcherManager(collection);
+                var searcher = sm.acquire();
+                try {
+                    for (var id : slice) {
+                        var hits = searcher.search(new TermQuery(new Term(FIELD_ID, id)), 1);
+                        if (hits.scoreDocs.length == 0) continue;
+                        var content = searcher.storedFields().document(hits.scoreDocs[0].doc).get(FIELD_CONTENT_STORED);
+                        if (content == null || content.isBlank()) continue;
+                        texts.add(content.length() > RERANK_EMBED_CHARS ? content.substring(0, RERANK_EMBED_CHARS) : content);
+                        kept.add(id);
+                    }
+                } finally {
+                    sm.release(searcher);
+                }
+                if (texts.isEmpty()) continue;
+                var vectors = embed.apply(texts);
+                if (vectors == null || vectors.size() != kept.size()) {
+                    log.warn("Re-embed on '{}': the embedder answered {} vector(s) for {} text(s); stopping after {}",
+                        collection, vectors == null ? 0 : vectors.size(), kept.size(), done);
+                    return done;
+                }
+                var map = new java.util.LinkedHashMap<String, List<Float>>();
+                for (int i = 0; i < kept.size(); i++) if (vectors.get(i) != null) map.put(kept.get(i), vectors.get(i));
+                done += writeBackVectors(collection, map);
+                if (progress != null) progress.accept(done);
+            } catch (IOException | RuntimeException e) {
+                log.warn("Re-embed on '{}' stopped after {} passage(s): {}", collection, done, e.toString());
+                return done;
+            }
+        }
+        log.info("Re-embed on '{}' finished: {} passage(s) carry their own vector again", collection, done);
+        return done;
+    }
+
+    /** Where a passage sits: its book on the shelf and which part it is. */
+    public record PlaceInBook(BookRef book, int part) {}
+
+    /**
+     * The book a passage belongs to and its part, or empty when it is not part of a book (an
+     * unpaginated document, or one the backfill has not reached). What lets a search say which
+     * book it read from, so she can go on to read it (2026-10-04: not one book opened in a day).
+     */
+    public java.util.Optional<PlaceInBook> placeOf(String collection, String docId) {
+        if (collection == null || docId == null) return java.util.Optional.empty();
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                var self = searcher.search(new TermQuery(new Term(FIELD_ID, docId)), 1);
+                if (self.scoreDocs.length == 0) return java.util.Optional.empty();
+                var d = searcher.storedFields().document(self.scoreDocs[0].doc);
+                var group = d.get(FIELD_DOC_GROUP);
+                var partStr = d.get(FIELD_PART);
+                int part = partStr == null ? -1 : Integer.parseInt(partStr);
+                if (group == null || part < 1) return java.util.Optional.empty();
+                var ref = bookRef(searcher, collection, group);
+                return ref == null ? java.util.Optional.empty() : java.util.Optional.of(new PlaceInBook(ref, part));
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            return java.util.Optional.empty();
+        }
     }
 
     /** One part of a book, by its number from 1, or null when the shelf has no such part. */

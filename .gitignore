@@ -178,3 +178,8 @@ relay-*identity*.tgz
 # Release runs: artifacts, logs, checksums, evidence per version (scripts/release/*.sh write here).
 # Nothing in it is source; the published files live on GitHub, signed.
 releases/
+
+# Written by scripts/export-public.sh into the exported tree: the private commit a release was
+# cut from, read by common/build.gradle.kts for the build stamp. It rides in the build tarball,
+# never in a commit.
+.source-commit

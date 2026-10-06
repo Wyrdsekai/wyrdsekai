@@ -243,6 +243,14 @@ When Wyrdsekai starts a model server in Docker, it gives it a memory limit. The 
 
 Values are Docker sizes, such as `6144m` or `8g`. `0` removes the limit. A running container takes a new value the next time Wyrdsekai starts it, with `wyrd start` or `wyrd restart`. `wyrd doctor` shows the limits Docker holds, and warns when a model server has none.
 
+## If a model runs on Ollama
+
+Set `OLLAMA_CONTEXT_LENGTH=16384` in Ollama's environment and restart it. Ollama's own window is
+small unless told otherwise (4,096 tokens on many versions; it differs between versions), and the
+setting our requests carry does not change it. A full turn's prompt is longer than that and would be
+cut at its head, where the companion's identity sits, and she would answer as someone with no memory
+of the house. The setting is safe on any version.
+
 ## Sharing models across the household
 
 One computer with a good graphics card can think for the rest of the house.
@@ -388,6 +396,8 @@ The vault is Wyrdsekai's own backup. It takes a copy of your data every 15 minut
 
 Since 0.5.0 the vault also holds the library's search indexes, `search/search/knowledge` and `search/search/study`. A large index can take hours to rebuild on a computer with a strong graphics card, and days on an ordinary home computer. The first copy stores the index once. Later copies store only its new files. A file that has not changed is reused from the previous copy without being read again.
 
+Since 0.5.5 the vault also holds each companion's home folder, `beings/<slug>/home`, with the file that names who it belongs to. That is where its coding helpers keep what they learned. The caches its tools fill again on their own are left out: `.cache`, `.npm`, `.local/lib`, `.local/bin`, and any `node_modules` or `__pycache__` folder. A restore gives the home back to the companion's own user at the next start. The vault also keeps a few small files it used to leave out: the tunnel key that phones are paired by, the relay certificate the node trusts, the companion's recent turns, and what the body last saw of its machine and its brain. `wyrd vault status` lists anything in the data folder that is still not classified.
+
 If you have a second disk, set `vault.dir` to a folder on it, so the copy is not on the same disk as your data. Set `vault.remote` to keep a copy on another computer. The drill checks the index piece by piece and does not write it out.
 
 ```bash
@@ -407,6 +417,39 @@ wyrd vault restore latest <dir> --key /path/to/vault.key
 To restore on another computer, use `wyrd vault restore latest <dir> --key /path/to/vault.key`. `stage` takes the same `--key` option. A vault from 0.4.0 holds unencrypted files. The first copy after you upgrade encrypts them in place.
 
 **An encrypted vault refuses unencrypted files.** Once every file in the vault is encrypted, Wyrdsekai writes a small file, `vault.sealed`, beside the key. From then on, if it finds an unencrypted copy or piece in the vault, it refuses to list it, restore it or encrypt it. Wyrdsekai never writes one, so someone else put it there: anyone who can write to the vault folder, for example on a vault computer that `wyrd vault sync` sends to. The same holds without `vault.sealed` when the vault already holds encrypted copies. If you copied an old 0.4.0 vault into place on purpose, set `WYRDSEKAI_VAULT_ALLOW_UNSEALED=true` for one start or one `wyrd vault restore`, then remove it. A restore also refuses any file whose path would land outside the folder you restore into.
+
+## The household's language
+
+`WYRDSEKAI_LOCALE` (the older `WYRDSEKAI_LANG` is read when it is not set) is the household's
+language: what a companion speaks on her own time, what her notes are kept in, and what the product
+says in her voice when nobody is being answered. The desktop setup sets it. A node installed from the
+terminal may not have it set; the household's language is then the one a person's own app reports
+when it connects, and until one has, the language healer rewrites nothing. A person who writes to her in another language is answered in that language, for as long
+as they are the one she is answering; nothing else she hears, the narrator, a peer, an item, moves
+her language. A line she said on her own time in another language is left out of the night's
+learning, and the morning check after a night tells Spanish from English.
+
+## The language healer
+
+A companion's earliest notes could once crystallise in the wrong language, and a note in the
+wrong language taught the next one. New notes are checked as they are written. Notes already
+written are mended in the background: the healer rewrites a few at a time into the household's
+language (above), keeping the originals in the soul's history.
+
+It mends her own notes only: what she wrote and what she said, including the lines sleep kept as
+"I said: …". What anyone else said stays in the language they used, whatever their name. After a
+round that rewrote notes of hers, she is told the next time she speaks, how many and into which
+language, and she keeps that it happened.
+
+It works only when the house is quiet: nobody has spoken to the companion for two minutes, she is
+not mid-thought, and the brain is idle. Rewrites go one at a time to the model her full turns use,
+with 90 seconds each. If one does not answer, the pass stops and the next waits half an hour. A
+note whose rewrite comes back wrong three times, still in the other language or handed back
+unchanged, is taken to be legitimately in two languages and left alone; that count is kept in
+`<data>/substrate/` and survives restarts. `wyrd soul language <companion>` shows what the healer
+sees, and `wyrd soul language <companion> heal` has the notes mended now, without waiting for a
+quiet moment. `WYRDSEKAI_SOUL_LANGUAGE_RECONCILE=false` turns the healer off; the notes then stay as they
+are.
 
 ## Nightly learning: the morning check
 

@@ -65,7 +65,11 @@ public final class E2eTestSupport {
 
     /** Currently configured backend type. */
     public static String backendType() {
-        return System.getenv().getOrDefault("WYRDSEKAI_E2E_BACKEND", "sglang");
+        // The default is what the harness can bring up by itself: compose profile "drive", our 9B on
+        // :8083 with the 4B voice on :8201. It was "sglang" from the first e2e commit (2026-03-01, an
+        // SGLang Qwen3-8B fixture on :8000) long after that fixture stopped being what anyone ran, so a
+        // bare `./gradlew test` auto-started the drive and then waited 180 s on :8000 (2026-10-05).
+        return System.getenv().getOrDefault("WYRDSEKAI_E2E_BACKEND", "llama-drive");
     }
 
     /** Default URL for the configured backend. */
@@ -375,6 +379,18 @@ public final class E2eTestSupport {
             log.info("Reusing shared {} fixture for {}", type, name);
             var backend = existing.createBackend(name, 10);
             return new SetupResult(backend, existing, true);
+        }
+
+        // The drive is not an in-process fixture: it is the compose profile the harness starts
+        // itself, on the port its own URL names, so the default backend and the auto-start agree.
+        if ("llama-drive".equals(type) || "drive".equals(type)) {
+            if (tryStartLlamaCppService(url, "drive", "llama-drive", 180) && isHealthy(url)) {
+                log.info("Using {} at {} after auto-start", type, url);
+                var backend = externalBackend(name, 10);
+                return new SetupResult(backend, null, false);
+            }
+            Assumptions.assumeTrue(false, "No drive backend at " + url
+                + " — start it: docker compose -f docker/docker-compose.e2e.yml --profile drive up -d llama-drive llama-voice");
         }
 
         // Start a new fixture

@@ -113,6 +113,39 @@ BLOCK = 1024          # §4o's proven regime: packed blocks, 2 epochs — the
 EPOCHS = 2            # exact protocol whose measured neutral drift was ~0.
 MIN_LINES = 40
 SOLITARY_MAX = int(os.environ.get("WYRDSEKAI_SLEEP_WRITE_SOLITARY_MAX", "150"))
+# The household's language. A line she said on her own time in
+# another language is not pressed into her night: on the household node (2026-10-05) the product
+# translated her English drafts into Spanish for a morning and recorded them as hers, and a night
+# that trains on them makes the next morning's drafts more Spanish. A reply to a person who wrote
+# in that language is kept: she answered them in theirs.
+def household_lang():
+    """The household's language as configured (WYRDSEKAI_LOCALE, then WYRDSEKAI_LANG), or None when
+    neither is set: a node installed from the terminal sets neither, and its household may well
+    speak Spanish, so nothing is left out for its language then."""
+    for key in ("WYRDSEKAI_LOCALE", "WYRDSEKAI_LANG"):
+        v = (os.environ.get(key) or "").strip().lower()
+        v = v.replace("_", "-").replace(".", "-").split("-")[0]
+        if v:
+            return v
+    return None
+_SPANISH_MARKERS = (" el ", " la ", " los ", " las ", " un ", " una ", " unos ", " unas ", " con ", " que ",
+                    " para ", " por ", " del ", " está ", " están ", " su ", " sus ", " tus ", " más ", " muy ",
+                    " en el ", " en la ", " de la ", " de los ", " contra ", " frente ", " junto ", " al ")
+
+
+def reads_as(text):
+    """'ja' for Japanese script, 'es' for Spanish by function-word density (the node's own rule,
+    LanguageHeuristics), None when the text reads as English or cannot be told."""
+    if not text:
+        return None
+    if any(0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF for c in text):
+        return "ja"
+    if any(c in text for c in "ñÑ¿¡"):
+        return "es"
+    padded = re.sub(r"[\W\d_]", " ", " " + text.lower() + " ")
+    hits = sum(padded.count(m) for m in _SPANISH_MARKERS)
+    words = len(padded.split())
+    return "es" if hits >= 2 and hits * 12 >= words else None
                       # What she says WITH someone all trains. What she says to
                       # an empty room is kept by salience up to this many lines
                       # a night: measured 09-18, a week held 2,013 spoken lines
@@ -399,6 +432,13 @@ def load_lines(since):
             said.update(pieces)
             left["not_hers"] += 1
             continue
+        said_to = (e.get("to") or "").strip()
+        if e.get("type") == "speak" and (not said_to or said_to == "system"):
+            lang, household = reads_as(txt), household_lang()
+            if household and lang is not None and lang != household:
+                said.update(pieces)
+                left["language"] += 1
+                continue
         if has_run_on(txt):
             # A line or a dream with a sentence that runs on is left out, not cut: its first
             # LINE_CHAR_MAX characters are the run-on.
@@ -459,6 +499,7 @@ def load_lines(since):
             past.append(row)
     for reason, what in (
             ("product", "the product or a tool wrote, not her"),
+            ("language", "said on her own time in a language that is not the household's"),
             ("repeated", "said word for word before"),
             ("echo", "made mostly of sentences she or a tool had already said"),
             ("not_hers", "of product text under her name (a memory with its speaker label, the day's chronicle, "

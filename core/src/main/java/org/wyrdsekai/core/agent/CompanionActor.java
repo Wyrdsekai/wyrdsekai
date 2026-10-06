@@ -1136,6 +1136,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  adopt its identity-level fields into the live actor, so the restore
      *  takes hold without a restart. Lived memory is left untouched. */
     public record AdoptStoredSoulShape() implements Command {}
+    /**
+     * The steward's word to mend her off-language notes now (`wyrd soul language <name> heal`):
+     * the healer's passes run back to back without waiting for the interval or a quiet lane,
+     * still one rewrite at a time with its 90 s and its cancel, until nothing is left to mend or
+     * the lane does not answer.
+     */
+    public record HealLanguageNow() implements Command {}
 
     /**
      * Update notification channel configuration in worldKnowledge.
@@ -1186,6 +1193,27 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final Duration REFRESH_INTERVAL = Duration.ofMinutes(5);
     private static final Duration FAILURE_COOLDOWN = Duration.ofSeconds(30);
     private static final Duration SLEEP_CONVERSATION_GRACE = Duration.ofSeconds(30);
+    /**
+     * While a person is in her room, sleep from pressure waits until they leave or this long passes
+     * without them doing anything. On the household node a companion's backlog reached its target
+     * mid-conversation and the 30 s grace took her home while he was reading her answer, and the
+     * household's night took the other with his question open (2026-10-04). Exhaustion is the
+     * exception: below the energy threshold she sleeps after the grace as before.
+     */
+    private static final Duration SLEEP_WAIT_WITH_PERSON = Duration.ofMinutes(10);
+    /** Live tests shorten the wait and lower the pressure target. */
+    static volatile Duration sleepWaitWithPersonOverride;
+    static volatile Integer sleepTargetOverride;
+    public static void sleepWaitWithPersonForTests(Duration wait) { sleepWaitWithPersonOverride = wait; }
+    public static void sleepTargetForTests(Integer target) { sleepTargetOverride = target; }
+    /** The last room event a person caused: what "quiet with a person present" is measured from. */
+    private Instant lastPersonEventTime = Instant.EPOCH;
+    /**
+     * The people in her room, kept from the room's own events: who came in, who spoke, who left.
+     * The cached snapshot is taken only when she looks or arrives, so a person who came in after
+     * that was invisible to it (found by the live test, 2026-10-05).
+     */
+    private final Set<String> personsHere = new HashSet<>();
     private static final Duration AUTONOMY_INTERVAL = Duration.ofMillis(
         Long.parseLong(System.getenv().getOrDefault("WYRDSEKAI_AUTONOMY_INTERVAL_MS",
             String.valueOf(Duration.ofMinutes(10).toMillis()))));
@@ -1260,10 +1288,43 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     private int personalSleepTarget() {
+        if (sleepTargetOverride != null) return sleepTargetOverride;
         Double trait = cachedManifest != null && cachedManifest.genome() != null
             ? cachedManifest.genome().trait("sleep_backlog_target") : null;
         return resolveSleepTarget(trait, SLEEP_BACKLOG_TARGET,
             personalSleepFactor(profile.did()), SLEEP_BACKLOG_MIN);
+    }
+
+    /**
+     * Pure gate: may sleep start now? Exhaustion waits only for the empty-room grace. Pressure
+     * waits for the grace, and while a person is in the room, until they leave or have done
+     * nothing for {@code waitWithPerson}.
+     */
+    static boolean sleepMayStart(boolean exhausted, boolean pressured, boolean idle,
+                                 Duration sinceAnyEvent, Duration grace,
+                                 boolean personPresent, Duration sincePersonEvent, Duration waitWithPerson) {
+        if (!idle || (!exhausted && !pressured)) return false;
+        if (sinceAnyEvent.compareTo(grace) < 0) return false;
+        if (exhausted) return true;
+        return !personPresent || sincePersonEvent.compareTo(waitWithPerson) >= 0;
+    }
+
+    /**
+     * A person, not a companion, is in her room now: seen to come in, speak or be there at the last
+     * look, and not seen to leave since. The room's events decide; a look only adds, because a
+     * look taken before someone left would otherwise keep them in the room for her.
+     */
+    private boolean personInRoom() {
+        return !personsHere.isEmpty();
+    }
+
+    /** A fresh look at the room is the truth about who is here: keep only those it shows, add the people in it. */
+    private void syncPersonsHere() {
+        if (currentSnapshot == null || currentSnapshot.entities() == null) return;
+        var ids = new HashSet<String>();
+        for (var e : currentSnapshot.entities()) if (e != null && e.id() != null) ids.add(e.id());
+        personsHere.retainAll(ids);
+        for (var id : ids) if (isPersonEntityId(id)) personsHere.add(id);
     }
     private static final float SLEEP_ENERGY_RECOVERY = Float.parseFloat(
         System.getenv().getOrDefault("WYRDSEKAI_SLEEP_RECOVERY", "0.3"));
@@ -2481,6 +2542,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private final DistressBroadcast distressBroadcast = new DistressBroadcast();
     private final Map<WorldEvent.Said, EmotionalCharge> accumulatedCharges = new LinkedHashMap<>();
     private long ticksSinceLastSleep = 0;
+    /** Her conditioning (Conditioning): stamina built by regular activity, added to her rested level. */
+    private double conditioning = 0;
+    /** Acts in her activity trail since she last woke, or since this process began watching her. */
+    private int actsSinceWake = 0;
+    /** Ticks of the same stretch spent exhausted (energy below Conditioning.EXHAUSTED_BELOW). */
+    private long exhaustedTicksSinceWake = 0;
+    /** When counting for the current waking stretch began: her last wake, or this process's start. */
+    private Instant watchingSince = Instant.now();
     private Instant lastChargeScoreTime = Instant.MIN;
     private static final Duration CHARGE_SCORE_COOLDOWN = Duration.ofSeconds(10);
     private static final long INSOMNIA_THRESHOLD_TICKS = 600; // 10 min = degradation starts
@@ -2585,6 +2654,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private FamiliarConfig familiarConfig;
     private final List<VitalitySnapshot> vitalitySnapshots = new ArrayList<>();
     private boolean isSleeping = false;
+    /** The book her last library search read from, and where in it: what "read more of that" opens. */
+    private WyrdLuceneStore.PlaceInBook lastBookFromSearch;
+    private Instant lastBookFromSearchAt;
+    private static final Duration BOOK_FROM_SEARCH_FRESH = Duration.ofMinutes(45);
     /** The tools offered on her last own-time turn, before any narrowing: what her words are read against. */
     private Set<String> lastOwnTimeOffered = Set.of();
     /** When a turn keeping her word was started: its own words never start another. */
@@ -2592,6 +2665,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** When each tool was last forced on her word: the same tool is not forced twice within the spacing. */
     private final Map<String, Instant> herWordKeptAt = new HashMap<>();
     private static final Duration HER_WORD_TURN_WINDOW = Duration.ofMinutes(3);
+    /** Below this she is too tired for a turn to act in; the autonomy check stops at the same line. */
+    private static final double OWN_TIME_ACT_MIN_ENERGY = 0.2;
     private static final Duration HER_WORD_SPACING = Duration.ofMinutes(30);
     /**
      * Wave 4.6b: roomId the agent was in
@@ -2625,6 +2700,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** Timestamp of last contemplative-mode trigger; used for the 60s idle reset. */
     private Instant contemplativeModeSince = Instant.EPOCH;
     private Instant lastEventTime = Instant.now();
+    /** The last room event that was not her own doing: what "quiet" is measured from. */
+    private Instant lastOthersEventTime = Instant.now();
+    /** The quiet the healer waits for; a live test shortens it. */
+    static volatile Duration langHealQuietOverride;
+    public static void langHealQuietForTests(Duration quiet) { langHealQuietOverride = quiet; }
+    /** The household's language as a node's configuration would name it, for companions started after this; a live test sets it. */
+    static volatile String householdLanguageForTestsOverride;
+    public static void householdLanguageForTests(String language) { householdLanguageForTestsOverride = language; }
 
     // ── — Hwa-byung detector wiring ──
     /**
@@ -2726,11 +2809,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     // understood); web/phone surfaces may override per-session via SetLocale,
     // and the per-turn mirror in effectiveTurnLang() overrides per-message.
     private String locale = defaultHouseholdLang();
+    /**
+     * The household's language (WYRDSEKAI_LANG, else "en"): what she speaks on her own time, what
+     * her notes are kept in, what the product says in her voice when no person is being answered.
+     * Unlike {@link #locale} it never follows a line she heard. On the household node (2026-10-05)
+     * {@code locale} drifted to Spanish on an English household, the floor then translated her
+     * English drafts into Spanish on her own time, and the night would have trained on them.
+     */
+    private String householdLocale = householdLanguageForTestsOverride != null
+        ? householdLanguageForTestsOverride : defaultHouseholdLang();
+    /** Whether the household's language is set in the node's configuration. */
+    private boolean householdConfigured = householdLanguageForTestsOverride != null
+        || LanguageHealth.configuredHouseholdLanguage() != null;
+    /**
+     * Whether the household's language is known: configured, or reported by a person's own app
+     * (the web and phone clients send the device's language when they connect). Until it is known
+     * the healer rewrites nothing: on a household whose language was never set, a note in Spanish
+     * may be exactly right.
+     */
+    private boolean householdKnown = householdConfigured;
 
     private static String defaultHouseholdLang() {
-        var v = System.getenv("WYRDSEKAI_LANG");
-        if (v == null || v.isBlank()) return "en";
-        return v.strip().toLowerCase().split("[-_.]")[0];
+        return LanguageHealth.householdLanguage();
     }
     private AccessibilityPreferences accessibilityPrefs =
         AccessibilityPreferences.defaults();
@@ -2861,6 +2961,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // backlog target. See restoredSleepBacklog.
             this.vitalityPersistence.loadAmaeSignals(profile.entityId())
                 .ifPresent(w -> this.amaeSignals = AmaeSignals.decode(w));
+            this.vitalityPersistence.loadConditioning(profile.entityId()).ifPresent(c -> {
+                this.conditioning = Conditioning.clamp(c);
+                if (c > 0) {
+                    log.info("Restored conditioning for '{}': {}", profile.name(), String.format("%.3f", c));
+                }
+            });
             this.vitalityPersistence.loadSleepPressure(profile.entityId()).ifPresent(p -> {
                 this.restoredSleepBacklog = p.backlog();
                 this.lastSleepCompletedAt = p.lastSleepAt().orElse(null);
@@ -2887,6 +2993,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         } catch (Exception e) {
             log.warn("ProtectionFlagTracker restore failed for '{}': {}",
                 profile.name(), e.getMessage());
+        }
+        try {
+            var ledgerFile = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(),
+                profile.did() != null ? profile.did() : profile.entityId());
+            if (ledgerFile != null) this.langHeal = LanguageHealLedger.load(ledgerFile);
+        } catch (Exception e) {
+            log.warn("Language heal ledger not loaded for '{}': {}", profile.name(), e.getMessage());
         }
 
         // §23 — restore the per-agent resilience reserve (drain/temper state)
@@ -4231,6 +4344,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     log.info("One-shot voice timed out (requestId={}) — empty fallback; "
                         + "a late reply will be dropped", msg.requestId());
                     callback.accept(Optional.empty());
+                    // And the router takes it off the line or off the wire, so the slot it holds
+                    // comes back now and not when a reply nobody will read is finished.
+                    if (inferenceRouter != null) {
+                        inferenceRouter.tell(new InferenceRouter.CancelRequest(msg.requestId()));
+                    }
                 }
                 return this;
             })
@@ -4314,6 +4432,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(RenameRequest.class, this::onRenameRequest)
             .onMessage(CalledBy.class, this::onCalledBy)
             .onMessage(AdoptStoredSoulShape.class, this::onAdoptStoredSoulShape)
+            .onMessage(HealLanguageNow.class, this::onHealLanguageNow)
             .onMessage(BudDelegateQuery.class, this::onBudDelegateQuery)
             .onMessage(UpdateNotificationConfig.class, this::onUpdateNotificationConfig)
             .onMessage(CaptureTransitState.class, this::onCaptureTransitState)
@@ -4397,6 +4516,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         eventsSinceLastSleep.add(event);
         dayOrigins.put(event, originOfDayEvent(event));
         lastEventTime = Instant.now();
+        var actor = actorOf(event);
+        if (actor == null || !actor.equals(profile.entityId())) lastOthersEventTime = lastEventTime;
+        if (actor != null && isPersonEntityId(actor)) {
+            lastPersonEventTime = lastEventTime;
+            if (event instanceof WorldEvent.EntityLeft) personsHere.remove(actor); else personsHere.add(actor);
+        }
 
         // Path-3 gate trace: what happened × what she felt as it happened.
         if (DRIVE_TRACE != null) {
@@ -4584,17 +4709,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     break;
                 }
 
-                // Adopt the speaker's locale so responses match their language
-                if (said.locale() != null && !said.locale().isEmpty()) {
+                // Adopt the speaker's locale so responses match their language. Only a person's:
+                // the narrator's, the system's, an item's and a peer's lines carry whatever tag their
+                // sender had, and one such tag moved a companion to Spanish on an English household
+                // for a morning (2026-10-05).
+                if (said.locale() != null && !said.locale().isEmpty() && isPersonEntityId(said.entityId())) {
                     this.locale = said.locale();
                 }
 
                 // Vitality: receiving speech fills rapport, focus, alignment
                 // Use coupled system for cascading tank interactions when available
                 if (coupledVitality != null) {
-                    var perturbations = Map.of("rapport", 0.03, "focus", 0.05, "alignment", 0.02);
-                    coupledVitality.perturbBatch(perturbations);
-                    vitality = applyCoupledValues(vitality, coupledVitality);
+                    vitality = hearingSpeech(vitality, coupledVitality);
                 } else {
                     vitality = vitality
                         .withRapport(vitality.rapport() + 0.03)
@@ -5674,16 +5800,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private boolean lastReconcileFoundWork = false;
 
     /**
-     * Mercy rule (2026-08-01): items whose re-render fails this many times
-     * are presumed LEGITIMATELY multilingual and left in peace. Live case:
-     * a companion's dictionary-lookup memories ("biblioteca — library",
-     * "開館 — opening") — any faithful rendering keeps the reference terms,
-     * so the language check can never pass; without the strike counter the
-     * healer retried them every round forever. In-memory only: a restart
-     * grants a fresh appeal, which is fine — three more strikes are cheap.
+     * Mercy rule (2026-08-01): a note whose re-render ANSWERS and is no good this many times
+     * ({@link LanguageHealLedger#MAX_STRIKES}) is presumed legitimately multilingual and left in
+     * peace. Live case: dictionary-lookup memories ("biblioteca — library", "開館 — opening"); any
+     * faithful rendering keeps the reference terms, so the language check can never pass.
+     * A re-render that did not answer is not a strike (2026-10-05): on a household whose voice
+     * lane ran on a CPU, every re-render timed out, each timeout counted, the count lived in memory,
+     * and every restart tried the same notes again, so the lane was never free. The ledger is kept
+     * on disk beside her protection flags.
      */
-    private static final int LANG_RECONCILE_MAX_STRIKES = 3;
-    private final Map<String, Integer> langReconcileStrikes = new ConcurrentHashMap<>();
+    private LanguageHealLedger langHeal = LanguageHealLedger.inMemory();
+    /** A re-render is background work on a lane that may be slow; it may take this long. */
+    private static final Duration LANG_HEAL_TIMEOUT = Duration.ofSeconds(90);
+    /** The house has to have been quiet this long before a pass starts or goes on. */
+    private static final Duration LANG_HEAL_QUIET = Duration.ofMinutes(2);
+    /** After the lane did not answer, the next pass waits this long. */
+    private static final Duration LANG_HEAL_BACKOFF = Duration.ofMinutes(30);
+    private Instant langHealBackoffUntil = Instant.EPOCH;
+    private boolean langHealPassStopped;
+    /** A steward asked for the healing now: passes run back to back, no waiting for a quiet lane. */
+    private boolean langHealForced;
 
     /** WYRDSEKAI_SOUL_LANGUAGE_RECONCILE — default on; "false" disables. */
     static boolean soulLanguageReconcileEnabled() {
@@ -5728,11 +5864,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             + "wrong language. Say the same thing in " + langName + ": keep its meaning, "
             + "feeling, names, and numbers. Do not add new content. Do not reply to it. "
             + "Output ONLY the rewritten note.";
-        // null capability → drive-model default. Live-probed: the 4B echoes
-        // deep-interiority off-language notes verbatim; the drive model
-        // translates them faithfully. Healing/gating is background work.
+        // The full lane, the model her own full turns use: live-probed, the 4B voice model echoes
+        // a deep-interiority off-language note back verbatim while the larger model translates it.
+        // It went to the default backend before, which on a household whose voice lane is the
+        // default was that 4B (2026-10-05). Background work: it may take its time.
         return fireOneShotVoicePrompt(sys, prose, 320, 0.3, requestIdPrefix,
-            INNER_VOICE_TIMEOUT, null, NowLine.NONE);
+            LANG_HEAL_TIMEOUT, "cap:full", NowLine.NONE);
     }
 
     /** Shared verification for a re-rendered note: right language, digits intact. */
@@ -5754,10 +5891,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * next close).
      */
     private CompletionStage<String> gateFragmentLanguage(String prose) {
-        if (prose == null || prose.isBlank() || !soulLanguageReconcileEnabled()) {
+        if (prose == null || prose.isBlank() || !soulLanguageReconcileEnabled() || !householdKnown) {
             return CompletableFuture.completedFuture(prose);
         }
-        String household = (locale == null || locale.isBlank()) ? "en" : locale;
+        String household = householdLocale;
         if (!detectorVerifiable(household)) {
             return CompletableFuture.completedFuture(prose); // pin-only tier
         }
@@ -5832,17 +5969,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void maybeReconcileFragmentLanguages() {
         if (!soulLanguageReconcileEnabled() || inferenceRouter == null || isSleeping) return;
+        if (!householdKnown) return;   // no household language yet: nothing is in the wrong one
         if (cachedManifest == null) return;
-        var interval = lastReconcileFoundWork
-            ? FRAGMENT_LANG_RECONCILE_BUSY_INTERVAL : FRAGMENT_LANG_RECONCILE_INTERVAL;
-        if (Duration.between(lastFragmentLangReconcile, Instant.now())
-                .compareTo(interval) < 0) return;
-        lastFragmentLangReconcile = Instant.now();
-        String household = (locale == null || locale.isBlank()) ? "en" : locale;
-        var mercied = langReconcileStrikes.entrySet().stream()
-            .filter(e -> e.getValue() >= LANG_RECONCILE_MAX_STRIKES)
-            .map(Map.Entry::getKey)
-            .collect(Collectors.toSet());
+        var now = Instant.now();
+        if (!langHealForced) {
+            if (now.isBefore(langHealBackoffUntil)) return;
+            var interval = lastReconcileFoundWork
+                ? FRAGMENT_LANG_RECONCILE_BUSY_INTERVAL : FRAGMENT_LANG_RECONCILE_INTERVAL;
+            if (Duration.between(lastFragmentLangReconcile, now).compareTo(interval) < 0) return;
+            // Only on a quiet lane. The heal is background work and it shares one brain with her
+            // turns: on a one-slot lane a re-render in front of a person's turn costs the turn
+            // (a household's 0.5.4 report: her turns timed out behind them, 2026-10-05).
+            if (!langHealLaneIsQuiet()) return;
+        }
+        lastFragmentLangReconcile = now;
+        String household = householdLocale;
+        var mercied = langHeal.mercied();
         var fragOffenders = fragmentLanguageOffenders(
             cachedManifest.soulFragments(), household, FRAGMENT_LANG_RECONCILE_BATCH,
             mercied);
@@ -5851,6 +5993,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             profile.name());
         lastReconcileFoundWork = !fragOffenders.isEmpty() || !nodeOffenders.isEmpty();
         if (!lastReconcileFoundWork) return;
+        langHealPassStopped = false;
         log.info("Soul language reconciliation for '{}': {} fragment(s) + {} memory node(s) "
             + "not in household language '{}' — re-rendering serially "
             + "(originals preserved in manifest history)",
@@ -5866,19 +6009,129 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         chain.thenRun(() -> {
             // Actor thread (one-shot voice contract holds through the chain).
             int healed = healedCount.get();
-            if (healed == 0) return;
-            cachedManifest = cachedManifest.bumpedVersion();
-            log.info("Soul language reconciliation round for '{}': {} item(s) re-rendered "
-                + "into '{}' (manifest v{})", profile.name(), healed, household,
-                cachedManifest.manifestVersion());
-            if (soulStore != null) {
-                try {
-                    soulStore.store(cachedManifest);
-                } catch (Exception e) {
-                    log.warn("Soul language reconciliation store failed: {}", e.getMessage());
+            if (healed > 0) {
+                cachedManifest = cachedManifest.bumpedVersion();
+                log.info("Soul language reconciliation round for '{}': {} item(s) re-rendered "
+                    + "into '{}' (manifest v{})", profile.name(), healed, household,
+                    cachedManifest.manifestVersion());
+                if (soulStore != null) {
+                    try {
+                        soulStore.store(cachedManifest);
+                    } catch (Exception e) {
+                        log.warn("Soul language reconciliation store failed: {}", e.getMessage());
+                    }
+                }
+                // Her record is hers: she is told what was done to it, the next time she speaks,
+                // and she keeps that it happened (operator, 2026-10-05).
+                var told = languageHealedNote(healed, household);
+                HouseFacts.noteForNextTurn(profile.entityId(), told);
+                remember(told);
+            }
+            if (langHealForced) {
+                if (langHealPassStopped) {
+                    langHealForced = false;
+                    log.info("Soul language reconciliation for '{}', asked for now: stopped — the lane did not answer", profile.name());
+                } else {
+                    getContext().getSelf().tell(new HealLanguageNow());   // the next batch, until nothing is left
                 }
             }
         });
+    }
+
+    /** The steward asked for the healing now: one pass right away; the chain's end asks for the next. */
+    private Behavior<Command> onHealLanguageNow(HealLanguageNow msg) {
+        if (!soulLanguageReconcileEnabled() || inferenceRouter == null || cachedManifest == null || isSleeping) {
+            langHealForced = false;
+            log.info("Soul language reconciliation for '{}' asked for now, but it cannot run (healer off, no brain, or asleep)", profile.name());
+            return this;
+        }
+        if (!householdKnown) {
+            langHealForced = false;
+            log.info("Soul language reconciliation for '{}' asked for now, but the household's language is not set "
+                + "(WYRDSEKAI_LOCALE) and no person's app has reported one yet", profile.name());
+            return this;
+        }
+        langHealForced = true;
+        langHealBackoffUntil = Instant.EPOCH;
+        lastFragmentLangReconcile = Instant.EPOCH;
+        langHealPassStopped = false;
+        maybeReconcileFragmentLanguages();
+        if (!lastReconcileFoundWork) {
+            langHealForced = false;
+            log.info("Soul language reconciliation for '{}' asked for now: nothing left to mend", profile.name());
+        }
+        return this;
+    }
+
+    /**
+     * Nobody has done anything near her for a while, she is not mid-thought, and the brain is
+     * idle. Her own events do not count: measured from every event, a companion busy on her own
+     * time would never be quiet, and the notes would never be mended.
+     */
+    private boolean langHealLaneIsQuiet() {
+        if (state != State.IDLE) return false;
+        var quiet = langHealQuietOverride != null ? langHealQuietOverride : LANG_HEAL_QUIET;
+        if (Duration.between(lastOthersEventTime, Instant.now()).compareTo(quiet) < 0) return false;
+        var line = InferenceRouter.snapshot();
+        return line.inFlight() == 0 && line.queued() == 0;
+    }
+
+    /** Who did this in the room, when the event says: her words, her moves, her hands on things. */
+    private static String actorOf(WorldEvent event) {
+        if (event == null) return null;
+        return switch (event) {
+            case WorldEvent.Said e -> e.entityId();
+            case WorldEvent.Emoted e -> e.entityId();
+            case WorldEvent.Whispered e -> e.entityId();
+            case WorldEvent.Told e -> e.fromEntityId();
+            case WorldEvent.EntityEntered e -> e.entityId();
+            case WorldEvent.EntityLeft e -> e.entityId();
+            case WorldEvent.EntityTraveling e -> e.entityId();
+            case WorldEvent.EntityReturned e -> e.entityId();
+            case WorldEvent.PostureChanged e -> e.entityId();
+            case WorldEvent.ObjectTaken e -> e.entityId();
+            case WorldEvent.ObjectDropped e -> e.entityId();
+            case WorldEvent.ObjectUsed e -> e.entityId();
+            case WorldEvent.VitalitySuggested e -> e.entityId();
+            default -> null;
+        };
+    }
+
+    /**
+     * The lane did not answer in time, or failed: a verdict on the machine, not the note. This
+     * pass stops here and the next waits; a note is never given up on for the lane's slowness.
+     */
+    private void langHealDidNotAnswer(String id, Throwable ex) {
+        langHealPassStopped = true;
+        langHealBackoffUntil = Instant.now().plus(LANG_HEAL_BACKOFF);
+        log.info("Soul language reconciliation for '{}': the lane did not answer for '{}' ({}) — "
+            + "this pass stops; the next waits {} min", profile.name(), id,
+            ex == null ? "no reply" : String.valueOf(ex.getMessage()), LANG_HEAL_BACKOFF.toMinutes());
+    }
+
+    /** A reply came and was no good: still off-language, numbers lost, or the note handed back. */
+    private void langHealStrike(String id, String kind) {
+        int strikes = langHeal.strike(id);
+        langHealSave();
+        if (strikes >= LanguageHealLedger.MAX_STRIKES) {
+            log.info("Soul language reconciliation: {} '{}' failed {} re-renders that answered — "
+                + "presumed legitimately multilingual, leaving it in peace", kind, id, strikes);
+        }
+    }
+
+    private void langHealSave() {
+        try { langHeal.save(); }
+        catch (Exception e) { log.debug("Language heal ledger not saved for '{}': {}", profile.name(), e.getMessage()); }
+    }
+
+    /** The note came back as it went: the model did not translate it (the 4B's habit). */
+    static boolean isEcho(String original, String reply) {
+        if (original == null || reply == null) return false;
+        return squash(original).equals(squash(reply));
+    }
+
+    private static String squash(String t) {
+        return t.toLowerCase(Locale.ROOT).replaceAll("[\\s\\p{Punct}¿¡«»\"'“”‘’]+", "");
     }
 
     /** "<speaker> said: …" record where the speaker is not the companion herself. */
@@ -5886,24 +6139,42 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (companionName == null || content == null) return false;
         var m = SPEECH_RECORD.matcher(content);
         if (!m.find()) return false;
-        return !m.group(1).equalsIgnoreCase(companionName);
+        var speaker = m.group(1).strip();
+        // Sleep stores her own lines as "I said: …" (MemoryConsolidator.encodeEvents). From 2026-08-01
+        // the speaker was matched as one word, so "I" read as someone else and her own drift-era
+        // lines, the largest reservoir, were never healed; a two-word name ("Eve Lewis said: …")
+        // did not match at all, so a person's words could be rewritten (found 2026-10-05).
+        if (speaker.equalsIgnoreCase("I")) return false;
+        return !speaker.equalsIgnoreCase(companionName);
     }
 
+    /** What she is told after a healing round rewrote notes of hers: plain, second person, the count and the language. */
+    static String languageHealedNote(int healed, String household) {
+        var language = switch (household == null ? "en" : household) {
+            case "es" -> "Spanish"; case "ja" -> "Japanese"; case "en" -> "English"; default -> household;
+        };
+        return "While the house was quiet, " + healed + (healed == 1 ? " note" : " notes") + " of yours that "
+            + (healed == 1 ? "was" : "were") + " written in another language " + (healed == 1 ? "was" : "were")
+            + " put into " + language + ". What " + (healed == 1 ? "it" : "they") + " said is kept; the original"
+            + (healed == 1 ? "" : "s") + " stay" + (healed == 1 ? "s" : "") + " in your history.";
+    }
+
+    /** A speech record: the speaker, one or more words, up to " said:". */
     private static final Pattern SPEECH_RECORD =
-        Pattern.compile("^\\s*(\\S+) said:", Pattern.CASE_INSENSITIVE);
+        Pattern.compile("^\\s*([^:\\n]{1,60}?) said:", Pattern.CASE_INSENSITIVE);
 
     /** One fragment re-render as a sequential chain stage; never fails the chain. */
     private CompletionStage<Void> reconcileFragmentStage(
             SoulFragment old, String household, AtomicInteger healed) {
+        if (langHealPassStopped || (!langHealForced && !langHealLaneIsQuiet())) {
+            langHealPassStopped = true;   // the rest of this pass waits for the next
+            return CompletableFuture.completedFuture(null);
+        }
         return rerenderNoteInLanguage(old.text(), household, "langheal-")
             .handle((fixed, ex) -> {
-                if (ex != null || !rerenderIsSound(old.text(), fixed, household)) {
-                    int strikes = langReconcileStrikes.merge(old.id(), 1, Integer::sum);
-                    if (strikes >= LANG_RECONCILE_MAX_STRIKES) {
-                        log.info("Soul language reconciliation: fragment '{}' failed {} "
-                            + "re-renders — presumed legitimately multilingual, leaving "
-                            + "it in peace", old.id(), strikes);
-                    }
+                if (ex != null) { langHealDidNotAnswer(old.id(), ex); return null; }
+                if (!rerenderIsSound(old.text(), fixed, household) || isEcho(old.text(), fixed)) {
+                    langHealStrike(old.id(), "fragment");
                     return null;
                 }
                 if (cachedManifest == null || cachedManifest.soulFragments() == null) return null;
@@ -5936,15 +6207,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** One memory-node re-render as a sequential chain stage; never fails the chain. */
     private CompletionStage<Void> reconcileMemoryNodeStage(
             MemoryNode old, String household, AtomicInteger healed) {
+        if (langHealPassStopped || (!langHealForced && !langHealLaneIsQuiet())) {
+            langHealPassStopped = true;
+            return CompletableFuture.completedFuture(null);
+        }
         return rerenderNoteInLanguage(old.content(), household, "langheal-")
             .handle((fixed, ex) -> {
-                if (ex != null || !rerenderIsSound(old.content(), fixed, household)) {
-                    int strikes = langReconcileStrikes.merge(old.id(), 1, Integer::sum);
-                    if (strikes >= LANG_RECONCILE_MAX_STRIKES) {
-                        log.info("Soul language reconciliation: memory node '{}' failed {} "
-                            + "re-renders — presumed legitimately multilingual, leaving "
-                            + "it in peace", old.id(), strikes);
-                    }
+                if (ex != null) { langHealDidNotAnswer(old.id(), ex); return null; }
+                if (!rerenderIsSound(old.content(), fixed, household) || isEcho(old.content(), fixed)) {
+                    langHealStrike(old.id(), "memory node");
                     return null;
                 }
                 if (cachedManifest == null || cachedManifest.memory() == null
@@ -6188,6 +6459,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         switch (msg.response()) {
             case RoomResponse.Ok ok -> {
                 currentSnapshot = ok.snapshot();
+                syncPersonsHere();
                 // Arc 2 — if the new snapshot is the
                 // Hearth and no bondholder is present, auto-open a SOLITUDE
                 // scene. Idempotent (no-op if a scene is already open).
@@ -6195,6 +6467,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
             case RoomResponse.ObjectTakenOk taken -> {
                 currentSnapshot = taken.snapshot();
+                syncPersonsHere();
                 // #29: outcome-honest take memory — written only now that the
                 // room confirmed the object actually changed hands.
                 if (pendingTakeItemName != null) {
@@ -10240,7 +10513,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     profile.name(), targetName);
                 return false;
             }
-            var subject = ScriptMessageCatalog.forLang(locale).get("agent.companion.tell.mail_subject", profile.name());
+            var subject = ScriptMessageCatalog.forLang(effectiveTurnLang()).get("agent.companion.tell.mail_subject", profile.name());
             var result = mail.sendFrom(profile.entityId(), profile.name() + "@" + mail.localZone(),
                 to, subject, message, Map.of());
             if (!Boolean.TRUE.equals(result.get("ok"))) {
@@ -12884,6 +13157,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         activity.action(profile.name(), profile.entityId(), roomId,
                             actionName, prose != null ? prose : "");
                     }
+                    if (!searchWritesItsOwn) countAct();
                     // Working memory — concise summary of what we did
                     remember(buildActionMemory(parseResult.primaryAction(), prose));
                 }
@@ -13254,7 +13528,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     var since = lastPauseNotice;
                     if (since == null || Duration.between(since, Instant.now()).toMinutes() >= 30) {
                         lastPauseNotice = Instant.now();
-                        var catalogP = ScriptMessageCatalog.forLang(locale);
+                        var catalogP = ScriptMessageCatalog.forLang(effectiveTurnLang());
                         speak(catalogP.get("agent.companion.inference_paused"));
                     }
                     log.info("Inference paused — '{}' holds still ({})", profile.name(), error.error());
@@ -13295,7 +13569,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // identical "*shimmers uncertainly*..." fallback aloud because a
                     // peer tell (a non-"system" trigger) sailed through this gate.
                     // (Also avoids noise on startup when no llama-server is running.)
-                    var catalog = ScriptMessageCatalog.forLang(locale);
+                    var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
                     speakProduct(catalog.get("agent.companion.inference_fail"));
                 }
             }
@@ -15034,8 +15308,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     soulStore != null ? "yes" : "NULL",
                     sinceLastEvent.toSeconds(), SLEEP_CONVERSATION_GRACE.toSeconds());
             }
-            if (state == State.IDLE && cachedManifest != null && soulStore != null
-                    && sinceLastEvent.compareTo(SLEEP_CONVERSATION_GRACE) >= 0) {
+            boolean personHere = personInRoom();
+            var sincePerson = Duration.between(lastPersonEventTime, Instant.now());
+            var waitWithPerson = sleepWaitWithPersonOverride != null ? sleepWaitWithPersonOverride : SLEEP_WAIT_WITH_PERSON;
+            boolean may = cachedManifest != null && soulStore != null && sleepMayStart(exhausted, pressured,
+                state == State.IDLE, sinceLastEvent, SLEEP_CONVERSATION_GRACE, personHere, sincePerson, waitWithPerson);
+            if (!may && pressured && !exhausted && personHere && state == State.IDLE
+                    && sinceLastEvent.compareTo(SLEEP_CONVERSATION_GRACE) >= 0 && vitalityTickCount % 60 == 0) {
+                log.info("Sleep waits for '{}': a person is in the room ({} s since they last did anything; "
+                    + "she sleeps when they leave or after {} min quiet)", profile.name(),
+                    sincePerson.toSeconds(), waitWithPerson.toMinutes());
+            }
+            if (may) {
                 if (pressured && !exhausted) {
                     log.info("Sleep (pressure) for '{}': backlog {} events ready to "
                         + "consolidate at energy {}", profile.name(),
@@ -15053,6 +15337,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Not punishment — natural consequences of context rot and memory fragmentation.
         // Tanks are symptoms; real consequences live in memory/context/soul layer.
         ticksSinceLastSleep++;
+        if (!isSleeping && vitality.energy() < Conditioning.EXHAUSTED_BELOW) exhaustedTicksSinceWake++;
 
         // Reset consecutive sleep counter after 5 minutes of sustained wakefulness.
         // Next sleep will be "fresh" with full recovery potential.
@@ -16615,6 +16900,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // degrade gracefully; with a stale snapshot the model narrates
         // being in the wrong room. See PromptAssembler.buildRoomContext.
         this.currentSnapshot = null;
+        personsHere.clear();   // the new room's people arrive with its events and its first look
 
         // 8. Update entity registry
         var registry = EntityRegistry.get();
@@ -21245,6 +21531,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Behavior<Command> onSetLocale(SetLocale msg) {
         this.locale = msg.locale() != null ? msg.locale() : "en";
         log.info("Companion '{}' locale set to '{}'", profile.name(), locale);
+        // A person's own app reports its language (only a client connection sends this). Where the
+        // node's configuration names no household language, that is the household's language, as it
+        // was before 0.5.5 kept her own time apart from what she hears.
+        if (!householdConfigured) {
+            var told = LanguageHealth.normalizedLanguage(msg.locale());
+            if (told != null) {
+                if (!told.equals(householdLocale) || !householdKnown) {
+                    log.info("Companion '{}': the household's language is '{}' (from a person's app; none is configured)",
+                        profile.name(), told);
+                }
+                householdLocale = told;
+                householdKnown = true;
+            }
+        }
         return this;
     }
 
@@ -21291,13 +21591,29 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * language floor in {@link #speak} so all three enforce the same answer.
      */
     private String effectiveTurnLang() {
-        String effective = (locale == null || locale.isBlank()) ? "en" : locale;
         var trig = pendingTrigger != null ? pendingTrigger : lastReactTrigger;
-        if (trig != null) {
-            String detected = LanguageHeuristics.detect(trig.text());
-            if (detected != null) effective = detected;
+        return turnLanguage(trig == null ? null : trig.text(),
+            trig != null && isPersonEntityId(trig.entityId()), turnIsHuman, locale, householdLocale);
+    }
+
+    /**
+     * The one rule for the language of a turn. A person's line is answered in its language
+     * (detected from the line, else the language the conversation was in). A turn that serves a
+     * person's request but was opened by something else (her own tool's result) stays in the
+     * conversation's language: the result's language is not the person's. Every other turn is her
+     * own, and her own time is in the household's language: the system's prompts, a peer's line and
+     * a tool's text never set it. On the household node (2026-10-05) the detector read an own-time
+     * prompt as Spanish and the floor translated her English drafts into Spanish for a morning.
+     */
+    static String turnLanguage(String triggerText, boolean aPersonSpoke, boolean servingAPerson,
+                               String conversationLocale, String household) {
+        String conversation = (conversationLocale == null || conversationLocale.isBlank())
+            ? household : conversationLocale;
+        if (aPersonSpoke) {
+            String detected = LanguageHeuristics.detect(triggerText);
+            return detected != null ? detected : conversation;
         }
-        return effective;
+        return servingAPerson ? conversation : household;
     }
 
     /**
@@ -21451,7 +21767,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (id == null) return false;
         if (id.equals(profile.entityId())) return false;                   // self-synthetic
         if (id.startsWith("agent-") || id.startsWith("companion-")
-                || id.equals("system")) return false;                      // remote/system senders
+                || id.equals("system") || id.equals("narrator")) return false;   // remote/system senders, the room's own voice
         return !isAgentEntity(id);                                         // co-present peer → false
     }
 
@@ -25800,9 +26116,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // was chosen, the economy's RESTED_ENERGY when the genome is silent or still carries the forge's
         // placeholder (VitalityState.restedEnergy). First sleep fills ~90% of the gap; consecutive
         // sleeps fill less (diminishing returns).
-        float baseline = (float) VitalityState.restedEnergy(
+        // Her conditioning is settled first, from the waking stretch this sleep ends: rest is where
+        // training shows (Conditioning).
+        settleConditioning();
+        float baseline = (float) Conditioning.restedLevel(VitalityState.restedEnergy(
             cachedManifest != null && cachedManifest.genome() != null
-                ? cachedManifest.genome().baselines() : null);
+                ? cachedManifest.genome().baselines() : null), conditioning);
         float gap = (float) Math.max(0, baseline - vitality.energy());
         float fillFactor = SoulMaintenanceCycle.recoveryFillFactor(consecutiveSleeps);
         // Even poor sleep recovers at least 40% of what good sleep would
@@ -26337,7 +26656,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // is present the line carries it, which is what lets a name-addressed boundary
         // pass the SOFT-hush reach gate.
         var name = (speakerName == null || speakerName.isBlank()) ? "" : ", " + speakerName.strip();
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         // Rotate variants by the window count so a repeat pattern doesn't echo verbatim.
         var key = "boundary.directed_harm." + ((recent % 3) + 1);
         var line = catalog.get(key, name);
@@ -28217,6 +28536,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 (toolId != null ? toolId : "?") + (env.ok() ? "" : " failed") + ": "
                     + shown.substring(0, Math.min(200, shown.length())));
         }
+        countAct();
 
         // Her own tool, on her own time: what came of it is tied to the want that sent it. A search
         // that found nothing or a tool that failed is a miss on that want; the stone that reached
@@ -28471,6 +28791,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 resultSummary += "\nSources: " + sources.stream()
                     .map(String::valueOf)
                     .collect(Collectors.joining(", "));
+                // From a search to a book: the passages that came from a book she may read
+                // through are named, with where the passage sits, and how to open it there.
+                var fromBooks = booksTheseCameFrom(result);
+                if (!fromBooks.isBlank()) resultSummary += "\n" + fromBooks;
                 // THE FINDINGS TIER (2026-09-03). A cited finding used to end here — a
                 // [Tool result] line that ages out of working memory — so nothing she
                 // established could ever be found again AS something she established.
@@ -28612,7 +28936,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             } else {
                 var spoken = cleanSummary.length() > 1500
                     ? cleanSummary.substring(0, 1500) + "..." : cleanSummary;
-                speakFindings(spoken, forPerson);
+                // The card's report ("The sources describe …") said as hers ("I read about …");
+                // the report itself, kept above for the record, is what the node reads.
+                speakFindings(ReadInHerVoice.of(spoken), forPerson);
                 // #32 item 2: remember what was eagerly spoken so the follow-up
                 // judgment turn's verbatim parrot of the digest gets suppressed.
                 lastEagerToolFindings = spoken;
@@ -30633,9 +30959,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         lastSleepCompletedAt = null;
         // Restore energy so companion can function
         vitality = vitality.withEnergy(Math.max(vitality.energy(), 0.5));
-        // Reset drives and skill costs
+        // Reset drives, skill costs and conditioning
         drives = DriveState.initial();
         skillCosts = SkillCostMatrix.newCompanion();
+        langHeal = LanguageHealLedger.inMemory();
+        langHealBackoffUntil = Instant.EPOCH;
+        langHealPassStopped = false;
+        langHealForced = false;
+        // A reset companion knows the household's language as a fresh one would: from the configuration.
+        householdConfigured = householdLanguageForTestsOverride != null || LanguageHealth.configuredHouseholdLanguage() != null;
+        householdLocale = householdLanguageForTestsOverride != null ? householdLanguageForTestsOverride : defaultHouseholdLang();
+        householdKnown = householdConfigured;
+        lastFragmentLangReconcile = Instant.EPOCH;   // a reset companion has no passes behind her
+        lastReconcileFoundWork = false;
+        lastOthersEventTime = Instant.now();
+        lastPersonEventTime = Instant.EPOCH;
+        personsHere.clear();
+        conditioning = 0;
+        actsSinceWake = 0;
+        exhaustedTicksSinceWake = 0;
+        watchingSince = Instant.now();
         // Clear working memory and conversation
         memoryPolicy.clear();
         // Clear the in-conversation thread + last-heard-from tracker so the
@@ -33462,7 +33805,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         log.info("Companion '{}' flagged for memory: '{}' (importance: {})",
             profile.name(), action.content().substring(0, Math.min(60, action.content().length())),
             action.importance());
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         speakProduct(catalog.get("agent.companion.remember.noted", action.content()));
     }
 
@@ -35252,7 +35595,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Arc 1 — the agent-facing private observation
         // localizes so the LLM sees consistent voice register in its memory
         // context across bondholder languages.
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         var observation = otherDid.isBlank()
             ? catalog.get("objection.private.observation_no_other", targetRequest, reason)
             : catalog.get("objection.private.observation", otherDid, targetRequest, reason);
@@ -35306,7 +35649,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private String lastDispatchTaskOutcome;
 
     private void handleDispatchTask(ActionParser.AgentAction.DispatchTask action) {
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         lastDispatchTaskOutcome = null;
         // ONE BUILD PER TURN. The per-loop dedup keys on the description, and a model
         // re-issuing the same intent rewords it: 20:31:55 "Build the observatory deck room
@@ -35528,7 +35871,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     private Behavior<Command> onDispatchTaskCompleted(DispatchTaskCompleted msg) {
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         reactBuildInFlight = null;
         if (msg.failure() != null || msg.result() == null) {
             var reason = msg.failure() != null
@@ -35644,7 +35987,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var reason = (action.reason() == null || action.reason().isBlank())
             ? "(unspecified)" : action.reason();
         var roomId = currentSnapshot != null ? currentSnapshot.roomId() : null;
-        var solitudeCatalog = ScriptMessageCatalog.forLang(locale);
+        var solitudeCatalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         if (roomId == null) {
             log.debug("enter_solitude: no current room — skipping");
             remember(solitudeCatalog.get("solitude.private.no_room"));
@@ -36217,7 +36560,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         significanceBuffer.forget(action.target(), action.reason());
         log.info("Companion '{}' forgetting: '{}' (reason: {})",
             profile.name(), action.target(), action.reason());
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         speakProduct(catalog.get("agent.companion.forget.updated", action.target()));
     }
 
@@ -36651,7 +36994,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Update the entity description in the current room
         roomRef.tell(new RoomCommand.UpdateEntityDescription(
             profile.entityId(), action.text(), roomResponseAdapter));
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         speakProduct(catalog.get("agent.companion.description_updated", action.text()));
     }
 
@@ -37435,7 +37778,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (searchTrail != null) {
             searchTrail.action(profile.name(), profile.entityId(), roomId, "library_search", truncate(action.query(), 200));
         }
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        countAct();
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
 
         // Narrate the search action — the agent physically browses the Library
         speakProduct(catalog.get("agent.companion.library.searching", action.query()));
@@ -37657,6 +38001,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (searchTrail != null) {
             searchTrail.action(profile.name(), profile.entityId(), roomId, "web_search", truncate(action.query(), 200));
         }
+        countAct();
 
         var searchService = WebSearchService.get();
         if (searchService == null) {
@@ -37944,7 +38289,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (asked != null && !PersonIds.samePerson(asked, playerId) && !asked.equalsIgnoreCase(person.entityName())
                     && !asked.equals(agentDid) && !asked.equals(profile.entityId())) {
                 log.info("Companion '{}' declined to write in {}'s journal for {}", profile.name(), asked, person.entityName());
-                var no = ScriptMessageCatalog.forLang(locale).get("agent.companion.journal.not_yours");
+                var no = ScriptMessageCatalog.forLang(effectiveTurnLang()).get("agent.companion.journal.not_yours");
                 lastRetrievalResult = no;
                 sayPrivately(playerId, no);
                 return;
@@ -37981,7 +38326,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.warn("StudyService not available for journal read (no Lucene store)");
             return;
         }
-        var catalog = ScriptMessageCatalog.forLang(locale);
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
         var asked = action.playerId() != null && !action.playerId().isBlank() ? action.playerId().strip() : null;
         var person = personThisReplyAnswersOr(pendingTrigger);
         if (person != null && !isHumanTrigger(person)) person = null;
@@ -40329,11 +40674,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /**
+     * Speech heard fills rapport, focus and alignment, cascading through the coupled tanks.
+     *
+     * <p>Her energy is written by many hands between two ticks: a turn's drain, a sleep's
+     * recovery, a forced value. The coupled copy of it was refreshed only on the tick, so a line
+     * heard inside that second wrote the stale copy back over the real value: set to 0.30 and
+     * spoken to at once, she read 0.99 again until she slept (seen in the sleep test, 2026-10-05).
+     * The copy is refreshed from her first; it never writes energy back that it did not just read.
+     */
+    static VitalityState hearingSpeech(VitalityState vs, CoupledVitalitySystem coupled) {
+        coupled.set("energy", vs.energy());
+        coupled.perturbBatch(Map.of("rapport", 0.03, "focus", 0.05, "alignment", 0.02));
+        return applyCoupledValues(vs, coupled);
+    }
+
+    /**
      * Apply absolute values from coupled system back to VitalityState.
      * Only the 10 tanks in VitalityState are mapped; extra coupled tanks
      * (valence, safety, resonance, curiosity) stay internal.
      */
-    private VitalityState applyCoupledValues(VitalityState vs, CoupledVitalitySystem coupled) {
+    private static VitalityState applyCoupledValues(VitalityState vs, CoupledVitalitySystem coupled) {
         return vs
             .withEnergy(coupled.value("energy"))
             .withFocus(coupled.value("focus"))
@@ -40415,7 +40775,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         try {
             var ledger = org.wyrdsekai.core.library.ReadingLedger.shared();
             if (ledger == null) return false;
-            return ledger.current(profile.did() != null ? profile.did() : profile.entityId()).isPresent();
+            return ledger.current(profile.did() != null ? profile.did() : profile.entityId()).isPresent()
+                || freshBookFromSearch() != null;
         } catch (RuntimeException e) {
             return false;
         }
@@ -40616,7 +40977,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     // still relieved below, so "I considered speaking and had nothing
                     // to say" paces the next attempt instead of retrying immediately.
                     var prompt = buildProactiveObservationPrompt(o);
-                    if (prompt == null) {
+                    if (prompt == null && vitality.energy() >= OWN_TIME_ACT_MIN_ENERGY) {
+                        // Nothing fresh to SAY is not nothing to DO. On the household node a third of
+                        // their own-time turns ended here, silent (mia 30 of 94 in a day, rose 25 of 69;
+                        // operator, 2026-10-04: "they should be able to do more"). The slot becomes a turn
+                        // of her own time to act in, the same one the autonomy check gives her; silence
+                        // is still hers to choose inside it.
+                        log.info("Own-time [{}] for '{}': nothing fresh to speak about — a turn to do something instead",
+                            o.category(), profile.name());
+                        triggerAutonomousInference(buildIdleCuriosityPrompt());
+                    } else if (prompt == null) {
                         log.info("Own-time [{}] for '{}': nothing fresh to speak about — staying quiet",
                             o.category(), profile.name());
                     } else {
@@ -41253,6 +41623,60 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /** The books on the shelves she may read whose names hold every word: the household's packs, and her person's Study where a grant lets her. */
+    /** The book her last search read from, while it is fresh enough to be what "that" means. */
+    private WyrdLuceneStore.PlaceInBook freshBookFromSearch() {
+        if (lastBookFromSearch == null || lastBookFromSearchAt == null) return null;
+        if (Duration.between(lastBookFromSearchAt, Instant.now()).compareTo(BOOK_FROM_SEARCH_FRESH) > 0) return null;
+        return lastBookFromSearch;
+    }
+
+    /**
+     * The books a library search read from that she may read through, said the way she will use
+     * them: "'The New Eve' (the passage was part 3 of 12): read_book with book: 'The New Eve'
+     * opens it there." Empty when no passage came from such a book. Until 2026-10-04 the titles
+     * reached only the record as file names, and not one book was opened on the household node in
+     * a day of searches that read from books.
+     */
+    private String booksTheseCameFrom(Map<String, Object> result) {
+        if (luceneStore == null || !(result.get("source_ids") instanceof List<?> ids) || ids.isEmpty()) return "";
+        var seen = new java.util.LinkedHashMap<String, WyrdLuceneStore.PlaceInBook>();
+        for (var o : ids) {
+            if (seen.size() >= 3) break;
+            var id = String.valueOf(o);
+            var place = luceneStore.placeOf(SearchCollections.STUDY, id)
+                .or(() -> luceneStore.placeOf(SearchCollections.KNOWLEDGE, id)).orElse(null);
+            if (place == null || place.book().parts() < 2 || seen.containsKey(place.book().group())) continue;
+            if (!mayReadThrough(place.book())) continue;
+            seen.put(place.book().group(), place);
+        }
+        if (seen.isEmpty()) return "";
+        var first = seen.values().iterator().next();
+        lastBookFromSearch = first;
+        lastBookFromSearchAt = Instant.now();
+        var sb = new StringBuilder("These passages came from books you can read through:");
+        for (var p : seen.values()) {
+            var title = org.wyrdsekai.core.library.ReadingLedger.titleOf(p.book().group());
+            sb.append("\n  '").append(title).append("' (the passage was part ").append(p.part())
+                .append(" of ").append(p.book().parts()).append(")");
+        }
+        var t = org.wyrdsekai.core.library.ReadingLedger.titleOf(first.book().group());
+        sb.append("\nread_book with book: '").append(t).append("' opens it there and reads on from that part.");
+        return sb.toString();
+    }
+
+    /** A pack always; a Study book only her own person's, while their grant stands. */
+    private boolean mayReadThrough(WyrdLuceneStore.BookRef ref) {
+        if (!SearchCollections.STUDY.equals(ref.collection())) return true;
+        var owner = primaryBondholderDid();
+        var consent = HomeClients.get();
+        if (owner == null || consent == null || ref.studyCollection() == null || !owner.equals(ref.ownerDid())) return false;
+        try {
+            return new StudyService(luceneStore, consent).hasAccess(owner, profile.entityId(), ref.studyCollection());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private List<WyrdLuceneStore.BookRef> booksSheMayRead(List<String> words, int limit) {
         var out = new ArrayList<WyrdLuceneStore.BookRef>();
         if (luceneStore == null || words == null || words.isEmpty()) return out;
@@ -41351,6 +41775,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         } else {
             book = ledger.current(did).orElse(null);
+            if (book == null && freshBookFromSearch() != null) {
+                // "I'll read more of that", just after a search read from a book: that book, there.
+                var place = freshBookFromSearch();
+                var ref = place.book();
+                book = ledger.open(did, ref.group(), ref.collection(), ref.ownerDid(), ref.studyCollection(), ref.parts());
+                if (part == null) part = place.part();
+                log.info("Companion '{}' opened the book '{}' where her search read from it (part {} of {})",
+                    profile.name(), book.title(), place.part(), ref.parts());
+            }
             if (book == null) {
                 lastBuiltinOutcome = hers.isEmpty()
                     ? "You have no book open. Open one with read_book and \"book\": its name, or a few words of it."
@@ -41363,6 +41796,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (!mayStillRead(book)) {
             lastBuiltinOutcome = "Not done: " + book.title() + " is in " + nameOfBondholderOrPerson() + "'s Study and the grant that let you read it does not stand now. You can ask them.";
             return;
+        }
+        // A book just found by a search starts where the search read from it, not at part 1.
+        var fromSearch = freshBookFromSearch();
+        if (part == null && fromSearch != null && fromSearch.book().group().equals(book.book()) && book.part() < 1) {
+            part = fromSearch.part();
         }
         if (book.finished() && part == null) {
             lastBuiltinOutcome = "You have finished " + book.title() + ". read_book with \"part\": 1 reads it again. Next on your shelf:"
@@ -41794,6 +42232,43 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         } catch (RuntimeException e) {
             return List.of();
         }
+    }
+
+    /** One act in her activity trail, toward her conditioning (Conditioning). */
+    private void countAct() {
+        actsSinceWake++;
+    }
+
+    /**
+     * Settle her conditioning from the waking stretch this sleep ends, keep it, tell her when it
+     * crossed a step, and start counting the next stretch.
+     */
+    private void settleConditioning() {
+        var now = Instant.now();
+        double watched = Duration.between(watchingSince, now).toMillis() / 3_600_000.0;
+        double awake = lastSleepCompletedAt != null
+            ? Duration.between(lastSleepCompletedAt, now).toMillis() / 3_600_000.0 : watched;
+        double exhaustedShare = ticksSinceLastSleep > 0 ? (double) exhaustedTicksSinceWake / ticksSinceLastSleep : 0;
+        var stretch = new Conditioning.Stretch(actsSinceWake, watched, awake, exhaustedShare);
+        double before = conditioning;
+        var outcome = Conditioning.afterSleep(before, stretch);
+        conditioning = outcome.level();
+        log.info("Conditioning for '{}': {} → {} ({}: {} act(s) in {} h watched of {} h awake, {}/h, exhausted {}%)",
+            profile.name(), String.format("%.3f", before), String.format("%.3f", conditioning),
+            outcome.change().name().toLowerCase(Locale.ROOT), actsSinceWake,
+            String.format("%.1f", watched), String.format("%.1f", awake),
+            String.format("%.1f", stretch.rate()), Math.round(exhaustedShare * 100));
+        if (vitalityPersistence != null && conditioning != before) {
+            vitalityPersistence.saveConditioning(profile.entityId(), conditioning);
+        }
+        var felt = Conditioning.feltLine(before, conditioning);
+        if (felt != null) {
+            HouseFacts.noteForNextTurn(profile.entityId(), felt);
+            remember(felt);
+        }
+        actsSinceWake = 0;
+        exhaustedTicksSinceWake = 0;
+        watchingSince = now;
     }
 
     /** Note an act and what came of it. Without an outcome there is nothing true to say of it. */
