@@ -40,7 +40,7 @@ class AModelStillLoadingIsWaitedForTest {
         var src = Files.readString(Files.exists(from) ? from : Path.of(rel));
         int loading = src.indexOf("if (isStillLoading(failure.error()) && failure.chatReq() != null) {");
         int permanent = src.indexOf("if (isPermanentInferenceError(failure.error())) {");
-        int fallback = src.indexOf("var fallback = selectBackendExcluding(failure.failedBackend(), failure.localOnly());");
+        int fallback = src.indexOf("var fallback = selectBackendExcluding(failure.failedBackend(), failure.localOnly(), needed);");
         assertThat(loading).isGreaterThan(-1);
         assertThat(loading).as("before the permanent-error and fallback branches").isLessThan(permanent);
         assertThat(permanent).isLessThan(fallback);

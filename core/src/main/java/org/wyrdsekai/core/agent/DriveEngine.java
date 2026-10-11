@@ -105,70 +105,66 @@ public class DriveEngine {
 
         for (int i = 0; i < DRIVE_COUNT; i++) {
             var cfg = configs[i];
-            if (cfg.baseRate() <= 0 && d[i] <= 0) continue; // event-only drive at zero — skip
+            if (cfg.baseRate() <= 0 && d[i] <= 0 && !cfg.hasSetpoint()) continue; // event-only drive at zero — skip
 
-            // Base accumulation rate (scaled by archetype)
-            double rate = cfg.baseRate() * cfg.archetypeScale();
-
-            // Cross-drive modulation: each other drive modulates this drive's rate
+            // How open the drive is to building right now: cross-drive modulation and the tank gates,
+            // as one factor, so a ramping drive and a settling drive answer the same conditions.
             double crossFactor = 1.0;
             for (int j = 0; j < DRIVE_COUNT; j++) {
                 if (i == j) continue;
                 crossFactor += cfg.crossMod()[j] * d[j];
             }
-            rate *= Math.max(0.1, crossFactor); // floor at 0.1x — never fully suppress
+            double mod = Math.max(0.1, crossFactor); // floor at 0.1x — never fully suppress
 
             // Tank→drive gating
             if (energy < ENERGY_FREEZE_THRESHOLD) {
-                rate = 0; // sleep threshold — drives frozen
+                mod = 0; // sleep threshold — drives frozen
             } else if (energy < ENERGY_DAMPEN_THRESHOLD) {
-                rate *= ENERGY_DAMPEN_FACTOR; // exhaustion dampens
+                mod *= ENERGY_DAMPEN_FACTOR; // exhaustion dampens
             }
             if (focus < FOCUS_DAMPEN_THRESHOLD) {
-                rate *= FOCUS_DAMPEN_FACTOR; // scattered attention reduces motivation
+                mod *= FOCUS_DAMPEN_FACTOR; // scattered attention reduces motivation
             }
 
             // Additional tank modulation per spec §4.2
             if (errorPressure > 0.6) {
-                if (i == FRUSTRATION) rate *= 1.3;
-                if (i == PLAY) rate *= 0.5;
-                if (i == CREATIVITY) rate *= 0.7;
+                if (i == FRUSTRATION) mod *= 1.3;
+                if (i == PLAY) mod *= 0.5;
+                if (i == CREATIVITY) mod *= 0.7;
             }
             if (confidence > 0.7) {
-                if (i == SEEKING) rate *= 1.2;
-                if (i == CREATIVITY) rate *= 1.2;
+                if (i == SEEKING) mod *= 1.2;
+                if (i == CREATIVITY) mod *= 1.2;
             } else if (confidence < 0.2) {
-                if (i == SEEKING) rate *= 0.7;
-                if (i == VIGILANCE) rate *= 1.2;
+                if (i == SEEKING) mod *= 0.7;
+                if (i == VIGILANCE) mod *= 1.2;
             }
             if (rapport > 0.7) {
-                if (i == AFFILIATION) rate *= 1.2;
-                if (i == PLAY) rate *= 1.3;
-                if (i == CARE) rate *= 1.1;
+                if (i == AFFILIATION) mod *= 1.2;
+                if (i == PLAY) mod *= 1.3;
+                if (i == CARE) mod *= 1.1;
             } else if (rapport < 0.2) {
-                if (i == AFFILIATION) rate *= 1.3; // loneliness amplifies bonding desire
+                if (i == AFFILIATION) mod *= 1.3; // loneliness amplifies bonding desire
             }
 
-            // Apply accumulation
-            d[i] += rate * deltaTime;
+            if (cfg.hasSetpoint()) {
+                // A satiable drive settles toward its own point over its own hours, from either
+                // side, through the same gates; temperament sets where it settles. Relief events
+                // (DriveState.relieve / the eases in CompanionActor) drop it to its floor and it
+                // builds again from there. Until 2026-10-10 these four ramped per second and were
+                // leaked toward a floor every second, which pinned each at a number nobody chose.
+                double setpoint = Math.min(1.0, cfg.setpoint() * cfg.archetypeScale());
+                d[i] += mod * (setpoint - d[i]) * deltaTime / cfg.settleTau();
+            } else {
+                // Base accumulation rate (scaled by archetype)
+                double rate = cfg.baseRate() * cfg.archetypeScale() * mod;
+                d[i] += rate * deltaTime;
 
-            // Natural relief decay for drives above their floor
-            // Drives decay toward their relief floor at a rate proportional to (value - floor)
-            if (d[i] > cfg.reliefFloor() && cfg.reliefTau() > 0) {
-                double decayRate = (d[i] - cfg.reliefFloor()) / cfg.reliefTau();
-                // Event-only drives (baseRate=0) always decay toward floor. Among the
-                // ACCUMULATING drives, the SATIABLE homeostats also relax toward set-point
-                // instead of ratcheting to a permanent 1.0 pin: AFFILIATION (social hunger),
-                // CARE (tending eases; the cared-for being ok), PLAY (delight sates),
-                // VIGILANCE (alertness stands down when no threat persists). Their triggers
-                // keep spiking them while the condition holds, so this is a true homeostat,
-                // not a leak. (2026-06-03/04 audit: these four accumulated with NO relief
-                // path — decay excluded by baseRate>0 AND no relief event — so they pinned
-                // at 1.0, gradientless, and the want-layer read them as unmotivating noise.
-                // SEEKING and CREATIVITY stay OUT: they're already relieved by an event
-                // (production discharge), so they keep persist-until-relieved.)
-                if (cfg.baseRate() <= 0
-                        || i == AFFILIATION || i == CARE || i == PLAY || i == VIGILANCE) {
+                // Natural relief decay for event-only drives above their floor: they decay toward
+                // it at a rate proportional to (value - floor). SEEKING and CREATIVITY stay out:
+                // they are relieved by an event (production discharge), persist-until-relieved.
+                if (cfg.baseRate() <= 0 && d[i] > cfg.reliefFloor() && cfg.reliefTau() > 0) {
+                    double decayRate = (d[i] - cfg.reliefFloor()) / cfg.reliefTau();
                     d[i] -= decayRate * deltaTime;
                 }
             }
@@ -189,6 +185,18 @@ public class DriveEngine {
      * @return array of 8 doubles (one per VitalityState field, canonical order)
      */
     public double[] driveTankFeedback(DriveState drives) {
+        var deltas = rawDriveTankFeedback(drives);
+        // The felt tanks fade per minute of lived beats (VitalityState.tickColoring, 2026-10-10);
+        // what a drive adds to them is per minute too, or play at half strength would fill rapport
+        // from empty in seven minutes. Energy (index 2) keeps its per-second economy.
+        for (int i = 0; i < deltas.length; i++) {
+            if (i != 2) deltas[i] /= 60.0;
+        }
+        return deltas;
+    }
+
+    /** The feedback as it was written: per second for every tank. */
+    double[] rawDriveTankFeedback(DriveState drives) {
         // Tank order: contextBudget, confidence, energy, alignment, errorPressure, momentum, rapport, focus, integrity, disgust
         double[] deltas = new double[10];
 

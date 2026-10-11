@@ -27,18 +27,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DerivedSummarySupersedesTest {
 
+    /**
+     * Fixtures are dated relative to now: a fragment's effective confidence decays after thirty
+     * days without confirmation, so a fixture pinned to a calendar date drifted under the line this
+     * test asserts sixty days later (first seen 2026-10-09; it had passed three days before).
+     */
+    private static final Instant A_DAY_AGO = Instant.now().minus(java.time.Duration.ofDays(1));
+
     private static SoulFragment derived(String id, String category, String label, String text,
                                         float confidence, int reinforcements) {
         return new SoulFragment(id, category, label, text, null, null, false,
-            confidence, reinforcements, Instant.parse("2026-08-10T00:00:00Z"),
-            Instant.parse("2026-08-10T00:00:00Z"), null, null, null,
+            confidence, reinforcements, A_DAY_AGO,
+            A_DAY_AGO, null, null, null,
             FragmentKind.NARRATIVE, null);
     }
 
     private static SoulFragment observed(String id, String label, String text) {
         return new SoulFragment(id, "procedure", label, text, null, null, false,
-            0.5f, 0, Instant.parse("2026-08-10T00:00:00Z"),
-            Instant.parse("2026-08-10T00:00:00Z"), null, null, null,
+            0.5f, 0, A_DAY_AGO,
+            A_DAY_AGO, null, null, null,
             FragmentKind.DEXTERITY, null);
     }
 
@@ -85,7 +92,7 @@ class DerivedSummarySupersedesTest {
         var merged = SoulMaintenanceCycle.reinforceFragments(List.of(old), List.of(fresh));
 
         var current = merged.stream().filter(SoulFragment::isCurrent).findFirst().orElseThrow();
-        assertThat(current.firstObserved()).isEqualTo(Instant.parse("2026-08-10T00:00:00Z"));
+        assertThat(current.firstObserved()).isEqualTo(A_DAY_AGO);
     }
 
     @Test

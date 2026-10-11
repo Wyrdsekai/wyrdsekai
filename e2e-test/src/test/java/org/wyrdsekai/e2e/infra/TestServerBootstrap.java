@@ -78,6 +78,8 @@ import org.wyrdsekai.server.http.UpdateRoutes;
 import org.wyrdsekai.server.ssh.SshAdapter;
 import org.wyrdsekai.server.telnet.TelnetAdapter;
 import org.wyrdsekai.server.ws.WyrdWebSocket;
+import org.wyrdsekai.common.protocol.S2CMessage;
+import org.wyrdsekai.core.agent.CrossZoneTellService;
 import org.wyrdsekai.server.ws.ZoneBridgeEndpoint;
 
 import java.net.URI;
@@ -392,6 +394,14 @@ public final class TestServerBootstrap implements AutoCloseable {
         // per plan step. 100s was causing WebSocket drops mid-execution.
         var wsHandler = new WyrdWebSocket(system, authService, wardService, inventoryService,
             null /* federationService */, pairingService, true /* allowAnonymous */, 600);
+        // The session route an answer takes to a person who is not in her room. The product wires
+        // it in Main; this harness never did, so a bunshin's report to a visitor she had walked
+        // away from reached no one here (the organic dispatch suite, 2026-10-05).
+        var tellServiceForSessions = CrossZoneTellService.get();
+        if (tellServiceForSessions != null) {
+            tellServiceForSessions.setPlayerDeliverer((playerId, formatted) ->
+                wsHandler.deliverToPlayer(playerId, new S2CMessage.Prose(0L, "tell", formatted, List.of(), null, "normal")));
+        }
 
         // wiring — HomeRegistry + HomeClient + ward/grant mirror
         var homeStore = new HomeStore(jdbcUrl);

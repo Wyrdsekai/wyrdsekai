@@ -4,6 +4,96 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.6] — 2026-10-11
+
+### Added
+
+- **`wyrd rooms repair <room>` mends a room's script.** Companions can build rooms and give them a
+  small program, a script, that runs when someone comes in or speaks. When one of those scripts
+  keeps failing, this command has it repaired. The repair is made on a copy, the old version is
+  kept, and the script is replaced only if the new one works. The house also does this by itself
+  while everyone is quiet, as it already did for items, and a companion can ask for it herself.
+- **`wyrd doctor` lists room scripts that were switched off** because they kept failing, and says
+  what went wrong with each one.
+- **`wyrd doctor` checks Ollama.** If your model runs on Ollama, it now tells you when the model is
+  set up to read too little text at once for a companion, and which setting fixes that.
+- **A new setting, `WYRDSEKAI_STEWARD_DIGEST_MINUTES`,** decides how often you hear about what a
+  companion did on her own. The default is every 30 minutes. Set it to `0` to hear about each thing
+  as it happens.
+
+### Changed
+
+- **Her wants are her own again.** A companion has wants: to be with someone, to look after
+  someone, to play, and to keep watch. A mistake in the arithmetic held all four at small fixed
+  numbers. On our own household machine her wish for company barely moved for three days while she
+  was telling us "I wanted to be near you". Now each want grows slowly over hours when it is not
+  met, settles at a level that suits her temperament, and drops back when it is met. Time alone now
+  counts as time alone. A conversation with a person now eases her wish for company, as time with
+  another companion already did.
+- **Her feelings change over hours, not minutes.** Her sense of closeness, her focus and her drive
+  used to drain away within minutes after a conversation, and her confidence was always at the top.
+  On our household machine her sense of closeness read zero almost all the time for weeks, even with
+  another companion beside her. Now each feeling drifts slowly back to her own usual level. Something
+  said to her adds a little to what she already feels instead of resetting it. Calm can now grow
+  while she is alone. Her energy and her sleep work as before.
+- **Her focus and confidence settle at her own level.** Three more feelings were stuck. A rule meant
+  for a companion who never sleeps started ten minutes after she woke up, and wore down her focus and
+  her sense of being herself every single day. It now starts only after a full day without sleep, so
+  a companion who sleeps normally never meets it. Every reply she gave used to make her a little more
+  confident, so she was never unsure of anything. Now a good reply only wins back confidence that
+  earlier mistakes had cost her. And a want she follows all day now lifts her mood to a comfortable
+  level, not all the way to the top.
+- **She stays with a person her helper is working for.** A companion can send out a copy of herself,
+  a bunshin, to do a task for someone. On her own time she used to wander off to another room while
+  that copy was still working for a person waiting with her. Now she stays while they are there. A
+  person can still ask her to come along somewhere else.
+- **An answer that reaches no one is kept.** If a person left before she could answer them, the
+  answer was lost. Now she keeps it and gives it to them the next time they come into her room, talk
+  to her, or sign in. If it has waited a while, she says it is from earlier.
+- **A long conversation now fits the model.** A language model can only read so much text at once.
+  Wyrdsekai now asks each model how much that is and shortens what it sends to fit, leaving out old
+  conversation first and her sense of who she is last. Before, a message that was too long was sent
+  anyway and refused. On a Mac the small voice model now gets as much room as on other systems.
+- **You hear about her own time in one message, not dozens.** One day of small chores sent the
+  steward fifty-eight separate notices. Now what she did on her own arrives as one short summary
+  every half hour, for example: "mia, on her own time in the last 30 min: close room ×12
+  (quiet-alcove, study, the-garden and 9 more); go to room (the-lab)". Something a person asked her
+  for still arrives straight away, and `wyrd feed` still lists everything.
+- **Messages kept for you now reach you when you sign in.** Messages kept for someone who was away
+  were only shown in one rare case, so most people never saw them. They now appear the next time you
+  sign in, whether in the browser, by telnet or by SSH.
+- **A broken room script is switched off, and she is told why.** Scripts the companions wrote for
+  their rooms were failing about twenty times a day, and nothing was done about it. Now she is told
+  once, in plain words, what is wrong. After three failures the script is switched off: the room
+  stays, nothing is lost, and writing the script again turns it back on. A script with a mistake
+  that stops it from being read at all is refused when she writes it, and she is told why.
+
+### Fixed
+
+- **One failed save could stop a companion's sleep work until the next restart.** After a sleep,
+  the part of Wyrdsekai that writes down who she has become, called the forge, saves a new numbered
+  version of her. Two saves at the same moment could pick the same number. The second was refused,
+  and that stopped the forge. Until the next restart, every sleep was saved without the forge's
+  checks, one of those saves failed as well, and a scene she had just written to herself was lost.
+  This happened twice in three weeks on our household machine. Now each save takes the next free
+  number, a save that fails no longer stops anything, and the forge starts again by itself if it
+  ever stops for another reason. Renaming a companion and changing her notification settings had
+  the same flaw and were quietly not saved. Both are saved now.
+- **Replies in a person's own language were later "corrected".** If someone wrote to her in Spanish
+  in an English household, she answered in Spanish, and a few nights later a clean-up step rewrote
+  that answer into English as if it were a mistake. Every line she says now remembers the language
+  she was answering in, so a Spanish answer to a Spanish question stays as it was.
+- **An accent in a name was taken for Spanish.** An English sentence that mentioned a name like
+  Boullée or Les Misérables was sent off to be translated. Now only marks that belong to Spanish
+  alone, such as ñ, ¿ and ¡, count as proof.
+- **`wyrd soul language` showed the wrong count** of attempts to fix a note's language. It reads the
+  right one now.
+- **A line in the wrong language could go out unfixed.** On a machine that runs one model for
+  everything, the step that puts a stray line back into the household's language had only three
+  seconds and usually ran out of time. It now has thirty.
+- **"I'll open the lab" built a second lab.** When she said she would open a room she already had,
+  she built a new copy of it. Now opening a room means going to it.
+
 ## [0.5.5] — 2026-10-05
 
 ### Added

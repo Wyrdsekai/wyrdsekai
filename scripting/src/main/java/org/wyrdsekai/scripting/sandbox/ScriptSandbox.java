@@ -30,6 +30,8 @@ public class ScriptSandbox implements Closeable {
     private final String roomId;
     private final ResourceLimits limits;
     private final org.graalvm.polyglot.ResourceLimits statementLimit;   // null when unlimited
+    /** Told of every failure (the hook, the message); the log line alone left a failing script failing forever. */
+    private volatile java.util.function.BiConsumer<String, String> failureSink;
 
     public ScriptSandbox(String roomId) {
         this(roomId, ResourceLimits.ROOM_SCRIPT);
@@ -50,6 +52,21 @@ public class ScriptSandbox implements Closeable {
 
     public ResourceLimits limits() {
         return limits;
+    }
+
+    /** Who is told when a script fails (the hook or "top level", and the message). */
+    public void onFailure(java.util.function.BiConsumer<String, String> sink) {
+        this.failureSink = sink;
+    }
+
+    private void report(String what, String message) {
+        var sink = failureSink;
+        if (sink == null) return;
+        try {
+            sink.accept(what, message == null ? "" : message);
+        } catch (RuntimeException e) {
+            log.debug("Script failure sink threw for room {}: {}", roomId, e.toString());
+        }
     }
 
     /**
@@ -139,11 +156,14 @@ public class ScriptSandbox implements Closeable {
                 if (e.isResourceExhausted()) {
                     log.warn("Room {} script stopped in {}: it ran past its limit of {} statements"
                         + " (WYRDSEKAI_ROOM_SCRIPT_STATEMENTS)", roomId, what, limits.statementLimit());
+                    report(what, "it ran past its limit of " + limits.statementLimit() + " statements");
                 } else if (e.isCancelled() && watch != null && watch.tripped()) {
                     log.warn("Room {} script stopped in {}: it used more than {} ms of CPU time"
                         + " (WYRDSEKAI_ROOM_SCRIPT_CPU_MS)", roomId, what, limits.cpuTimeoutMs());
+                    report(what, "it used more than " + limits.cpuTimeoutMs() + " ms of CPU time");
                 } else {
                     log.error("Script {} failed in room {}: {}", what, roomId, e.getMessage());
+                    report(what, e.getMessage());
                 }
                 return onFailure;
             } finally {
@@ -151,6 +171,7 @@ public class ScriptSandbox implements Closeable {
             }
         } catch (Exception e) {
             log.error("Script {} failed in room {}: {}", what, roomId, e.getMessage());
+            report(what, e.getMessage());
             return onFailure;
         }
     }

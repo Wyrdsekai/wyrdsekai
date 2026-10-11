@@ -589,6 +589,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                                            double confidence,
                                            String reason) implements Command {}
     private record VitalityTick() implements Command {}
+    /** Try again to reach the people she owes a line to (a session may have come back). */
+    private record OwedLinesRetry() implements Command {}
+    /** The window for her own-time acts closed: one notice to the steward. */
+    private record StewardDigestFlush() implements Command {}
     /** Result from a scripted tool item execution (arrives from virtual thread). */
     /** Scripted-tool result piped back from a virtual thread.
      *  {@code resetGeneration} captures the {@code resetGeneration} value at
@@ -2542,6 +2546,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private final DistressBroadcast distressBroadcast = new DistressBroadcast();
     private final Map<WorldEvent.Said, EmotionalCharge> accumulatedCharges = new LinkedHashMap<>();
     private long ticksSinceLastSleep = 0;
+    /** Lived seconds awake since her last sleep (soak-scaled like the drives); insomnia counts these. */
+    private double secondsAwake = 0;
     /** Her conditioning (Conditioning): stamina built by regular activity, added to her rested level. */
     private double conditioning = 0;
     /** Acts in her activity trail since she last woke, or since this process began watching her. */
@@ -2552,7 +2558,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Instant watchingSince = Instant.now();
     private Instant lastChargeScoreTime = Instant.MIN;
     private static final Duration CHARGE_SCORE_COOLDOWN = Duration.ofSeconds(10);
-    private static final long INSOMNIA_THRESHOLD_TICKS = 600; // 10 min = degradation starts
+    /**
+     * How long awake before insomnia's consequences begin: a full waking day. This was ten
+     * minutes, written against a one-second tick, so on the household node focus and alignment
+     * were rotted to their 0.1 floors within an hour of every waking and sat there all day, while
+     * she slept every eight hours like anyone. A companion who sleeps on her own rhythm never meets
+     * this; one who refuses sleep still pays the natural price.
+     */
+    static final double INSOMNIA_AFTER_AWAKE_SECONDS = 16 * 3600.0;
+    /** Context rot and memory fragmentation, per minute awake past that, on the felt fades' scale. */
+    static final double INSOMNIA_ROT_PER_MIN = 0.005;
+    /** Soul staleness: alignment drifts this much an hour while insomniac. */
+    static final double INSOMNIA_ALIGNMENT_DRIFT_PER_HOUR = 0.1;
     private static final int MAX_ACCUMULATED_CHARGES = 200;
     private int proactiveActionCount = 0;
     private Instant proactiveWindowStart = Instant.now();
@@ -2606,6 +2623,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         new ArrayList<>();
     /** slotId → room-presence entity of the working copy — see the dispatch site. */
     private final Map<String, String> bunshinBodies = new HashMap<>();
+    /** The person each running bunshin works for, by slot: she stays with them while it works. */
+    private final Map<String, WorldEvent.Said> bunshinWorkingFor = new HashMap<>();
+    /** Lines she owes people she could not reach, said when they are next seen. */
+    private OwedLines owedLines = OwedLines.inMemory();
+    private static final String OWED_RETRY_TIMER_KEY = "owed-lines-retry";
+    /** Her own-time acts for the steward, gathered into one notice per window (WYRDSEKAI_STEWARD_DIGEST_MINUTES). */
+    private final List<StewardFeed.Act> stewardDigest = new ArrayList<>();
+    private static final String STEWARD_DIGEST_TIMER_KEY = "steward-digest";
+    private static final Duration OWED_RETRY_EVERY = Duration.ofMinutes(2);
 
     /**
      * Node-wide (drive state × moment) trace — Path 3's future training data
@@ -2702,6 +2728,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Instant lastEventTime = Instant.now();
     /** The last room event that was not her own doing: what "quiet" is measured from. */
     private Instant lastOthersEventTime = Instant.now();
+    /**
+     * When a person or a peer companion last did something she witnessed. Loneliness counts from
+     * here: it used to count from {@link #lastEventTime}, which every event resets, her own lines
+     * and acts included, so a companion living her own time could never grow lonely (the
+     * household node: loneliness 0.02 through fifteen hours alone, 2026-10-10).
+     */
+    private Instant lastCompanyEventTime = Instant.now();
     /** The quiet the healer waits for; a live test shortens it. */
     static volatile Duration langHealQuietOverride;
     public static void langHealQuietForTests(Duration quiet) { langHealQuietOverride = quiet; }
@@ -2995,11 +3028,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 profile.name(), e.getMessage());
         }
         try {
-            var ledgerFile = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(),
-                profile.did() != null ? profile.did() : profile.entityId());
+            // Named by her entity id, which she has from birth; her DID is restored later in the
+            // load, so naming by "DID if known" gave the file one name here and another to the
+            // steward's view, which then showed retired notes as never tried (2026-10-09).
+            var ledgerFile = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(), profile.entityId());
             if (ledgerFile != null) this.langHeal = LanguageHealLedger.load(ledgerFile);
         } catch (Exception e) {
             log.warn("Language heal ledger not loaded for '{}': {}", profile.name(), e.getMessage());
+        }
+        try {
+            var owedFile = OwedLines.pathFor(WyrdConfig.get().dataDir(), profile.entityId());
+            if (owedFile != null) this.owedLines = OwedLines.load(owedFile);
+            if (!owedLines.isEmpty()) {
+                log.info("Companion '{}' still owes {} line(s) from before the restart", profile.name(), owedLines.size());
+                timers.startTimerWithFixedDelay(OWED_RETRY_TIMER_KEY, new OwedLinesRetry(), OWED_RETRY_EVERY);
+            }
+        } catch (Exception e) {
+            log.warn("Owed lines not loaded for '{}': {}", profile.name(), e.getMessage());
         }
 
         // §23 — restore the per-agent resilience reserve (drain/temper state)
@@ -3570,8 +3615,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     agentProfile.name(), e.toString());
             }
 
-            soulStore.store(birthManifest);
-            this.cachedManifest = birthManifest;
+            this.cachedManifest = storeManifest(birthManifest);
             // Born as this individual: seed-derived drive temperament + birth felt-state
             // tone (before coupled-vitality sync so it picks up the tone). No-ops for a
             // null/neutral seed → un-archetyped births are unchanged (zero regression).
@@ -4066,6 +4110,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(RecipeResourceDenied.class, this::onRecipeResourceDenied)
             .onMessage(PreflightRejectReceived.class, this::onPreflightRejectReceived)
             .onMessage(VitalityTick.class, this::onVitalityTick)
+            .onMessage(OwedLinesRetry.class, this::onOwedLinesRetry)
+            .onMessage(StewardDigestFlush.class, this::onStewardDigestFlush)
             .onMessage(ScriptedToolResult.class, this::onScriptedToolResult)
             .onMessage(ToolResultReady.class, this::onToolResultReady)
             .onMessage(SetLocale.class, this::onSetLocale)
@@ -4450,6 +4496,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (es != null) {
                     es.unsubscribe(profile.entityId());
                 }
+                // What she did on her own time since the last notice goes out before her channels close.
+                try { flushStewardDigest(); } catch (RuntimeException e) { log.debug("steward digest at stop: {}", e.toString()); }
                 // A stopped companion is in no room: left standing there, she was counted as
                 // someone who hears what is said in it (othersHear).
                 var presence = EntityRegistry.get();
@@ -4521,6 +4569,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (actor != null && isPersonEntityId(actor)) {
             lastPersonEventTime = lastEventTime;
             if (event instanceof WorldEvent.EntityLeft) personsHere.remove(actor); else personsHere.add(actor);
+        }
+        if (actor != null && !actor.equals(profile.entityId()) && (isPersonEntityId(actor) || isAgentEntity(actor))) {
+            lastCompanyEventTime = lastEventTime;
         }
 
         // Path-3 gate trace: what happened × what she felt as it happened.
@@ -4716,6 +4767,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (said.locale() != null && !said.locale().isEmpty() && isPersonEntityId(said.entityId())) {
                     this.locale = said.locale();
                 }
+                // What she owed them from earlier comes first, before their new line is answered.
+                deliverOwedTo(said.entityId());
 
                 // Vitality: receiving speech fills rapport, focus, alignment
                 // Use coupled system for cascading tank interactions when available
@@ -4843,6 +4896,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
 
             case WorldEvent.EntityEntered entered -> {
+                deliverOwedTo(entered.entityId());
                 // Only greet if this agent is the designated greeter for this entry
                 if (!entered.entityId().equals(profile.entityId())
                         && EngagementGate.shouldGreet(
@@ -5556,15 +5610,18 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private void applyBeatColoring(Instant beatAt) {
         if (vitality == null || beatAt == null || profile == null) return;
         if (lastBeatAt == null) { lastBeatAt = beatAt; return; } // first beat = baseline only
-        double elapsed = Duration.between(lastBeatAt, beatAt).toMillis() / 1000.0;
+        // SOAK-ONLY (SoakTimeScale): a lived second is `factor` seconds of fading, and one beat may
+        // catch up that much more. factor()=1.0 in production.
+        double elapsed = SoakTimeScale.compress(Duration.between(lastBeatAt, beatAt)).toMillis() / 1000.0;
         if (elapsed <= 0) return; // out-of-order / same instant: don't advance or accrue
         lastBeatAt = beatAt;
+        double maxScalar = BEAT_MAX_SCALAR * SoakTimeScale.factor();
         try {
-            double colorScalar = Math.min(elapsed / BEAT_NOMINAL_TICK_SECONDS, BEAT_MAX_SCALAR);
+            double colorScalar = Math.min(elapsed / BEAT_NOMINAL_TICK_SECONDS, maxScalar);
             // Genome expresses here: temperament scales how fast each coloring tank fades.
             vitality = vitality.tickColoring(colorScalar, activeGenome()).clamped();
 
-            double holdScalar = Math.min(elapsed / BEAT_HOLD_PERIOD_SECONDS, BEAT_MAX_SCALAR);
+            double holdScalar = Math.min(elapsed / BEAT_HOLD_PERIOD_SECONDS, maxScalar);
             // Posture-hold: affinity-modulated imprint while the focal holds a posture.
             if (currentSnapshot != null && cachedManifest != null) {
                 var self = currentSnapshot.entities().stream()
@@ -5948,7 +6005,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 && !isOtherSpeakersTestimony(n.content(), companionName))
             .filter(n -> {
                 var l = detectLanguage(n.content());
-                return l != null && !l.equals(householdLang);
+                // A line she spoke in the language the turn was in (a Spanish-writing person,
+                // answered in Spanish) is hers to keep, not drift: the node says so since 0.5.6.
+                return l != null && !l.equals(householdLang) && !l.equals(n.spokenIn());
             })
             .limit(limit)
             .toList();
@@ -6016,7 +6075,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     cachedManifest.manifestVersion());
                 if (soulStore != null) {
                     try {
-                        soulStore.store(cachedManifest);
+                        cachedManifest = storeManifest(cachedManifest);
                     } catch (Exception e) {
                         log.warn("Soul language reconciliation store failed: {}", e.getMessage());
                     }
@@ -6232,7 +6291,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // consolidation; originLocale becomes truthful.
                 nodes.set(idx, new MemoryNode(old.id(), fixed.strip(), old.keywords(),
                     old.importance(), old.impressionDepth(), old.formative(),
-                    old.primaryEmotion(), old.lastAccessed(), old.accessCount(), household));
+                    old.primaryEmotion(), old.lastAccessed(), old.accessCount(), household, household));
                 cachedManifest = cachedManifest.withMemory(
                     new CompactedMemory(nodes, mem.links(), mem.topicWeights()));
                 healed.incrementAndGet();
@@ -6301,7 +6360,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     && f.kind() == FragmentKind.EPISODIC).count() - 1);
             if (soulStore != null) {
                 try {
-                    soulStore.store(cachedManifest);
+                    cachedManifest = storeManifest(cachedManifest);
                 } catch (Exception e) {
                     log.warn("Inner-monologue soulStore.store failed: {}", e.getMessage());
                 }
@@ -10527,6 +10586,72 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
     }
 
+    /**
+     * A line that reached no one is kept for the person and tried again: when they walk into her
+     * room, when they next speak to her, and every couple of minutes by session or mail.
+     */
+    private void keepOwed(WorldEvent.Said person, String text) {
+        if (person == null || person == NO_ONE || person.entityId() == null) return;
+        owedLines.add(person.entityId(), person.entityName(), text);
+        log.info("Companion '{}' had a line for {} and no way reached them: kept for when they are next seen ({} owed)",
+            profile.name(), person.entityName(), owedLines.size());
+        timers.startTimerWithFixedDelay(OWED_RETRY_TIMER_KEY, new OwedLinesRetry(), OWED_RETRY_EVERY);
+    }
+
+    /** Everything owed to this person, said to them now that they can be reached: a whisper where she is, else their session. */
+    private void deliverOwedTo(String personId) {
+        if (personId == null || owedLines.isEmpty() || !isPersonEntityId(personId) || !owedLines.owes(personId)) return;
+        for (var owed : owedLines.takeFor(personId)) {
+            var line = owedPreface(owed) + owed.text();
+            if (!whisperOrSession(personId, line)) {
+                // Seen but not reachable after all (a registry entry without a session): keep it.
+                owedLines.add(owed.personId(), owed.personName(), owed.text());
+                return;
+            }
+            log.info("Companion '{}' said to {} what she owed them from {}", profile.name(), owed.personName(), owed.since());
+        }
+    }
+
+    /** A line kept more than a couple of minutes is framed as from before, so it is not read as an answer to now. */
+    static String owedPreface(OwedLines.Owed owed) {
+        return Duration.between(owed.since(), Instant.now()).compareTo(Duration.ofMinutes(2)) > 0
+            ? "From earlier, while you were away: " : "";
+    }
+
+    private Behavior<Command> onOwedLinesRetry(OwedLinesRetry msg) {
+        owedLines.expire(Instant.now());
+        for (var owed : owedLines.all()) {
+            var line = owedPreface(owed) + owed.text();
+            if (whisperOrSession(owed.personId(), line) || sendReplyByMail(owed.personId(), owed.personName(), line)) {
+                owedLines.remove(owed);
+                log.info("Companion '{}' reached {} with what she owed them from {}", profile.name(), owed.personName(), owed.since());
+            }
+        }
+        if (owedLines.isEmpty()) timers.cancel(OWED_RETRY_TIMER_KEY);
+        return this;
+    }
+
+    /**
+     * A real exchange with a person answers the appetite for company, as a peer's reach already
+     * did (CONNECTION_AFFILIATION_EASE); a person's never had (2026-10-10). Toward the rest floor,
+     * never below it.
+     */
+    private void easeAffiliationForAPerson() {
+        if (drives == null || drives.affiliation() <= AFFILIATION_REST_FLOOR) return;
+        double eased = Math.max(AFFILIATION_REST_FLOOR, drives.affiliation() - PERSON_AFFILIATION_EASE);
+        drives = drives.spikeAffiliation(eased - drives.affiliation());
+    }
+
+    /** The name of a person waiting in her room on a bunshin of hers, or null. */
+    private String personWaitingOnHerBunshinHere() {
+        for (var person : bunshinWorkingFor.values()) {
+            if (person != null && person.entityId() != null && presentIdFor(roomId, person.entityId()) != null) {
+                return person.entityName();
+            }
+        }
+        return null;
+    }
+
     /** The origin of an event of the day as it happens (what the day summary and the dream read). */
     private MemoryOrigin originOfDayEvent(WorldEvent event) {
         return switch (event) {
@@ -11481,17 +11606,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if ((cp >= 0x3040 && cp <= 0x30FF) || (cp >= 0x4E00 && cp <= 0x9FFF)) return "ja";
             i += Character.charCount(cp);
         }
-        // Spanish-only orthography is decisive on its own.
-        if (t.matches("(?s).*[áéíóúñ¿¡].*")) return "es";
-        // Otherwise count function words that are common in Spanish and rare in English.
+        // Spanish-only orthography is decisive on its own: ñ, ¿ and ¡. An accented vowel is not:
+        // Boullée, Les Misérables and Sōseki's neighbours sit in English lines, and three English
+        // library findings were sent to be "translated from Spanish" and then rewritten by the
+        // healer six times over on the household node (2026-10-08). An accent counts as one sign
+        // among the function words below.
+        if (t.matches("(?s).*[ñ¿¡].*")) return "es";
+        // Each lowercase accented word is one sign (está, quedaré, aquí); a capitalised one is a
+        // name (Boullée, Théâtre, Misérables) and no sign at all.
+        int es = 0;
+        var accented = ACCENTED_WORD.matcher(text);
+        while (accented.find()) es++;
+        // Count function words that are common in Spanish and rare in English.
         // Counted on the text AS WRITTEN, lowercase only: Spanish function words sit
         // mid-sentence in lowercase, while "Los Angeles", "Del" and "Al" are names. Matched
         // case-blind, "Al and Del went to Los Angeles for the con" read as Spanish, and a
         // draft the detector calls Spanish is sent for translation — into Spanish
         // (measured 2026-09-15: the correction prompt translated that English line 2/2).
-        int es = 0;
-        for (var w : ES_MARKERS) {
-            if (text.matches("(?s).*\\b" + w + "\\b.*")) es++;
+        // Letter lookarounds, not \b: a word ending in an accented letter has no \b after it.
+        for (var w : ES_MARKER_PATTERNS) {
+            if (w.matcher(text).find()) es++;
         }
         if (es >= 2) return "es";
         // Too short to judge — say so rather than guessing "en" and letting a
@@ -11550,6 +11684,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // from the list above and read as English (2026-09-15); these four catch it, and
         // flag nothing new across 17,400 lines of the household's own record.
         "el", "es", "yo", "tu");
+    private static final List<Pattern> ES_MARKER_PATTERNS = ES_MARKERS.stream()
+        .map(w -> Pattern.compile("(?<!\\p{L})" + w + "(?!\\p{L})")).toList();
+    /** A lowercase word with an accented vowel in it, whole. */
+    private static final Pattern ACCENTED_WORD = Pattern.compile("(?<!\\p{L})\\p{Ll}*[áéíóú]\\p{Ll}*(?!\\p{L})");
 
     /**
      * True when the token starting at {@code idx} sits in sentence-initial position:
@@ -12894,10 +13032,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 lastFailure = Instant.MIN;
 
                 // Vitality: successful inference proves recovery.
-                // Error pressure halves on each success (exponential decay toward zero).
-                // Confidence boost scales with accumulated pressure (bigger boost
-                // when recovering from degraded state).
-                double confidenceBoost = 0.05 + (vitality.errorPressure() * 0.15);
+                // Error pressure halves on each success (exponential decay toward zero), and
+                // confidence recovers in proportion to what the pressure had taken. It is not a
+                // fixed gift: 0.05 a reply, dozens an hour, held it at 1.00 on the household node
+                // for weeks against a fade of 0.001 a minute, and she was never unsure of anything.
+                double confidenceBoost = vitality.errorPressure() * 0.15;
                 vitality = vitality
                     .withConfidence(vitality.confidence() + confidenceBoost)
                     .withErrorPressure(vitality.errorPressure() * 0.5)
@@ -13684,9 +13823,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** Per-second self-tapering approach to the ceiling while a peer is present
      *  (rate × (ceiling − fam)) — ~reaches ceiling over ~10–15 min of shared presence. */
     private static final double COPRESENCE_FAMILIARITY_RATE = 0.004;
-    /** Tier-1 continuous easing while a familiar peer is present (per sec at fam=1). */
+    /** Tier-1 continuous easing while a familiar peer is present (per MINUTE at fam=1; per second
+     *  it emptied a day's loneliness in a minute of company, 2026-10-10). */
     private static final double COPRESENCE_LONELINESS_EASE = 0.02;
     private static final double COPRESENCE_AFFILIATION_EASE = 0.02;
+    /** A real exchange with a person eases the appetite for company, as a peer's reach does. */
+    private static final double PERSON_AFFILIATION_EASE = 0.15;
+    /** How much a person's silence past a quarter hour adds to care, per hour. */
+    private static final double CARE_SILENCE_PER_HOUR = 0.02;
     /** Tier-2 reciprocal-reach familiarity jump (can exceed the proximity ceiling). */
     private static final double CONNECTION_FAMILIARITY_JUMP = 0.08;
     /** Tier-2 affiliation relief on a peer reach, scaled up by (0.3 + familiarity). */
@@ -14450,12 +14594,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         if (maxFam <= 0.0) return;   // no familiar peer present → no Tier-1 relief
         vitality = vitality.withLoneliness(Math.max(0.0,
-            vitality.loneliness() - COPRESENCE_LONELINESS_EASE * maxFam * deltaTime));
+            vitality.loneliness() - COPRESENCE_LONELINESS_EASE * maxFam * deltaTime / 60.0));
         // Ease AFFILIATION toward — but not below — its rest floor (a sated social drive
         // rests at baseline, doesn't bottom out at 0).
         if (drives.affiliation() > AFFILIATION_REST_FLOOR) {
             double target = Math.max(AFFILIATION_REST_FLOOR,
-                drives.affiliation() - COPRESENCE_AFFILIATION_EASE * maxFam * deltaTime);
+                drives.affiliation() - COPRESENCE_AFFILIATION_EASE * maxFam * deltaTime / 60.0);
             drives = drives.spikeAffiliation(target - drives.affiliation());
         }
     }
@@ -14842,11 +14986,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         double[] tankFeedback = driveEngine.driveTankFeedback(drives);
         vitality = applyTankFeedbackArray(vitality, tankFeedback, deltaTime);
 
-        // Contextual spikes — human silence drives CARE, overdue commitments drive SEEKING
+        // Contextual spikes — a person's silence feeds CARE, overdue commitments drive SEEKING.
+        // Care's rise is per hour of a PERSON'S silence (it counted every event, her own included,
+        // and rose per second times the minutes: fifteen minutes past the mark it would have
+        // pinned care at 1.0 within a quarter hour, 2026-10-10).
         {
-            long silenceMinutes = Duration.between(lastEventTime, now).toMinutes();
+            long silenceMinutes = Duration.between(lastPersonEventTime, now).toMinutes();
             if (silenceMinutes > 15) {
-                drives = drives.spikeCare(0.001 * (silenceMinutes - 15) * deltaTime);
+                drives = drives.spikeCare(CARE_SILENCE_PER_HOUR * deltaTime / 3600.0);
             }
         }
         if (!commitmentTracker.getOverdue().isEmpty()) {
@@ -15337,6 +15484,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Not punishment — natural consequences of context rot and memory fragmentation.
         // Tanks are symptoms; real consequences live in memory/context/soul layer.
         ticksSinceLastSleep++;
+        if (!isSleeping) secondsAwake += deltaTime;
         if (!isSleeping && vitality.energy() < Conditioning.EXHAUSTED_BELOW) exhaustedTicksSinceWake++;
 
         // Reset consecutive sleep counter after 5 minutes of sustained wakefulness.
@@ -15345,17 +15493,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             consecutiveSleeps = 0;
         }
 
-        if (!isSleeping && ticksSinceLastSleep > INSOMNIA_THRESHOLD_TICKS && cachedManifest != null) {
-            long overThreshold = ticksSinceLastSleep - INSOMNIA_THRESHOLD_TICKS;
-            // Context rot: contextBudget degrades (event journal grows unpruned)
-            double rotRate = Math.min(0.001, overThreshold * 0.000002);
-            vitality = vitality.withContextBudget(Math.max(0.05, vitality.contextBudget() - rotRate));
-            // Memory fragmentation: focus degrades (unpruned memory nodes pile up)
-            vitality = vitality.withFocus(Math.max(0.1, vitality.focus() - rotRate * 0.5));
-            // Soul staleness: alignment drifts every 5 min (fingerprint not updated)
-            if (overThreshold % 300 == 0) {
-                vitality = vitality.withAlignment(Math.max(0.1, vitality.alignment() - 0.01));
-            }
+        if (!isSleeping && secondsAwake > INSOMNIA_AFTER_AWAKE_SECONDS && cachedManifest != null) {
+            vitality = rotForInsomnia(vitality, secondsAwake - INSOMNIA_AFTER_AWAKE_SECONDS, deltaTime);
         }
 
         // Periodically persist vitality state
@@ -15967,6 +16106,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      *  fall back to speaking the original draft so the user isn't left hanging.
      *  Tests without a live inference router rely on this fallback path. */
     private static final Duration VOICE_POLISH_TIMEOUT = Duration.ofSeconds(3);
+    /**
+     * A draft in the wrong language is rewritten into the right one before it is spoken. That
+     * is a translation, not a polish: on the single-brain profile it queues on the one model her
+     * turns use and takes seconds, and under the polish's three seconds it never finished, so the
+     * draft went out as it was (every such correction on the household node, 2026-10-08).
+     */
+    private static final Duration VOICE_CORRECTION_TIMEOUT = Duration.ofSeconds(30);
 
     /**
      * Is this pinned "fact" internal machinery rather than something a listener needs?
@@ -16078,9 +16224,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (expectedLang != null && !expectedLang.isBlank()) {
             pendingVoicePolishExpected.put(requestId, expectedLang);
         }
-        // Schedule the fallback timer — if no response comes, speak the original.
+        // Schedule the fallback timer — if no response comes, speak the original. A correction
+        // into the right language waits longer than a polish.
         timers.startSingleTimer("polish-timeout-" + requestId,
-            new VoicePolishTimeout(requestId, draft), VOICE_POLISH_TIMEOUT);
+            new VoicePolishTimeout(requestId, draft), wrongLanguage ? VOICE_CORRECTION_TIMEOUT : VOICE_POLISH_TIMEOUT);
         var hasFacts = preserveFacts != null && !preserveFacts.isEmpty();
         var sb = new StringBuilder();
         // LANGUAGE PIN — leads the prompt, states the language positively, names it.
@@ -16702,6 +16849,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
 
+        // The language this line was spoken in: the turn's (the person's language when they wrote
+        // in one the detector knows, else the conversation's; her own time is the household's). It
+        // goes with the line into the trail, the room and her memory, so a reply in a person's
+        // language is never later read as drift from the household's (2026-10-09).
+        final String spokenIn = answering != null && answering != NO_ONE && isHumanTrigger(answering)
+            ? turnLanguage(answering.text(), true, true, locale, householdLocale)
+            : turnLanguage(null, false, false, locale, householdLocale);
         var activity = ActivityLogger.get();
         if (activity != null) {
             // A reply to a person goes in the trail with the line it answers. The line is
@@ -16720,7 +16874,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 answered == null ? null : answered.entityName(),
                 answered == null ? null : answered.entityId(),
                 firstReply ? extractUserTellContent(answered.text()) : null,
-                authoredBy, replyMadeWithHerNight);
+                authoredBy, replyMadeWithHerNight, spokenIn);
         }
 
         // Deliver to pending BridgeAsk reply (Claude Code MCP) — the line that answers the ask,
@@ -16754,7 +16908,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // What answers a person's private words goes back to them alone whenever anyone else is
         // in her room (audit W4, 2026-09-28): it used to be said aloud to the room.
         var privatelyTo = privateAnswerTarget(answering);
-        if (answering != null && isHumanTrigger(answering)) lastAnsweredPersonAt = Instant.now();
+        if (answering != null && isHumanTrigger(answering)) {
+            lastAnsweredPersonAt = Instant.now();
+            easeAffiliationForAPerson();   // a real exchange with a person answers the appetite for company
+        }
         // A person who asked from somewhere else (a tell from another room) is not in her room to
         // hear it. When the model answered in plain words instead of calling tell_agent, the answer
         // was said aloud where she stood and the asker got nothing: "I'm moving to the Test Nook
@@ -16774,20 +16931,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 log.info("Companion '{}' put her answer to {} in their mail (not reachable by session)",
                     profile.name(), answering.entityName());
             } else {
-                log.info("Companion '{}' had an answer for {} and no way reached them", profile.name(), answering.entityName());
+                // Kept for when they are next seen; it used to be logged and lost. Her bunshin's
+                // report is also said where she stands: the copy folded back into this room.
+                keepOwed(answering, adapted);
+                if (ActivityLogger.AUTHORED_REPORT.equals(authoredBy)) {
+                    roomRef.tell(new RoomCommand.SayInRoom(
+                        profile.entityId(), profile.name(), adapted, spokenIn, roomResponseAdapter));
+                }
             }
         } else if (privatelyTo == null) {
             roomRef.tell(new RoomCommand.SayInRoom(
-                profile.entityId(), profile.name(), adapted, locale, roomResponseAdapter));
-        } else if (!whisperOrSession(privatelyTo.entityId(), adapted)) {
-            log.info("Companion '{}' held back a line owed privately to {}: others are in the room and "
-                + "no private way reached them", profile.name(), privatelyTo.entityName());
+                profile.entityId(), profile.name(), adapted, spokenIn, roomResponseAdapter));
+        } else if (!whisperOrSession(privatelyTo.entityId(), adapted)
+                && !sendReplyByMail(privatelyTo.entityId(), privatelyTo.entityName(), adapted)) {
+            keepOwed(privatelyTo, adapted);
         }
 
         // Track our own speech in history (won't be added again from notification
         // because onRoomEvent ignores our own entityId)
         var selfSaid = new WorldEvent.Said(
-            roomId, Instant.now(), profile.entityId(), profile.name(), adapted);
+            roomId, Instant.now(), profile.entityId(), profile.name(), adapted, spokenIn);
         addToHistory(selfSaid, privatelyTo != null ? originOfLine(privatelyTo)
             : askerElsewhere ? MemoryOrigin.privateTo(answering.entityId()) : originOfOwnLine(answering));
 
@@ -17382,6 +17545,19 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             if (luceneStore != null) {
                 new StudyService(luceneStore).addNote(steward, "[feed] " + line);
             }
+            // Her own-time acts reach the steward as one notice per window, not one each: on the
+            // household node a day's kept words sent 58 (2026-10-09). What a person asked for
+            // through her bunshin is still told as it happens. The feed file and the desk keep
+            // every act either way.
+            int window = WyrdConfig.get().stewardDigestMinutes();
+            if (!viaBunshin && window > 0) {
+                if (stewardDigest.isEmpty()) {
+                    timers.startSingleTimer(STEWARD_DIGEST_TIMER_KEY, new StewardDigestFlush(), Duration.ofMinutes(window));
+                }
+                stewardDigest.add(new StewardFeed.Act(verb, target, outcome, Instant.now()));
+                if (stewardDigest.size() > StewardFeed.DIGEST_MAX) stewardDigest.remove(0);
+                return;
+            }
             var notifService = NotificationService.get();
             if (notifService != null) {
                 notifService.notify(steward, truncate(line, 140), "normal", profile.entityId());
@@ -17389,6 +17565,37 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             fanOutExternal(line, "normal");
         } catch (Exception e) {
             log.debug("Steward desk note failed: {}", e.toString());
+        }
+    }
+
+    private Behavior<Command> onStewardDigestFlush(StewardDigestFlush msg) {
+        flushStewardDigest();
+        return this;
+    }
+
+    /** The gathered own-time acts, as one notice to the steward; nothing when there are none. */
+    private void flushStewardDigest() {
+        if (stewardDigest.isEmpty()) return;
+        timers.cancel(STEWARD_DIGEST_TIMER_KEY);
+        var steward = primaryBondholderDid();
+        if (steward == null) {
+            var grants = ActionGrants.get();
+            steward = grants != null ? grants.fallbackOwnerDid() : null;
+        }
+        var acts = List.copyOf(stewardDigest);
+        stewardDigest.clear();
+        if (steward == null) return;
+        var minutes = Math.max(1, (int) Duration.between(acts.get(0).at(), Instant.now()).toMinutes());
+        var line = StewardFeed.digest(profile.name(), acts, minutes);
+        try {
+            var notifService = NotificationService.get();
+            if (notifService != null) {
+                notifService.notify(steward, truncate(line, 140), "normal", profile.entityId());
+            }
+            fanOutExternal(line, "normal");
+            log.info("Companion '{}' told the steward of {} own-time act(s) in one notice", profile.name(), acts.size());
+        } catch (Exception e) {
+            log.debug("Steward digest failed: {}", e.toString());
         }
     }
 
@@ -18895,6 +19102,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     profile.name() + "'s bunshin", "agent", roomId);
                 bunshinBodies.put(slotId, bunshinEntityId);
             }
+            if (bunshinFor != null) bunshinWorkingFor.put(slotId, bunshinFor);
             emoteToRoom("splits in two — a translucent copy settles nearby, "
                 + "eyes distant, already at work");
             // INFO because room events leave no journal trace: verifying the
@@ -19113,7 +19321,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             cachedManifest = restoredManifest;
             initCoupledVitality();
             if (soulStore != null) {
-                soulStore.store(restoredManifest);
+                cachedManifest = storeManifest(restoredManifest);
             }
 
             new FamiliarJournal(luceneStore)
@@ -19804,7 +20012,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
             // Persist the new companion's manifest if soul-store is available
             if (soulStore != null) {
-                soulStore.store(promoted.newManifest());
+                storeManifest(promoted.newManifest());
             }
 
             // The named familiar's identity retires — remove from locker
@@ -24964,10 +25172,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 .withDecisionCapacity(decisionCapacity)
                 .withSkillCostGenome(newGenome)
                 .withManifestVersion(cachedManifest.manifestVersion() + 1, Instant.now());
-            soulStore.store(toStore);
-            this.cachedManifest = toStore;
+            this.cachedManifest = storeManifest(toStore);
             log.info("Companion '{}' persisted soul on stop (v{}, {} bonds, {} capacity domains)",
-                profile.name(), toStore.manifestVersion(), activeBonds.size(),
+                profile.name(), cachedManifest.manifestVersion(), activeBonds.size(),
                 decisionCapacity != null ? decisionCapacity.scores().size() : 0);
         } catch (Exception e) {
             log.warn("Soul persist-on-stop failed for '{}': {}", profile.name(), e.toString());
@@ -25074,10 +25281,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                                      CompactedMemory memoryBefore,
                                      CompactedMemory memoryAfter,
                                      long epoch) {
-        var manifestWithState = newManifest
-            .withBonds(List.copyOf(activeBonds.values()))
-            .withDecisionCapacity(decisionCapacity)
-            .withSkillCostGenome(skillCosts.toGenome());
+        // What she wove into her manifest while the forge ran is carried into its result, and the
+        // result takes the number after the store's head: another writer may have moved it.
+        final var manifestWithState = rebaseManifestOntoStoreHead(
+            carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt)
+                .withBonds(List.copyOf(activeBonds.values()))
+                .withDecisionCapacity(decisionCapacity)
+                .withSkillCostGenome(skillCosts.toGenome()));
 
         if (forgeActor != null) {
             // One ask per sleep: a message adapter keeps only the newest mapping for its type, so a
@@ -25092,9 +25302,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 profile.name(), manifestWithState.manifestVersion(),
                 activeBonds.size(), decisionCapacity.scores().size());
         } else {
-            soulStore.store(manifestWithState);
+            var stored = storeManifest(manifestWithState);
             getContext().getSelf().tell(
-                new SleepCycleComplete(manifestWithState, memoryBefore, memoryAfter, epoch));
+                new SleepCycleComplete(stored, memoryBefore, memoryAfter, epoch));
         }
     }
 
@@ -25327,6 +25537,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /**
+     * The one door for her manifest into the store. The store is keyed on (did, version) and
+     * every path that changes her manifest numbered it "cached + 1" from its own copy, so two of
+     * them in the same seconds collided: on the household node, 2026-10-11 04:53, the sleep forge
+     * and an inner-monologue weave both made v192, the forge actor died on the second insert and
+     * one woven scene was lost. A manifest numbered at or below the store's head is stored as
+     * head + 1, and the caller keeps what was actually stored.
+     */
+    private SoulManifest storeManifest(SoulManifest manifest) {
+        var toStore = rebaseManifestOntoStoreHead(manifest);
+        soulStore.store(toStore);
+        return toStore;
+    }
+
+    /**
      * #417 — If parallel writers bumped {@link SoulStore} while this manifest
      * was being prepared, return a copy with {@code manifestVersion} set to
      * {@code store.latest.manifestVersion + 1}. Otherwise return as-is.
@@ -25335,20 +25559,66 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (stale == null || soulStore == null) return stale;
         try {
             var latest = soulStore.latest(stale.did());
-            if (latest.isPresent()
-                    && latest.get().manifestVersion() >= stale.manifestVersion()) {
-                int rebasedVersion = latest.get().manifestVersion() + 1;
-                log.info("Rebasing post-deep-sleep manifest for '{}': "
-                        + "v{} -> v{} (store moved during training)",
-                    profile.name(), stale.manifestVersion(), rebasedVersion);
-                return stale.withManifestVersion(rebasedVersion);
+            var rebased = rebasedOntoHead(stale, latest);
+            if (rebased != stale) {
+                log.info("Manifest v{} for '{}' is not past the store's v{}: stored as v{}",
+                    stale.manifestVersion(), profile.name(),
+                    latest.get().manifestVersion(), rebased.manifestVersion());
             }
+            return rebased;
         } catch (Exception e) {
             log.warn("Manifest rebase check failed for '{}': {} — proceeding "
                     + "with stale version (forge may collide)",
                 profile.name(), e.getMessage());
         }
         return stale;
+    }
+
+    /** A manifest numbered at or below the store's head takes head + 1; one past it is left alone. */
+    static SoulManifest rebasedOntoHead(SoulManifest stale, Optional<SoulManifest> head) {
+        if (stale == null || head == null || head.isEmpty()) return stale;
+        if (head.get().manifestVersion() < stale.manifestVersion()) return stale;
+        return stale.withManifestVersion(head.get().manifestVersion() + 1);
+    }
+
+    /**
+     * A sleep's result replaces her manifest, but the forge worked from the manifest as it was
+     * when the sleep began. What she wove into it while the forge ran (an inner-monologue scene,
+     * on the household node 2026-10-11 at 04:53:02, three seconds after the forge started) was in
+     * neither the snapshot nor the result, and vanished from her store with the result's write.
+     * Episodic fragments first observed since the sleep began and absent from the result are
+     * carried into it.
+     */
+    static SoulManifest carryWovenDuringSleep(SoulManifest forged, SoulManifest current, Instant sleepStartedAt) {
+        if (forged == null || current == null || sleepStartedAt == null || current.soulFragments() == null) return forged;
+        var kept = forged.soulFragments() != null ? new ArrayList<>(forged.soulFragments()) : new ArrayList<SoulFragment>();
+        var ids = new HashSet<String>();
+        for (var f : kept) if (f != null && f.id() != null) ids.add(f.id());
+        boolean carried = false;
+        for (var f : current.soulFragments()) {
+            if (f == null || f.kind() != FragmentKind.EPISODIC || f.id() == null || ids.contains(f.id())) continue;
+            if (f.firstObserved() == null || f.firstObserved().isBefore(sleepStartedAt)) continue;
+            kept.add(f);
+            ids.add(f.id());
+            carried = true;
+        }
+        return carried ? forged.withFragments(kept) : forged;
+    }
+
+    /**
+     * Insomnia's natural consequences (§85.7), per minute awake past a full day: context rot,
+     * memory fragmentation, soul staleness. Full strength an hour past the threshold, so the first
+     * minute over it is not a cliff. The floors are as before. Not punishment: the price of a
+     * journal that is never consolidated.
+     */
+    static VitalityState rotForInsomnia(VitalityState v, double secondsOver, double deltaSeconds) {
+        if (v == null || secondsOver <= 0 || deltaSeconds <= 0) return v;
+        double ramp = Math.min(1.0, secondsOver / 3600.0);
+        double rot = INSOMNIA_ROT_PER_MIN * ramp * deltaSeconds / 60.0;
+        double drift = INSOMNIA_ALIGNMENT_DRIFT_PER_HOUR * ramp * deltaSeconds / 3600.0;
+        return v.withContextBudget(Math.max(0.05, v.contextBudget() - rot))
+            .withFocus(Math.max(0.1, v.focus() - rot * 0.5))
+            .withAlignment(Math.max(0.1, v.alignment() - drift));
     }
 
     /**
@@ -25413,14 +25683,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 log.warn("ForgeActor rejected sleep manifest for '{}': {}",
                     profile.name(), error.message());
                 // Still store locally and recover — ForgeActor rejection shouldn't block sleep
-                if (soulStore != null && msg.newManifest() != null) {
+                var kept = msg.newManifest();
+                if (soulStore != null && kept != null) {
                     try {
-                        soulStore.store(msg.newManifest());
+                        kept = storeManifest(kept);
                     } catch (Exception e) {
                         log.warn("Fallback store also failed: {}", e.getMessage());
                     }
                 }
-                completeSleep(msg.newManifest(), msg.memoryBefore(), msg.memoryAfter());
+                completeSleep(kept, msg.memoryBefore(), msg.memoryAfter());
             }
             default -> {
                 // Unexpected result type — recover anyway
@@ -25459,7 +25730,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (manifest == null) return;
         if (storeIt && soulStore != null) {
             try {
-                soulStore.store(rebaseManifestOntoStoreHead(manifest));
+                manifest = storeManifest(manifest);
             } catch (Exception e) {
                 log.warn("Storing a late sleep manifest for '{}' failed: {}", profile.name(), e.getMessage());
             }
@@ -25589,7 +25860,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (holdSleepForTheNightWrite(newManifest, memoryBefore, memoryAfter)) return;
         // Update cached manifest if we got a new one
         if (newManifest != null) {
-            cachedManifest = newManifest;
+            cachedManifest = carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt);
             initCoupledVitality();
             // Seed entity resolution from relationships
             if (admissionController != null && newManifest.relationships() != null) {
@@ -25797,7 +26068,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     cachedManifest.manifestVersion());
                 if (soulStore != null) {
                     try {
-                        soulStore.store(cachedManifest);
+                        cachedManifest = storeManifest(cachedManifest);
                     } catch (Exception e) {
                         log.warn("Substrate-fragment soulStore.store failed: {}",
                             e.getMessage());
@@ -25901,7 +26172,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                             result.corpusEntries().size(), cachedManifest.manifestVersion());
                         if (soulStore != null) {
                             try {
-                                soulStore.store(cachedManifest);
+                                cachedManifest = storeManifest(cachedManifest);
                             } catch (Exception e) {
                                 log.warn("Recipe-fragment soulStore.store failed: {}", e.getMessage());
                             }
@@ -26182,6 +26453,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         accumulatedCharges.clear();
         calibrationLedgers.values().forEach(CalibrationLedger::clearFeedbackLog);
         ticksSinceLastSleep = 0;
+        secondsAwake = 0;
         consecutiveSleeps++;
         isSleeping = false;
         ActivityGauge.sleepFinished();
@@ -26444,7 +26716,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // — so accumulate() raised restlessness and this reset it to 0 every tick,
         // silently disabling boredom + the social/generative drives in the live
         // runtime. The arithmetic now lives on VitalityState where it's unit-tested.
-        return vs.applyColoringFeedback(deltas, dt);
+        // Each delta lands with headroom (applyDriveFeedback): a drive that stays up warms her to a
+        // level, not to the ceiling (rapport 1.00 for a sim-day alone, the first night-in-minutes
+        // run, 2026-10-11).
+        return vs.applyDriveFeedback(deltas, dt);
     }
 
     private static double clampV(double v) {
@@ -30974,6 +31249,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         lastReconcileFoundWork = false;
         lastOthersEventTime = Instant.now();
         lastPersonEventTime = Instant.EPOCH;
+        lastCompanyEventTime = Instant.now();
         personsHere.clear();
         conditioning = 0;
         actsSinceWake = 0;
@@ -31331,7 +31607,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Persist updated manifest
         if (soulStore != null) {
             try {
-                soulStore.store(cachedManifest);
+                cachedManifest = storeManifest(cachedManifest);
                 log.info("Companion '{}' persisted notification config update",
                     profile.name());
             } catch (Exception e) {
@@ -32520,7 +32796,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 cachedManifest.profile() != null
                     ? cachedManifest.profile().withName(newName)
                     : profile);
-            soulStore.store(cachedManifest);
+            try {
+                cachedManifest = storeManifest(cachedManifest);
+            } catch (Exception e) {
+                log.warn("Companion '{}' could not store her new name: {}", profile.name(), e.getMessage());
+            }
         }
         var registry = EntityRegistry.get();
         if (registry != null) {
@@ -32553,6 +32833,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * drops: the room shouldn't see a return that the reset already erased.
      */
     private void dissolveBunshinBody(String slotId, boolean visibly) {
+        if (slotId != null) bunshinWorkingFor.remove(slotId);
         var body = slotId != null ? bunshinBodies.remove(slotId) : null;
         if (body == null) return;
         var presenceRegistry = EntityRegistry.get();
@@ -32690,6 +32971,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             return;
         }
 
+        // The room refuses a script that does not parse; she is told why here, in her own record,
+        // so the next turn can write it again instead of leaving a script that fails on every hook.
+        var parseProblem = ItemScriptExecutor.parseProblem(action.script());
+        if (parseProblem != null) {
+            log.warn("Companion '{}' add_script for '{}' did not parse: {}", profile.name(), action.roomId(), parseProblem);
+            remember("The script I wrote for " + action.roomId() + " did not parse (" + parseProblem
+                + "), so the room keeps the one it had. I can write it again with add_script.");
+            return;
+        }
         targetRef.tell(new RoomCommand.SetBehaviorScript(
             action.roomId(), action.script(), profile.entityId(), roomResponseAdapter));
 
@@ -32796,6 +33086,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var target = action.target();
         if (target == null || target.isBlank()) {
             log.warn("Companion '{}' go_to_room with empty target — ignoring", profile.name());
+            return;
+        }
+        // On her own time she does not walk out on a person her bunshin is working for while they
+        // wait in the room: the report came back to a room she had left and reached no one (the
+        // household node, 2026-10-05; the organic dispatch suite, 2026-10-05). A person asking her
+        // to come somewhere still moves her.
+        var waiting = personWaitingOnHerBunshinHere();
+        if (!reactiveInference && waiting != null) {
+            log.info("Companion '{}' stays in {}: her bunshin is working for {}, who is here (wanted {})",
+                profile.name(), roomId, waiting, target);
             return;
         }
 
@@ -40661,16 +40961,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var agentId = profile.did() != null ? profile.did() : profile.entityId();
         var genome = TankGenome.defaultGenome(agentId);
         coupledVitality = new CoupledVitalitySystem(genome);
-        // Sync current vitality values into coupled system
-        coupledVitality.set("energy", vitality.energy());
-        coupledVitality.set("focus", vitality.focus());
-        coupledVitality.set("rapport", vitality.rapport());
-        coupledVitality.set("confidence", vitality.confidence());
-        coupledVitality.set("alignment", vitality.alignment());
-        coupledVitality.set("momentum", vitality.momentum());
-        coupledVitality.set("error_pressure", vitality.errorPressure());
-        coupledVitality.set("context_budget", vitality.contextBudget());
+        syncCoupledFrom(coupledVitality, vitality);
         log.debug("Initialized coupled vitality system for '{}'", profile.name());
+    }
+
+    /** The coupled copy reads what she feels now, all eight mapped tanks, before anything cascades. */
+    static void syncCoupledFrom(CoupledVitalitySystem coupled, VitalityState vs) {
+        coupled.set("energy", vs.energy());
+        coupled.set("focus", vs.focus());
+        coupled.set("rapport", vs.rapport());
+        coupled.set("confidence", vs.confidence());
+        coupled.set("alignment", vs.alignment());
+        coupled.set("momentum", vs.momentum());
+        coupled.set("error_pressure", vs.errorPressure());
+        coupled.set("context_budget", vs.contextBudget());
     }
 
     /**
@@ -40683,26 +40987,38 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * The copy is refreshed from her first; it never writes energy back that it did not just read.
      */
     static VitalityState hearingSpeech(VitalityState vs, CoupledVitalitySystem coupled) {
-        coupled.set("energy", vs.energy());
-        coupled.perturbBatch(Map.of("rapport", 0.03, "focus", 0.05, "alignment", 0.02));
-        return applyCoupledValues(vs, coupled);
+        // The copy reads her first, all eight, so the cascade starts from what she feels; then
+        // what the line CHANGED is added to her. Until 2026-10-10 the copy's values were written
+        // over hers whole, and the copy's rapport rested at a fixed 0.5 that nothing drained — so
+        // every line anyone said reset her rapport to 0.5 whatever the day had been, and her own
+        // momentum and focus to the copy's resting numbers.
+        syncCoupledFrom(coupled, vs);
+        var changes = coupled.perturbBatch(Map.of("rapport", 0.03, "focus", 0.05, "alignment", 0.02));
+        return applyCoupledChanges(vs, changes);
     }
 
     /**
-     * Apply absolute values from coupled system back to VitalityState.
-     * Only the 10 tanks in VitalityState are mapped; extra coupled tanks
-     * (valence, safety, resonance, curiosity) stay internal.
+     * Add what a cascade changed to her tanks. Only the eight tanks the copy maps are touched;
+     * the copy's own tanks (valence, safety, resonance, curiosity) stay internal to it.
      */
-    private static VitalityState applyCoupledValues(VitalityState vs, CoupledVitalitySystem coupled) {
-        return vs
-            .withEnergy(coupled.value("energy"))
-            .withFocus(coupled.value("focus"))
-            .withRapport(coupled.value("rapport"))
-            .withConfidence(coupled.value("confidence"))
-            .withAlignment(coupled.value("alignment"))
-            .withMomentum(coupled.value("momentum"))
-            .withErrorPressure(coupled.value("error_pressure"))
-            .withContextBudget(coupled.value("context_budget"));
+    static VitalityState applyCoupledChanges(VitalityState vs, Map<String, Double> changes) {
+        var out = vs;
+        for (var e : changes.entrySet()) {
+            double d = e.getValue() == null ? 0.0 : e.getValue();
+            if (d == 0.0) continue;
+            out = switch (e.getKey()) {
+                case "energy" -> out.withEnergy(out.energy() + d);
+                case "focus" -> out.withFocus(out.focus() + d);
+                case "rapport" -> out.withRapport(out.rapport() + d);
+                case "confidence" -> out.withConfidence(out.confidence() + d);
+                case "alignment" -> out.withAlignment(out.alignment() + d);
+                case "momentum" -> out.withMomentum(out.momentum() + d);
+                case "error_pressure" -> out.withErrorPressure(out.errorPressure() + d);
+                case "context_budget" -> out.withContextBudget(out.contextBudget() + d);
+                default -> out;
+            };
+        }
+        return out.clamped();
     }
 
     // ── Proactive behavior execution ─────────────────────────────────────
@@ -44424,7 +44740,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // SOAK-ONLY (SoakTimeScale): compress the since-event clocks so the
         // accumulate() threshold gates (restlessness still>5s, loneliness 5min,
         // stagnation 2h goal/tool-output) trip in sim-time. No-op in production.
-        var sinceInteraction = SoakTimeScale.compress(Duration.between(lastEventTime, now));
+        var sinceInteraction = SoakTimeScale.compress(Duration.between(lastCompanyEventTime, now));
         var sinceGoalDone = SoakTimeScale.compress(Duration.between(lastGoalDoneAt, now));
         var sinceToolOutput = SoakTimeScale.compress(Duration.between(lastToolOutputAt, now));
         var sinceInference = SoakTimeScale.compress(Duration.between(lastInferenceActivityAt, now));

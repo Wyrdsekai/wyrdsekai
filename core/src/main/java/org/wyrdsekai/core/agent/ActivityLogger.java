@@ -166,9 +166,22 @@ public final class ActivityLogger {
     public void speak(String agentName, String agentId, String room, String text,
                        Map<String, Double> felt, String toName, String toId, String heard,
                        String authoredBy, boolean withHerNight) {
+        speak(agentName, agentId, room, text, felt, toName, toId, heard, authoredBy, withHerNight, null);
+    }
+
+    /**
+     * As above; {@code lang} is the language the line was spoken in — the turn's language, which
+     * is the person's when they wrote in one the detector knows. Written as {@code "lang"}, so the
+     * night can leave out a line that drifted from its turn's language and keep a reply given in
+     * the person's own.
+     */
+    public void speak(String agentName, String agentId, String room, String text,
+                       Map<String, Double> felt, String toName, String toId, String heard,
+                       String authoredBy, boolean withHerNight, String lang) {
         var node = event("speak", agentName, agentId)
             .put("room", room)
             .put("text", truncate(text, SPEAK_TEXT_MAX));
+        if (lang != null && !lang.isBlank()) node.put("lang", lang);
         if (authoredBy != null && !authoredBy.isBlank()) node.put("authored", authoredBy);
         if (withHerNight && (authoredBy == null || authoredBy.isBlank())) node.put("night", true);
         if (toName != null && !toName.isBlank()) {

@@ -130,7 +130,7 @@ public final class MemoryConsolidator {
                     return new MemoryNode(node.id(), node.content(), node.keywords(),
                         node.importance(), node.impressionDepth(), node.formative(),
                         node.primaryEmotion(), node.lastAccessed(), node.accessCount(),
-                        detected);
+                        detected, node.spokenIn());
                 }
                 return node;
             })
@@ -158,14 +158,19 @@ public final class MemoryConsolidator {
 
             String id = "mem-" + said.timestamp().toEpochMilli() + "-" + said.entityId().hashCode();
             String content;
-            if (SocialRecord.isSelf(agentEntityId, said.entityId())) {
+            boolean hers = SocialRecord.isSelf(agentEntityId, said.entityId());
+            if (hers) {
                 content = "I said: " + said.text();
             } else {
                 content = said.entityName() + " said: " + said.text();
             }
 
             List<String> keywords = NegativeSpaceAnalyzer.extractTopicWords(said.text());
-            nodes.add(ImpressionScorer.encode(id, content, keywords, charge));
+            var node = ImpressionScorer.encode(id, content, keywords, charge);
+            // Her own line carries the language of the turn it answered (CompanionActor.speakDirect
+            // puts it on the Said): a reply in the person's language is hers, not drift.
+            if (hers && said.locale() != null && !said.locale().isBlank()) node = node.withSpokenIn(said.locale());
+            nodes.add(node);
         }
         return nodes;
     }

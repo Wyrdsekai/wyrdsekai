@@ -319,6 +319,11 @@ public final class ItemContractRepair {
         escalation = e;
     }
 
+    /** The registered coding helper, or null; the room-script mend runs through the same one. */
+    static Escalation escalation() {
+        return escalation;
+    }
+
     /** True while the escalation backend itself is the one being repaired — it must not escalate to itself. */
     private static final ThreadLocal<Boolean> ESCALATION_IS_SELF = ThreadLocal.withInitial(() -> false);
 

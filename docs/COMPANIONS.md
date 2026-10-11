@@ -753,7 +753,8 @@ rest stays rest ("I'll let it", "I'll stay here"), so does a hedge ("maybe I'll"
 anything she puts off ("I'll go when I'm ready"), and the same kind of act is not pressed twice
 in half an hour. An offer left to the person is theirs to take up, not a word of hers to keep
 ("if you'd rather talk about something else, tell me and I'll go with you"), and going with
-someone is staying with them.
+someone is staying with them. "I'll open the lab" means going there, or reopening it if she
+closed it; only "a new room" is built.
 
 ### Projects
 

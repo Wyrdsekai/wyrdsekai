@@ -57,6 +57,9 @@ public class RoomScriptEngine implements Closeable {
         this.roomId = roomId;
         this.sandbox = new ScriptSandbox(roomId, configuredLimits());
         this.loader = loader;
+        // A script of hers that fails is counted, told to her once, and set aside after three.
+        this.sandbox.onFailure((what, message) ->
+            BrokenRoomScripts.failed(roomId, loader == null ? null : loader.getUserScriptsDir(), what, message));
         this.worldApi = new WorldApi(roomId);
 
         // Wire the coding-backend provider so room scripts can probe
@@ -210,6 +213,7 @@ public class RoomScriptEngine implements Closeable {
      */
     public List<ScriptEmission> invokeHook(String hookName, Object... args) {
         pendingEmissions.clear();
+        if (BrokenRoomScripts.isSetAside(roomId, loader.getUserScriptsDir())) return List.of();
         var source = loader.load(roomId);
         if (source == null) return List.of();
 
@@ -222,6 +226,7 @@ public class RoomScriptEngine implements Closeable {
      * Returns empty if no script or no getHints function defined.
      */
     public Optional<List<Hint>> getHints() {
+        if (BrokenRoomScripts.isSetAside(roomId, loader.getUserScriptsDir())) return Optional.empty();
         var source = loader.load(roomId);
         if (source == null) return Optional.empty();
 
@@ -247,6 +252,7 @@ public class RoomScriptEngine implements Closeable {
      */
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getToolDefinitions() {
+        if (BrokenRoomScripts.isSetAside(roomId, loader.getUserScriptsDir())) return List.of();
         var source = loader.load(roomId);
         if (source == null) return List.of();
 
@@ -270,6 +276,7 @@ public class RoomScriptEngine implements Closeable {
      * Call onActivate hook (§31) — room is being activated (recovery complete or first access).
      */
     public List<ScriptEmission> invokeActivate(RoomState state) {
+        if (BrokenRoomScripts.isSetAside(roomId, loader.getUserScriptsDir())) return List.of();
         return invokeLifecycle(state, "onActivate");
     }
 
@@ -277,6 +284,7 @@ public class RoomScriptEngine implements Closeable {
      * Call onPassivate hook (§31) — room is being passivated (idle timeout).
      */
     public List<ScriptEmission> invokePassivate(RoomState state) {
+        if (BrokenRoomScripts.isSetAside(roomId, loader.getUserScriptsDir())) return List.of();
         return invokeLifecycle(state, "onPassivate");
     }
 
@@ -295,6 +303,9 @@ public class RoomScriptEngine implements Closeable {
      */
     public List<ScriptEmission> invokeTimer(RoomState state, String timerId, String hookName) {
         pendingEmissions.clear();
+        // A set-aside script does not run from any door: the activation and timer doors were left
+        // open and the household node logged the same syntax error at every start (2026-10-09).
+        if (BrokenRoomScripts.isSetAside(roomId, loader.getUserScriptsDir())) return List.of();
         var source = loader.load(roomId);
         if (source == null) return List.of();
         syncState(state);

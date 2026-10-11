@@ -66,11 +66,12 @@ class DriveEngineIntegrationTest {
             prevHeartbeat = heartbeat;
         }
 
-        // After 100 ticks: drives should have accumulated
+        // After 100 ticks: drives should have accumulated. SEEKING ramps; the satiable three settle
+        // toward points hours away (2026-10-10), so in 100 s they have moved, not arrived.
         assertThat(drives.seeking()).isGreaterThan(0.01);
-        assertThat(drives.play()).isGreaterThan(0.01);
-        assertThat(drives.care()).isGreaterThan(0.01);
-        assertThat(drives.affiliation()).isGreaterThan(0.01);
+        assertThat(drives.play()).isGreaterThan(0.001);
+        assertThat(drives.care()).isGreaterThan(0.001);
+        assertThat(drives.affiliation()).isGreaterThan(0.001);
 
         // Event-only drives should still be zero
         assertThat(drives.grief()).isEqualTo(0.0);

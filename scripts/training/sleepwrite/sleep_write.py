@@ -433,12 +433,22 @@ def load_lines(since):
             left["not_hers"] += 1
             continue
         said_to = (e.get("to") or "").strip()
-        if e.get("type") == "speak" and (not said_to or said_to == "system"):
-            lang, household = reads_as(txt), household_lang()
-            if household and lang is not None and lang != household:
+        if e.get("type") == "speak":
+            lang = reads_as(txt)
+            # Since 0.5.6 a row says what language its turn was in ("lang"): a line that drifted
+            # from it is left out whoever it was said to; a reply in the person's language is kept.
+            # Older rows: her own time in a language other than the household's is left out.
+            turn_lang = (e.get("lang") or "").strip().lower()[:2] or None
+            if turn_lang and lang is not None and lang != turn_lang:
                 said.update(pieces)
                 left["language"] += 1
                 continue
+            if not turn_lang and (not said_to or said_to == "system"):
+                household = household_lang()
+                if household and lang is not None and lang != household:
+                    said.update(pieces)
+                    left["language"] += 1
+                    continue
         if has_run_on(txt):
             # A line or a dream with a sentence that runs on is left out, not cut: its first
             # LINE_CHAR_MAX characters are the run-on.

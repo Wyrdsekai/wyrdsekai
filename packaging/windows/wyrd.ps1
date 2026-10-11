@@ -2521,6 +2521,63 @@ function Invoke-Inference {
 # W2 (parity with bin/wyrd doctor): HTTPS on :7443 with the household
 # certificate and its expiry, the household bus's TLS and login, and every setting that keeps an old
 # plain door open during the transition.
+# A model on Ollama runs with Ollama's own window (4,096 tokens on many versions) unless told
+# otherwise, and the setting our requests carry does not change it; a full turn needs 8192. Reads
+# the window of what is loaded (/api/ps) and says when it is too small.
+function Invoke-DoctorOllamaWindow {
+    $url = [string]$env:WYRDSEKAI_INFERENCE_URL
+    if (-not $url) { try { $url = [string]$conf['WYRDSEKAI_INFERENCE_URL'] } catch { $url = '' } }
+    if (-not $url -or $url -notlike 'http*') { return }
+    $url = $url.TrimEnd('/')
+    try { $null = Invoke-WebRequest -Uri ($url + '/api/tags') -UseBasicParsing -TimeoutSec 5 } catch { return }
+    try { $ps = Invoke-RestMethod -Uri ($url + '/api/ps') -TimeoutSec 5 } catch { return }
+    $models = @()
+    $loaded = Get-JProp $ps 'models'
+    if ($null -ne $loaded) {
+        foreach ($m in $loaded) {
+            $n = Get-JProp $m 'name'; if (-not $n) { $n = Get-JProp $m 'model' }; if (-not $n) { $n = '?' }
+            $c = [int](Get-JProp $m 'context_length')
+            $models += ,@($n, $c)
+        }
+    }
+    if ($models.Count -eq 0) {
+        Write-Host ("  ollama       : " + (_T 'doctor.ollama_none' $url))
+        return
+    }
+    $desc = ($models | ForEach-Object { _T 'doctor.ollama_window' $_[0] $(if ($_[1]) { [string]$_[1] } else { _T 'doctor.ollama_unknown' }) }) -join ', '
+    $small = @($models | Where-Object { $_[1] -gt 0 -and $_[1] -lt 8192 })
+    if ($small.Count -gt 0) {
+        Write-Warn2 (_T 'doctor.ollama_small' $url $desc)
+    } else {
+        Write-Host ("  ollama       : " + (_T 'doctor.ollama_ok' $url $desc))
+    }
+}
+
+# A room script a companion wrote that failed three times is set aside (BrokenRoomScripts): the
+# room runs without it until she writes it again. The record is <data>\scripts\.broken\state.json.
+function Invoke-DoctorRoomScripts {
+    $state = Join-Path $DataDir "scripts\.broken\state.json"
+    if (-not (Test-Path $state)) { return }
+    $rows = @()
+    try {
+        $d = Get-Content $state -Raw | ConvertFrom-Json
+        foreach ($p in ($d.PSObject.Properties | Sort-Object Name)) {
+            $n = $p.Value
+            if ($null -eq $n) { continue }
+            $aside = Get-JProp $n 'setAside'
+            if ($aside -eq $true) {
+                $err = ([string](Get-JProp $n 'lastError')) -replace '\s+', ' '   # one line: a parse error quotes the script across lines
+                if ($err.Length -gt 90) { $err = $err.Substring(0, 90) }
+                $rows += ("{0} — {1}" -f $p.Name, $err)
+            }
+        }
+    } catch { return }
+    if ($rows.Count -eq 0) { return }
+    Write-Host ""
+    Write-Warn2 (_T 'doctor.room_scripts' ([string]$rows.Count))
+    foreach ($r in $rows) { Write-Host ("    {0}" -f $r) }
+}
+
 function Invoke-DoctorHouseholdTls {
     param($ServerPid)
     Write-Host (_T 'doctor.tls_header')
@@ -2605,6 +2662,8 @@ function Invoke-Doctor {
     }
     Write-Host ("  port $RestPort   : {0}" -f $(if (Test-PortListening) { "listening" } else { "free" }))
     Invoke-DoctorHouseholdTls $serverPid
+    Invoke-DoctorRoomScripts
+    Invoke-DoctorOllamaWindow
     # Releases: this node, and the two programs it leans on
     if ((Get-UpdateMode) -ne 'off') {
         $inst = Get-InstalledRelease; $lat = Get-LatestRelease $ReleaseRepo
@@ -2678,6 +2737,7 @@ Mail:
 Rooms (steward):
   rooms [list]                         every room: who made it, doorways, who is in it, markup flag
   rooms demolish <room>                take a made room down (founding rooms, Homes, occupied rooms refused)
+  rooms repair <room>                  mend a companion's failing room script now (a copy through the coding helper)
   rooms prune [--duplicates] [--yes]   list the junk (markup ids; later copies of a name with --duplicates), --yes demolishes
 
 Inference:
@@ -3962,6 +4022,27 @@ function Invoke-Rooms {
                 if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
                 $body = $null; try { $body = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
                 Write-Err2 $(if ($body -and $body.message) { $body.message } elseif ($body -and $body.error) { $body.error } else { $_.Exception.Message })
+                exit 1
+            }
+        }
+        "repair" {
+            # A room script a companion wrote that fails: mended on a copy through the coding
+            # helper, replaced only when whole (the same bench as `wyrd items repair`).
+            $room = if ($Rest.Count -ge 2) { $Rest[1] } else { $null }
+            if (-not $room) { Write-Err2 "Usage: wyrd rooms repair <room-id>"; exit 2 }
+            $token = Get-SessionToken
+            if (-not $token) { Write-Err2 "Log in first: wyrd login"; exit 1 }
+            Write-Host "Repairing the script in $room (a copy goes through the coding backend; this can take a few minutes)..."
+            try {
+                $d = Invoke-RestMethod -Method Post -Uri "$base/api/rooms/script/repair" -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body (@{ room = $room } | ConvertTo-Json -Compress) -TimeoutSec 1800
+                Write-Host ("    {0}: {1}" -f $(if ($d.fixed) { 'FIXED' } else { 'not fixed' }), $d.note)
+                foreach ($p in @($d.after)) { Write-Host "    still: $p" }
+                if (-not $d.fixed) { exit 1 }
+            } catch {
+                $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+                if ($code -eq 401) { Write-Err2 "Your session has expired - run: wyrd login"; exit 1 }
+                $body = $null; try { $body = $_.ErrorDetails.Message | ConvertFrom-Json } catch { }
+                Write-Err2 $(if ($body -and $body.error) { $body.error } else { $_.Exception.Message })
                 exit 1
             }
         }

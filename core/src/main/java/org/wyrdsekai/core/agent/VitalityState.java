@@ -256,6 +256,28 @@ public record VitalityState(
     }
 
     /**
+     * What her drives do to how she feels, per tick: the same deltas as
+     * {@link #applyColoringFeedback}, but each lands with headroom. A gain is scaled by how far
+     * the tank is from full, a loss by how far it is from empty, so a drive that stays up warms
+     * or wears her to a level, not to a wall: with play at half for a day, rapport rests around
+     * 0.6 rather than at 1.00 (the first night-in-minutes run, 2026-10-11, and rose on the
+     * household node, 0.84–1.00 all night with no one there). Energy keeps its own economy, since
+     * its drain is the price of the drive, not a feeling about it.
+     */
+    public VitalityState applyDriveFeedback(double[] deltas, double dt) {
+        double[] current = {contextBudget, confidence, energy, alignment, errorPressure,
+            momentum, rapport, focus, integrity, disgust};
+        double[] withHeadroom = new double[Math.min(deltas.length, current.length)];
+        for (int i = 0; i < withHeadroom.length; i++) {
+            double d = deltas[i];
+            if (i == 2 || d == 0) { withHeadroom[i] = d; continue; }
+            double room = d > 0 ? 1.0 - current[i] : current[i];
+            withHeadroom[i] = d * Math.max(0.0, Math.min(1.0, room));
+        }
+        return applyColoringFeedback(withHeadroom, dt);
+    }
+
+    /**
      * Metabolic energy rate per tick (1 second).
      * NEGATIVE = drain while awake (being conscious costs energy).
      * Recovery happens through sleep (+0.3), reagents, or successful skill use.
@@ -306,6 +328,49 @@ public record VitalityState(
         return Math.max(0.0, Math.min(1.0, chosen));
     }
 
+    /*
+     * The fade of the felt tanks, per MINUTE of lived beats (2026-10-10). These rates were written
+     * in February as "slowly fades" against a one-second tick, which made rapport empty from full in
+     * seventeen minutes; the beat-gating of May kept the magnitude per lived second and capped a
+     * beat's catch-up at 600, so one quiet ten-minute gap emptied rapport, focus and momentum in a
+     * single beat. On the household node rapport read 0.00 nine lines in ten for weeks, and anyone
+     * speaking reset it to a fixed 0.5. Now a tank fades toward its OWN resting point (the genome's,
+     * or the tank's default when the genome is silent or still carries the forge's placeholder),
+     * never past it, and the hours are hours: rapport from full to rest in about eight, focus four,
+     * momentum three. Energy and context budget keep their per-second economy (calibrated 07-18).
+     */
+    public static final double FADE_RAPPORT_PER_MIN = 0.001;
+    public static final double FADE_FOCUS_PER_MIN = 0.002;
+    public static final double FADE_MOMENTUM_PER_MIN = 0.003;
+    public static final double FADE_ALIGNMENT_PER_MIN = 0.001;
+    /** Confidence had no fade at all and only ever gained, so it pinned at 1.00 nine days in ten. */
+    public static final double FADE_CONFIDENCE_PER_MIN = 0.001;
+    public static final double FADE_ERROR_PRESSURE_PER_MIN = 0.005;
+    public static final double FADE_DISGUST_PER_MIN = 0.003;
+    /**
+     * Equanimity's skill-atrophy, per minute. It was 0.00005 a second (0.18 an hour), more than the
+     * 0.002 a minute that half an hour of unbothered solitude gives, so equanimity sat at 0.00 for
+     * months and the solitude close-rule (crossing 0.5) could never fire. A learned skill fades over
+     * days: this empties from full in about a day and a half.
+     */
+    public static final double EQUANIMITY_ATROPHY_PER_MIN = 0.0005;
+
+    /** The resting point of a felt tank: the genome's, unless silent or the forge's placeholder. */
+    public static double restFor(GenomeProfile genome, String tank, double fallback) {
+        if (genome == null) return fallback;
+        double b = genome.baselineFor(tank, Double.NaN);
+        if (Double.isNaN(b) || b == FORGE_PLACEHOLDER_BASELINE) return fallback;
+        return Math.max(0.0, Math.min(1.0, b));
+    }
+
+    /** One step of a fade toward rest, from either side, never past it; a zero step is identity. */
+    static double fadeToward(double current, double rest, double step) {
+        double gap = rest - current;
+        if (step <= 0 || gap == 0) return current;
+        if (Math.abs(gap) <= step) return rest;
+        return current + Math.signum(gap) * step;
+    }
+
     /**
      * Advance vitality by one tick (1 second).
      *
@@ -316,57 +381,9 @@ public record VitalityState(
      * standalone keep the pre-Phase-1B behavior on the 10 new tanks.</p>
      */
     public VitalityState tick() {
-        return new VitalityState(
-            contextBudget + 0.003,    // slowly recovers
-            confidence,                // no natural change
-            energy + TICK_ENERGY_RATE, // drain while awake — sleep is the only real recovery
-            alignment - 0.001,        // slowly drifts without reinforcement
-            errorPressure - 0.005,    // naturally decays
-            momentum - 0.003,         // decays without activity
-            rapport - 0.001,          // slowly fades
-            focus - 0.002,            // slowly wanders
-            integrity,                 // no natural change — only shifts on action appraisal
-            disgust - 0.003,          // naturally decays (disgust fades without new triggers)
-            // Deprivation-shape tanks updated in accumulate(...).
-            restlessness, loneliness, stagnation, autonomyPressure,
-            significance, amae, saudade, obligation,
-            harmony, standing,
-            // Soothing — slow drift toward a baseline DEPRESSED by chronic
-            // allostatic load. At rest (allostatic 0) the set-point is the
-            // Gilbert mild-positive 0.3; as chronic overload climbs, the
-            // felt-safety set-point falls toward 0 (McEwen: sustained allostatic
-            // overload degrades the soothing/parasympathetic system — a
-            // genuinely broken-down agent can no longer self-soothe). This
-            // coupling is what makes the §23 welfare floor (soothing < 0.1)
-            // reachable at all: it can only be reached via sustained chronic
-            // load, never by ordinary or bonded-supported work. Sharp rises
-            // still come from explicit events (make_amends, release, bonded
-            // co-regulation) via withSoothing().
-            driftToward(soothing, SOOTHING_REST_BASELINE * (1.0 - allostaticLoad), 0.002),
-            // Allostatic load — Wave 1.5. No natural decay here; drains only via
-            // explicit integration events (sleep cycles, completed repair episodes,
-            // sustained-safety windows handled in accumulate() + event hooks).
-            // Pass-through preserves the damage meter — the substrate has to do
-            // work to discharge it.
-            allostaticLoad,
-            // Equanimity — Wave 1.5. Very slow natural decay without practice
-            // — like a learned skill that degrades with disuse. Practice
-            // triggers in accumulate() + event hooks drive accumulation.
-            //
-            // Calibration history ( / task #899
-            // 2026-05-19): the original -0.0005/s = -1.8/hr drained equanimity
-            // from full to empty in ~30 minutes, inconsistent with the "very
-            // slow" intent. The ResilienceSoakHarness 1h ordinary-load probe
-            // confirmed empirically: min_equanimity ≈ 0.0002 even with sleep-
-            // window integration events bumping +0.01/event/minute. Rate now
-            // -0.00005/s = -0.18/hr → empties from full in ~5.5 hours. Matches
-            // "persistent like a learned skill" semantics: a contemplative
-            // practice gap of half a working day, not a coffee break.
-            equanimity - 0.00005,
-            // Generativity — deprivation-shape; accumulates in accumulate(), drains
-            // on self-authored acts. Pass through unchanged here.
-            generativity
-        ).clamped();
+        // One second: the coloring half and the protective half, composed and clamped once — the
+        // same arithmetic the beat path uses, so the two can never drift apart again (2026-10-10).
+        return tickColoring(1.0, GenomeProfile.NEUTRAL).tickProtectiveDrift(1.0).clamped();
     }
 
     /**
@@ -403,17 +420,24 @@ public record VitalityState(
      */
     public VitalityState tickColoring(double scalar, GenomeProfile genome) {
         if (genome == null) genome = GenomeProfile.NEUTRAL;
+        // The fades are per minute of lived beats; energy and context budget stay per second.
+        double m = scalar / 60.0;
         return new VitalityState(
             contextBudget + 0.003 * scalar,
-            confidence,
+            fadeToward(confidence, restFor(genome, "confidence", 0.5),
+                FADE_CONFIDENCE_PER_MIN * m * genome.decayFactorFor("confidence")),
             energy + TICK_ENERGY_RATE * scalar,
-            alignment - 0.001 * scalar * genome.decayFactorFor("alignment"),
-            errorPressure - 0.005 * scalar * genome.decayFactorFor("errorPressure"),
-            momentum - 0.003 * scalar * genome.decayFactorFor("momentum"),
-            rapport - 0.001 * scalar * genome.decayFactorFor("rapport"),
-            focus - 0.002 * scalar * genome.decayFactorFor("focus"),
+            fadeToward(alignment, restFor(genome, "alignment", 0.5),
+                FADE_ALIGNMENT_PER_MIN * m * genome.decayFactorFor("alignment")),
+            fadeToward(errorPressure, 0.0, FADE_ERROR_PRESSURE_PER_MIN * m * genome.decayFactorFor("errorPressure")),
+            fadeToward(momentum, restFor(genome, "momentum", 0.4),
+                FADE_MOMENTUM_PER_MIN * m * genome.decayFactorFor("momentum")),
+            fadeToward(rapport, restFor(genome, "rapport", 0.5),
+                FADE_RAPPORT_PER_MIN * m * genome.decayFactorFor("rapport")),
+            fadeToward(focus, restFor(genome, "focus", 0.5),
+                FADE_FOCUS_PER_MIN * m * genome.decayFactorFor("focus")),
             integrity,
-            disgust - 0.003 * scalar * genome.decayFactorFor("disgust"),
+            fadeToward(disgust, 0.0, FADE_DISGUST_PER_MIN * m * genome.decayFactorFor("disgust")),
             // Protective + deprivation tanks: pass through (clock-gated elsewhere).
             restlessness, loneliness, stagnation, autonomyPressure,
             significance, amae, saudade, obligation,
@@ -444,7 +468,7 @@ public record VitalityState(
             harmony, standing,
             driftToward(soothing, SOOTHING_REST_BASELINE * (1.0 - allostaticLoad), 0.002 * scalar),
             allostaticLoad,
-            equanimity - 0.00005 * scalar,
+            equanimity - EQUANIMITY_ATROPHY_PER_MIN / 60.0 * scalar,
             generativity   // deprivation-shape; clock-gated accumulation in accumulate()
         ); // NOT clamped — caller clamps once after composition
     }

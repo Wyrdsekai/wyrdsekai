@@ -65,7 +65,7 @@ class HerOwnLineIsNotAPersonSpeakingTest {
         assertThat(CompanionActor.laterOf(personSpoke, null)).isEqualTo(personSpoke);
 
         var src = actorSource();
-        var stamp = src.indexOf("if (answering != null && isHumanTrigger(answering)) lastAnsweredPersonAt = Instant.now();");
+        var stamp = src.indexOf("if (answering != null && isHumanTrigger(answering)) {\n            lastAnsweredPersonAt = Instant.now();");
         assertThat(stamp).as("stamped where a line that answers a person goes out").isGreaterThan(-1);
         // The line goes out just below, by one of three ways: to an asker in another room, aloud to
         // the room, or privately. The stamp stands directly above all three.

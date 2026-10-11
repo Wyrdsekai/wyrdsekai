@@ -251,6 +251,13 @@ setting our requests carry does not change it. A full turn's prompt is longer th
 cut at its head, where the companion's identity sits, and she would answer as someone with no memory
 of the house. The setting is safe on any version.
 
+Since 0.5.6 the node reads the window each model server runs with, from the server itself and from
+any "context overflow" answer, and keeps a prompt within it: a backend too small for a turn is not
+used as a fallback for it, and a prompt larger than a known window is shortened before it is sent,
+history first, identity last. `wyrd doctor` reads the window Ollama is running your model with and
+says when it is too small. On a Mac the small voice model now starts with an 8,192-token window
+(`WYRDSEKAI_VOICE_CTX` changes it).
+
 ## Sharing models across the household
 
 One computer with a good graphics card can think for the rest of the house.
@@ -614,6 +621,31 @@ wyrd body hooks arm rules.json       # turn them on, only if the replay is clean
 ```
 
 The history is `<data>/brainstem/hooks-seen.jsonl`. It has one line for each different thing the tools did and were not cut for, with a count and the first and last times. At every start, the node's own rules are tested against it. Rules that would cut ordinary work are not enforced. The hooks then say `record-only`, with the reason, on the body line of `wyrd body`.
+
+### The steward feed
+
+Everything a companion does without being asked goes into the feed file and onto your Study desk;
+`wyrd feed` reads it. What she does on her own time reaches you as one notice per window rather than
+one notice per act. What a person asked for through her bunshin is still told as it happens.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `WYRDSEKAI_STEWARD_DIGEST_MINUTES` | `30` | Minutes gathered into one notice. `0` sends each act at once. |
+
+A notice kept for you while you had no session open is shown when you next come in, at whichever
+door: the web, telnet or SSH.
+
+### Room scripts that fail
+
+A room script a companion wrote that fails is told to her once, in plain words. After three failures
+it is set aside: the room stays, its script does not run, nothing is lost, and writing it again puts it
+back. A script that does not parse is refused when she writes it. After each of the companion's sleeps
+the workshop mends failing room scripts the way it mends items, within the same night's minutes
+(`WYRDSEKAI_ITEM_MEND_MINUTES`): on a copy, through the coding helper, judged by the error the room saw,
+the file replaced only when whole and the old version kept under `scripts/.repaired/`, three tries and
+then it rests until the script changes. `wyrd rooms repair <room>` asks for a mend now; the mending bench
+takes a room's id as it takes an item's name. `wyrd doctor` names any script set aside; the record is
+`scripts/.broken/state.json` under the data directory.
 
 ### Broken items and night mending
 

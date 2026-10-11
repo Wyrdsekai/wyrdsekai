@@ -7,12 +7,15 @@ import org.wyrdsekai.core.config.WyrdConfig;
 import org.wyrdsekai.core.household.QuietHours;
 import org.wyrdsekai.core.item.BrokenItems;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
+import org.wyrdsekai.core.room.BrokenRoomScripts;
+import org.wyrdsekai.common.system.SystemPaths;
 import org.wyrdsekai.core.update.ActivityGauge;
 
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
@@ -55,7 +58,7 @@ public final class NightMending {
                 // is over". Quiet hours, when kept, end the window too.
                 mend(Duration.ofMinutes(minutes),
                     () -> ActivityGauge.inferenceInFlight() == 0 && (!keepsQuietHours || QuietHours.isQuiet()),
-                    BodyMap.get(), ScriptedItemLoader.householdItemsDir(), SETTLE, POLL, WINDOW);
+                    BodyMap.get(), ScriptedItemLoader.householdItemsDir(), SystemPaths.scriptsDir(), SETTLE, POLL, WINDOW);
             } finally {
                 running.set(false);
             }
@@ -65,8 +68,17 @@ public final class NightMending {
     /** One item, now, at her own asking. Never blocks the caller; she is told by a mark how it went. */
     public static boolean mendNow(String item) {
         var entry = BrokenItems.find().stream().filter(e -> e.item().equals(item)).findFirst().orElse(null);
-        if (entry == null) return false;
+        if (entry == null) return mendRoomNow(item);
         Thread.ofVirtual().name("mending-" + item).start(() -> mendOne(entry, BodyMap.get(), "at the mending bench"));
+        return true;
+    }
+
+    /** The bench takes a room's script by the room's id as well. */
+    public static boolean mendRoomNow(String roomId) {
+        var dir = SystemPaths.scriptsDir();
+        var entry = BrokenRoomScripts.mendable(dir).stream().filter(e -> e.roomId().equals(roomId)).findFirst().orElse(null);
+        if (entry == null) return false;
+        Thread.ofVirtual().name("mending-room-" + roomId).start(() -> mendOneRoom(entry, BodyMap.get(), "at the mending bench"));
         return true;
     }
 
@@ -96,6 +108,15 @@ public final class NightMending {
      */
     static int mend(Duration budget, BooleanSupplier quietEnough, BodyMap map, Path itemsDir,
                     Duration settle, Duration poll, Duration window) {
+        return mend(budget, quietEnough, map, itemsDir, null, settle, poll, window);
+    }
+
+    /**
+     * As above, and then the room scripts of hers that failed ({@code roomsDir}, null for none),
+     * within the same night's minutes.
+     */
+    static int mend(Duration budget, BooleanSupplier quietEnough, BodyMap map, Path itemsDir, Path roomsDir,
+                    Duration settle, Duration poll, Duration window) {
         var today = LocalDate.now();
         if (!today.equals(budgetDay)) { budgetDay = today; spentToday = Duration.ZERO; }
         int mended = 0;
@@ -113,10 +134,35 @@ public final class NightMending {
                 if (mendOne(entry, map, "while the house was quiet")) mended++;
                 spentToday = spentToday.plus(Duration.between(started, Instant.now()));
             }
+            for (var entry : roomsDir == null ? List.<BrokenRoomScripts.Entry>of() : BrokenRoomScripts.mendable(roomsDir)) {
+                if (spentToday.compareTo(budget) >= 0) { log.info("[night-mending] the night's {} min are spent", budget.toMinutes()); break; }
+                if (!awaitQuiet(quietEnough, settle, poll, deadline)) {
+                    log.info("[night-mending] the house did not go quiet within {} min; {} mended, the room scripts wait for another night",
+                        window.toMinutes(), mended);
+                    break;
+                }
+                var started = Instant.now();
+                if (mendOneRoom(entry, map, "while the house was quiet")) mended++;
+                spentToday = spentToday.plus(Duration.between(started, Instant.now()));
+            }
         } finally {
             ActivityGauge.maintenanceFinished();
         }
         return mended;
+    }
+
+    private static boolean mendOneRoom(BrokenRoomScripts.Entry entry, BodyMap map, String when) {
+        var r = RoomScriptRepair.repair(entry.roomId(), entry.file(), entry.lastError());
+        if ("no coding backend is registered to repair with".equals(r.note())) return false;   // nothing was tried; nothing to count
+        if ("nothing to repair".equals(r.note())) {
+            // Whole as it stands (a person mended it by hand): the record is cleared and it runs.
+            BrokenRoomScripts.rewritten(entry.roomId(), entry.file().getParent());
+            return false;
+        }
+        BrokenRoomScripts.mendAttempted(entry, r.fixed());
+        if (map != null) BrokenRoomScripts.tellMended(entry, r.fixed(), String.join(" | ", r.after()), when);
+        log.info("[night-mending] room script {}: {}", entry.roomId(), r.fixed() ? "mended" : "not mended — " + r.note());
+        return r.fixed();
     }
 
     /**

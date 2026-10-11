@@ -260,7 +260,8 @@ A companion has a body: the computer and services it runs on.
   also keeps the search index, because rebuilding it can take days. If you have
   a second disk, point the vault there with `vault.dir`.
 - **The steward feed** shows what a companion did without being asked, in a log
-  file and as a note on your desk. `wyrd feed` reads it. `wyrd grants tiers`
+  file and as a note on your desk. `wyrd feed` reads it. What she does on her
+  own time reaches you as one notice per half hour, not one per act. `wyrd grants tiers`
   shows, for every action, how far a companion may take it on its own.
 - **Tidy rooms and names.** Rooms can be demolished.
   `wyrd rooms prune --stale 30` lists rooms nobody has used for 30 days. The

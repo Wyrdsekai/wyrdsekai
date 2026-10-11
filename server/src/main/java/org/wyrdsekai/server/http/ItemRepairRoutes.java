@@ -6,6 +6,9 @@ import io.javalin.http.Context;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.coding.ItemContractCheck;
 import org.wyrdsekai.core.coding.ItemContractRepair;
+import org.wyrdsekai.core.coding.RoomScriptRepair;
+import org.wyrdsekai.core.room.BrokenRoomScripts;
+import org.wyrdsekai.common.system.SystemPaths;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
 
 import java.nio.file.Files;
@@ -34,6 +37,7 @@ public final class ItemRepairRoutes {
     public void register(JavalinDefaultRoutingApi app) {
         app.get("/api/items/broken", this::handleBroken);
         app.post("/api/items/repair", this::handleRepair);
+        app.post("/api/rooms/script/repair", this::handleRoomRepair);
     }
 
     record ErrorResponse(String error) {}
@@ -68,6 +72,44 @@ public final class ItemRepairRoutes {
     private void handleBroken(Context ctx) {
         if (!steward(ctx)) return;
         ctx.json(Map.of("broken", broken()));
+    }
+
+    /** A room script of a companion's, mended the way an item is: on a copy, replaced only when whole. */
+    private void handleRoomRepair(Context ctx) {
+        if (!steward(ctx)) return;
+        String room = null;
+        try {
+            var node = JsonMapper.builder().build().readTree(ctx.body() == null || ctx.body().isBlank() ? "{}" : ctx.body());
+            if (node.hasNonNull("room")) room = node.get("room").asText();
+        } catch (Exception ignored) {
+        }
+        if (room == null || !room.matches("[A-Za-z0-9_.-]{1,120}")) {
+            ctx.status(400).json(new ErrorResponse("Which room? {\"room\": \"<id>\"}"));
+            return;
+        }
+        final var roomId = room;
+        var dir = SystemPaths.scriptsDir();
+        var file = dir.resolve(roomId + ".js");
+        if (!Files.isRegularFile(file)) {
+            ctx.status(404).json(new ErrorResponse("No script of a companion's for room " + roomId));
+            return;
+        }
+        var entry = BrokenRoomScripts.mendable(dir).stream().filter(e -> e.roomId().equals(roomId)).findFirst().orElse(null);
+        var lastError = entry == null ? null : entry.lastError();
+        var r = RoomScriptRepair.repair(roomId, file, lastError);
+        if (entry != null && !"nothing to repair".equals(r.note()) && !"no coding backend is registered to repair with".equals(r.note())) {
+            BrokenRoomScripts.mendAttempted(entry, r.fixed());
+            BrokenRoomScripts.tellMended(entry, r.fixed(), String.join(" | ", r.after()), "at your word");
+        } else if (r.fixed() || "nothing to repair".equals(r.note())) {
+            BrokenRoomScripts.rewritten(roomId, dir);
+        }
+        var out = new LinkedHashMap<String, Object>();
+        out.put("room", r.roomId());
+        out.put("fixed", r.fixed());
+        out.put("note", r.note());
+        out.put("before", r.before());
+        out.put("after", r.after());
+        ctx.json(out);
     }
 
     private void handleRepair(Context ctx) {

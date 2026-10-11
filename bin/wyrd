@@ -1497,13 +1497,13 @@ start_inference() {
                 fi
                 if [[ -n "$v8_csv" ]]; then
                     log "starting voice llama-server (model=$(basename "$voice_model") :8201 +V8 vectors)"
-                    nohup "$llama" -m "$voice_model" --port 8201 -c "$(( 4096 * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    nohup "$llama" -m "$voice_model" --port 8201 -c "$(( ${WYRDSEKAI_VOICE_CTX:-8192} * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "$gpu_layers" --host 0.0.0.0 \
                         --control-vector-scaled "$v8_csv" \
                         > "$DATA_DIR/.llama-server-voice.log" 2>&1 &
                 else
                     warn "voice :8201 starting WITHOUT V8 vectors — bundled vectors missing at $DATA_DIR/vectors/v8 (set WYRDSEKAI_V8_VECTORS or reinstall)"
-                    nohup "$llama" -m "$voice_model" --port 8201 -c "$(( 4096 * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    nohup "$llama" -m "$voice_model" --port 8201 -c "$(( ${WYRDSEKAI_VOICE_CTX:-8192} * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                         -ngl "$gpu_layers" --host 0.0.0.0 \
                         > "$DATA_DIR/.llama-server-voice.log" 2>&1 &
                 fi
@@ -5308,6 +5308,9 @@ print(("WARN " if q>=5 else "OK ")+s)
             log "${inf_line#OK }"
         fi
     fi
+    # The window a configured Ollama runs its model with: a companion's full turn needs 8192.
+    _doctor_ollama_window
+    if [[ $? -eq 1 ]]; then _wbump; fi
     state_summary=$(do_state dump --summary 2>/dev/null || true)
     if [[ -z "$state_summary" ]]; then
         warn "$(_t doctor.state_unavailable)"
@@ -5451,6 +5454,10 @@ PY
     # ── Her own time: turns that never become acts ──
     # The trail is the one instrument that sees own time; the live suites are a person asking.
     _doctor_own_time
+    if [[ $? -eq 1 ]]; then _wbump; fi
+
+    # ── Room scripts a companion wrote that failed and were set aside ──
+    _doctor_room_scripts
     if [[ $? -eq 1 ]]; then _wbump; fi
 
     # ── Summary + exit code ──
@@ -5812,6 +5819,91 @@ _doctor_own_time() {
         return 1
     fi
     return 0
+}
+
+# A model on Ollama runs with Ollama's own window (4,096 tokens on many versions) unless told
+# otherwise, and the setting our requests carry does not change it; a full turn needs 8192. Reads
+# the window of what is loaded (/api/ps) and says when it is too small.
+_doctor_ollama_window() {
+    local url="${WYRDSEKAI_INFERENCE_URL:-}"
+    [[ -n "$url" ]] || return 0
+    url="${url%/}"
+    [[ "$url" == http* ]] || return 0
+    curl -sf -m 5 "$url/api/tags" >/dev/null 2>&1 || return 0
+    local report
+    report=$(_ollama_window_report "$url" 2>/dev/null) || return 0
+    [[ -z "$report" ]] && return 0
+    local state="${report%%$'\n'*}"
+    if [[ "$state" == NONE ]]; then
+        log "$(_t doctor.ollama_none "$url")"
+        return 0
+    fi
+    # One line per loaded model: name<TAB>window (0 when Ollama does not say).
+    local desc="" name ctx one
+    while IFS=$'\t' read -r name ctx; do
+        [[ -n "$name" ]] || continue
+        [[ "$ctx" =~ ^[1-9][0-9]*$ ]] || ctx="$(_t doctor.ollama_unknown)"
+        one="$(_t doctor.ollama_window "$name" "$ctx")"
+        desc="${desc:+$desc, }$one"
+    done < <(printf '%s\n' "$report" | tail -n +2)
+    if [[ "$state" == WARN ]]; then
+        warn "$(_t doctor.ollama_small "$url" "$desc")"
+        return 1
+    fi
+    log "$(_t doctor.ollama_ok "$url" "$desc")"
+    return 0
+}
+
+# _ollama_window_report <url> — one line: OK/WARN and the loaded models with their windows.
+_ollama_window_report() {
+    python3 -I - "$1" <<'PYEOF'
+import json, sys, urllib.request
+url = sys.argv[1]
+try:
+    with urllib.request.urlopen(url + "/api/ps", timeout=5) as r:
+        d = json.load(r)
+except Exception:
+    sys.exit(0)
+models = [(m.get("name") or m.get("model") or "?", int(m.get("context_length") or 0)) for m in d.get("models") or []]
+if not models:
+    print("NONE")
+    sys.exit(0)
+small = [(n, c) for n, c in models if 0 < c < 8192]
+print("WARN" if small else "OK")
+for n, c in models:
+    print("%s\t%d" % (n.replace("\t", " "), c))
+PYEOF
+}
+
+# A room script a companion wrote that failed three times is set aside (BrokenRoomScripts): the
+# room runs without it until she writes it again. The record is <data>/scripts/.broken/state.json.
+_doctor_room_scripts() {
+    local state="$DATA_DIR/scripts/.broken/state.json"
+    [[ -f "$state" ]] || return 0
+    local rows
+    rows=$(_room_scripts_set_aside "$state" 2>/dev/null) || return 0
+    [[ -z "$rows" ]] && return 0
+    local n
+    n=$(printf '%s\n' "$rows" | grep -c .)
+    echo ""
+    warn "$(_t doctor.room_scripts "$n")"
+    printf '%s\n' "$rows" | sed 's/^/    /'
+    return 1
+}
+
+# _room_scripts_set_aside <state.json> — one line per set-aside room script: the room and what failed.
+_room_scripts_set_aside() {
+    python3 -I - "$1" <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for room, n in sorted(d.items()):
+    if isinstance(n, dict) and n.get("setAside"):
+        err = " ".join((n.get("lastError") or "").split())   # one line: a parse error quotes the script across lines
+        print("%s — %s" % (room, err[:90]))
+PYEOF
 }
 
 # _own_time_summary <trail> <hours> — one line per companion with own-time turns in the window:
@@ -14209,7 +14301,25 @@ for r in sorted(rooms, key=lambda r: (r.get("maker"), -r.get("quietDays",0))):
             [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
             printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
             ;;
-        *) echo "Usage: wyrd rooms [list] | made | find [words] [--cold] | tidy [--yes] | keep <room> | close <room> | open <room> | demolish <room> [--with-objects] | prune [--duplicates] [--stale <days>] [--with-objects] [--yes]"; return 64 ;;
+        repair)
+            # A room script a companion wrote that fails: mended on a copy through the coding
+            # helper, replaced only when whole (the same bench as `wyrd items repair`).
+            local room="${2:-}"
+            [[ -n "$room" ]] || { err "Usage: wyrd rooms repair <room-id>"; return 2; }
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            log "Repairing the script in $room (a copy goes through the coding backend; this can take a few minutes)…"
+            curl -s -m 1800 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+                -d "{\"room\": \"$room\"}" "$api/api/rooms/script/repair" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+if d.get("error"): print("    " + d["error"]); sys.exit(1)
+print("    %s: %s" % ("FIXED" if d.get("fixed") else "not fixed", d.get("note","")))
+for p in d.get("after",[]): print("    still: " + p)
+sys.exit(0 if d.get("fixed") else 1)
+'
+            ;;
+        *) echo "Usage: wyrd rooms [list] | made | find [words] [--cold] | tidy [--yes] | keep <room> | close <room> | open <room> | repair <room> | demolish <room> [--with-objects] | prune [--duplicates] [--stale <days>] [--with-objects] [--yes]"; return 64 ;;
     esac
 }
 
@@ -16338,7 +16448,7 @@ do_voice() {
                 log "$(_t voice.enable.starting_metal "$port")"
                 local gpu_layers="${WYRDSEKAI_GPU_LAYERS:-99}"
                 nohup "$llama" -m "$voice_model_file" --lora "$adapter_file" \
-                    --port "$port" -c "$(( ${LLAMA_VOICE_CTX:-4096} * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
+                    --port "$port" -c "$(( ${LLAMA_VOICE_CTX:-${WYRDSEKAI_VOICE_CTX:-8192}} * ${WYRDSEKAI_VOICE_PARALLEL:-1} ))" -np "${WYRDSEKAI_VOICE_PARALLEL:-1}" --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
                     -ngl "$gpu_layers" --host 0.0.0.0 --jinja \
                     --reasoning off --reasoning-budget 0 \
                     > "$DATA_DIR/.llama-voice.log" 2>&1 &

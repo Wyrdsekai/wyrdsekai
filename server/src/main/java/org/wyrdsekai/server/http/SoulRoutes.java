@@ -153,14 +153,15 @@ public final class SoulRoutes {
             ctx.status(404).json(new ErrorResponse("No manifest found for DID: " + did));
             return;
         }
+        var m = manifest.get();
         var ledger = LanguageHealLedger.inMemory();
         try {
-            var p = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(), did);
+            var p = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(),
+                m.profile() != null && m.profile().entityId() != null ? m.profile().entityId() : did);
             if (p != null) ledger = LanguageHealLedger.load(p);
         } catch (RuntimeException e) {
             log.debug("Language heal ledger for {} not read: {}", did, e.toString());
         }
-        var m = manifest.get();
         var name = m.profile() != null ? m.profile().name() : null;
         ctx.json(LanguageHealth.of(m, LanguageHealth.householdLanguage(), ledger, name));
     }
@@ -202,7 +203,8 @@ public final class SoulRoutes {
         ref.tell(new CompanionActor.HealLanguageNow());
         var ledger = LanguageHealLedger.inMemory();
         try {
-            var p = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(), did);
+            var p = LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(),
+                m.profile() != null && m.profile().entityId() != null ? m.profile().entityId() : did);
             if (p != null) ledger = LanguageHealLedger.load(p);
         } catch (RuntimeException ignored) { }
         var name = m.profile() != null ? m.profile().name() : null;

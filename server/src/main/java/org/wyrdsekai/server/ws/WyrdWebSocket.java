@@ -1050,6 +1050,11 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             if (entityRegistry != null && playerId != null) {
                 entityRegistry.enter(playerId, playerName, "player", startRoom);
             }
+            // Notices kept for them while no session of theirs was live are delivered now. Until
+            // 0.5.6 the buffer was emptied only on a return from travel, so a steward who logged
+            // in the next day never saw them (the household node, 2026-10-09).
+            var keptNotices = NotificationService.get();
+            if (keptNotices != null && playerId != null) keptNotices.flushBuffered(playerId);
 
             // On-login flush: notify EVERY companion (multi-companion households).
             if (entityRegistry != null && playerId != null && !playerId.startsWith("anon-")) {

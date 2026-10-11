@@ -1536,6 +1536,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 && failure.chatReq() != null) {
             var backend = findBackendByName(failure.failedBackend());
             var window = parseAvailableContext(failure.error());
+            if (window > 0) BackendWindows.learned(failure.failedBackend(), window, "an overflow error");
             if (backend != null && window > 0) {
                 int round = failure.compactRounds() + 1;
                 var compacted = compactToFit(failure.chatReq(), window,
@@ -1603,7 +1604,28 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         // otherwise the provider could still end up bouncing cross-zone after the
         // local backend fails. See task #200.
         if (failure.chatReq() != null && !failure.fallbackAttempted()) {
-            var fallback = selectBackendExcluding(failure.failedBackend(), failure.localOnly());
+            // A backend whose window is known to be too small for this prompt is not a fallback;
+            // the prompt is shrunk to the window of the one that is left, rather than sent whole
+            // to answer 400 (a 7,500-token turn on a 4,096-token Ollama model, 2026-10-05).
+            var needed = promptTokensLenient(failure.chatReq());
+            var fallback = selectBackendExcluding(failure.failedBackend(), failure.localOnly(), needed);
+            var chatReq = failure.chatReq();
+            if (fallback == null) {
+                var small = selectBackendExcluding(failure.failedBackend(), failure.localOnly());
+                if (small != null) {
+                    var w = BackendWindows.of(small.name());
+                    var fitted = compactToFit(chatReq, w, 0, 1);
+                    if (fitted != null) {
+                        log.info("Prompt of ~{} tokens shrunk to the {}-token window of '{}' before falling back for {}",
+                            needed, w, small.name(), failure.requestId());
+                        fallback = small;
+                        chatReq = fitted;
+                    } else {
+                        log.warn("No backend has a window for this prompt (~{} tokens; '{}' runs with {}): {}",
+                            needed, small.name(), w, failure.requestId());
+                    }
+                }
+            }
             if (fallback != null) {
                 log.info("Falling back to '{}' for {}", fallback.name(), failure.requestId());
                 // Use backend.chatCompletion (same dispatch as primary) so NatsRemote
@@ -1618,7 +1640,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 // backend has a smaller window than the one that just failed (the
                 // 9B→4B hop, where a 16K-assembled prompt lands on an 8K voice model).
                 // fallbackAttempted=true bounds this at one cross-backend hop.
-                dispatchWithRetry(fallback, failure.chatReq(), failure.requestId(),
+                dispatchWithRetry(fallback, chatReq, failure.requestId(),
                     failure.replyTo(), failure.localOnly(), failure.compactRounds(), true);
                 return this;
             }
@@ -2042,6 +2064,19 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
      * llama.cpp also reports the size of the request that overflowed:
      * {@code request (16869 tokens) exceeds ...}. Returns 0 when absent.
      */
+    /**
+     * What a request needs of a window, by the assembler's own measure (four characters a token,
+     * the response reserved), so a prompt the assembler kept under its ceiling for an 8K backend is
+     * not shrunk for one. The pessimistic {@link #estimateTokens(String)} is for compaction, where
+     * overshooting is the safe side.
+     */
+    static int promptTokensLenient(InferenceClient.ChatRequest req) {
+        if (req == null || req.messages() == null) return 0;
+        long chars = 0;
+        for (var m : req.messages()) chars += m.content() == null ? 0 : m.content().length();
+        return (int) (chars / 4) + 1 + (req.maxTokens() != null ? req.maxTokens() : 256);
+    }
+
     static int parseRequestTokens(String errMsg) {
         if (errMsg == null) return 0;
         var m = CTX_REQUEST.matcher(errMsg);
@@ -2158,14 +2193,27 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                                    boolean fallbackAttempted) {
         var self = getContext().getSelf();
         startedAt.putIfAbsent(requestId, System.nanoTime());
-        var call = backend.chatCompletion(chatReq);
+        // A prompt larger than the window this backend is known to run with is shrunk here,
+        // once, instead of going out whole to be refused.
+        int window = BackendWindows.of(backend.name());
+        int needed = window > 0 ? promptTokensLenient(chatReq) : 0;
+        InferenceClient.ChatRequest fitted = null;
+        if (window > 0 && needed > window) {
+            fitted = compactToFit(chatReq, window, 0, 1);
+            if (fitted != null) {
+                log.info("Prompt of ~{} tokens shrunk to the {}-token window of '{}' before sending {}",
+                    needed, window, backend.name(), requestId);
+            }
+        }
+        final var req = fitted != null ? fitted : chatReq;
+        var call = backend.chatCompletion(req);
         onTheWire.put(requestId, call);
         call
             .thenAccept(resp -> self.tell(new InferResult(requestId,
                     renderContent(resp), backend.name(), resp.usage(), replyTo)))
             .exceptionally(ex -> {
                 self.tell(new InferFailure(requestId, ex.getMessage(), backend.name(),
-                    chatReq, replyTo, localOnly, compactRounds, fallbackAttempted));
+                    req, replyTo, localOnly, compactRounds, fallbackAttempted));
                 return null;
             });
     }
@@ -2211,7 +2259,42 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             log.info("Backend '{}' health: {}", result.backendName(),
                     result.healthy() ? "UP" : "DOWN");
         }
+        // A backend that is up and whose window is not known yet is asked for it, a few times
+        // while it answers nothing (every backend starts as "healthy" in this map, so there is no
+        // up-transition to wait for: the household node's brain was never asked, 2026-10-09).
+        if (result.healthy() && BackendWindows.of(result.backendName()) == 0
+                && windowAsks.merge(result.backendName(), 1, Integer::sum) <= WINDOW_ASKS) {
+            var backend = findBackendByName(result.backendName());
+            if (backend != null) Thread.ofVirtual().name("window-" + result.backendName()).start(() -> learnWindow(backend));
+        }
+        if (!result.healthy()) windowAsks.remove(result.backendName());
         return this;
+    }
+
+    /** How many times each backend was asked for its window since it last came up. */
+    private final java.util.Map<String, Integer> windowAsks = new java.util.concurrent.ConcurrentHashMap<>();
+    /** A backend that never says is left alone after this many health ticks. */
+    static final int WINDOW_ASKS = 10;
+
+    /** Ask a live backend what window it runs with; nothing is recorded when it does not say. */
+    static void learnWindow(InferenceBackend backend) {
+        var url = backend.url();
+        if (url == null || !url.startsWith("http")) return;
+        switch (backend) {
+            case InferenceBackend.LlamaServer b ->
+                BackendWindows.learned(b.name(), BackendWindows.windowFromLlamaProps(InferenceConfig.readBody(url + "/props", 1500)), "/props");
+            case InferenceBackend.Mlx b ->
+                BackendWindows.learned(b.name(), BackendWindows.windowFromLlamaProps(InferenceConfig.readBody(url + "/props", 1500)), "/props");
+            case InferenceBackend.Ollama b -> {
+                int w = BackendWindows.windowFromOllamaPs(InferenceConfig.readBody(url + "/api/ps", 1500));
+                if (w <= 0 && !b.models().isEmpty()) {
+                    w = BackendWindows.windowFromOllamaShow(InferenceConfig.postJson(url + "/api/show",
+                        "{\"model\":\"" + b.models().get(0).replace("\"", "") + "\"}", 1500));
+                }
+                BackendWindows.learned(b.name(), w, w > 0 ? "/api/ps or /api/show" : "unknown");
+            }
+            default -> { }
+        }
     }
 
     // --- Backend selection ---
@@ -2473,9 +2556,15 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     private InferenceBackend selectBackendExcluding(String excludeName, boolean excludeRemote) {
+        return selectBackendExcluding(excludeName, excludeRemote, 0);
+    }
+
+    /** As above, skipping any backend whose known window is smaller than {@code neededTokens} (0 = any). */
+    private InferenceBackend selectBackendExcluding(String excludeName, boolean excludeRemote, int neededTokens) {
         for (var b : backends) {
             if (excludeRemote && b instanceof InferenceBackend.NatsRemote) continue;
             if (held(b.name())) continue;
+            if (neededTokens > 0 && BackendWindows.tooSmall(b.name(), neededTokens)) continue;
             if (!b.name().equals(excludeName)
                     && healthStatus.getOrDefault(b.name(), false)) {
                 return b;

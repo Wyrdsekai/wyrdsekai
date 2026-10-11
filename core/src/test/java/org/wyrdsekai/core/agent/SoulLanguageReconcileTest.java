@@ -203,6 +203,20 @@ class SoulLanguageReconcileTest {
     }
 
     @Test
+    @DisplayName("the healer and the steward's view name her strike ledger the same way: by her entity id")
+    void theLedgerHasOneName() throws Exception {
+        var core = "core/src/main/java/org/wyrdsekai/core/agent/CompanionActor.java";
+        var routes = "server/src/main/java/org/wyrdsekai/server/http/SoulRoutes.java";
+        var actor = java.nio.file.Files.readString(java.nio.file.Files.exists(java.nio.file.Path.of("..", core)) ? java.nio.file.Path.of("..", core) : java.nio.file.Path.of(core));
+        var route = java.nio.file.Files.readString(java.nio.file.Files.exists(java.nio.file.Path.of("..", routes)) ? java.nio.file.Path.of("..", routes) : java.nio.file.Path.of(routes));
+        assertTrue(actor.contains("LanguageHealLedger.pathFor(WyrdConfig.get().dataDir(), profile.entityId());"),
+            "the actor names the ledger by entity id: her DID is restored later in the load");
+        assertEquals(1, actor.split("LanguageHealLedger\\.pathFor\\(", -1).length - 1, "one place names it");
+        assertEquals(2, route.split("m\\.profile\\(\\) != null && m\\.profile\\(\\)\\.entityId\\(\\) != null \\? m\\.profile\\(\\)\\.entityId\\(\\) : did\\)", -1).length - 1,
+            "both routes read it under the same name");
+    }
+
+    @Test
     @DisplayName("reconcile is default-on; explicit false disables")
     void configDefaultOn() {
         // Env not set in the test JVM → default on.

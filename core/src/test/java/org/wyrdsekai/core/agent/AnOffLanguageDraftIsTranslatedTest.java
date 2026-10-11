@@ -83,4 +83,19 @@ class AnOffLanguageDraftIsTranslatedTest {
         assertTrue(src.contains("boolean rewrite = wrongLanguage\n            || (detectorVerifiable(expectedLang) && draftLang != null && !draftLang.equals(expectedLang));"),
             "the floor is at the polish door, not only in speak()");
     }
+
+    /**
+     * A correction into the right language is a translation, not a polish: on the single-brain
+     * profile it queues on the one model her turns use, and under the polish's three seconds it
+     * never finished, so every such draft went out uncorrected (the household node, 2026-10-08).
+     */
+    @Test
+    @DisplayName("a correction into the right language has its own wait")
+    void aCorrectionHasItsOwnWait() throws Exception {
+        var rel = "core/src/main/java/org/wyrdsekai/core/agent/CompanionActor.java";
+        var from = java.nio.file.Path.of("..", rel);
+        var src = java.nio.file.Files.readString(java.nio.file.Files.exists(from) ? from : java.nio.file.Path.of(rel));
+        assertTrue(src.contains("private static final Duration VOICE_CORRECTION_TIMEOUT = Duration.ofSeconds(30);"));
+        assertTrue(src.contains("new VoicePolishTimeout(requestId, draft), wrongLanguage ? VOICE_CORRECTION_TIMEOUT : VOICE_POLISH_TIMEOUT);"));
+    }
 }

@@ -64,6 +64,19 @@ public class ItemScriptExecutor implements Closeable {
         }
     }
 
+    /** Why the script does not parse, in one line, or null when it parses. */
+    public static String parseProblem(String script) {
+        if (script == null || script.isBlank()) return "the script is empty";
+        try (var ctx = Context.newBuilder("js").build()) {
+            ctx.parse(Source.newBuilder("js", script, "script.js").buildLiteral());
+            return null;
+        } catch (Exception e) {
+            var msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage().strip();
+            var nl = msg.indexOf('\n');
+            return nl > 0 ? msg.substring(0, nl) : msg;
+        }
+    }
+
 
     private static final Logger log = LoggerFactory.getLogger(ItemScriptExecutor.class);
     private static final long TIMEOUT_MS = ResourceLimits.ITEM_SCRIPT.cpuTimeoutMs();

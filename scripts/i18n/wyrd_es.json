@@ -1462,5 +1462,11 @@
   "update.usage.siblings": "       wyrd update siblings                  actualizar CodeZaiku y ResearchZosho donde estén instalados",
   "update.usage.stage": "       wyrd update stage                     descargar y verificar la última versión, instalarla tú",
   "update.usage.file": "       wyrd update <archivo.deb|.pkg|.msi>   instalar este instalador en el sitio",
-  "researcher.update.usage": "Uso: wyrd researcher update [--yes]    (el actualizador propio del bibliotecario: última versión, verificada, servicio reiniciado)"
+  "researcher.update.usage": "Uso: wyrd researcher update [--yes]    (el actualizador propio del bibliotecario: última versión, verificada, servicio reiniciado)",
+  "doctor.room_scripts": "{0} script(s) de sala apartado(s) tras fallar tres veces; cada sala funciona sin su script hasta que el compañero lo vuelva a escribir (add_script)",
+  "doctor.ollama_small": "Ollama en {0}: {1} — un turno completo de un compañero necesita una ventana de 8192 tokens: pon OLLAMA_CONTEXT_LENGTH=16384 en el entorno de Ollama y reinícialo",
+  "doctor.ollama_ok": "Ollama en {0}: {1}",
+  "doctor.ollama_none": "Ollama en {0}: todavía no hay ningún modelo cargado; su ventana se lee cuando haya uno (por defecto Ollama usa 4096 salvo que OLLAMA_CONTEXT_LENGTH esté definido)",
+  "doctor.ollama_window": "{0} funciona con una ventana de {1} tokens",
+  "doctor.ollama_unknown": "desconocida"
 }

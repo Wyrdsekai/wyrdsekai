@@ -86,6 +86,12 @@ public final class HerWord {
             List.of("dispatch_task")),
         new Rule(Pattern.compile("\\bclose\\b"),
             List.of("close_room")),
+        // "Open" a room is to go to it, or to reopen a closed one: "I'll open the lab room first" made a
+        // second lab, and a third; she then closed the copies (the household node, 2026-10-08). Only a
+        // NEW room is built on "open".
+        new Rule(Pattern.compile("\\b(?:open|reopen|re-open)\\b(?:(?!\\bnew\\b)[^.])*\\b(?:room|garden|nook|place|hall|study|"
+                + "alcove|corner|space|sanctuary|chamber|refuge|lab|workshop|library)\\b"),
+            List.of("go_to_room")),
         new Rule(Pattern.compile("\\b(?:build|make|create|open|shape|start|raise)\\b[^.]*\\b(?:room|garden|nook|place|hall|study|"
                 + "alcove|corner|space|sanctuary|chamber|refuge)\\b"),
             List.of("create_room_from_template", "create_room")),

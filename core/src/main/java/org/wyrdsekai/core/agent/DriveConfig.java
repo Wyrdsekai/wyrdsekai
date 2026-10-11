@@ -27,8 +27,38 @@ public record DriveConfig(
     double reliefTau,
     double reliefFloor,
     double archetypeScale,
-    double[] crossMod
+    double[] crossMod,
+    /** Where the drive settles when nothing answers it, scaled by temperament; NaN = it ramps and is
+     *  relieved by events (SEEKING, CREATIVITY, the event-only drives). */
+    double setpoint,
+    /** Seconds to close most of the gap to {@link #setpoint}, from either side. */
+    double settleTau
 ) {
+    /** A drive with no settling point: the shape every drive had before 2026-10-10. */
+    public DriveConfig(double hillN, double hillK, double baseRate, double buildTau, double reliefTau,
+                       double reliefFloor, double archetypeScale, double[] crossMod) {
+        this(hillN, hillK, baseRate, buildTau, reliefTau, reliefFloor, archetypeScale, crossMod, Double.NaN, 0.0);
+    }
+
+    /** True for the satiable homeostats: they settle toward a point of their own instead of ramping. */
+    public boolean hasSetpoint() {
+        return !Double.isNaN(setpoint) && settleTau > 0;
+    }
+
+    /*
+     * The satiable drives (2026-10-10). Until now AFFILIATION, CARE, PLAY and VIGILANCE ramped at a
+     * per-second rate and were leaked back toward a floor every second with a short time constant
+     * (60–600 s); the two met at a fixed point nobody chose — affiliation 0.05 + 0.0003 × 180 = 0.10,
+     * care 0.16, play 0.02, vigilance 0.06 — and the household node showed exactly those numbers for
+     * days, three distinct readings of affiliation in three days, while she said "I wanted to be
+     * near you". A want pinned by arithmetic is not hers. Now each settles toward ITS point over
+     * hours, from either side, scaled by temperament; a real answer to it (company, tending, play,
+     * the threat passing) drops it to its floor and it builds again from there.
+     */
+    static final double AFFILIATION_SETPOINT = 0.6;   static final double AFFILIATION_SETTLE_S = 6 * 3600;
+    static final double CARE_SETPOINT = 0.4;          static final double CARE_SETTLE_S = 8 * 3600;
+    static final double PLAY_SETPOINT = 0.5;          static final double PLAY_SETTLE_S = 3 * 3600;
+    static final double VIGILANCE_SETPOINT = 0.2;     static final double VIGILANCE_SETTLE_S = 2 * 3600;
     // Drive indices — canonical ordering
     public static final int SEEKING      = 0;
     public static final int CARE         = 1;
@@ -66,21 +96,25 @@ public record DriveConfig(
                 //           SEEK  CARE  PLAY  VIGIL AFFIL GRIEF FRUST CREAT START SURP
                 new double[]{ 0.0,  0.0,  0.2, -0.1,  0.1,  0.0, -0.2,  0.3,  0.0,  0.0}),
 
-            // CARE: moderate curve, slow relief (caring lingers)
+            // CARE: moderate curve; settles toward 0.4 over eight hours, relieved when the tending is received
             new DriveConfig(2.0, 0.5, 0.0002, 1500, 300, 0.1, 1.0,
-                new double[]{ 0.0,  0.0, -0.1,  0.2,  0.3,  0.2,  0.0,  0.0,  0.0,  0.0}),
+                new double[]{ 0.0,  0.0, -0.1,  0.2,  0.3,  0.2,  0.0,  0.0,  0.0,  0.0},
+                CARE_SETPOINT, CARE_SETTLE_S),
 
-            // PLAY: linear/gentle, fast relief (play is its own reward)
+            // PLAY: linear/gentle; settles toward 0.5 over three hours, play itself relieves it
             new DriveConfig(1.0, 0.3, 0.0004, 720, 60, 0.0, 1.0,
-                new double[]{ 0.1,  0.0,  0.0, -0.3,  0.2, -0.2, -0.3,  0.2,  0.0,  0.0}),
+                new double[]{ 0.1,  0.0,  0.0, -0.3,  0.2, -0.2, -0.3,  0.2,  0.0,  0.0},
+                PLAY_SETPOINT, PLAY_SETTLE_S),
 
-            // VIGILANCE: switch-like, slow relaxation
+            // VIGILANCE: switch-like urgency; a low watchfulness at rest (0.2 over two hours), spiked by events
             new DriveConfig(3.0, 0.6, 0.0001, 3600, 600, 0.0, 1.0,
-                new double[]{-0.2,  0.1, -0.4,  0.0, -0.1,  0.0,  0.2, -0.2,  0.0,  0.0}),
+                new double[]{-0.2,  0.1, -0.4,  0.0, -0.1,  0.0,  0.2, -0.2,  0.0,  0.0},
+                VIGILANCE_SETPOINT, VIGILANCE_SETTLE_S),
 
-            // AFFILIATION: similar to seeking but social
+            // AFFILIATION: the appetite for company; settles toward 0.6 over six hours alone, company relieves it
             new DriveConfig(1.5, 0.4, 0.0003, 1080, 180, 0.05, 1.0,
-                new double[]{ 0.1,  0.2,  0.3, -0.1,  0.0,  0.3, -0.1,  0.0,  0.0,  0.0}),
+                new double[]{ 0.1,  0.2,  0.3, -0.1,  0.0,  0.3, -0.1,  0.0,  0.0,  0.0},
+                AFFILIATION_SETPOINT, AFFILIATION_SETTLE_S),
 
             // GRIEF: event-only, very slow relief
             //   GRIEF←CARE and GRIEF←AFFILIATION zeroed (2026-06-07). The crossMod ROW is modulation
@@ -150,7 +184,7 @@ public record DriveConfig(
                 double scale = Math.max(0.5, Math.min(2.0, 1.0 + entry.getValue()));
                 configs[idx] = new DriveConfig(
                     c.hillN, c.hillK, c.baseRate, c.buildTau, c.reliefTau,
-                    c.reliefFloor, scale, c.crossMod);
+                    c.reliefFloor, scale, c.crossMod, c.setpoint, c.settleTau);
             }
         }
         return configs;

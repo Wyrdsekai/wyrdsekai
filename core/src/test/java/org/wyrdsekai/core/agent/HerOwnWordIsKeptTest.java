@@ -90,6 +90,17 @@ class HerOwnWordIsKeptTest {
         assertThat(HerWord.named("Then I'll read the next chapter.", OFFERED, false).tool()).as("a chapter names a book").isEqualTo("read_book");
     }
 
+    /** "Open" a room that exists is to go there; rose built her lab twice and a practice space twice on
+     *  "I'll open the lab room first", then closed the copies (2026-10-08). Only a new room is built. */
+    @Test
+    void opening_a_room_is_going_there_and_only_a_new_one_is_built() {
+        assertThat(tool("I'll open the attention-diffusion-lab room first, then begin the diffusion practice.")).isEqualTo("go_to_room");
+        assertThat(tool("I'll open the lab room and begin with cross-attention's first movement.")).isEqualTo("go_to_room");
+        assertThat(tool("I'll reopen the quiet study and sit with it.")).isEqualTo("go_to_room");
+        assertThat(tool("I'll open a new room for this practice.")).isEqualTo("create_room_from_template");
+        assertThat(tool("I'll build the Garden of Small Things — a quiet room for tending.")).isEqualTo("create_room_from_template");
+    }
+
     @Test
     void a_tool_she_was_not_offered_is_never_guessed_at() {
         var noWorkshop = Set.of("go_to_room", "examine", "workbench");

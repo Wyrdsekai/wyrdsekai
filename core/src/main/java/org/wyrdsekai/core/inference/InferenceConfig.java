@@ -412,6 +412,8 @@ public record InferenceConfig(
             try {
                 var client = manager.start();
                 log.info("llama-server started on port {} for backend '{}'", port, name);
+                // Its window: the server's own word, here if it answers already, else when it comes up.
+                BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(client.getBaseUrl() + "/props", 1500)), "/props");
                 return new InferenceBackend.LlamaServer(name, client, priority, models, manager);
             } catch (IOException e) {
                 log.warn("Failed to start llama-server for '{}': {}", name, e.getMessage());
@@ -429,6 +431,12 @@ public record InferenceConfig(
                 log.info("Backend '{}' discovered models from {}: {}", name, url, effectiveModels);
             }
         }
+        // The window it runs with: the server's own word (/props) when it is up at boot; the
+        // router asks again when it comes up (the household node's brain starts beside the node
+        // and answered nothing here, 2026-10-09). The configured size is NOT a stand-in: on that
+        // node it read 8192 while the brain ran with four times that, and a window believed too
+        // small shrinks prompts that fit.
+        BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(url + "/props", 1500)), "/props");
         return new InferenceBackend.LlamaServer(
                 name, new InferenceClient(url, null, INFERENCE_TIMEOUT,
                     new ApiProvider.OpenAI("llama-server")), priority, effectiveModels, manager);
@@ -801,6 +809,8 @@ public record InferenceConfig(
         }
 
         if (isLlamaServer) {
+            // The window each slot runs with, from the server itself (default_generation_settings.n_ctx).
+            BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(url + "/props", 1500)), "/props");
             log.info("Auto-detected llama-server at {} as '{}' (model: {}, priority: {})",
                 url, name, modelName, priority);
             return Optional.of(new InferenceBackend.LlamaServer(
@@ -893,6 +903,17 @@ public record InferenceConfig(
 
             log.info("Auto-detected Ollama at {} as '{}' with models: {} (priority {})",
                 url, name, models, priority);
+            // The window Ollama runs the model with: a loaded model says so (/api/ps); otherwise a
+            // num_ctx in the model's own parameters (/api/show). Ollama's own default is small
+            // (4,096 on many versions) and the setting our requests carry does not change it.
+            int window = BackendWindows.windowFromOllamaPs(readBody(url + "/api/ps", 1500));
+            String how = "/api/ps";
+            if (window <= 0) {
+                window = BackendWindows.windowFromOllamaShow(
+                    postJson(url + "/api/show", "{\"model\":\"" + models.get(0).replace("\"", "") + "\"}", 1500));
+                how = "/api/show num_ctx";
+            }
+            BackendWindows.learned(name, window, how);
             return Optional.of(new InferenceBackend.Ollama(
                 name, new InferenceClient(url, null, INFERENCE_TIMEOUT,
                     new ApiProvider.OpenAI("ollama")), priority, models));
@@ -903,6 +924,36 @@ public record InferenceConfig(
     }
 
     /** Extract model names from Ollama /api/tags JSON, filtering out embedding models. */
+    /** The body of a GET, or null on any failure; a probe, never a wait. */
+    static String readBody(String url, int timeoutMs) {
+        try {
+            var conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            if (conn.getResponseCode() != 200) return null;
+            return new String(conn.getInputStream().readAllBytes());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** The body of a POST with a JSON body, or null on any failure. */
+    static String postJson(String url, String json, int timeoutMs) {
+        try {
+            var conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.getOutputStream().write(json.getBytes());
+            if (conn.getResponseCode() != 200) return null;
+            return new String(conn.getInputStream().readAllBytes());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private static List<String> discoverOllamaModels(String tagsJson) {
         var models = new ArrayList<String>();
         // Embedding model families to skip

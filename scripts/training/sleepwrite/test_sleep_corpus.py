@@ -89,6 +89,25 @@ assert any("Es tarde y la casa" in r["line"] for r in fresh_u), "an unconfigured
 print("own-time lines in another language are left out of the night; replies in the person's language are kept;"
       " with no household language set nothing is left out for language")
 
+# Since 0.5.6 a row says what language its turn was in: a reply that drifted from it is left out
+# even though it was said to a person, and a reply in the person's language is kept whatever the
+# household speaks (the healer's blind spot listed after 0.5.5).
+os.environ["WYRDSEKAI_LOCALE"] = "en"
+rows_t = [ev(30 - i, f"a quiet thought {i}", 0.5) for i in range(3)]
+rows_t.append(ev(20, "Claro que sí, la biblioteca está junto al jardín.", 0.9, to="sam", heard="¿dónde está la biblioteca?", lang="es"))
+rows_t.append(ev(19, "El estudio se siente bien para esta hora, iré allí con lo que se escribió esta noche.", 0.9, to="sam", heard="where is the study?", lang="en"))
+rows_t.append(ev(18, "The study is through the hall, on the left.", 0.9, to="sam", heard="where is the study?", lang="en"))
+(tmp / "data/agent-activity.jsonl").write_text("\n".join(rows_t) + "\n")
+fresh_t, _ = sw.load_lines(now - timedelta(hours=24))
+lines_t = [r["line"] for r in fresh_t]
+assert any("la biblioteca está junto al jardín" in l for l in lines_t), "a reply in the person's language is kept"
+assert not any("El estudio se siente bien" in l for l in lines_t), "a Spanish reply to an English line is drift, left out"
+assert any("The study is through the hall" in l for l in lines_t)
+os.environ.pop("WYRDSEKAI_LOCALE")
+fresh_t2, _ = sw.load_lines(now - timedelta(hours=24))
+assert not any("El estudio se siente bien" in r["line"] for r in fresh_t2), "the turn's language decides, with or without a household setting"
+print("a row's own turn language decides: a reply that drifted from it is left out, one in the person's language is kept")
+
 # The morning guard tells Spanish from English, both being Latin script.
 import morning_probe as _mp
 assert _mp.check_pass(("script", "en"), "I am well today, thank you for asking. The house is quiet.")

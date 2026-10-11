@@ -1462,5 +1462,11 @@
   "update.usage.siblings": "       wyrd update siblings                  入っている CodeZaiku と ResearchZosho を更新する",
   "update.usage.stage": "       wyrd update stage                     最新版を取得して検証し、自分で入れる",
   "update.usage.file": "       wyrd update <file.deb|.pkg|.msi>      このインストーラをそのまま入れる",
-  "researcher.update.usage": "使い方: wyrd researcher update [--yes]    (司書自身の更新: 最新版を検証して入れ、サービスを再起動)"
+  "researcher.update.usage": "使い方: wyrd researcher update [--yes]    (司書自身の更新: 最新版を検証して入れ、サービスを再起動)",
+  "doctor.room_scripts": "部屋のスクリプト {0} 件が3回失敗したため保留中です。コンパニオンが書き直す(add_script)まで、その部屋はスクリプトなしで動きます",
+  "doctor.ollama_small": "{0} の Ollama: {1} — コンパニオンの完全なターンには 8192 トークンのウィンドウが必要です。Ollama の環境に OLLAMA_CONTEXT_LENGTH=16384 を設定して再起動してください",
+  "doctor.ollama_ok": "{0} の Ollama: {1}",
+  "doctor.ollama_none": "{0} の Ollama: まだモデルが読み込まれていません。読み込まれたらウィンドウを確認します(OLLAMA_CONTEXT_LENGTH を設定しない限り Ollama の既定は 4096 です)",
+  "doctor.ollama_window": "{0} は {1} トークンのウィンドウで動作中",
+  "doctor.ollama_unknown": "不明"
 }

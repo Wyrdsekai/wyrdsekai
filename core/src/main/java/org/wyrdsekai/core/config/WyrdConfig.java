@@ -305,6 +305,16 @@ public final class WyrdConfig {
         catch (RuntimeException e) { return 3; }
     }
 
+    /**
+     * {@code WYRDSEKAI_STEWARD_DIGEST_MINUTES} — her own-time acts reach the steward as one notice per
+     * this many minutes instead of one notice each (58 in a day on the household node, 2026-10-09);
+     * 0 sends each at once, as before. Default 30. The feed file and the Study desk keep every act.
+     */
+    public int stewardDigestMinutes() {
+        try { return Math.max(0, Integer.parseInt(resolve("WYRDSEKAI_STEWARD_DIGEST_MINUTES", "steward.digest_minutes", () -> "30").trim())); }
+        catch (RuntimeException e) { return 30; }
+    }
+
     /** {@code WYRDSEKAI_ITEM_MEND_MINUTES} — minutes a night the workshop may spend mending broken household items; 0 turns it off. Default 45. */
     public int itemMendMinutes() {
         try { return Math.max(0, Integer.parseInt(resolve("WYRDSEKAI_ITEM_MEND_MINUTES", "items.mend_minutes", () -> "45").trim())); }

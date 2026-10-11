@@ -313,6 +313,15 @@ public class TelnetSession implements Runnable {
             if (entityRegistry != null && playerId != null) {
                 entityRegistry.enter(playerId, playerName, "player", currentRoomId);
             }
+            // Notices kept for them while no session of theirs was live, shown at this door now
+            // (the in-world delivery reaches web sessions only). Until 0.5.6 the buffer was
+            // emptied only on a return from travel.
+            var keptNotices = NotificationService.get();
+            if (keptNotices != null && playerId != null && sessionRef != null) {
+                for (var kept : keptNotices.flushBuffered(playerId)) {
+                    sessionRef.tell(new ClientSessionActor.SendMessage(kept));
+                }
+            }
 
             // On-login flush: notify EVERY companion (multi-companion households).
             if (entityRegistry != null && playerId != null && !playerId.startsWith("anon-")) {

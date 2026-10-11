@@ -239,10 +239,35 @@ public class ForgeActor extends ReplicatedEventSourcedBehavior<
             new ForgeEvent.SoulForged(finalManifest.did(), Instant.now(),
                 finalManifest.manifestVersion(), finalManifest.contentHash())
         ).thenRun(newState -> {
-            soulStore.store(finalManifest);
+            var failed = tryStore(finalManifest);
+            if (failed.isPresent()) {
+                cmd.replyTo().tell(new ForgeCommand.ForgeResult.Error(
+                    "the forge could not store the manifest: " + failed.get()));
+                return;
+            }
             cmd.replyTo().tell(new ForgeCommand.ForgeResult.Ok(
                 "Soul forged: " + finalManifest.did() + " v" + finalManifest.manifestVersion()));
         });
+    }
+
+    /**
+     * Stores a manifest without letting a failed insert stop the forge. This actor is one per node
+     * and event-sourced: an exception thrown in one of its side effects stopped it for the rest of
+     * the process, and every sleep after that went unanswered until the next restart (the household
+     * node, 2026-10-02 and 2026-10-11: a version collision on one companion's manifest, both
+     * companions' nights falling back to a direct store). The caller answers the asker with the
+     * reason instead.
+     */
+    private Optional<String> tryStore(SoulManifest manifest) {
+        try {
+            soulStore.store(manifest);
+            return Optional.empty();
+        } catch (RuntimeException e) {
+            var why = e.getMessage() != null ? e.getMessage() : e.toString();
+            if (e.getCause() != null && e.getCause().getMessage() != null) why += " (" + e.getCause().getMessage() + ")";
+            log.warn("Forge could not store {} v{}: {}", manifest.did(), manifest.manifestVersion(), why);
+            return Optional.of(why);
+        }
     }
 
     private Effect<ForgeEvent, ForgeState> onRestore(ForgeState state, ForgeCommand.Restore cmd) {
@@ -353,7 +378,12 @@ public class ForgeActor extends ReplicatedEventSourcedBehavior<
         return Effect().persist(
             new ForgeEvent.SoulForked(cmd.parentDid(), cmd.childDid(), Instant.now())
         ).thenRun(newState -> {
-            soulStore.store(childManifest);
+            var failed = tryStore(childManifest);
+            if (failed.isPresent()) {
+                cmd.replyTo().tell(new ForgeCommand.ForgeResult.Error(
+                    "the forge could not store the child's manifest: " + failed.get()));
+                return;
+            }
             cmd.replyTo().tell(new ForgeCommand.ForgeResult.ManifestResult(childManifest));
         });
     }
@@ -367,7 +397,12 @@ public class ForgeActor extends ReplicatedEventSourcedBehavior<
             new ForgeEvent.SoulBorn(manifest.did(), Instant.now(),
                 manifest.genome() != null ? manifest.genome().name() : "default")
         ).thenRun(newState -> {
-            soulStore.store(manifest);
+            var failed = tryStore(manifest);
+            if (failed.isPresent()) {
+                cmd.replyTo().tell(new ForgeCommand.ForgeResult.Error(
+                    "the forge could not store the newborn's manifest: " + failed.get()));
+                return;
+            }
             cmd.replyTo().tell(new ForgeCommand.ForgeResult.Ok(
                 "Soul born: " + manifest.did()));
         });
@@ -521,7 +556,12 @@ public class ForgeActor extends ReplicatedEventSourcedBehavior<
         if (pendingVariant.isPresent()) {
             var variant = pendingVariant.get();
             var updatedManifest = applyVariantToManifest(currentManifest, variant);
-            soulStore.store(updatedManifest);
+            var failed = tryStore(updatedManifest);
+            if (failed.isPresent()) {
+                cmd.replyTo().tell(new ForgeCommand.ForgeResult.Error(
+                    "the forge could not store the adopted variant: " + failed.get()));
+                return Effect().none();
+            }
         }
 
         return Effect().persist(List.of(

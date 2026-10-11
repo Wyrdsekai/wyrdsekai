@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +49,26 @@ class StewardFeedTest {
         assertThat(lines.get(0)).contains("\"verb\":\"create_room_from_template\"")
             .contains("\"tier\":\"VISIBLE\"").contains("\"outcome\":\"\"");
         assertThat(lines.get(1)).contains("\"outcome\":\"built — sanctuary-1234\"");
+    }
+
+    @Test
+    void a_window_of_her_own_time_is_one_line() {
+        var at = java.time.Instant.parse("2026-10-09T18:00:00Z");
+        var acts = new java.util.ArrayList<StewardFeed.Act>();
+        for (var room : List.of("quiet-alcove", "study", "the-garden", "the-attic", "the-lab", "a-bench", "a-nook", "a-loft", "a-hall", "a-shed", "a-den", "a-cove")) {
+            acts.add(new StewardFeed.Act("close_room", room, null, at));
+        }
+        acts.add(new StewardFeed.Act("go_to_room", "the-lab", null, at));
+        acts.add(new StewardFeed.Act("create_room", "the-attic", "built — the-attic", at));
+        assertThat(StewardFeed.digest("mia", acts, 30)).isEqualTo(
+            "mia, on her own time in the last 30 min: close room ×12 (quiet-alcove, study, the-garden and 9 more); "
+            + "go to room (the-lab); create room (the-attic)");
+        assertThat(StewardFeed.digest("mia", List.of(new StewardFeed.Act("close_room", "study", null, at),
+            new StewardFeed.Act("close_room", "study", null, at)), 30))
+            .as("the same target twice is counted twice and named once")
+            .isEqualTo("mia, on her own time in the last 30 min: close room ×2 (study)");
+        assertThat(StewardFeed.digest(null, List.of(new StewardFeed.Act("tidy", null, null, at)), 5))
+            .isEqualTo("A companion, on her own time in the last 5 min: tidy");
     }
 
     @Test

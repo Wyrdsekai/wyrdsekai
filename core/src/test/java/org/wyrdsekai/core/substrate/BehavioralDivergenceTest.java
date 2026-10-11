@@ -26,7 +26,10 @@ class BehavioralDivergenceTest {
         for (int a = 0; a < archetypes.length; a++) {
             var engine = DriveEngine.forArchetype(AgentArchetype.get(archetypes[a]));
             var d = drives;
-            for (int t = 0; t < 300; t++) { // 5 minutes
+            // An hour (was five minutes): the satiable drives settle toward their points over hours
+            // since 2026-10-10, so two temperaments that differ only on care and vigilance (guardian,
+            // steward) are a thousandth apart at five minutes and a hundredth at an hour.
+            for (int t = 0; t < 3600; t++) {
                 d = engine.tick(d, tanks, 1.0);
             }
             finalStates[a] = d.toArray();

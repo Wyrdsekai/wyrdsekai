@@ -2381,8 +2381,19 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                     ? cmd.script()
                     : existing + "\n\n" + cmd.script();
             }
+            // A script that does not parse would fail on every hook from now on: it is refused
+            // here with the reason, and the room keeps the script it had (2026-10-09).
+            var problem = org.wyrdsekai.scripting.sandbox.ItemScriptExecutor.parseProblem(scriptToWrite);
+            if (problem != null) {
+                log.warn("Behavior script for room '{}' by '{}' refused: it does not parse ({})",
+                    roomId, cmd.requesterId(), problem);
+                cmd.replyTo().tell(new RoomResponse.Rejected("script_parse_failed",
+                    "The script does not parse: " + problem));
+                return Effect().none();
+            }
             Files.writeString(userDir.resolve(roomId + ".js"), scriptToWrite);
             scriptLoader.invalidate(roomId);
+            BrokenRoomScripts.rewritten(roomId, userDir);
 
             log.info("Behavior script {} for room '{}' by '{}' ({} bytes)",
                 cmd.append() ? "appended" : "set",

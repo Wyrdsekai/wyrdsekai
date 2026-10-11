@@ -85,10 +85,11 @@ class CompanionActorInnerMonologueWiringTest {
             .contains("SoulFragment.fromEpisodicScene(");
 
         assertThat(body)
-            .as("must dual-write via soulStore.store() — same path as substrate/recipe Forge")
+            .as("must dual-write through the one door (storeManifest, which numbers past the "
+                + "store's head and calls soulStore.store) — same path as substrate/recipe Forge")
             .contains("cachedManifest.withFragments(")
             .contains("bumpedVersion()")
-            .contains("soulStore.store(cachedManifest)");
+            .contains("cachedManifest = storeManifest(cachedManifest)");
 
         assertThat(body)
             .as("race-tight idempotency re-check after the await (in case two scene-closes "

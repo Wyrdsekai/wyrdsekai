@@ -117,7 +117,7 @@ public final class ApiPolicy {
             "POST /api/body/forget", "POST /api/body/door", "GET /api/body/hooks",
             "POST /api/body/hooks/arm", "POST /api/body/hooks/replay",
             "GET /api/vault", "POST /api/vault/snapshot", "POST /api/vault/drill", "POST /api/vault/prune",
-            "GET /api/items/broken", "POST /api/items/repair",
+            "GET /api/items/broken", "POST /api/items/repair", "POST /api/rooms/script/repair",
             "POST /api/rooms/prune", "DELETE /api/rooms/{roomId}",
             "GET /api/rooms/made", "GET /api/rooms/archive", "POST /api/rooms/{roomId}/close", "POST /api/rooms/{roomId}/open",
             "GET /api/items/made", "POST /api/items/made/out", "POST /api/rooms/tidy", "POST /api/rooms/{roomId}/keep",

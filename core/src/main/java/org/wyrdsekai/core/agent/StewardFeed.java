@@ -159,6 +159,44 @@ public final class StewardFeed {
         }
     }
 
+    /** One act of hers, held for the digest. */
+    public record Act(String verb, String target, String outcome, java.time.Instant at) {}
+
+    /** The most acts a digest holds; beyond it the oldest are counted, not named. */
+    public static final int DIGEST_MAX = 200;
+
+    /**
+     * One line for a window of her own-time acts: each verb once with its count and up to three
+     * of its targets. "mia, on her own time in the last 30 min: close room ×12 (quiet-alcove,
+     * study, the-garden and 9 more); go to room (the-lab)".
+     */
+    public static String digest(String companionName, java.util.List<Act> acts, int minutes) {
+        var sb = new StringBuilder();
+        sb.append(companionName == null ? "A companion" : companionName)
+          .append(", on her own time in the last ").append(minutes).append(" min: ");
+        var byVerb = new java.util.LinkedHashMap<String, java.util.List<String>>();
+        for (var a : acts) {
+            var verb = a.verb() == null ? "?" : a.verb().replace('_', ' ');
+            var targets = byVerb.computeIfAbsent(verb, k -> new java.util.ArrayList<>());
+            targets.add(a.target() == null ? "" : a.target().strip());
+        }
+        boolean first = true;
+        for (var e : byVerb.entrySet()) {
+            if (!first) sb.append("; ");
+            first = false;
+            var targets = e.getValue();
+            sb.append(e.getKey());
+            if (targets.size() > 1) sb.append(" ×").append(targets.size());
+            var named = targets.stream().filter(t -> !t.isBlank()).distinct().toList();
+            if (!named.isEmpty()) {
+                sb.append(" (").append(String.join(", ", named.subList(0, Math.min(3, named.size()))));
+                if (named.size() > 3) sb.append(" and ").append(named.size() - 3).append(" more");
+                sb.append(")");
+            }
+        }
+        return sb.toString();
+    }
+
     /** The human line the desk note and the CLI show. */
     public static String describe(String companionName, String verb, String target, String outcome) {
         var sb = new StringBuilder();

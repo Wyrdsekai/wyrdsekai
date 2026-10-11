@@ -51,22 +51,23 @@ class CompanionActorRecipeEnrollmentWiringTest {
     @Test
     void provisionForCompanion_call_lives_after_soulStore_store() throws Exception {
         // Order matters: the provisioner reads the canonical DID, which only
-        // exists after soulStore.store(birthManifest) lands the row. If a
+        // exists after the birth manifest is stored (storeManifest(birthManifest),
+        // the one door every write of her manifest goes through). If a
         // refactor moves the call above the store, idempotency still holds
         // (the registry will no-op when DID is null/blank — see the unit
         // test provisionForCompanion_blank_did_returns_zero) but the wire
         // is wrong on intent. Catch it.
         var src = sourceText();
-        int storeIdx = src.indexOf("soulStore.store(birthManifest)");
+        int storeIdx = src.indexOf("storeManifest(birthManifest)");
         int provisionIdx = src.indexOf(".provisionForCompanion(");
         assertThat(storeIdx)
-            .as("expected soulStore.store(birthManifest) call site to be present")
+            .as("expected the storeManifest(birthManifest) call site to be present")
             .isGreaterThan(0);
         assertThat(provisionIdx)
             .as("expected provisionForCompanion call site to be present")
             .isGreaterThan(0);
         assertThat(provisionIdx)
-            .as("provisionForCompanion must come AFTER soulStore.store(birthManifest) "
+            .as("provisionForCompanion must come AFTER storeManifest(birthManifest) "
                 + "in CompanionActor source — the DID is only canonical after store")
             .isGreaterThan(storeIdx);
     }

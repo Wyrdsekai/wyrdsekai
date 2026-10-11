@@ -38,10 +38,28 @@ public record MemoryNode(
     @JsonProperty("primaryEmotion") String primaryEmotion,
     @JsonProperty("lastAccessed") Instant lastAccessed,
     @JsonProperty("accessCount") int accessCount,
-    @JsonProperty("originLocale") String originLocale
+    @JsonProperty("originLocale") String originLocale,
+    /** The language she spoke this line in, for her own lines ("I said: …"): the language of the
+     *  turn, so a reply in the person's language is not read as drift from the household's. Null
+     *  on nodes written before 0.5.6 and on what others said. */
+    @JsonProperty("spokenIn") String spokenIn
 ) {
     @JsonCreator
     public MemoryNode {}
+
+    /** A node with no record of the language it was spoken in (every caller before 0.5.6). */
+    public MemoryNode(String id, String content, List<String> keywords, float importance,
+                      float impressionDepth, boolean formative, String primaryEmotion,
+                      Instant lastAccessed, int accessCount, String originLocale) {
+        this(id, content, keywords, importance, impressionDepth, formative, primaryEmotion,
+            lastAccessed, accessCount, originLocale, null);
+    }
+
+    /** The same node, with the language it was spoken in. */
+    public MemoryNode withSpokenIn(String lang) {
+        return new MemoryNode(id, content, keywords, importance, impressionDepth, formative,
+            primaryEmotion, lastAccessed, accessCount, originLocale, lang);
+    }
 
     /** Create a neutral memory with no emotional charge (defaults to "en" locale). */
     public static MemoryNode neutral(String id, String content, List<String> keywords) {
@@ -77,13 +95,13 @@ public record MemoryNode(
         float effectiveDecay = decayRate * (1.0f - impressionDepth * 0.8f);
         float newImportance = Math.max(0.0f, importance - effectiveDecay);
         return new MemoryNode(id, content, keywords, newImportance, impressionDepth,
-            false, primaryEmotion, lastAccessed, accessCount, originLocale);
+            false, primaryEmotion, lastAccessed, accessCount, originLocale, spokenIn);
     }
 
     /** Reinforce by access. */
     public MemoryNode accessed() {
         float boosted = Math.min(1.0f, importance + 0.1f);
         return new MemoryNode(id, content, keywords, boosted, impressionDepth,
-            formative, primaryEmotion, Instant.now(), accessCount + 1, originLocale);
+            formative, primaryEmotion, Instant.now(), accessCount + 1, originLocale, spokenIn);
     }
 }

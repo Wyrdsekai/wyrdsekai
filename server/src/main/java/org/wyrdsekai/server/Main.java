@@ -11,7 +11,9 @@ import io.nats.client.Options;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.Props;
+import org.apache.pekko.actor.typed.SupervisorStrategy;
 import org.apache.pekko.actor.typed.javadsl.AskPattern;
+import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.persistence.typed.ReplicaId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -2271,8 +2273,15 @@ public class Main {
         log.info("WorldDnaHarvester spawned");
 
         // Soul system: ForgeActor (SoulStore created earlier for Between)
+        // One forge per node, event-sourced: an exception in one of its side effects stops it for
+        // the rest of the process and every sleep after that goes unanswered (the household node,
+        // 2026-10-02 and 2026-10-11). The forge now answers a failed store instead of throwing, and
+        // if it ever fails some other way it is restarted, with backoff, rather than left dead.
         var forgeActor = system.<ForgeCommand>systemActorOf(
-            ForgeActor.create(soulStore), "forge-actor", Props.empty());
+            Behaviors.supervise(ForgeActor.create(soulStore))
+                .onFailure(SupervisorStrategy.restartWithBackoff(
+                    Duration.ofSeconds(1), Duration.ofSeconds(30), 0.2)),
+            "forge-actor", Props.empty());
         log.info("ForgeActor spawned");
 
         // Spawn InferenceRouter with ResourceMeter + ComputeUnitNormalizer

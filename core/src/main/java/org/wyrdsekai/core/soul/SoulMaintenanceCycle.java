@@ -574,7 +574,7 @@ public final class SoulMaintenanceCycle {
                         Math.max(merged.impressionDepth(), absorbed.impressionDepth()),
                         merged.formative(), merged.primaryEmotion(),
                         merged.lastAccessed(), merged.accessCount() + absorbed.accessCount(),
-                        merged.originLocale());
+                        merged.originLocale(), merged.spokenIn());
                     consumed[j] = true;
                 }
             }
