@@ -22,6 +22,8 @@ public sealed interface InferenceBackend
     InferenceClient client();  // may be null for ClaudeCli
     int priority();
     List<String> models();
+    /** The same backend with the models it turned out to serve (asked after boot). */
+    InferenceBackend withModels(List<String> models);
     CompletableFuture<Boolean> healthCheck();
 
     /** Perform a chat completion. Default delegates to client(). */
@@ -82,6 +84,7 @@ public sealed interface InferenceBackend
                         List<String> models,
                         LlamaServerManager manager) implements InferenceBackend {
         @Override public String type() { return "llama-server"; }
+        @Override public LlamaServer withModels(List<String> m) { return new LlamaServer(name, client, priority, m, manager); }
         @Override public CompletableFuture<Boolean> healthCheck() {
             return client.healthCheck("/health");
         }
@@ -91,6 +94,7 @@ public sealed interface InferenceBackend
     record Ollama(String name, InferenceClient client, int priority,
                    List<String> models) implements InferenceBackend {
         @Override public String type() { return "ollama"; }
+        @Override public Ollama withModels(List<String> m) { return new Ollama(name, client, priority, m); }
         @Override public CompletableFuture<Boolean> healthCheck() {
             return client.healthCheck("/api/tags");
         }
@@ -100,6 +104,7 @@ public sealed interface InferenceBackend
     record VLLM(String name, InferenceClient client, int priority,
                  List<String> models) implements InferenceBackend {
         @Override public String type() { return "vllm"; }
+        @Override public VLLM withModels(List<String> m) { return new VLLM(name, client, priority, m); }
         @Override public CompletableFuture<Boolean> healthCheck() {
             return client.healthCheck("/health");
         }
@@ -109,6 +114,7 @@ public sealed interface InferenceBackend
     record SGLang(String name, InferenceClient client, int priority,
                    List<String> models) implements InferenceBackend {
         @Override public String type() { return "sglang"; }
+        @Override public SGLang withModels(List<String> m) { return new SGLang(name, client, priority, m); }
         @Override public CompletableFuture<Boolean> healthCheck() {
             return client.healthCheck("/health");
         }
@@ -132,6 +138,7 @@ public sealed interface InferenceBackend
     record Mlx(String name, InferenceClient client, int priority,
                 List<String> models, String displayUrl) implements InferenceBackend {
         @Override public String type() { return "mlx"; }
+        @Override public Mlx withModels(List<String> m) { return new Mlx(name, client, priority, m, displayUrl); }
         @Override public String url() {
             return displayUrl != null && !displayUrl.isBlank()
                 ? displayUrl
@@ -177,6 +184,7 @@ public sealed interface InferenceBackend
     record Cloud(String name, InferenceClient client, int priority,
                   List<String> models) implements InferenceBackend {
         @Override public String type() { return "cloud"; }
+        @Override public Cloud withModels(List<String> m) { return new Cloud(name, client, priority, m); }
         @Override public CompletableFuture<Boolean> healthCheck() {
             var path = client.getProvider().healthPath();
             if (path == null) return CompletableFuture.completedFuture(true);
@@ -197,6 +205,7 @@ public sealed interface InferenceBackend
                        RemoteCaller caller)
             implements InferenceBackend {
         @Override public String type() { return "nats-remote"; }
+        @Override public NatsRemote withModels(List<String> m) { return new NatsRemote(name, priority, m, targetZone, sourceZone, caller); }
         @Override public InferenceClient client() { return null; }
         @Override public String url() { return "nats://" + targetZone; }
         /**
@@ -243,6 +252,7 @@ public sealed interface InferenceBackend
     record ClaudeCli(String name, ClaudeCliInference cli, int priority,
                       List<String> models) implements InferenceBackend {
         @Override public String type() { return "claude-cli"; }
+        @Override public ClaudeCli withModels(List<String> m) { return new ClaudeCli(name, cli, priority, m); }
         @Override public InferenceClient client() { return null; }
         @Override public String url() { return "claude-cli://oauth"; }
         @Override public CompletableFuture<Boolean> healthCheck() {

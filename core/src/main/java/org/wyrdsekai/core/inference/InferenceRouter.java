@@ -987,6 +987,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 .onMessage(ListBackends.class, this::onListBackends)
                 .onMessage(InferResult.class, this::onInferResult)
                 .onMessage(InferFailure.class, this::onInferFailure)
+                .onMessage(ModelsDiscovered.class, this::onModelsDiscovered)
                 .onMessage(HouseholdDeclined.class, this::onHouseholdDeclined)
                 .onMessage(RetryAfterLoading.class, this::onRetryAfterLoading)
                 .onMessage(HealthCheckTick.class, this::onHealthCheckTick)
@@ -2061,6 +2062,16 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     }
 
     /**
+     * Whether a prompt our estimate sizes at {@code needed} tokens goes out whole to a backend
+     * with this window. Our count is four characters a token and undercounts: a prompt it put
+     * under 8,192 was 8,271 to the server, was refused, and the turn timed out on the retry
+     * (household node, 2026-10-19). So it fits only with the margin to spare.
+     */
+    static boolean fitsWindow(int needed, int window) {
+        return window <= 0 || needed <= window - ctxSafetyMargin(window);
+    }
+
+    /**
      * llama.cpp also reports the size of the request that overflowed:
      * {@code request (16869 tokens) exceeds ...}. Returns 0 when absent.
      */
@@ -2198,7 +2209,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         int window = BackendWindows.of(backend.name());
         int needed = window > 0 ? promptTokensLenient(chatReq) : 0;
         InferenceClient.ChatRequest fitted = null;
-        if (window > 0 && needed > window) {
+        if (!fitsWindow(needed, window)) {
             fitted = compactToFit(chatReq, window, 0, 1);
             if (fitted != null) {
                 log.info("Prompt of ~{} tokens shrunk to the {}-token window of '{}' before sending {}",
@@ -2268,6 +2279,42 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
             if (backend != null) Thread.ofVirtual().name("window-" + result.backendName()).start(() -> learnWindow(backend));
         }
         if (!result.healthy()) windowAsks.remove(result.backendName());
+        // A backend that listed no models at boot is asked what it serves once it is up, so its
+        // lanes are registered: a GPU box that was down at boot stayed "models: []" and the whole
+        // household ran on the local voice until the next restart (2026-10-19).
+        if (result.healthy() && capabilityRegistry != null) {
+            var b = findBackendByName(result.backendName());
+            if (b != null && b.models().isEmpty() && (b instanceof InferenceBackend.Ollama || b instanceof InferenceBackend.LlamaServer)
+                    && modelAsks.merge(b.name(), 1, Integer::sum) <= WINDOW_ASKS) {
+                var self = getContext().getSelf();
+                Thread.ofVirtual().name("models-" + b.name()).start(() -> {
+                    var models = InferenceConfig.modelsServedBy(b);
+                    if (!models.isEmpty()) self.tell(new ModelsDiscovered(b.name(), models));
+                });
+            }
+        }
+        return this;
+    }
+
+    /** How many times a backend with no model list was asked what it serves since it came up. */
+    private final java.util.Map<String, Integer> modelAsks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** A backend said what it serves, after boot. */
+    private record ModelsDiscovered(String backendName, List<String> models) implements Command {}
+
+    private Behavior<Command> onModelsDiscovered(ModelsDiscovered d) {
+        for (int i = 0; i < backends.size(); i++) {
+            var b = backends.get(i);
+            if (!b.name().equals(d.backendName()) || !b.models().isEmpty()) continue;
+            var known = b.withModels(d.models());
+            backends.set(i, known);
+            if (capabilityRegistry != null) {
+                capabilityRegistry.registerBackend(known, d.models(), CapabilityRegistry.largestLocalModelSize(backends));
+                capabilityRegistry.rankDefaultLane(backends);
+                capabilityRegistry.ensureReasoning(backends);
+            }
+            log.info("Backend '{}' says it serves {} — its lanes are registered", b.name(), d.models());
+        }
         return this;
     }
 

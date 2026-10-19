@@ -310,7 +310,25 @@ public final class NodeCapabilities {
      * decide whether to prefer borrowing a household peer's GPU (a CPU-only node
      * borrows; a GPU node stays local-first).
      */
+    /** A GPU does not come and go while the node runs; the answer is kept this long. */
+    static final long GPU_CACHE_MS = 300_000;
+    private static volatile Boolean hostGpuCached;
+    private static volatile long hostGpuAt;
+    /** How many times the host was actually asked (tests). */
+    static final java.util.concurrent.atomic.AtomicInteger hostGpuProbes = new java.util.concurrent.atomic.AtomicInteger();
+
     public static boolean hostHasGpu() {
+        long now = System.currentTimeMillis();
+        var cached = hostGpuCached;
+        if (cached != null && now - hostGpuAt < GPU_CACHE_MS) return cached;
+        boolean has = probeHostGpu();
+        hostGpuCached = has;
+        hostGpuAt = now;
+        hostGpuProbes.incrementAndGet();
+        return has;
+    }
+
+    private static boolean probeHostGpu() {
         // NVIDIA
         try {
             var proc = new ProcessBuilder("nvidia-smi", "--query-gpu=name",
@@ -322,8 +340,42 @@ public final class NodeCapabilities {
         var os = System.getProperty("os.name", "").toLowerCase();
         var arch = System.getProperty("os.arch", "").toLowerCase();
         if (os.contains("mac") && (arch.equals("aarch64") || arch.equals("arm64"))) return true;
+        // An AMD GPU with memory set aside for it (the Ryzen AI MAX class): the kernel says so.
+        if (amdGpuWithMemory(Path.of("/sys/class/drm"))) return true;
         // Explicit config override (env > profile.toml)
         return WyrdConfig.get().gpuName() != null;
+    }
+
+    /** An AMD GPU counts when the BIOS set aside this much for it. */
+    static final long AMD_GPU_MIN_BYTES = 8L << 30;
+
+    /**
+     * Whether the kernel lists an AMD GPU with at least {@link #AMD_GPU_MIN_BYTES} of its own
+     * memory under the given drm tree. A household's Ryzen AI MAX+ 395 advertised itself as a
+     * CPU-only host for five weeks because only nvidia-smi was asked (2026-10-19).
+     */
+    static boolean amdGpuWithMemory(Path drm) {
+        try {
+            if (!Files.isDirectory(drm)) return false;
+            try (var cards = Files.list(drm)) {
+                for (var card : (Iterable<Path>) cards::iterator) {
+                    if (!card.getFileName().toString().startsWith("card")) continue;
+                    var dev = card.resolve("device");
+                    var vendor = dev.resolve("vendor");
+                    var vram = dev.resolve("mem_info_vram_total");
+                    if (!Files.isReadable(vendor) || !Files.isReadable(vram)) continue;
+                    if (!"0x1002".equals(Files.readString(vendor).strip())) continue;
+                    try {
+                        if (Long.parseLong(Files.readString(vram).strip()) >= AMD_GPU_MIN_BYTES) return true;
+                    } catch (NumberFormatException ignored) {
+                        // this card does not say
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // the host does not say
+        }
+        return false;
     }
 
     private boolean detectInternet() {
@@ -344,7 +396,23 @@ public final class NodeCapabilities {
         return 0;
     }
 
+    /** The battery reading is kept this long: the heartbeat asks every ten seconds. */
+    static final long BATTERY_CACHE_MS = 60_000;
+    private volatile int batteryCached = Integer.MIN_VALUE;
+    private volatile long batteryReadAt;
+    /** How many times the battery was actually read (tests). */
+    static final java.util.concurrent.atomic.AtomicInteger batteryReads = new java.util.concurrent.atomic.AtomicInteger();
+
     private int detectBattery() {
+        long now = System.currentTimeMillis();
+        if (batteryCached != Integer.MIN_VALUE && now - batteryReadAt < BATTERY_CACHE_MS) return batteryCached;
+        batteryCached = readBattery();
+        batteryReadAt = now;
+        batteryReads.incrementAndGet();
+        return batteryCached;
+    }
+
+    private static int readBattery() {
         // Linux: /sys/class/power_supply/BAT0/capacity
         try {
             var batPath = Path.of("/sys/class/power_supply/BAT0/capacity");
@@ -352,15 +420,18 @@ public final class NodeCapabilities {
                 return Integer.parseInt(Files.readString(batPath).trim());
             }
         } catch (Exception ignored) {}
-        // macOS: pmset -g batt
-        try {
-            var proc = new ProcessBuilder("pmset", "-g", "batt").start();
-            var output = new String(proc.getInputStream().readAllBytes());
-            if (proc.waitFor() == 0) {
-                var matcher = Pattern.compile("(\\d+)%").matcher(output);
-                if (matcher.find()) return Integer.parseInt(matcher.group(1));
-            }
-        } catch (Exception ignored) {}
+        // macOS: pmset -g batt. Only there: on a Linux box this spawned a process that could
+        // not exist every ten seconds, for weeks (a household's journal, 2026-10-19).
+        if (System.getProperty("os.name", "").toLowerCase().contains("mac")) {
+            try {
+                var proc = new ProcessBuilder("pmset", "-g", "batt").start();
+                var output = new String(proc.getInputStream().readAllBytes());
+                if (proc.waitFor() == 0) {
+                    var matcher = Pattern.compile("(\\d+)%").matcher(output);
+                    if (matcher.find()) return Integer.parseInt(matcher.group(1));
+                }
+            } catch (Exception ignored) {}
+        }
         return -1; // plugged in / no battery
     }
 }

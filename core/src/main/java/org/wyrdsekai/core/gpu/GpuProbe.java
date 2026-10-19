@@ -50,7 +50,23 @@ public final class GpuProbe {
      * Detect all available GPUs. Tries NVIDIA first, then AMD ROCm, then Apple Silicon.
      * Returns empty list if no GPUs are detected.
      */
+    /** "No GPU here" is remembered this long; a found GPU is asked again each time (its free memory moves). */
+    static final long NONE_CACHE_MS = 300_000;
+    private static volatile long noneSeenAt;
+    /** How many times the tools were actually run (tests). */
+    static final java.util.concurrent.atomic.AtomicInteger probes = new java.util.concurrent.atomic.AtomicInteger();
+
     public static List<GpuInfo> detect() {
+        long now = System.currentTimeMillis();
+        if (noneSeenAt > 0 && now - noneSeenAt < NONE_CACHE_MS) return List.of();
+        var found = detectNow();
+        noneSeenAt = found.isEmpty() ? now : 0;
+        return found;
+    }
+
+    /** The tools, run now. Three of them, each a process that may not exist on this host. */
+    static List<GpuInfo> detectNow() {
+        probes.incrementAndGet();
         // Try NVIDIA first
         var nvidiaGpus = detectNvidia();
         if (!nvidiaGpus.isEmpty()) return nvidiaGpus;

@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.LongNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.wyrdsekai.common.util.Json;
 
@@ -59,6 +61,17 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
         @Override
         public String name() { return "openai"; }
 
+        /**
+         * {@code OLLAMA_KEEP_ALIVE} the way Ollama parses it: a whole number goes as a number (seconds,
+         * negative = loaded for good), anything else as a duration string; unset means loaded for good.
+         */
+        static JsonNode keepAlive(String raw) {
+            var s = raw == null ? "" : raw.strip();
+            if (s.isEmpty()) return LongNode.valueOf(-1);
+            if (s.matches("-?\\d+")) return LongNode.valueOf(Long.parseLong(s));
+            return TextNode.valueOf(s);
+        }
+
         /** The models Ollama lets us switch thinking off with {@code reasoning_effort: "none"}: Qwen's. */
         static boolean takesReasoningEffortNone(String model) {
             if (model == null) return false;
@@ -77,8 +90,11 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
 
                     // --- Ollama-specific params (ignored by SGLang/vLLM/OpenAI) ---
                     if (isOllama) {
-                        // Pin model in GPU memory between inference calls.
-                        obj.put("keep_alive", System.getenv().getOrDefault("OLLAMA_KEEP_ALIVE", "-1"));
+                        // Keep the model loaded between calls. Ollama reads keep_alive as a NUMBER
+                        // (seconds; negative = loaded for good) or a duration STRING ("10m"). The string
+                        // "-1" is neither: current Ollama answers 400 `time: missing unit in duration
+                        // "-1"`, and a household's GPU box refused every request for two weeks (2026-10-04).
+                        obj.set("keep_alive", keepAlive(System.getenv("OLLAMA_KEEP_ALIVE")));
                         // Disable thinking for Qwen3.x (Ollama uses reasoning_effort). Only for the
                         // models that take "none": gpt-oss on Ollama takes low, medium or high and
                         // answers 400 to "none", and every full turn then fell back to the small

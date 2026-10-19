@@ -4744,6 +4744,11 @@ public class Main {
                     "buildTimestamp", v.buildTimestamp().toString(),
                     "wireProtocol", v.wireProtocol(),
                     "federationSchema", v.federationSchema(),
+                    // The Java this process runs on. A host's unattended upgrade replaced the JDK under
+                    // a running node; every helper it started printed a four-line warning for two
+                    // weeks and nothing said why (a household's journal, 2026-10-19). The doctor
+                    // compares this with what is installed.
+                    "javaRuntime", System.getProperty("java.runtime.version", ""),
                     "zoneId", zoneId));
             });
             if (federationServiceRef != null) {

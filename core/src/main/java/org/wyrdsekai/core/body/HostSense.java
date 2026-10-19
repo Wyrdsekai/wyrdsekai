@@ -20,7 +20,18 @@ public final class HostSense {
 
     /** One reading. Negative means "the host does not say". */
     public record Reading(double memoryStallPct10, double heapPct, double diskFreePct,
-                          double load1, int cpus, long diskFreeBytes) {
+                          double load1, int cpus, long diskFreeBytes, double hottestC) {
+        /** A reading with no temperature (the host does not say). */
+        public Reading(double memoryStallPct10, double heapPct, double diskFreePct,
+                       double load1, int cpus, long diskFreeBytes) {
+            this(memoryStallPct10, heapPct, diskFreePct, load1, cpus, diskFreeBytes, -1);
+        }
+        /** The one-minute load as a share of the cores; negative when the host does not say. */
+        public double loadPerCore() { return load1 < 0 || cpus <= 0 ? -1 : load1 / cpus; }
+        /** The processor is spoken for: more runnable work than cores for the last minute. */
+        public boolean pinned() { return loadPerCore() >= 0.9; }
+        /** A thermal zone reads at or past 90 °C. */
+        public boolean hot() { return hottestC >= 90.0; }
 
         public boolean memoryPressure() { return memoryStallPct10 >= 10.0 || heapPct >= 90.0; }
         public boolean diskTight() { return diskFreePct >= 0 && diskFreePct < 10.0; }
@@ -33,6 +44,7 @@ public final class HostSense {
             if (memoryStallPct10 >= 0) sb.append(String.format(Locale.ROOT, ", memory stall %.1f%%", memoryStallPct10));
             if (diskFreePct >= 0) sb.append(String.format(Locale.ROOT, ", disk free %.0f%% (%.1f GB)", diskFreePct, diskFreeBytes / 1e9));
             if (load1 >= 0) sb.append(String.format(Locale.ROOT, ", load %.2f/%d", load1, cpus));
+            if (hottestC >= 0) sb.append(String.format(Locale.ROOT, ", hottest zone %.0f °C", hottestC));
             return sb.toString();
         }
     }
@@ -86,7 +98,39 @@ public final class HostSense {
         } catch (RuntimeException ignored) {
             // not on this host
         }
-        return new Reading(stall, heapPct, diskFree, load, rt.availableProcessors(), diskBytes);
+        return new Reading(stall, heapPct, diskFree, load, rt.availableProcessors(), diskBytes, readHottestZoneC());
+    }
+
+    /**
+     * The hottest thermal zone the kernel reports, in °C; -1 when there is none. A household
+     * box ran its companions' model on the processor until the chip's own thermal limit reset
+     * it (2026-10-05); the reading is what lets her own time slow before that.
+     */
+    static double readHottestZoneC() {
+        return readHottestZoneC(Path.of("/sys/class/thermal"));
+    }
+
+    public static double readHottestZoneC(Path thermal) {
+        double hottest = -1;
+        try {
+            if (!Files.isDirectory(thermal)) return -1;
+            try (var zones = Files.list(thermal)) {
+                for (var zone : (Iterable<Path>) zones::iterator) {
+                    if (!zone.getFileName().toString().startsWith("thermal_zone")) continue;
+                    var temp = zone.resolve("temp");
+                    if (!Files.isReadable(temp)) continue;
+                    try {
+                        double c = Double.parseDouble(Files.readString(temp).strip()) / 1000.0;
+                        if (c > 0 && c < 150 && c > hottest) hottest = c;   // -273 and 0 are "not wired"
+                    } catch (IOException | RuntimeException ignored) {
+                        // this zone does not say
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // the host does not say
+        }
+        return hottest;
     }
 
     /** Linux PSI: {@code some avg10=…} in /proc/pressure/memory, as a percentage of time stalled. */

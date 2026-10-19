@@ -4,6 +4,57 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.7] — 2026-10-19
+
+### Added
+
+- **The large model runs on AMD and Intel graphics.** Until now the single large model needed an
+  NVIDIA card or a Mac. It now also runs on an AMD graphics unit that has memory set aside for it
+  in the BIOS, such as a Ryzen AI MAX computer, and on an Intel graphics unit in a computer with 48
+  GB of memory, through Vulkan. `wyrd brain plan` shows what the unit has and where the model will
+  sit; `wyrd brain setup` and `wyrd brain enable` work as on an NVIDIA card. Nightly learning on the
+  large model stays off on these units for now. One household ran its companions on the processor
+  for five weeks with a capable graphics unit idle beside them, because Wyrdsekai only looked for
+  NVIDIA.
+- **`wyrd report` writes a report file for the authors.** When something is wrong, one command
+  collects what we need to read: the node's logs, its services and settings with every token,
+  password and key blanked, versions, hardware, and the doctor's lines. It never includes the
+  companions' souls, memories or world. You read the file, then decide whether to send it.
+- **`wyrd doctor` says when a companion model runs on the processor** and how busy the processor
+  has been, and **when the computer's Java was updated under the running node**, which makes the
+  node print a warning for every helper it starts until it is restarted.
+
+### Changed
+
+- **The bigger model gets the bigger turns.** When a household has a small model on this computer
+  and a larger one on another machine, Wyrdsekai now asks each server which models it serves, puts
+  the larger one on the full turns and the smaller one on the quick ones, and gives the server named
+  by `WYRDSEKAI_INFERENCE_URL` first place. Before, a server listed without a model name was taken
+  for the default for everything, and one household's 4B voice model on the processor answered
+  every turn for five weeks while a 20B model on the GPU box sat idle. A server that is down when
+  the node starts is asked again when it comes up.
+- **A companion's own time slows on a hot or overloaded computer.** When the processor has had more
+  work than cores for a minute, or a temperature sensor reads 90 °C or more, her own-time turns
+  come half as often, a quarter as often with both. Her own time never stops. A household computer
+  with no graphics unit ran its companions' own time on the processor until its thermal limit reset
+  it in the night.
+- **Long prompts are shortened with room to spare.** Wyrdsekai's count of a prompt's length runs a
+  little short of the model's own count. A prompt that seemed to fit was refused once, shortened,
+  and then timed out on the retry. Prompts are now shortened before that can happen.
+- **The node no longer starts helper programs every ten seconds.** A check for a battery ran a Mac
+  tool on Linux ten seconds apart, and the graphics card was looked up again each time it was asked
+  about. The answers are now kept.
+
+### Fixed
+
+- **Every request to a current Ollama failed.** Wyrdsekai asked Ollama to keep the model loaded
+  with a setting written in a form that newer Ollama versions refuse. Each request got an error back
+  and the turn fell to another server, or failed. One household's GPU box answered nothing for two
+  weeks. The setting is now sent the way Ollama reads it. `OLLAMA_KEEP_ALIVE` still changes it.
+- **`wyrd doctor` no longer stops at its first warning.** On Linux and Mac, a check that found
+  something to warn about ended the doctor there, with no summary line; on one Mac it stopped
+  after a single set-aside room script. Every check now reports and the doctor runs to its end.
+
 ## [0.5.6] — 2026-10-11
 
 ### Added

@@ -1164,19 +1164,80 @@ plan_brain_residency() {
     else echo $(( BRAIN_LAYERS - on_gpu )); fi
 }
 
-_brain_vram_mb() {   # the largest single card: the brain runs on one
+# ── Which GPU the brain runs on ─────────────────────────────────────────────────────────────
+# nvidia (CUDA) when nvidia-smi answers; amd (Vulkan) when the kernel lists an AMD device with
+# memory set aside for it under /sys/class/drm; intel (Vulkan, the system's memory) for an Intel
+# render device; metal on a Mac; none otherwise. WYRDSEKAI_BRAIN_BACKEND=cuda|vulkan picks the
+# path on a host with both (the build box has an Intel iGPU beside its NVIDIA card). A
+# household's Ryzen AI MAX+ 395 ran its companions on the CPU for five weeks because only NVIDIA
+# was looked for (2026-10-19). WYRD_SYS_DRM points the readers at a stand-in tree (tests).
+_drm_gpu_kind() {   # amd | intel | none
+    local drm="${WYRD_SYS_DRM:-/sys/class/drm}" d
+    [[ -d "$drm" ]] || { echo none; return 0; }
+    [[ -n "$(_amd_card_dir)" ]] && { echo amd; return 0; }
+    for d in "$drm"/card*/device; do
+        [[ -r "$d/vendor" && "$(tr -d '[:space:]' < "$d/vendor")" == "0x8086" ]] && { echo intel; return 0; }
+    done
+    echo none
+}
+_brain_gpu_kind() {   # nvidia | amd | intel | metal | none
+    [[ "$(uname -s)" == "Darwin" ]] && { echo metal; return 0; }
+    case "$(printf '%s' "${WYRDSEKAI_BRAIN_BACKEND:-}" | tr 'A-Z' 'a-z')" in
+        cuda) echo nvidia; return 0 ;;
+        vulkan) local k; k="$(_drm_gpu_kind)"; [[ "$k" == none ]] && k=intel; echo "$k"; return 0 ;;
+    esac
+    if command -v nvidia-smi &>/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader &>/dev/null; then echo nvidia; return 0; fi
+    _drm_gpu_kind
+}
+# The AMD device with the most memory set aside for it: its sysfs directory, or "".
+_amd_card_dir() {
+    local drm="${WYRD_SYS_DRM:-/sys/class/drm}" d best="" bestv=0 v
+    for d in "$drm"/card*/device; do
+        [[ -r "$d/vendor" && -r "$d/mem_info_vram_total" ]] || continue
+        [[ "$(tr -d '[:space:]' < "$d/vendor")" == "0x1002" ]] || continue
+        v="$(tr -d '[:space:]' < "$d/mem_info_vram_total")"; [[ "$v" =~ ^[0-9]+$ ]] || continue
+        (( v > bestv )) && { bestv=$v; best="$d"; }
+    done
+    echo "$best"
+}
+_amd_mem_mb() {   # <file in the device directory> → MB; 0 when it does not say
+    local d; d="$(_amd_card_dir)"; [[ -n "$d" && -r "$d/$1" ]] || { echo 0; return 0; }
+    local b; b="$(tr -d '[:space:]' < "$d/$1")"; [[ "$b" =~ ^[0-9]+$ ]] || { echo 0; return 0; }
+    echo $(( b / 1048576 ))
+}
+_brain_amd_vram_mb() { _amd_mem_mb mem_info_vram_total; }      # set aside for the GPU in the BIOS
+_brain_amd_vram_used_mb() { _amd_mem_mb mem_info_vram_used; }
+_brain_amd_gtt_mb() { _amd_mem_mb mem_info_gtt_total; }        # what it may borrow from system memory
+_brain_amd_name() {
+    local d; d="$(_amd_card_dir)"; [[ -n "$d" ]] || { echo ""; return 0; }
+    local id; id="$(tr -d '[:space:]' < "$d/device" 2>/dev/null || true)"
+    echo "AMD GPU ${id#0x}"
+}
+
+_brain_vram_mb() {   # the GPU's own memory: the largest card, or what the BIOS set aside for an AMD one
     # macOS: the GPU shares system memory, there is no card to measure. Report 0; the Darwin
     # planner below decides from RAM alone.
     if [[ "$(uname -s)" == "Darwin" ]]; then echo 0; return 0; fi
-    if command -v nvidia-smi &>/dev/null; then
-        nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1
-    else echo 0; fi
+    local v=""
+    case "$(_brain_gpu_kind)" in
+        nvidia) v="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1)" ;;
+        amd) v="$(_brain_amd_vram_mb)" ;;
+    esac
+    [[ "$v" =~ ^[0-9]+$ ]] && echo "$v" || echo 0
 }
 # What others hold on the card right now, in MB: the card's used memory less what our own
 # servers and the night's trainer hold. A game or a desktop on this card has no compute-apps
 # row, so the difference is the honest measure. 0 without nvidia-smi.
 _brain_vram_others_mb() {
-    command -v nvidia-smi &>/dev/null || { echo 0; return 0; }
+    case "$(_brain_gpu_kind)" in
+        amd)
+            # The kernel says how much is in use, not whose; while our brain is up, that is the brain.
+            if docker inspect -f '{{.State.Running}}' wyrdsekai-llama-brain 2>/dev/null | grep -q true; then echo 0
+            else _brain_amd_vram_used_mb; fi
+            return 0 ;;
+        nvidia) ;;
+        *) echo 0; return 0 ;;
+    esac
     local used ours=0 pid mem
     used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1)"
     [[ "$used" =~ ^[0-9]+$ ]] || { echo 0; return 0; }
@@ -1247,13 +1308,38 @@ plan_brain_residency_darwin() {
     if (( ram >= BRAIN_DARWIN_RAM_MIN_MB )); then echo gpu-full; else echo not-viable; fi
 }
 
+# plan_brain_residency_unified <ram_mb>  →  gpu-full | not-viable
+# A GPU with no memory of its own that shares the system's (an Intel iGPU): every layer is on it
+# or the profile is not offered, as on a Mac, from the same amount of memory. An AMD GPU plans
+# from what the BIOS set aside for it, through plan_brain_residency, like a card.
+BRAIN_UNIFIED_RAM_MIN_MB=$BRAIN_DARWIN_RAM_MIN_MB
+plan_brain_residency_unified() {
+    local ram="${1:-0}"
+    [[ "$ram" =~ ^[0-9]+$ ]] || { echo not-viable; return; }
+    if (( ram >= BRAIN_UNIFIED_RAM_MIN_MB )); then echo gpu-full; else echo not-viable; fi
+}
+# The plan for this host's kind of GPU.
+_brain_plan_for_kind() {   # <profile> <vram_avail_mb> <ram_mb> [kind]
+    local kind="${4:-$(_brain_gpu_kind)}"
+    case "$kind" in
+        metal) plan_brain_residency_darwin "$3" ;;
+        intel) plan_brain_residency_unified "$3" ;;
+        none) echo not-viable ;;
+        *) plan_for_profile "$1" "$2" "$3" ;;
+    esac
+}
+
 # The cgroup cap for the brain container: what stays in RAM + prompt cache + 2 GiB.
-_brain_single_mem_limit() {   # <plan>
-    local plan="$1" on_gpu=0 cache="${LLAMA_CACHE_RAM:-1024}"
+_brain_single_mem_limit() {   # <plan> [kind]
+    local plan="$1" kind="${2:-$(_brain_gpu_kind)}" on_gpu=0 cache="${LLAMA_CACHE_RAM:-1024}" room=2048
     case "$plan" in gpu-full) on_gpu=$BRAIN_LAYERS ;; all) on_gpu=0 ;; *) on_gpu=$(( BRAIN_LAYERS - plan )) ;; esac
     [[ "$cache" =~ ^[0-9]+$ ]] || cache=1024
     # mlock pins the mapped file, so the whole file counts even when layers live on the card.
-    echo "$(( BRAIN_FILE_MB + cache + 2048 ))m"
+    # A GPU that uses the system's memory (AMD, Intel) holds its working memory and compute
+    # buffers in that same memory, charged to the container: measured 21 GB at the first turn
+    # on the build box's iGPU against a 25 GB cap sized for a card (2026-10-19). More room there.
+    case "$kind" in amd|intel) room=8192 ;; esac
+    echo "$(( BRAIN_FILE_MB + cache + room ))m"
 }
 
 # Start (or reconcile) the single brain through compose. Returns 0 when the container is up
@@ -1264,10 +1350,10 @@ _start_brain_compose() {
         warn "$(_t brain.start.model_missing "$DATA_DIR/models/$model")"
         return 1
     fi
-    local plan="${LLAMA_CPU_MOE:-}"
+    local plan="${LLAMA_CPU_MOE:-}" kind; kind="$(_brain_gpu_kind)"
     if [[ -z "$plan" ]]; then
         # Planned on what the card has FREE (less the steward's ceiling), not on the whole card.
-        plan="$(plan_for_profile "$(_serving_profile)" "$(_brain_vram_available_mb)" "$(_brain_ram_mb)")"
+        plan="$(_brain_plan_for_kind "$(_serving_profile)" "$(_brain_vram_available_mb)" "$(_brain_ram_mb)" "$kind")"
         if [[ "$plan" == "not-viable" ]]; then
             warn "$(_t brain.start.not_viable "$(_brain_vram_available_mb)" "$(_brain_ram_mb)")"
             return 1
@@ -1275,17 +1361,38 @@ _start_brain_compose() {
     fi
     case "$plan" in gpu-full) export LLAMA_CPU_MOE=0 ;; *) export LLAMA_CPU_MOE="$plan" ;; esac
     export LLAMA_BRAIN_MODEL="$model" WYRDSEKAI_DATA="$DATA_DIR"
-    [[ -z "${LLAMA_BRAIN_MEM_LIMIT:-}" ]] && export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit "$plan")"
+    [[ -z "${LLAMA_BRAIN_MEM_LIMIT:-}" ]] && export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit "$plan" "$(_brain_gpu_kind)")"
     [[ -f "$DATA_DIR/adapters/brain/honesty.gguf" ]] || warn "$(_t brain.start.no_generic_adapter "$DATA_DIR/adapters/brain/honesty.gguf")"
     # The drive container holds the same port. The voice container is stopped only when this
     # model is to be the voice as well.
     docker stop wyrdsekai-llama >/dev/null 2>&1 || true
     [[ "$(_serving_profile)" == "single-sparse" ]] && { docker stop wyrdsekai-llama-voice >/dev/null 2>&1 || true; }
-    _ensure_nvidia_container_runtime
-    log "$(_t brain.start.starting "$model" "$plan")"
-    if docker compose --profile brain up -d llama-brain 2>/dev/null; then return 0; fi
+    case "$kind" in
+        amd|intel) log "$(_t brain.start.starting_vulkan "$model" "$kind" "$plan")" ;;
+        *) log "$(_t brain.start.starting "$model" "$plan")" ;;
+    esac
+    if _brain_compose_up "$kind"; then return 0; fi
     warn "$(_t brain.start.failed)"
     return 1
+}
+
+# The brain's compose service, up, for this kind of GPU: the CUDA service on an NVIDIA card, the
+# Vulkan one on AMD and Intel. The two share one container name, so the other service's container
+# is removed first (compose would rename it otherwise). Everything else the service reads is in the
+# environment already (the model, the plan, the cap, the data directory).
+_brain_compose_up() {   # [kind] [--force-recreate]
+    local kind="${1:-$(_brain_gpu_kind)}" recreate=() profile=brain service=llama-brain
+    [[ " $* " == *" --force-recreate "* ]] && recreate=(--force-recreate)
+    case "$kind" in
+        amd|intel)
+            profile=brain-vulkan; service=llama-brain-vulkan
+            # The weights live on the GPU; pinning the mapped file in RAM as well would hold them twice.
+            export LLAMA_BRAIN_MLOCK="${LLAMA_BRAIN_MLOCK:-0}" ;;
+        *) _ensure_nvidia_container_runtime ;;
+    esac
+    local _svc; _svc="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$BRAIN_CONTAINER" 2>/dev/null || true)"
+    if [[ -n "$_svc" && "$_svc" != "$service" ]]; then docker rm -f "$BRAIN_CONTAINER" >/dev/null 2>&1 || true; fi
+    docker compose --profile "$profile" up -d ${recreate[@]+"${recreate[@]}"} "$service" 2>/dev/null
 }
 
 # True when the process behind the drive server's PID file is the single model (loading or up).
@@ -2322,9 +2429,15 @@ if cands:
     elif [[ "$platform" == "Darwin" && "$arch" == "arm64" ]]; then
         gpu_name="Apple Silicon"
         log "$(_t setup.hw.gpu_apple)"
+    elif [[ "$(_drm_gpu_kind)" == amd ]]; then
+        gpu_name="$(_brain_amd_name)"
+        log "$(_t setup.hw.gpu_amd "$gpu_name" "$(_brain_amd_vram_mb)")"
     elif command -v rocm-smi &>/dev/null; then
         gpu_name="AMD ROCm"
         log "$(_t setup.hw.gpu_rocm)"
+    elif [[ "$(_drm_gpu_kind)" == intel ]]; then
+        gpu_name="Intel GPU"
+        log "$(_t setup.hw.gpu_intel)"
     else
         warn "$(_t setup.hw.gpu_none)"
     fi
@@ -3251,7 +3364,7 @@ Targets:
   openhands        Install the OpenHands coding backend (Docker image
                    pull + config flip). Requires Docker or Podman.
   openclaw         Install the containerized OpenClaw skill gateway
-                   (SPEC_SKILLS §12.3 Option B): image pull, container
+                   ( Option B): image pull, container
                    start on :18789, config flip. Also: wyrd openclaw setup.
 
 Flags (full setup only):
@@ -5309,8 +5422,13 @@ print(("WARN " if q>=5 else "OK ")+s)
         fi
     fi
     # The window a configured Ollama runs its model with: a companion's full turn needs 8192.
-    _doctor_ollama_window
-    if [[ $? -eq 1 ]]; then _wbump; fi
+    # `if ! …`: a check that warns returns 1, and a bare call under set -e ended the doctor there
+    # (the Mac's doctor stopped after one set-aside room script, with no summary, 2026-10-19).
+    if ! _doctor_ollama_window; then _wbump; fi
+    # A companion model on this processor: the load it carries, and when her own time slows for it.
+    # `if ! …`: a check that warns returns 1, and a bare call under set -e ended the doctor there
+    # (the Mac's doctor stopped after one set-aside room script, with no summary, 2026-10-19).
+    if ! _doctor_host_load; then _wbump; fi
     state_summary=$(do_state dump --summary 2>/dev/null || true)
     if [[ -z "$state_summary" ]]; then
         warn "$(_t doctor.state_unavailable)"
@@ -5374,6 +5492,10 @@ print(("WARN " if q>=5 else "OK ")+s)
     fi
 
     _doctor_build_coherence
+    # The Java under the running server, against the Java on disk.
+    # `if ! …`: a check that warns returns 1, and a bare call under set -e ended the doctor there
+    # (the Mac's doctor stopped after one set-aside room script, with no summary, 2026-10-19).
+    if ! _doctor_java_changed; then _wbump; fi
 
     # ── F8 §4: Identity coherence ──
     echo ""
@@ -5415,7 +5537,7 @@ PY
     # ── F24 Phase 3: Relay NKey health ──
     echo ""
     log "$(_t doctor.relay_header)"
-    _doctor_relay_nkey
+    if ! _doctor_relay_nkey; then _wbump; fi
     local _r=$?
     if [[ "$_r" -eq 1 ]]; then _wbump; fi
     if [[ "$_r" -eq 2 ]]; then _ebump; fi
@@ -5425,7 +5547,7 @@ PY
     # warning. The protocol allows multiple; in practice Nostr taught us that
     # one shared relay becomes a centralization bottleneck if nobody else
     # stands up a peer. Not an error — solo households are valid.
-    _doctor_relay_diversity
+    if ! _doctor_relay_diversity; then _wbump; fi
     local _rd=$?
     if [[ "$_rd" -eq 1 ]]; then _wbump; fi
 
@@ -5434,7 +5556,7 @@ PY
     # surfaces warnings if any relay is unreachable. The exit code stays
     # warning-level (not error) — Nostr is opt-in and a flaky relay isn't
     # a wyrdsekai-side fault.
-    _doctor_nostr
+    if ! _doctor_nostr; then _wbump; fi
     local _nostr_rc=$?
     if [[ "$_nostr_rc" -eq 1 ]]; then _wbump; fi
 
@@ -5453,12 +5575,13 @@ PY
 
     # ── Her own time: turns that never become acts ──
     # The trail is the one instrument that sees own time; the live suites are a person asking.
-    _doctor_own_time
+    if ! _doctor_own_time; then _wbump; fi
     if [[ $? -eq 1 ]]; then _wbump; fi
 
     # ── Room scripts a companion wrote that failed and were set aside ──
-    _doctor_room_scripts
-    if [[ $? -eq 1 ]]; then _wbump; fi
+    # `if ! …`: a check that warns returns 1, and a bare call under set -e ended the doctor there
+    # (the Mac's doctor stopped after one set-aside room script, with no summary, 2026-10-19).
+    if ! _doctor_room_scripts; then _wbump; fi
 
     # ── Summary + exit code ──
     echo ""
@@ -5818,6 +5941,60 @@ _doctor_own_time() {
         echo "$summary" | grep "^WARN" | sed 's/^WARN /    /'
         return 1
     fi
+    return 0
+}
+
+# The Java the running server was started on, and the Java on disk now. A host's unattended
+# upgrade replaced the JDK under a running node (25.0.4 → 25.0.4.1); from then on every helper it
+# started printed a four-line "jspawnhelper version" warning, 43,000 journal lines a day for two
+# weeks, and nothing said why (a household's journal, 2026-10-19). A restart is the whole fix.
+_java_runtime_running() {   # what the node says it runs on, "" when it does not answer
+    curl -sf -m 3 "http://127.0.0.1:${WYRDSEKAI_PORT:-7070}/api/version" 2>/dev/null \
+        | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("javaRuntime",""))' 2>/dev/null || true
+}
+_java_runtime_installed() {   # java.runtime.version of the Java the launcher would start today
+    find_java &>/dev/null || { echo ""; return 0; }
+    "$JAVA_CMD" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java\.runtime\.version *= *//p' | head -1
+}
+_doctor_java_changed() {
+    local running installed
+    running="$(_java_runtime_running)"; installed="$(_java_runtime_installed)"
+    [[ -n "$running" && -n "$installed" ]] || return 0
+    [[ "$running" == "$installed" ]] && return 0
+    warn "$(_t doctor.java_changed "$installed" "$running")"
+    return 1
+}
+
+# A companion model running on the processor, with no GPU offload: a llama-server of ours whose
+# command line carries no --n-gpu-layers / -ngl. A household's 32-thread box ran two companions'
+# own time that way at 1300% CPU for hours, and its thermal limit reset it in the night
+# (2026-10-05); nothing had said so. Honest about the limit: a container's server is seen too.
+_local_model_on_cpu() {
+    local pid args
+    for pid in $(pgrep -x llama-server 2>/dev/null); do
+        args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+        [[ -z "$args" ]] && continue
+        [[ "$args" == *"--n-gpu-layers"* || "$args" == *" -ngl "* || "$args" == *"--gpu-layers"* ]] && continue
+        return 0
+    done
+    return 1
+}
+
+# When a companion model runs on this processor: the 15-minute load against the cores, a warning
+# at nine tenths (the own-time cadence slows at the same mark), silence otherwise.
+_doctor_host_load() {
+    _local_model_on_cpu || return 0
+    local la cores ratio
+    la="$(awk '{print $3}' "${WYRD_PROC_LOADAVG:-/proc/loadavg}" 2>/dev/null || true)"
+    [[ "$la" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 0
+    cores="${WYRD_NPROC:-$(nproc 2>/dev/null || echo 1)}"
+    [[ "$cores" =~ ^[1-9][0-9]*$ ]] || cores=1
+    ratio="$(awk -v l="$la" -v c="$cores" 'BEGIN{printf "%d", (l/c)*100}')"
+    if (( ratio >= 90 )); then
+        warn "$(_t doctor.host_load_hot "$la" "$cores")"
+        return 1
+    fi
+    log "$(_t doctor.host_load_ok "$la" "$cores")"
     return 0
 }
 
@@ -15366,20 +15543,26 @@ _brain_hardware_notice() {
     [[ "$(uname -s)" == "Darwin" ]] && return 0
     local vram ram gpu fp file="$DATA_DIR/hardware-seen.json" prev="" offered=""
     vram="$(_brain_vram_mb)"; ram="$(_brain_ram_mb)"
-    gpu="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sort | tr '\n' '+' | sed 's/+$//' || true)"
+    local kind; kind="$(_brain_gpu_kind)"
+    case "$kind" in
+        nvidia) gpu="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sort | tr '\n' '+' | sed 's/+$//' || true)" ;;
+        amd) gpu="$(_brain_amd_name)" ;;
+        intel) gpu="Intel GPU" ;;
+    esac
     fp="${vram:-0}|${ram:-0}|${gpu}"
     if [[ -f "$file" ]]; then
         prev="$(sed -n 's/.*"fingerprint": *"\([^"]*\)".*/\1/p' "$file" | head -1)"
         offered="$(sed -n 's/.*"offered": *"\([^"]*\)".*/\1/p' "$file" | head -1)"
     fi
     local single drive best=""
-    single="$(plan_for_profile single-sparse "${vram:-0}" "${ram:-0}")"
-    drive="$(plan_for_profile sparse-drive "${vram:-0}" "${ram:-0}")"
+    single="$(_brain_plan_for_kind single-sparse "${vram:-0}" "${ram:-0}" "$kind")"
+    drive="$(_brain_plan_for_kind sparse-drive "${vram:-0}" "${ram:-0}" "$kind")"
     [[ "$single" != "not-viable" ]] && best=single-sparse
     [[ "$drive" != "not-viable" ]] && best=sparse-drive
     if [[ "$(_serving_profile)" == "two-model" && -n "$best" && ( "$fp" != "$prev" || "$offered" != "$best" ) ]]; then
         echo ""
-        echo "$(_t brain.notice.now_possible "${vram:-0}" "${ram:-0}")"
+        if [[ "$kind" == intel ]]; then echo "$(_t brain.notice.now_possible_unified "${ram:-0}")"
+        else echo "$(_t brain.notice.now_possible "${vram:-0}" "${ram:-0}")"; fi
         [[ "$drive" != "not-viable" ]] && echo "$(_t brain.notice.option_drive)"
         [[ "$single" != "not-viable" ]] && echo "$(_t brain.notice.option_single)"
         echo "$(_t brain.notice.how)"
@@ -15491,14 +15674,14 @@ print(next((str(a["id"]) for a in json.load(sys.stdin) if a.get("path", "").ends
 # Start the large model as the only brain for the gate, whatever the profile says (the profile is
 # changed only after the gate and the person's yes). Returns 1 when it does not come up.
 _brain_move_start_candidate() {   # <port>
-    local plan; plan="$(plan_for_profile single-sparse "$(_brain_vram_available_mb)" "$(_brain_ram_mb)")"
+    local kind plan; kind="$(_brain_gpu_kind)"
+    plan="$(_brain_plan_for_kind single-sparse "$(_brain_vram_available_mb)" "$(_brain_ram_mb)" "$kind")"
     [[ "$plan" == "not-viable" ]] && return 1
     case "$plan" in gpu-full) export LLAMA_CPU_MOE=0 ;; *) export LLAMA_CPU_MOE="$plan" ;; esac
     export LLAMA_BRAIN_MODEL="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}" WYRDSEKAI_DATA="$DATA_DIR"
-    [[ -z "${LLAMA_BRAIN_MEM_LIMIT:-}" ]] && export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit "$plan")"
+    [[ -z "${LLAMA_BRAIN_MEM_LIMIT:-}" ]] && export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit "$plan" "$kind")"
     docker stop wyrdsekai-llama wyrdsekai-llama-voice >/dev/null 2>&1 || true
-    _ensure_nvidia_container_runtime
-    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; docker compose --profile brain up -d llama-brain >/dev/null 2>&1 ) || return 1
+    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; _brain_compose_up "$kind" >/dev/null 2>&1 ) || return 1
     local i; for i in $(seq 1 180); do curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$1/health" && return 0; sleep 5; done
     return 1
 }
@@ -15680,9 +15863,17 @@ do_brain() {
     [[ -f "$species" ]] && generic="$species"
     local vram ram plan avail others cap; vram="$(_brain_vram_mb)"; ram="$(_brain_ram_mb)"
     others="$(_brain_vram_others_mb)"; cap="$(_brain_vram_cap_mb)"; avail="$(_brain_vram_available_mb "$vram" "$others" "$cap")"
-    plan="$(plan_brain_residency "${avail:-0}" "${ram:-0}")"
-    # macOS: unified memory, no card — the Darwin planner decides from RAM (Apple Silicon only).
-    if [[ "$(uname -s)" == "Darwin" ]]; then plan="$(plan_brain_residency_darwin "${ram:-0}")"; fi
+    local kind; kind="$(_brain_gpu_kind)"
+    # The planner for this kind of GPU: a card (NVIDIA, or an AMD GPU with the memory the BIOS set
+    # aside for it), a GPU sharing the system's memory (Intel), or a Mac.
+    plan="$(_brain_plan_for_kind single-sparse "${avail:-0}" "${ram:-0}" "$kind")"
+    _brain_hardware_line() {
+        case "$kind" in
+            amd) _t brain.status.hardware_amd "$(_brain_amd_name)" "${vram:-0}" "$(_brain_amd_gtt_mb)" "${ram:-0}" ;;
+            intel) _t brain.status.hardware_unified "Intel" "${ram:-0}" ;;
+            *) _t brain.status.hardware "${vram:-0}" "${ram:-0}" ;;
+        esac
+    }
     _brain_plan_text() {
         case "$1" in
             gpu-full) _t brain.status.plan_gpu_full ;;
@@ -15694,11 +15885,11 @@ do_brain() {
     case "$sub" in
         status|plan)
             echo "$(_t brain.status.profile "$(_serving_profile)")"
-            echo "$(_t brain.status.hardware "${vram:-0}" "${ram:-0}")"
+            echo "$(_brain_hardware_line)"
             echo "$(_t brain.status.plan "$(_brain_plan_text "$plan")")"
-            [[ "$(uname -s)" != "Darwin" ]] && echo "$(_brain_plan_words "$plan" "$avail" "$others" "$cap")"
+            [[ "$kind" == nvidia || "$kind" == amd ]] && echo "$(_brain_plan_words "$plan" "$avail" "$others" "$cap")"
             if [[ "$(uname -s)" != "Darwin" ]]; then
-                echo "$(_t brain.status.plan_drive "$(_brain_plan_text "$(plan_for_profile sparse-drive "${avail:-0}" "${ram:-0}")")")"
+                echo "$(_t brain.status.plan_drive "$(_brain_plan_text "$(_brain_plan_for_kind sparse-drive "${avail:-0}" "${ram:-0}" "$kind")")")"
                 local running; running="$(_brain_current_plan)"
                 [[ -n "$running" && "$running" != "$plan" ]] && echo "$(_t brain.status.running_plan "$(_brain_plan_text "$running")")"
             fi
@@ -15723,13 +15914,19 @@ do_brain() {
             ;;
         setup)
             if [[ "$plan" == "not-viable" ]]; then
-                echo "$(_t brain.status.hardware "${vram:-0}" "${ram:-0}")"
+                echo "$(_brain_hardware_line)"
+                # An AMD GPU plans from the memory the BIOS set aside for it; the way out is a BIOS setting.
+                [[ "$kind" == amd ]] && echo "$(_t brain.setup.amd_carveout "$(( BRAIN_SPINE_VRAM_MB + BRAIN_VRAM_HEADROOM_MB + BRAIN_LAYER_MB ))" "${vram:-0}")"
                 err "$(_t brain.setup.not_viable)"; return 1
             fi
             echo "$(_t brain.status.plan "$(_brain_plan_text "$plan")")"
             mkdir -p "$DATA_DIR/models" "$DATA_DIR/adapters/brain"
             # Nightly learning is on by default (0.5.0): setup brings its trainer too, unless --no-trainer.
             local _with_trainer=1; [[ " ${*:2} " == *" --no-trainer "* ]] && _with_trainer=0
+            # The trainer runs on CUDA and on MLX; on an AMD or Intel GPU the model serves without it.
+            if [[ "$_with_trainer" == "1" && "$kind" != nvidia && "$kind" != metal ]]; then
+                _with_trainer=0; echo "$(_t brain.setup.trainer_unavailable)"
+            fi
             if [[ ! -f "$model_path" ]]; then
                 if [[ "$_with_trainer" == "1" && "$(uname -s)" != "Darwin" ]]; then
                     _prompt_wait "$(_t brain.setup.confirm_trainer "$DATA_DIR/models")" 120
@@ -15826,10 +16023,9 @@ do_brain() {
             if [[ "$want" == "single-sparse" ]]; then
                 local _who; if ! _who="$(_brain_move_guard "${@:2}")"; then err "$(_t brain.move.redirect "$_who")"; return 1; fi
             fi
-            local want_plan; want_plan="$(plan_for_profile "$want" "${avail:-0}" "${ram:-0}")"
-            [[ "$(uname -s)" == "Darwin" ]] && want_plan="$plan"
+            local want_plan; want_plan="$(_brain_plan_for_kind "$want" "${avail:-0}" "${ram:-0}" "$kind")"
             if [[ "$want_plan" == "not-viable" ]]; then
-                echo "$(_t brain.status.hardware "${vram:-0}" "${ram:-0}")"
+                echo "$(_brain_hardware_line)"
                 err "$(_t brain.enable.profile_not_viable "$want")"; return 1
             fi
             do_config set "WYRDSEKAI_SERVING_PROFILE=$want" >/dev/null
@@ -15887,7 +16083,7 @@ do_brain() {
             ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
               case "$plan" in gpu-full) export LLAMA_CPU_MOE=0 ;; *) export LLAMA_CPU_MOE="$plan" ;; esac
               _start_brain_compose >/dev/null 2>&1 || true
-              docker compose --profile brain up -d --force-recreate llama-brain >/dev/null 2>&1 )
+              _brain_compose_up "$(_brain_gpu_kind)" --force-recreate >/dev/null 2>&1 )
             echo "$(_t brain.reshape.moved "$(_brain_plan_text "$plan")")"
             ;;
         serve)
@@ -16809,6 +17005,105 @@ do_connect() {
         ${host_args[@]+"${host_args[@]}"} "$@"
 }
 
+# ── wyrd report: a bundle for the people who make Wyrdsekai ─────────────────────────────────
+# What a household's steward sent by hand on 2026-10-19 (and what we could read a month from):
+# the node's journals, its units and settings, versions, hardware, the doctor's and the brain's
+# word. Written to a file the steward reads and then decides to send; nothing is sent from here.
+# Never in it: the data directory (souls, memories, the world), the credential safe, and any
+# setting whose name says token, password, secret or key. The journal is in it, and the journal
+# carries short lines of what the companions said; the README says so.
+_report_redact() {   # on stdin: KEY=value lines with secret-looking keys blanked
+    sed -E 's/^(([A-Za-z_]*(TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|NKEY|SEED)[A-Za-z_]*)=).*/\1<redacted>/I; s/^(Environment=)(([A-Za-z_]*(TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|NKEY|SEED)[A-Za-z_]*)=).*/\1\2<redacted>/I'
+}
+_report_journal() {   # <unit> <since> → the unit's journal, with sudo when the user may not read it
+    local out; out="$(journalctl -u "$1" --since "$2" --no-pager -o short-iso 2>/dev/null || true)"
+    if [[ -z "$out" || "$out" == *"No journal files were found"* || "$out" == *"-- No entries --"* ]]; then
+        out="$(sudo -n journalctl -u "$1" --since "$2" --no-pager -o short-iso 2>/dev/null || true)"
+    fi
+    printf '%s\n' "$out"
+}
+do_report() {
+    local days="${WYRDSEKAI_REPORT_DAYS:-30}" out_dir="${WYRDSEKAI_REPORT_DIR:-$HOME}"
+    case "${1:-}" in -h|--help|help) echo "$(_t report.usage)"; return 0 ;; esac
+    [[ "${1:-}" =~ ^[0-9]+$ ]] && days="$1"
+    local host stamp name T
+    host="$(hostname -s 2>/dev/null || hostname)"; stamp="$(date +%Y%m%d-%H%M)"
+    name="wyrdsekai-report-${host}-${stamp}"
+    T="$(mktemp -d)"; mkdir -p "$T/$name"
+    local R="$T/$name" since="-${days}d"
+    log "$(_t report.collecting "$days")"
+    # versions and the node's own word
+    { echo "collected: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "host: $host"; echo "launcher mode: ${MODE:-?}"; } > "$R/README.txt"
+    "$0" version > "$R/version.txt" 2>&1 || true
+    curl -sf -m 3 "http://127.0.0.1:${WYRDSEKAI_PORT:-7070}/api/version" > "$R/api-version.json" 2>/dev/null || echo '{"note":"the node did not answer"}' > "$R/api-version.json"
+    if command -v dpkg-query &>/dev/null; then
+        dpkg-query -W -f='${Package} ${Version} ${Status}\n' 'wyrdsekai*' > "$R/packages.txt" 2>/dev/null || true
+        grep -h -A3 -i "wyrdsekai" /var/log/dpkg.log* 2>/dev/null | grep -E "install|upgrade|remove" | sort | tail -200 > "$R/package-history.txt" || true
+    fi
+    # the doctor and the brain, as they read now
+    "$0" doctor > "$R/doctor.txt" 2>&1 || true
+    "$0" brain plan > "$R/brain-plan.txt" 2>&1 || true
+    "$0" inference status > "$R/inference.txt" 2>&1 || true
+    # units and settings, secrets blanked
+    if command -v systemctl &>/dev/null; then
+        local u; for u in wyrdsekai wyrdsekai-nats wyrdsekai-oracle wyrdsekai-brainstem; do
+            systemctl cat "$u" 2>/dev/null | _report_redact >> "$R/units.txt" || true
+            echo >> "$R/units.txt"
+        done
+        systemctl show wyrdsekai -p ActiveState -p SubState -p ActiveEnterTimestamp -p NRestarts -p ExecMainStartTimestamp 2>/dev/null > "$R/unit-state.txt" || true
+    fi
+    [[ -f "$CONFIG_FILE" ]] && { _report_redact < "$CONFIG_FILE" > "$R/wyrdsekai.conf" 2>/dev/null || true; }
+    [[ -f "$ENV_FILE" ]] && { _report_redact < "$ENV_FILE" > "$R/env" 2>/dev/null || true; }
+    # hardware — in a subshell without -e: a tool this host lacks, or a grep that finds nothing
+    # (no container of ours running), ended the whole report on the build box (2026-10-19).
+    (
+        set +e
+        echo "## uname"; uname -a
+        echo "## cpu"; lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|Thread|Core|Socket" || sysctl -n machdep.cpu.brand_string 2>/dev/null
+        echo "## memory"; free -g 2>/dev/null || vm_stat 2>/dev/null | head -5
+        echo "## gpu (pci)"; lspci -nnk 2>/dev/null | grep -A3 -iE "vga|3d|display" || system_profiler SPDisplaysDataType 2>/dev/null | head -20
+        echo "## gpu (kernel)"; local d; for d in /sys/class/drm/card*/device; do
+            [[ -r "$d/vendor" ]] || continue
+            echo "$d: vendor $(cat "$d/vendor" 2>/dev/null) device $(cat "$d/device" 2>/dev/null) vram_total $(cat "$d/mem_info_vram_total" 2>/dev/null) gtt_total $(cat "$d/mem_info_gtt_total" 2>/dev/null) vram_used $(cat "$d/mem_info_vram_used" 2>/dev/null)"
+        done
+        echo "## nvidia"; nvidia-smi 2>/dev/null | head -20 || echo "no nvidia-smi"
+        echo "## vulkan"; vulkaninfo --summary 2>/dev/null | grep -E "deviceName|deviceType|driverName|apiVersion" || echo "no vulkaninfo"
+        echo "## thermal"; local z; for z in /sys/class/thermal/thermal_zone*; do [[ -r "$z/temp" ]] && echo "$(cat "$z/type" 2>/dev/null): $(cat "$z/temp")"; done
+        echo "## load"; cat /proc/loadavg 2>/dev/null; echo "## disk"; df -h "$DATA_DIR" 2>/dev/null
+        echo "## docker"; docker --version 2>/dev/null; docker ps --format '{{.Names}} {{.Image}} {{.Status}}' 2>/dev/null | grep -i wyrd
+        true
+    ) > "$R/hardware.txt" 2>&1
+    # the journals
+    if command -v journalctl &>/dev/null; then
+        local u n=0; for u in wyrdsekai wyrdsekai-nats wyrdsekai-oracle wyrdsekai-brainstem; do
+            _report_journal "$u" "$since" | gzip -c > "$R/journal-$u.log.gz"
+            n=$(( n + $(gzip -dc "$R/journal-$u.log.gz" | wc -l) ))
+        done
+        echo "journal lines: $n (last $days days)" >> "$R/README.txt"
+        journalctl --list-boots --no-pager 2>/dev/null > "$R/boots.txt" || true
+        (journalctl -k --since "$since" --no-pager -o short-iso 2>/dev/null || sudo -n journalctl -k --since "$since" --no-pager -o short-iso 2>/dev/null) \
+            | grep -iE "thermal|segfault|oom|out of memory|watchdog|reset reason|mce" | tail -500 > "$R/kernel-events.txt" || true
+    elif [[ -f "$DATA_DIR/server.log" ]]; then
+        tail -n 200000 "$DATA_DIR/server.log" | gzip -c > "$R/server.log.gz"
+    fi
+    cat >> "$R/README.txt" <<EOF
+
+What is in this bundle: the node's journals for the last $days days, its systemd units and
+settings with every token, password and key blanked, its versions and package history, the
+hardware as the kernel reports it, and the doctor's, the brain's and the inference lines as they
+read when it was made.
+What is not: the data directory (the companions' souls, memories and world), the credential safe,
+and anything else that is theirs or yours.
+Read it before you send it: the journal holds short lines of what the companions said.
+EOF
+    mkdir -p "$out_dir"
+    local tarball="$out_dir/$name.tar.gz"
+    tar -C "$T" -czf "$tarball" "$name" && rm -rf "$T"
+    echo "$(_t report.written "$tarball" "$(du -h "$tarball" 2>/dev/null | cut -f1)")"
+    echo "$(_t report.read_first)"
+    return 0
+}
+
 # ── Browser terminal (ttyd wrapping `wyrd connect`) ──
 #
 # Opt-in web terminal on :7071: ttyd serves the built-in TUI client over
@@ -16955,6 +17250,7 @@ case "${1:-help}" in
     restart)    do_stop; sleep 1; do_start ;;
     status)     do_status ;;
     log|logs)   do_log ;;
+    report)     do_report "${@:2}" ;;
     backup)     do_backup ;;
     vault)      do_vault "${@:2}" ;;
     model)      do_model "${2:-}" "${3:-}" ;;
@@ -17053,6 +17349,7 @@ case "${1:-help}" in
         echo "$(_t usage.cmd.reseed)"
         echo "$(_t usage.cmd.update)"
         echo "$(_t usage.cmd.doctor)"
+        echo "$(_t usage.cmd.report)"
         echo "$(_t usage.cmd.state)"
         echo "  embed-migrate     Re-embed all stored embeddings on the bundled model (--plan/--run/--status/--reset)"
         echo "  embedding-model   Manage which embedding model is active (status/list/recommend/set/download)"

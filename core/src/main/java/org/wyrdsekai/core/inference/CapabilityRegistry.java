@@ -201,24 +201,71 @@ public class CapabilityRegistry {
      */
     public static CapabilityRegistry fromBackends(List<InferenceBackend> backends) {
         var registry = new CapabilityRegistry();
-
+        double largestLocal = largestLocalModelSize(backends);
         for (var backend : backends) {
-            var tier = inferTier(backend);
-            var models = backend.models();
+            registry.registerBackend(backend, backend.models(), largestLocal);
+        }
+        registry.ensureReasoning(backends);
 
-            if (models.isEmpty()) {
-                // Backend with no specific models — register as default
-                registry.register(new CapabilityEntry(
-                    "default", backend.name(), "default", tier, backend.priority()));
-                continue;
-            }
+        if (WyrdConfig.get().singleBrain()) {
+            registerSingleBrain(registry, backends);
+        }
 
-            for (var model : models) {
+        log.info("CapabilityRegistry auto-detected {} capabilities from {} backends: {}",
+            registry.availableCapabilities().size(), backends.size(),
+            registry.availableCapabilities());
+
+        return registry;
+    }
+
+    /** A model this small never leads the default lane while a larger one is served nearby. */
+    static final double SMALL_MODEL_B = 4.0;
+    /** Added to a small model's priority on the default lane: it answers behind every larger model. */
+    static final int SMALL_MODEL_DEFAULT_PENALTY = 1000;
+
+    /** The largest named model among the backends that are not a paid cloud; -1 when none says. */
+    static double largestLocalModelSize(List<InferenceBackend> backends) {
+        double largest = -1;
+        for (var b : backends) {
+            if ("cloud".equals(inferTier(b))) continue;
+            for (var m : b.models()) largest = Math.max(largest, extractSizeBillions(m.toLowerCase(Locale.ROOT)));
+        }
+        return largest;
+    }
+
+    /**
+     * Where a model stands on the default lane. A 4B beside a bigger local model stands behind it
+     * whatever its backend's priority: on a household node the local 4B voice at priority 5 took
+     * every default turn for five weeks while a 20B on the GPU box at priority 30 served only the
+     * overflow (2026-10-19). A paid cloud model never counts as the bigger one.
+     */
+    static int defaultPriority(int backendPriority, double sizeB, double largestLocal) {
+        boolean small = sizeB > 0 && sizeB <= SMALL_MODEL_B;
+        return small && largestLocal > SMALL_MODEL_B ? backendPriority + SMALL_MODEL_DEFAULT_PENALTY : backendPriority;
+    }
+
+    /**
+     * Register one backend's lanes from its model names. Called at boot for every backend and
+     * again when a backend that listed no models at boot says what it serves.
+     */
+    public void registerBackend(InferenceBackend backend, List<String> models, double largestLocal) {
+        var tier = inferTier(backend);
+        if (models.isEmpty()) {
+            // Backend with no specific models — register as default
+            register(new CapabilityEntry(
+                "default", backend.name(), "default", tier, backend.priority()));
+            return;
+        }
+        var registry = this;
+        for (var model : models) {
                 var modelLower = model.toLowerCase(Locale.ROOT);
 
-                // Always register as default
+                // Heuristic: extract parameter size from model name
+                var sizeB = extractSizeBillions(modelLower);
+
+                // Always register as default; a small model stands behind a larger local one
                 registry.register(new CapabilityEntry(
-                    "default", backend.name(), model, tier, backend.priority()));
+                    "default", backend.name(), model, tier, defaultPriority(backend.priority(), sizeB, largestLocal)));
 
                 // Heuristic: coding
                 if (modelLower.contains("coder") || modelLower.contains("codestral")
@@ -228,8 +275,6 @@ public class CapabilityRegistry {
                         "coding", backend.name(), model, tier, backend.priority()));
                 }
 
-                // Heuristic: extract parameter size from model name
-                var sizeB = extractSizeBillions(modelLower);
                 if (sizeB > 30) {
                     registry.register(new CapabilityEntry(
                         "reasoning", backend.name(), model, tier, backend.priority()));
@@ -279,13 +324,59 @@ public class CapabilityRegistry {
                     registry.register(new CapabilityEntry(
                         "code-mode", backend.name(), model, tier, backend.priority()));
                 }
+        }
+    }
+
+    /** Remove one entry; the lane's order is kept. */
+    void unregister(CapabilityEntry entry) {
+        capabilities.computeIfPresent(entry.capability(), (cap, existing) -> {
+            var list = new ArrayList<>(existing);
+            list.remove(entry);
+            return list.isEmpty() ? null : List.copyOf(list);
+        });
+    }
+
+    /**
+     * Rank the default lane again from every backend's models. Called when a backend says what
+     * it serves after boot: a 4B that was alone at boot stood first with no penalty, and stayed
+     * first when the 20B came up unless the lane was ranked again.
+     */
+    public void rankDefaultLane(List<InferenceBackend> backends) {
+        capabilities.remove("default");
+        double largestLocal = largestLocalModelSize(backends);
+        for (var backend : backends) {
+            var tier = inferTier(backend);
+            if (backend.models().isEmpty()) {
+                register(new CapabilityEntry("default", backend.name(), "default", tier, backend.priority()));
+                continue;
+            }
+            for (var model : backend.models()) {
+                var sizeB = extractSizeBillions(model.toLowerCase(Locale.ROOT));
+                register(new CapabilityEntry("default", backend.name(), model, tier,
+                    defaultPriority(backend.priority(), sizeB, largestLocal)));
             }
         }
+    }
 
-        // Fallback: if no backend registered as "reasoning" (e.g. all models are <30B),
-        // promote the backend with the largest model so cap:reasoning always resolves.
-        // Without this, cap:reasoning falls through to first-healthy-by-priority, which
-        // in a dual-inference deploy would misroute COMPLEX turns to the voice backend.
+    /** The reasoning/full entries the fallback below put in place; replaced when a larger model appears. */
+    private final Set<CapabilityEntry> fallbackEntries = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Fallback: if no backend registered as "reasoning" (e.g. all models are <30B),
+     * promote the backend with the largest model so cap:reasoning always resolves.
+     * Without this, cap:reasoning falls through to first-healthy-by-priority, which
+     * in a dual-inference deploy would misroute COMPLEX turns to the voice backend.
+     * Re-run when a backend says what it serves after boot: the fallback moves to the
+     * larger model; a real (>30B) reasoning entry stands.
+     */
+    public void ensureReasoning(List<InferenceBackend> backends) {
+        var registry = this;
+        boolean realReasoning = capabilities.getOrDefault("reasoning", List.of()).stream()
+            .anyMatch(e -> !fallbackEntries.contains(e));
+        if (!realReasoning) {
+            for (var e : fallbackEntries) unregister(e);
+            fallbackEntries.clear();
+        }
         if (!registry.availableCapabilities().contains("reasoning")) {
             InferenceBackend largest = null;
             double largestSize = -1;
@@ -301,26 +392,20 @@ public class CapabilityRegistry {
                 }
             }
             if (largest != null && largestModel != null) {
-                registry.register(new CapabilityEntry(
+                var reasoning = new CapabilityEntry(
                     "reasoning", largest.name(), largestModel,
-                    inferTier(largest), largest.priority()));
-                registry.register(new CapabilityEntry(
+                    inferTier(largest), largest.priority());
+                var full = new CapabilityEntry(
                     "full", largest.name(), largestModel,
-                    inferTier(largest), largest.priority()));
+                    inferTier(largest), largest.priority());
+                registry.register(reasoning);
+                registry.register(full);
+                fallbackEntries.add(reasoning);
+                fallbackEntries.add(full);
                 log.info("Registered '{}' ({}) as fallback reasoning/full backend ({}B)",
                     largest.name(), largestModel, largestSize);
             }
         }
-
-        if (WyrdConfig.get().singleBrain()) {
-            registerSingleBrain(registry, backends);
-        }
-
-        log.info("CapabilityRegistry auto-detected {} capabilities from {} backends: {}",
-            registry.availableCapabilities().size(), backends.size(),
-            registry.availableCapabilities());
-
-        return registry;
     }
 
     /** The lanes one resident model has to serve when it is the only local model. */

@@ -113,8 +113,8 @@ public record InferenceConfig(
         // drive pointed at a household GPU booted with the dead voice as its only backend
         // (Windows install test, 0.3.2).
         registerConfiguredUrl(backends, WyrdConfig.get().configuredInferenceUrl(),
-            url -> probeLlamaServer(url, "llama-server-auto", 5)
-                .or(() -> probeOllama(url, "ollama-remote", 5)));
+            (url, name, priority) -> probeLlamaServer(url, name != null ? name : "llama-server-auto", priority)
+                .or(() -> probeOllama(url, name != null ? name : "ollama-remote", priority)));
 
         // Auto-detect inference servers on default ports if no backends enabled
         if (backends.isEmpty()) {
@@ -238,9 +238,21 @@ public record InferenceConfig(
         try {
             return switch (type) {
                 case "llama-server" -> createLlamaServer(bc, name, url, priority, models);
-                case "ollama" -> new InferenceBackend.Ollama(
+                case "ollama" -> {
+                    if (models.isEmpty()) {
+                        // A listed server with no model list is asked what it serves, as the
+                        // configured-URL path always was: a household's GPU box sat at "models: []"
+                        // for five weeks, the registry saw only `default`, and every full turn went
+                        // to the local 4B voice on the CPU (2026-10-19).
+                        var probed = probeOllama(url, name, priority);
+                        if (probed.isPresent()) yield probed.get();
+                        log.warn("Backend '{}' at {} did not answer /api/tags at boot — listed with no "
+                            + "models until it does", name, url);
+                    }
+                    yield new InferenceBackend.Ollama(
                         name, new InferenceClient(url, null, INFERENCE_TIMEOUT,
                             new ApiProvider.OpenAI("ollama")), priority, models);
+                }
                 case "sglang" -> new InferenceBackend.SGLang(
                         name, new InferenceClient(url, null, INFERENCE_TIMEOUT,
                             new ApiProvider.OpenAI("sglang")), priority, models);
@@ -414,7 +426,11 @@ public record InferenceConfig(
                 log.info("llama-server started on port {} for backend '{}'", port, name);
                 // Its window: the server's own word, here if it answers already, else when it comes up.
                 BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(client.getBaseUrl() + "/props", 1500)), "/props");
-                return new InferenceBackend.LlamaServer(name, client, priority, models, manager);
+                // Its model, by name, so the registry can size it: a managed 4B voice with no name was
+                // the nameless default of a whole household (2026-10-19).
+                var served = models.isEmpty() ? discoverModels(client.getBaseUrl()) : models;
+                if (served.isEmpty()) served = List.of(modelFileName(modelPath));
+                return new InferenceBackend.LlamaServer(name, client, priority, served, manager);
             } catch (IOException e) {
                 log.warn("Failed to start llama-server for '{}': {}", name, e.getMessage());
                 return null;
@@ -699,21 +715,44 @@ public record InferenceConfig(
         return null;
     }
 
+    /** Probes a URL as whatever it is; {@code name} null means the probe's own name. */
+    interface ConfiguredProbe {
+        Optional<InferenceBackend> probe(String url, String name, int priority);
+    }
+
+    /** The place the steward's configured URL takes: ahead of every listed backend. */
+    static final int CONFIGURED_URL_PRIORITY = 1;
+
     /**
-     * Register the steward's configured inference URL unless a backend already points at
-     * that server. Pure apart from the probe, so the rule is testable without a network:
-     * {@code url} null → nothing; same server already listed → nothing; probe empty →
-     * nothing added (the probe logs why); otherwise the backend is added.
+     * Register the steward's configured inference URL and put it first. Pure apart from the
+     * probe, so the rule is testable without a network: {@code url} null → nothing; the same
+     * server already listed → that entry is probed again and takes first place with the models
+     * it reports (until 2026-10-19 it was left where the list put it, at priority 30 behind the
+     * local voice on a household node); a managed local server is left alone; probe empty →
+     * nothing changes (the probe logs why); otherwise the backend is added first.
      *
-     * @return true when a backend was added
+     * @return true when a backend was added or moved first
      */
     static boolean registerConfiguredUrl(List<InferenceBackend> backends, String url,
-                                         Function<String, Optional<InferenceBackend>> probe) {
+                                         ConfiguredProbe probe) {
         if (url == null || url.isBlank()) return false;
-        for (var b : backends) {
-            if (sameServer(b.url(), url)) return false;
+        for (int i = 0; i < backends.size(); i++) {
+            var b = backends.get(i);
+            if (!sameServer(b.url(), url)) continue;
+            if (b instanceof InferenceBackend.LlamaServer ls && ls.manager() != null) return false;
+            if (b.priority() <= CONFIGURED_URL_PRIORITY && !b.models().isEmpty()) return false;
+            var found = probe.probe(url, b.name(), CONFIGURED_URL_PRIORITY);
+            if (found.isEmpty()) {
+                log.warn("Inference URL {} is listed as '{}' but did not answer the probe — it keeps "
+                    + "its place (priority {})", url, b.name(), b.priority());
+                return false;
+            }
+            backends.set(i, found.get());
+            log.info("Inference backend from the configured URL: {} (listed as '{}', now first; models {})",
+                url, b.name(), found.get().models());
+            return true;
         }
-        var found = probe.apply(url);
+        var found = probe.probe(url, null, CONFIGURED_URL_PRIORITY);
         if (found.isEmpty()) {
             log.error("Inference URL {} answers neither llama-server (/health, /v1/models) "
                 + "nor Ollama (/api/tags) — NO backend registered from it. Check the URL and the "
@@ -723,6 +762,30 @@ public record InferenceConfig(
         backends.add(found.get());
         log.info("Inference backend from the configured URL: {} ({})", url, found.get().name());
         return true;
+    }
+
+    /** What a live backend says it serves, asked after boot; empty when it does not say. */
+    static List<String> modelsServedBy(InferenceBackend b) {
+        var url = b.url();
+        if (url == null || !url.startsWith("http")) return List.of();
+        try {
+            return switch (b) {
+                case InferenceBackend.Ollama o -> discoverOllamaModels(readBody(url + "/api/tags", 1500));
+                case InferenceBackend.LlamaServer l -> discoverModels(url);
+                default -> List.of();
+            };
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    /** The file name of a model path without its extension; what a managed server is called by. */
+    static String modelFileName(String modelPath) {
+        if (modelPath == null) return "default";
+        var slash = Math.max(modelPath.lastIndexOf('/'), modelPath.lastIndexOf('\\'));
+        var base = slash >= 0 ? modelPath.substring(slash + 1) : modelPath;
+        var dot = base.lastIndexOf('.');
+        return dot > 0 ? base.substring(0, dot) : base;
     }
 
     private static List<InferenceBackend> autoDetectLlamaServers() {

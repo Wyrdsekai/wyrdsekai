@@ -125,8 +125,8 @@ The larger model is a "sparse" model. It is made of many small expert parts, and
 | Profile | What runs | What your computer needs |
 |---|---|---|
 | `two-model`, the default | The drive model on port 8200 and the voice model on port 8201. | As before. |
-| `sparse-drive` | The large model takes the drive's place on port 8200. The voice model keeps speaking on port 8201. | One NVIDIA graphics card with 12 GB or more, 16 GB recommended, and 32 GB of RAM. Linux with Docker. |
-| `single-sparse` | One large model on port 8200 does everything, the voice included. | One NVIDIA graphics card with 8 GB or more, 16 GB recommended, and 32 GB of RAM. Or a Mac with Apple Silicon and 48 GB. Either way, 30 GB of free disk space. |
+| `sparse-drive` | The large model takes the drive's place on port 8200. The voice model keeps speaking on port 8201. | One NVIDIA graphics card with 12 GB or more, 16 GB recommended, and 32 GB of RAM; or an AMD graphics unit with that much set aside for it (see below). Linux with Docker. |
+| `single-sparse` | One large model on port 8200 does everything, the voice included. | One NVIDIA graphics card with 8 GB or more, 16 GB recommended, and 32 GB of RAM. Or an AMD graphics unit with 8 GB or more set aside for it in the BIOS, 32 GB recommended (a Ryzen AI MAX computer, for example). Or an Intel graphics unit on a computer with 48 GB of memory. Or a Mac with Apple Silicon and 48 GB. Either way, 30 GB of free disk space. |
 
 ```bash
 wyrd brain plan              # what this computer would do with the large model
@@ -147,6 +147,8 @@ After `wyrd brain enable` or `wyrd brain disable`, run `wyrd restart` to switch.
 **How the model is placed.** The planner keeps the model's core and its working memory on the graphics card. It puts the experts of the first few layers in RAM, as many as it must. `LLAMA_CPU_MOE` overrides its choice. With `sparse-drive`, the planner first keeps 4.3 GB of the card for the voice model. On a 16 GB card, the experts of 27 of the model's 40 layers then go to RAM. On a 12 GB card, 36 do. An 8 GB card is refused.
 
 **When your computer changes.** Each `wyrd start` compares this computer with the one Wyrdsekai saw last time. It looks at the largest graphics card, the RAM and the card's name, and keeps the record in `hardware-seen.json` in the data folder. The large model may have become possible, for example after a new card, more RAM or a move to another computer. If so, Wyrdsekai tells you once, with the commands for each profile. It never changes the profile by itself. If a computer can no longer run the chosen profile, it starts the two-model setup instead and says why.
+
+**AMD and Intel graphics.** Since 0.5.7 the large model also runs on AMD and Intel graphics units, through Vulkan, on Linux with Docker. An AMD unit uses the memory the BIOS set aside for it; the setting is usually called UMA frame buffer or iGPU memory. `wyrd brain plan` shows how much is set aside and how much more the unit can borrow from system memory. With 32 GB set aside, the whole model sits on the unit. With 8 GB, most of the experts go to RAM. With less than 6 GB, the profile is refused and the plan says what to change in the BIOS. An Intel unit has no memory of its own; it needs a computer with 48 GB, like a Mac. Nightly learning on the large model stays off on AMD and Intel graphics for now; everything else works. On a computer with both an NVIDIA card and another graphics unit, Wyrdsekai takes the NVIDIA card; `WYRDSEKAI_BRAIN_BACKEND=vulkan` picks the other one, `cuda` the card.
 
 **Sharing the graphics card.** On Linux, the large model shares the card with your other programs. If a game or another program needs the card, the companion moves part of itself into RAM after two minutes. It moves back once the card has been free for ten minutes. Each move takes a minute or two, and the companion does not answer during it. It runs a little slower while it shares.
 
@@ -212,7 +214,7 @@ They live in `<data>/adapters/brain/`, in the order the model server numbers the
 
 ### Windows and Mac
 
-On Windows with an NVIDIA card, and on a Mac with Apple Silicon and 48 GB or more, the large model runs through a native `llama-server`. Neither has been tested on its platform yet.
+On Windows with an NVIDIA card, and on a Mac with Apple Silicon and 48 GB or more, the large model runs through a native `llama-server`. Neither has been tested on its platform yet. On Linux with an AMD or Intel graphics unit it runs through Vulkan in Docker, as described above.
 
 Nightly learning on the large model needs CUDA on Linux, NVIDIA's software for its cards. On a Mac it needs MLX, Apple's equivalent, and uses `brain_write_mlx.py`. Windows can run the large model but cannot do nightly learning on it. The trainer reads the expert parts from the model file itself. So the trainer that `wyrd brain setup` brings downloads only the other 4.9 GB (`--no-trainer` leaves it out).
 
@@ -244,6 +246,8 @@ When Wyrdsekai starts a model server in Docker, it gives it a memory limit. The 
 Values are Docker sizes, such as `6144m` or `8g`. `0` removes the limit. A running container takes a new value the next time Wyrdsekai starts it, with `wyrd start` or `wyrd restart`. `wyrd doctor` shows the limits Docker holds, and warns when a model server has none.
 
 ## If a model runs on Ollama
+
+Wyrdsekai asks Ollama to keep the model loaded between turns. `OLLAMA_KEEP_ALIVE` in Wyrdsekai's settings changes that: a number of seconds, a time such as `10m`, or `-1` for "as long as Ollama runs", which is the default. Until 0.5.6 the default was sent in a form newer versions of Ollama refuse, and every request to such an Ollama failed; 0.5.7 sends it as a number.
 
 Set `OLLAMA_CONTEXT_LENGTH=16384` in Ollama's environment and restart it. Ollama's own window is
 small unless told otherwise (4,096 tokens on many versions; it differs between versions), and the
@@ -495,6 +499,16 @@ These timings used to be fixed in the code. They are now settings, and the numbe
 | `WYRDSEKAI_FLAG_NOTED_LIFT_DAYS` | 60 | How many days without a new sign before a "noted" flag lifts on its own. |
 
 In the settings file the same values are `sleep.deep_deadline_minutes`, `sleep.voice_align_timeout_minutes`, `protection.suspected_escalate_days`, `protection.suspected_lift_days` and `protection.noted_lift_days`. A companion reads the flag timings when she starts, so a change takes effect at the next restart.
+
+## When the model runs on the processor
+
+A computer with no graphics unit runs the model on its processor. That works, but it is slow, and a companion's own time can keep every core busy for hours. Since 0.5.7, when the processor has had more work than cores for a minute, or a temperature sensor reads 90 °C or more, a companion's own-time turns come half as often, or a quarter as often when both are true. Her own time never stops. `wyrd doctor` says when a model runs on the processor and how busy it has been over the last fifteen minutes. The way out is a graphics unit, or a model server on another computer (`wyrd inference remote <url>`).
+
+## A report for the authors
+
+`wyrd report` writes a file you can send to the people who make Wyrdsekai when something is wrong: `wyrdsekai-report-<computer>-<date>.tar.gz` in your home folder (`WYRDSEKAI_REPORT_DIR` chooses another). It holds the node's logs for the last 30 days (`wyrd report 7` for a week), its services and settings with every token, password and key blanked, its versions and update history, the hardware as the system reports it, and the lines `wyrd doctor` and `wyrd brain plan` print. It never holds the data folder: the companions' souls, memories and world stay where they are. Read it before you send it; the log holds short lines of what the companions said. Nothing is sent by the command itself.
+
+`wyrd doctor` also says when the Java on the computer was updated under a running node. From then on every helper the node starts prints a warning, and the fix is `wyrd restart` at a quiet moment.
 
 ## The log
 

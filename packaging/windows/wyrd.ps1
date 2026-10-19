@@ -2553,6 +2553,95 @@ function Invoke-DoctorOllamaWindow {
     }
 }
 
+# A companion model running on the processor (a llama-server of ours with no --n-gpu-layers / -ngl)
+# and the share of the cores busy right now; a warning at nine tenths, where her own time slows.
+# A household's 32-thread box ran two companions' own time at full load for hours and its thermal
+# limit reset it in the night (2026-10-05); nothing had said so.
+function Get-LocalModelOnCpu {
+    try {
+        $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'llama-server.exe'" -ErrorAction SilentlyContinue)
+    } catch { return $false }
+    foreach ($p in $procs) {
+        $cl = [string]$p.CommandLine
+        if ($cl -like '*--n-gpu-layers*' -or $cl -like '* -ngl *' -or $cl -like '*--gpu-layers*') { continue }
+        return $true
+    }
+    return $false
+}
+
+function Invoke-DoctorHostLoad {
+    if (-not (Get-LocalModelOnCpu)) { return }
+    try {
+        $cpus = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
+    } catch { return }
+    if ($cpus.Count -eq 0) { return }
+    $pct = [int][math]::Round(($cpus | Measure-Object -Property LoadPercentage -Average).Average)
+    $cores = ($cpus | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+    if (-not $cores) { $cores = [Environment]::ProcessorCount }
+    if ($pct -ge 90) {
+        Write-Warn2 (_T 'doctor.host_load_hot_pct' $pct $cores)
+    } else {
+        Write-Host ("  processor    : " + (_T 'doctor.host_load_ok_pct' $pct $cores))
+    }
+}
+
+# wyrd report: a bundle for the people who make Wyrdsekai — the server log, the settings with every
+# token, password and key blanked, versions, hardware, the doctor's and the brain's lines. Written to
+# a file the steward reads and then decides to send; nothing is sent from here. Never in it: the data
+# directory (souls, memories, the world) and the credential safe. (The Java-under-the-server check
+# the Linux doctor runs has no Windows twin: the runtime ships inside Wyrdsekai.exe and changes
+# only with the installer, which restarts the node.)
+function Hide-ReportSecrets {
+    param([string[]]$Lines)
+    foreach ($l in $Lines) { $l -replace '^((?:Environment=)?[A-Za-z_]*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|NKEY|SEED)[A-Za-z_]*=).*', '$1<redacted>' }
+}
+function Invoke-Report {
+    $days = 30
+    if ($Rest -and $Rest.Count -gt 0 -and ($Rest[0] -match '^\d+$')) { $days = [int]$Rest[0] }
+    $outDir = if ($env:WYRDSEKAI_REPORT_DIR) { $env:WYRDSEKAI_REPORT_DIR } else { $env:USERPROFILE }
+    $name = "wyrdsekai-report-$($env:COMPUTERNAME)-$(Get-Date -Format 'yyyyMMdd-HHmm')"
+    $T = Join-Path ([IO.Path]::GetTempPath()) $name
+    New-Item -ItemType Directory -Path $T -Force | Out-Null
+    Write-Host ("Collecting the last {0} days: the server log, settings (secrets blanked), versions, hardware, the doctor's and the brain's lines..." -f $days)
+    @("collected: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))", "host: $env:COMPUTERNAME") | Set-Content (Join-Path $T 'README.txt')
+    foreach ($verb in @('version', 'doctor', 'brain plan', 'inference status')) {
+        $file = ($verb -replace ' ', '-') + '.txt'
+        try { & $PSCommandPath ($verb -split ' ') *>&1 | Out-String | Set-Content (Join-Path $T $file) } catch { "not available: $_" | Set-Content (Join-Path $T $file) }
+    }
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$RestPort/api/version" -TimeoutSec 3 | ConvertTo-Json | Set-Content (Join-Path $T 'api-version.json') } catch { '{"note":"the node did not answer"}' | Set-Content (Join-Path $T 'api-version.json') }
+    if (Test-Path $ConfFile) { Hide-ReportSecrets (Get-Content $ConfFile) | Set-Content (Join-Path $T 'wyrdsekai.conf') }
+    try { Get-Service 'Wyrdsekai*' -ErrorAction SilentlyContinue | Format-Table Name, Status, StartType -AutoSize | Out-String | Set-Content (Join-Path $T 'services.txt') } catch { }
+    $hw = @()
+    try { $hw += '## os'; $hw += (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | Out-String) } catch { }
+    try { $hw += '## cpu'; $hw += (Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, LoadPercentage | Out-String) } catch { }
+    try { $hw += '## memory'; $hw += ("total GB: {0}" -f [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)) } catch { }
+    try { $hw += '## gpu'; $hw += (Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion | Out-String) } catch { }
+    try { $hw += '## disk'; $hw += (Get-PSDrive -Name ($DataDir.Substring(0, 1)) | Select-Object Used, Free | Out-String) } catch { }
+    $hw | Set-Content (Join-Path $T 'hardware.txt')
+    if (Test-Path $LogFile) {
+        $since = (Get-Date).AddDays(-$days)
+        $lines = Get-Content $LogFile -Tail 200000
+        $lines | Set-Content (Join-Path $T 'server.log')
+        Add-Content (Join-Path $T 'README.txt') ("server.log lines: {0} (the last {1} days are what the file holds up to {2:yyyy-MM-dd})" -f $lines.Count, $days, $since)
+    }
+    Add-Content (Join-Path $T 'README.txt') @"
+
+What is in this bundle: the server log, the settings with every token, password and key blanked,
+versions, the hardware as Windows reports it, and the doctor's, the brain's and the inference lines
+as they read when it was made.
+What is not: the data directory (the companions' souls, memories and world), the credential safe,
+and anything else that is theirs or yours.
+Read it before you send it: the log holds short lines of what the companions said.
+"@
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    $zip = Join-Path $outDir "$name.zip"
+    if (Test-Path $zip) { Remove-Item $zip -Force }
+    Compress-Archive -Path $T -DestinationPath $zip
+    Remove-Item -Recurse -Force $T
+    Write-Host ("Written: {0} ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
+    Write-Host "Read it before you send it: the log holds short lines of what the companions said. The data directory is not in it."
+}
+
 # A room script a companion wrote that failed three times is set aside (BrokenRoomScripts): the
 # room runs without it until she writes it again. The record is <data>\scripts\.broken\state.json.
 function Invoke-DoctorRoomScripts {
@@ -2664,6 +2753,7 @@ function Invoke-Doctor {
     Invoke-DoctorHouseholdTls $serverPid
     Invoke-DoctorRoomScripts
     Invoke-DoctorOllamaWindow
+    Invoke-DoctorHostLoad
     # Releases: this node, and the two programs it leans on
     if ((Get-UpdateMode) -ne 'off') {
         $inst = Get-InstalledRelease; $lat = Get-LatestRelease $ReleaseRepo
@@ -2706,6 +2796,7 @@ Lifecycle:
   restart               stop then start
   status                process + REST health + config summary
   log | logs            tail -f the server log
+  report [days]         write a report bundle for the Wyrdsekai authors (log, settings without secrets, versions, hardware); nothing is sent
   version [--mesh]      installed build (from the jar); --mesh = peers too
   update [status]       this release, the latest, the mode (WYRDSEKAI_UPDATE = check|auto|off)
   update now [VER] [--yes]  download the latest (or VER) .msi from the GitHub release, verify, install
@@ -5930,6 +6021,7 @@ switch ($Command.ToLower()) {
     "status"    { Invoke-Status }
     "log"       { Invoke-Log }
     "logs"      { Invoke-Log }
+    "report"    { Invoke-Report }
     "config"    { Invoke-Config }
     "cred"      { Invoke-Cred | Out-Null }
     "inference" { Invoke-Inference }

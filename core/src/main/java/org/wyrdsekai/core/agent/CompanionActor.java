@@ -22300,6 +22300,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * Curious/social agents check more frequently.
      */
     private Duration getAutonomyInterval() {
+        return stretchedByTheHost(ownAutonomyInterval());
+    }
+
+    /** The interval her temperament sets, before the host is considered. */
+    private Duration ownAutonomyInterval() {
         if (cachedManifest != null && cachedManifest.genome() != null) {
             var baselines = cachedManifest.genome().baselines();
             var curiosity = baselines.getOrDefault("curiosity", 0.5);
@@ -22321,6 +22326,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
 
         return AUTONOMY_INTERVAL;
+    }
+
+    /** The host factor last applied to her own time, so the change is logged once. */
+    private double lastHostFactor = 1.0;
+
+    /**
+     * A pinned or hot host stretches the time between her own-time turns; it never stops them.
+     * A household's processor ran its companions' model at full load for hours until its
+     * thermal limit reset the box (2026-10-05); nothing here had looked at the host.
+     */
+    private Duration stretchedByTheHost(Duration own) {
+        var host = bodyHostReading();
+        double factor = OwnTimeCadence.hostFactor(host);
+        if (factor != lastHostFactor) {
+            if (factor > 1.0) {
+                log.info("Companion '{}' slows her own time ×{}: {}", profile.name(), (int) factor, OwnTimeCadence.why(host));
+            } else {
+                log.info("Companion '{}' resumes her own pace: {}", profile.name(), OwnTimeCadence.why(host));
+            }
+            lastHostFactor = factor;
+        }
+        return factor > 1.0 ? Duration.ofMillis((long) (own.toMillis() * factor)) : own;
     }
 
     private String buildSoulKeywords() {

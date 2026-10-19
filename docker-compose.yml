@@ -248,7 +248,7 @@ services:
     entrypoint:
       - "/bin/sh"
       - "-c"
-    command:
+    command: &brain-command
       - |
         set -e
         # Two slots on ONE shared context pool (--kv-unified): a one-token typed question is answered
@@ -305,7 +305,7 @@ services:
         fi
         echo "[brain] exec: /app/llama-server $$*"
         exec /app/llama-server "$$@"
-    environment:
+    environment: &brain-environment
       - LLAMA_BRAIN_MODEL=${LLAMA_BRAIN_MODEL:-}
       - LLAMA_BRAIN_CTX=${LLAMA_BRAIN_CTX:-}
       - LLAMA_BRAIN_PARALLEL=${LLAMA_BRAIN_PARALLEL:-}
@@ -315,6 +315,10 @@ services:
       - LLAMA_CACHE_RAM=${LLAMA_CACHE_RAM:-}
       - LLAMA_CPU_MOE=${LLAMA_CPU_MOE:-}
       - LLAMA_CHAT_TEMPLATE_KWARGS=${LLAMA_CHAT_TEMPLATE_KWARGS:-}
+      # Vulkan only: which device when the host has several. Passed through only when the host
+      # sets it: set to an EMPTY string it means "no device", and the server quietly ran on the
+      # CPU at a fifth of the speed (the build box's iGPU, 2026-10-19). Unset = the first GPU.
+      - GGML_VK_VISIBLE_DEVICES
     deploy:
       resources:
         reservations:
@@ -322,6 +326,46 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    networks:
+      - wyrdsekai-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # The same single brain on an AMD or Intel GPU through Vulkan — the Ryzen AI MAX class of
+  # machine (a Radeon iGPU with 32 GB or more set aside for it in the BIOS and the system's
+  # memory behind it) and any iGPU that shares the system's memory. Same model, adapters,
+  # command and port as llama-brain; only the image and the device differ. The container runs
+  # as root, so /dev/dri needs no group. A household's Ryzen AI MAX+ 395 ran its companions on
+  # the CPU for five weeks because the single brain knew only NVIDIA (2026-10-19).
+  #
+  # Usage:
+  #   WYRDSEKAI_SERVING_PROFILE=single-sparse wyrd start   (the launcher picks this service on AMD/Intel)
+  #   (or) docker compose --profile brain-vulkan up -d llama-brain-vulkan
+  llama-brain-vulkan:
+    image: ghcr.io/ggml-org/llama.cpp:server-vulkan
+    container_name: wyrdsekai-llama-brain
+    restart: unless-stopped
+    oom_score_adj: 500
+    mem_limit: ${LLAMA_BRAIN_MEM_LIMIT:-0}
+    profiles: ["brain-vulkan"]
+    ulimits:
+      memlock: -1
+    ports:
+      - "${LLAMA_PORT:-8200}:8200"
+    volumes:
+      - ${WYRDSEKAI_DATA:-./data}/models:/models:ro
+      - ${WYRDSEKAI_DATA:-./data}/adapters:/adapters:ro
+    devices:
+      - /dev/dri:/dev/dri
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
+    command: *brain-command
+    environment: *brain-environment
     networks:
       - wyrdsekai-net
     healthcheck:
