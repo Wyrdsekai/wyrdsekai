@@ -9259,6 +9259,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * @return whether the turn started (false: held for a turn in flight)
      */
     private boolean triggerAutonomousInference(String autonomyPrompt, String forcedTool, boolean planAdvance) {
+        // HELD STILL IS HELD STILL. While the node is paused (a stop or an update on its way, the
+        // steward's pause) no own-time turn starts: every own-time path comes through here. A held
+        // household node kept sending its companions' own time to the processor model for twenty
+        // minutes beside the large model being measured (2026-10-19); the pause was never read here.
+        if (InferenceRouter.isPaused()) {
+            log.info("Own-time turn for '{}' held — inference is paused", profile.name());
+            return false;
+        }
         // A TURN IN FLIGHT IS NOT HERS TO TAKE. This check used to come after the request was
         // sent: the turn "yielded" to a person's pending line with its own-time request still
         // out, and the reply was then handled as the person's — gates skipped, the hush passed,

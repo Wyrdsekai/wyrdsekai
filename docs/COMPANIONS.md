@@ -523,16 +523,25 @@ instead of the two smaller ones. Since 0.5.3 that move has a gate:
 
 ```sh
 wyrd brain setup          # downloads the model (asks first)
+wyrd stop                 # the move runs on a stopped node
 wyrd brain move mia       # measures her first; asks you before anything changes
+wyrd start                # brings up the new setup, or the old one if nothing changed
 ```
 
+The move runs on a stopped node and refuses while the node is running. Only the large model
+should be up while she is measured: on one household's computer the node's two usual models and its
+companions' own turns ran beside the large model on the same chip and took it to 100 °C. The move
+itself never starts or stops the node; `wyrd start` is yours, before and after.
+
 What `brain move` does, in order: writes her description of herself from her own record and shows it
-to you (you can edit the file it names before answering); tells her she will be a few minutes without
-answers; starts the large model; measures it on her own recent turns and her own life, against the
-bare model as a control; prints a blind sheet of her real replies and the large model's on the same
-prompts, mixed, for you to read; and asks "Move her?". If she doesn't come through, or you say no, the
-two models come back and nothing changed. If you say yes, she moves, she is told on her next turn, and
-`wyrd brain disable` brings her back at any time. Her record is never touched by the move.
+to you (you can edit the file it names before answering); starts the large model alone; measures it on
+her own recent turns and her own life, against the bare model as a control, waiting for the chip to
+cool between turns when it runs hot; prints a blind sheet of her real replies and the large model's
+on the same prompts, mixed, for you to read; and asks "Move her?". The two questions are asked on
+your terminal; run the move from one. If she doesn't come through, or you say no, the large model is
+stopped and nothing changed: `wyrd start` brings the two models back. If you say yes, she moves:
+`wyrd start` brings up the large model alone, she is told on her next turn, and `wyrd brain disable`
+followed by `wyrd start` brings her back at any time. Her record is never touched by the move.
 
 How much of this happens depends on how long she has lived here. A companion who is new, or has under
 a week of nights on this computer, moves at once: the description and the facts are written, she is

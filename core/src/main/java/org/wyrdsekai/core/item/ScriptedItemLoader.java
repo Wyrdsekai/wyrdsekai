@@ -225,6 +225,14 @@ public final class ScriptedItemLoader {
 
     /** Re-scan all configured directories. Idempotent. */
     public synchronized List<ScriptedItemDef> reloadAll() {
+        // Tools from earlier tasks that the loader refused and that were left in their workspaces
+        // come where the mending looks first (2026-10-20); nothing here depends on it.
+        try {
+            org.wyrdsekai.core.coding.CodingTaskItemBridge.adoptRefusedTools(
+                org.wyrdsekai.core.coding.CodingWorkspace.scratchRoot(), householdItemsDir());
+        } catch (RuntimeException e) {
+            log.debug("ScriptedItemLoader: refused tools not adopted: {}", e.toString());
+        }
         loaded.clear();
         // Audits must reset too — otherwise subsequent boot scans pile up
         // duplicate shim entries for the same items.

@@ -210,5 +210,26 @@ sw2 = g.with_state(bare_msgs, g.STATE_FRAME + g.HER_STATES[1])
 check("a prompt with no state line gets one appended", sw2[0]["content"].endswith(g.STATE_FRAME + g.HER_STATES[1]))
 check("three of her states are supplied", len(g.HER_STATES) == 3 and g.HER_STATES[0] != g.HER_STATES[2])
 
+# ── the chip's heat: the gate waits between turns (a household APU at 100 °C, 2026-10-19) ──
+with tempfile.TemporaryDirectory() as d:
+    th, hw = os.path.join(d, "thermal"), os.path.join(d, "hwmon")
+    os.makedirs(os.path.join(th, "thermal_zone0")); open(os.path.join(th, "thermal_zone0", "temp"), "w").write("-273150\n")
+    for i, (name, temps) in enumerate([("nvme", {"temp1_input": "75000"}), ("k10temp", {"temp1_input": "100250", "temp3_input": "97000"}),
+                                       ("BAT1", {"temp1_input": "140000"})]):
+        pd = os.path.join(hw, f"hwmon{i}"); os.makedirs(pd); open(os.path.join(pd, "name"), "w").write(name + "\n")
+        for f, v in temps.items(): open(os.path.join(pd, f), "w").write(v + "\n")
+    check("the hottest chip sensor under hwmon is read; a drive or a battery is not the chip; a dead zone is not a temperature",
+          g.hottest_c(th, hw) == 100.25, g.hottest_c(th, hw))
+    os.makedirs(os.path.join(th, "thermal_zone1")); open(os.path.join(th, "thermal_zone1", "temp"), "w").write("101000\n")
+    check("the thermal zones still count", g.hottest_c(th, hw) == 101.0)
+    check("no sensors anywhere: -1", g.hottest_c(os.path.join(d, "none"), os.path.join(d, "none2")) == -1)
+reads = iter([95.0, 91.0, 86.0, 80.0]); slept = []; said = []
+waited = g.cool_down(log=said.append, read=lambda: next(reads), sleep=slept.append)
+check("hot: the gate waits until the chip is under the cool mark, and says so once", waited == 15 and slept == [5, 5, 5]
+      and len(said) == 2 and "95" in said[0], (waited, slept, said))
+check("cool: no wait, nothing said", g.cool_down(log=said.append, read=lambda: 61.0, sleep=slept.append) == 0 and len(said) == 2)
+check("every turn the gate takes waits first", "cool_down(self.log)" in open(os.path.join(HERE, "move_gate.py")).read().split("def reply")[1].split("def yes_no")[0]
+      and "cool_down(self.log)" in open(os.path.join(HERE, "move_gate.py")).read().split("def yes_no")[1][:600])
+
 print(("all passed" if fails == 0 else f"{fails} failed"))
 sys.exit(1 if fails else 0)

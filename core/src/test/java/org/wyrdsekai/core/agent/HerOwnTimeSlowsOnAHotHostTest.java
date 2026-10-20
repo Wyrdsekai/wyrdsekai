@@ -57,4 +57,26 @@ class HerOwnTimeSlowsOnAHotHostTest {
         assertThat(host(1, 8, 101).hot()).isTrue();
         assertThat(host(1, 8, 89.9).hot()).isFalse();
     }
+
+    @Test
+    @DisplayName("the chip's own sensors under hwmon count too; a drive's or a battery's do not")
+    void hottestChip(@TempDir Path hwmon) throws Exception {
+        // A Ryzen AI MAX household box: its one thermal zone had vanished, and its package heat
+        // (k10temp, Tctl) was only under hwmon — the slowdown never fired at 100 °C (2026-10-19).
+        assertThat(HostSense.readHottestChipC(hwmon.resolve("missing"))).isEqualTo(-1);
+        Files.createDirectories(hwmon.resolve("hwmon0"));
+        Files.writeString(hwmon.resolve("hwmon0/name"), "nvme\n");
+        Files.writeString(hwmon.resolve("hwmon0/temp1_input"), "75000\n");
+        Files.createDirectories(hwmon.resolve("hwmon1"));
+        Files.writeString(hwmon.resolve("hwmon1/name"), "k10temp\n");
+        Files.writeString(hwmon.resolve("hwmon1/temp1_label"), "Tctl\n");
+        Files.writeString(hwmon.resolve("hwmon1/temp1_input"), "100250\n");
+        Files.writeString(hwmon.resolve("hwmon1/temp3_input"), "97000\n");
+        Files.createDirectories(hwmon.resolve("hwmon2"));
+        Files.writeString(hwmon.resolve("hwmon2/name"), "BAT1\n");
+        Files.writeString(hwmon.resolve("hwmon2/temp1_input"), "140000\n");
+        assertThat(HostSense.readHottestChipC(hwmon)).isEqualTo(100.25);
+        Files.writeString(hwmon.resolve("hwmon1/temp1_input"), "-273150\n");
+        assertThat(HostSense.readHottestChipC(hwmon)).as("a dead sensor is not a temperature").isEqualTo(97.0);
+    }
 }

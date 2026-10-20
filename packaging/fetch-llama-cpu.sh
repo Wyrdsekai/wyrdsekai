@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 #
-# fetch-llama-cpu.sh — Download a CPU-only llama-server binary for bundling
-# in the Linux .deb and .tar.gz packages.
+# fetch-llama-cpu.sh — Download the llama-server binary bundled in the Linux
+# .deb and .tar.gz packages (the name is historical: it was the CPU-only build).
 #
-# Downloads the latest llama.cpp release binary for Linux amd64 (CPU build).
-# The resulting binary is placed at packaging/llama-server and picked up by
-# build-deb.sh alongside the bundled nats-server + metasearch binaries.
+# Since 0.5.8 the archive is llama.cpp's Vulkan build for Linux amd64: the same
+# server with the Vulkan backend (libggml-vulkan.so) beside it. ggml loads the
+# backends it finds next to the binary; on a host with a GPU and a Vulkan driver
+# the layers can go to the GPU, on a host without either the backend fails to
+# load and the CPU serves, as before. A household's 4B voice model ran on the
+# processor for five weeks beside an idle Radeon (2026-10-19). The CPU archive
+# is the fallback (and the only one for arm64). The binary is placed at
+# packaging/llama-server and picked up by build-deb.sh alongside the bundled
+# nats-server + metasearch binaries.
 #
 # We pin a specific release for reproducibility. Override LLAMA_CPP_RELEASE
 # to grab a different version.
@@ -37,8 +43,13 @@ esac
 # Recent releases (b88xx+) ship .tar.gz, not .zip. Keep a .zip fallback for
 # older pins. curl follows redirects; the GitHub release CDN occasionally
 # returns 502/504 — retry the fetch up to 3 times before giving up.
+URL_VULKAN="https://github.com/ggml-org/llama.cpp/releases/download/${RELEASE}/llama-${RELEASE}-bin-ubuntu-vulkan-${ARCH_TAG}.tar.gz"
 URL_TGZ="https://github.com/ggml-org/llama.cpp/releases/download/${RELEASE}/llama-${RELEASE}-bin-ubuntu-${ARCH_TAG}.tar.gz"
 URL_ZIP="https://github.com/ggml-org/llama.cpp/releases/download/${RELEASE}/llama-${RELEASE}-bin-ubuntu-${ARCH_TAG}.zip"
+# The Vulkan build first (x64 only; WYRDSEKAI_LLAMA_CPU_ONLY=1 skips it), then the CPU archives.
+URLS=()
+[[ "$ARCH_TAG" == "x64" && "${WYRDSEKAI_LLAMA_CPU_ONLY:-0}" != "1" ]] && URLS+=("$URL_VULKAN")
+URLS+=("$URL_TGZ" "$URL_ZIP")
 OUT_DIR="$SCRIPT_DIR"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -53,9 +64,9 @@ if [[ -f "$OUT_DIR/llama-server" ]] && [[ "${FORCE:-0}" != "1" ]]; then
     exit 0
 fi
 
-info "Fetching llama.cpp $RELEASE (ubuntu-$ARCH_TAG)..."
+info "Fetching llama.cpp $RELEASE (ubuntu-$ARCH_TAG, Vulkan build first)..."
 fetched=""
-for url in "$URL_TGZ" "$URL_ZIP"; do
+for url in "${URLS[@]}"; do
     # Preserve compound extensions like .tar.gz.
     base="${url##*/}"
     case "$base" in
@@ -109,5 +120,7 @@ for lib in "$BIN_DIR"/*.so "$BIN_DIR"/*.so.*; do
 done
 
 ok "Wrote $(du -sh "$OUT_DIR/llama-server" | cut -f1) to packaging/llama-server + $lib_count backend .so files"
+if [[ -f "$OUT_DIR/libggml-vulkan.so" ]]; then ok "the Vulkan backend is beside it (libggml-vulkan.so)"
+else info "no Vulkan backend in this build: the bundled server is CPU-only"; fi
 "$OUT_DIR/llama-server" --version 2>&1 | head -3 || \
     echo "(binary staged; runtime needs the bundled .so files adjacent to it)"

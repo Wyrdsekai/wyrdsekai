@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.7}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.8}"
 ARCH="${WYRDSEKAI_ARCH:-amd64}"  # amd64 or arm64
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
@@ -398,8 +398,8 @@ Group=nogroup
 WantedBy=multi-user.target
 EOF
 
-# llama-server service (bundled CPU build). Disabled by default — enabled on
-# demand by `wyrd inference local`. Model path + port come from the drop-in
+# llama-server service (the bundled build; Vulkan backend beside it since 0.5.8). Disabled by
+# default — enabled on demand by `wyrd inference local`. Model path + port come from the drop-in
 # that `wyrd inference local` writes at /etc/systemd/system/wyrdsekai-llama.service.d/.
 # Default port 11525 matches WYRDSEKAI_INFERENCE_URL=http://127.0.0.1:11525.
 #
@@ -409,7 +409,7 @@ EOF
 # postinst sets this; keep in sync if the perm model changes).
 cat > "$DEB_ROOT/usr/lib/systemd/system/wyrdsekai-llama.service" << 'EOF'
 [Unit]
-Description=Wyrdsekai llama-server (CPU inference)
+Description=Wyrdsekai llama-server (bundled inference)
 After=network-online.target
 Wants=network-online.target
 
@@ -421,6 +421,10 @@ Environment=WYRDSEKAI_LLAMA_MODEL=/opt/wyrdsekai/data/models/wyrdsekai-3.5-4b-v1
 Environment=WYRDSEKAI_LLAMA_CTX=8192
 Environment=WYRDSEKAI_LLAMA_CACHE_RAM=1024
 Environment=WYRDSEKAI_LLAMA_THREADS=auto
+# Layers on the GPU: auto = every layer when the Vulkan backend ships beside the binary and the
+# host has a GPU (/sys/class/drm); else none. A number pins it (0 keeps the model on the processor,
+# with no device at all: a device merely visible makes the processor path fifteen times slower).
+Environment=WYRDSEKAI_LLAMA_GPU_LAYERS=auto
 # V8 voice steering vectors — must match home-server's docker default (Gate-3 calibration).
 # Vectors bundled at /opt/wyrdsekai/data/vectors/v8/ by .deb postinstall. Skip
 # silently if any are missing. Override the comma-sep "file:scale" list via
@@ -432,6 +436,11 @@ WorkingDirectory=/opt/wyrdsekai/bin
 ExecStart=/bin/sh -c '\
     threads="$WYRDSEKAI_LLAMA_THREADS"; \
     if [ "$threads" = "auto" ]; then threads=$(nproc 2>/dev/null || echo 4); fi; \
+    ngl="$WYRDSEKAI_LLAMA_GPU_LAYERS"; \
+    if [ "$ngl" = "auto" ]; then ngl=0; \
+        if [ -f /opt/wyrdsekai/bin/libggml-vulkan.so ] && grep -qsE "0x(1002|8086|10de)" /sys/class/drm/card*/device/vendor; then ngl=99; fi; \
+    fi; \
+    GPU="--device none"; if [ "$ngl" != "0" ]; then GPU="--n-gpu-layers $ngl"; echo "[wyrdsekai-llama] $ngl layers on the GPU"; fi; \
     V8_CSV=""; \
     if [ -d "$WYRDSEKAI_V8_VECTORS_DIR" ] && [ -n "$WYRDSEKAI_V8_VECTORS" ]; then \
         IFS=","; for pair in $WYRDSEKAI_V8_VECTORS; do \
@@ -455,6 +464,7 @@ ExecStart=/bin/sh -c '\
         --ctx-size "$WYRDSEKAI_LLAMA_CTX" \
         --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" \
         --threads "$threads" \
+        $GPU \
         --jinja \
         --reasoning off \
         --reasoning-budget 0 \
@@ -614,7 +624,7 @@ Section: misc
 Priority: optional
 Architecture: ${ARCH}
 Depends: default-jre-headless (>= 2:1.25) | openjdk-25-jre-headless
-Recommends: sqlite3, nftables, bpftrace, docker.io | docker-ce | podman, python3-gi, gir1.2-gtk-3.0, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, policykit-1 | polkit, xdg-utils
+Recommends: sqlite3, nftables, bpftrace, docker.io | docker-ce | podman, python3-gi, gir1.2-gtk-3.0, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1, policykit-1 | polkit, xdg-utils, libvulkan1, mesa-vulkan-drivers
 Maintainer: Wyrdsekai Project <hello@wyrdsekai.org>
 Description: Distributed text-native world engine
  Wyrdsekai is a distributed text-native OS built on the MUD paradigm.
@@ -724,6 +734,15 @@ if [ -d /opt/wyrdsekai/share/oracle ]; then
         echo "[wyrdsekai] oracle bootstrap deferred (no network?) — run 'wyrd oracle bootstrap' later"
 fi
 
+# The bundled llama-server unit runs as nobody; to put layers on a graphics unit it has to open
+# /dev/dri/renderD* (groups render and video). Named only where they exist — a unit naming a
+# missing group does not start — in a drop-in beside the one `wyrd inference local` writes.
+_gpu_groups=""
+for _g in render video; do getent group "$_g" >/dev/null 2>&1 && _gpu_groups="$_gpu_groups $_g"; done
+if [ -n "$_gpu_groups" ]; then
+    mkdir -p /etc/systemd/system/wyrdsekai-llama.service.d
+    printf '[Service]\nSupplementaryGroups=%s\n' "${_gpu_groups# }" > /etc/systemd/system/wyrdsekai-llama.service.d/10-gpu.conf
+fi
 # Reload systemd unit cache. wyrdsekai-nats is not enabled: the node starts it at every start,
 # after writing the household include it reads (see the unit). wyrdsekai-llama is also
 # disabled by default — `wyrd inference local` enables it on demand.

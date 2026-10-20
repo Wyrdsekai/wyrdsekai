@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,7 +35,7 @@ class ConfiguredUrlIsAlwaysRegisteredTest {
         backends.add(backend("llama-voice", "http://127.0.0.1:8201", 15));
         var probes = new AtomicInteger();
         var added = InferenceConfig.registerConfiguredUrl(backends, "http://198.51.100.20:8200",
-            (url, name, priority) -> { probes.incrementAndGet(); return Optional.of(backend(name != null ? name : "llama-server-auto", url, priority)); });
+            (url, name, priority, kind) -> { probes.incrementAndGet(); return Optional.of(backend(name != null ? name : "llama-server-auto", url, priority)); });
         assertTrue(added);
         assertEquals(1, probes.get());
         assertEquals(2, backends.size());
@@ -50,7 +51,7 @@ class ConfiguredUrlIsAlwaysRegisteredTest {
         backends.add(new InferenceBackend.Ollama("ollama", new InferenceClient("http://198.51.100.161:11434"), 30, List.of()));
         var probes = new AtomicInteger();
         assertTrue(InferenceConfig.registerConfiguredUrl(backends, "http://198.51.100.161:11434/",
-            (url, name, priority) -> { probes.incrementAndGet();
+            (url, name, priority, kind) -> { probes.incrementAndGet();
                 return Optional.of(new InferenceBackend.Ollama(name, new InferenceClient(url), priority, List.of("gpt-oss:20b"))); }));
         assertEquals(1, probes.get(), "the listed server is asked what it serves");
         assertEquals(2, backends.size(), "not registered twice");
@@ -66,7 +67,7 @@ class ConfiguredUrlIsAlwaysRegisteredTest {
         var backends = new ArrayList<InferenceBackend>();
         backends.add(new InferenceBackend.Ollama("ollama", new InferenceClient("http://198.51.100.161:11434"), 30, List.of()));
         assertFalse(InferenceConfig.registerConfiguredUrl(backends, "http://198.51.100.161:11434",
-            (url, name, priority) -> Optional.empty()));
+            (url, name, priority, kind) -> Optional.empty()));
         assertEquals(30, backends.get(0).priority());
 
         var managed = new InferenceBackend.LlamaServer("llama-server", new InferenceClient("http://127.0.0.1:11525"), 5,
@@ -74,18 +75,40 @@ class ConfiguredUrlIsAlwaysRegisteredTest {
         var local = new ArrayList<InferenceBackend>(List.of(managed));
         var probes = new AtomicInteger();
         assertFalse(InferenceConfig.registerConfiguredUrl(local, "http://localhost:11525",
-            (url, name, priority) -> { probes.incrementAndGet(); return Optional.empty(); }));
+            (url, name, priority, kind) -> { probes.incrementAndGet(); return Optional.empty(); }));
         assertEquals(0, probes.get(), "a managed local server is not probed or replaced");
         assertSame(managed, local.get(0));
+    }
+
+    @Test
+    @DisplayName("a listed Ollama is asked again as Ollama; an unlisted URL as whatever it is")
+    void aListedOllamaStaysOllama() {
+        // The household's Ollama, re-probed as llama-server first, answered /v1/models and was
+        // registered as MLX (2026-10-19). The probe is told what the entry is.
+        var backends = new ArrayList<InferenceBackend>();
+        backends.add(new InferenceBackend.Ollama("ollama", new InferenceClient("http://198.51.100.161:11434"), 30, List.of()));
+        var kinds = new ArrayList<String>();
+        assertTrue(InferenceConfig.registerConfiguredUrl(backends, "http://198.51.100.161:11434",
+            (url, name, priority, kind) -> { kinds.add(kind);
+                return Optional.of(new InferenceBackend.Ollama(name, new InferenceClient(url), priority, List.of("gpt-oss:20b"))); }));
+        assertEquals(List.of("ollama"), kinds);
+        var listedLlama = new ArrayList<InferenceBackend>(List.of(
+            new InferenceBackend.LlamaServer("llama-server", new InferenceClient("http://198.51.100.20:8200"), 5, List.of(), null)));
+        InferenceConfig.registerConfiguredUrl(listedLlama, "http://198.51.100.20:8200",
+            (url, name, priority, kind) -> { kinds.add(kind); return Optional.empty(); });
+        assertEquals("llama-server", kinds.get(1));
+        InferenceConfig.registerConfiguredUrl(new ArrayList<>(), "http://198.51.100.99:8200",
+            (url, name, priority, kind) -> { kinds.add(kind); return Optional.empty(); });
+        assertNull(kinds.get(2), "nothing listed: probed as whatever it is");
     }
 
     @Test
     @DisplayName("no URL, nothing happens; a URL nothing answers at adds nothing")
     void nullAndDead() {
         var backends = new ArrayList<InferenceBackend>();
-        assertFalse(InferenceConfig.registerConfiguredUrl(backends, null, (url, name, priority) -> Optional.of(backend("x", url, 5))));
-        assertFalse(InferenceConfig.registerConfiguredUrl(backends, " ", (url, name, priority) -> Optional.of(backend("x", url, 5))));
-        assertFalse(InferenceConfig.registerConfiguredUrl(backends, "http://198.51.100.99:8200", (url, name, priority) -> Optional.empty()));
+        assertFalse(InferenceConfig.registerConfiguredUrl(backends, null, (url, name, priority, kind) -> Optional.of(backend("x", url, 5))));
+        assertFalse(InferenceConfig.registerConfiguredUrl(backends, " ", (url, name, priority, kind) -> Optional.of(backend("x", url, 5))));
+        assertFalse(InferenceConfig.registerConfiguredUrl(backends, "http://198.51.100.99:8200", (url, name, priority, kind) -> Optional.empty()));
         assertTrue(backends.isEmpty());
     }
 }

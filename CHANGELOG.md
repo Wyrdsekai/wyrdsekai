@@ -4,6 +4,84 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.8] — 2026-10-20
+
+### Added
+
+- **Nightly learning on AMD graphics.** On an AMD graphics unit with memory set aside for it, such
+  as a Ryzen AI MAX computer, `wyrd brain setup` now brings the nightly-learning trainer too, built
+  for that exact unit from AMD's own PyTorch release. Before any night is written there, the unit
+  has to pass a check: a minute of the night's arithmetic compared with the processor's. The
+  software for these units is young and has computed quietly wrong for some people; the check is
+  how a household finds out first.
+- **`wyrd brain check`** runs that check on any graphics unit, NVIDIA included, and `wyrd brain
+  status` shows the last result.
+- **The small models run on the graphics unit on AMD and Intel computers without Docker.** The
+  model server bundled in the Linux package now carries the Vulkan backend. On a computer with a
+  graphics unit and its driver, the node puts every layer of the models it starts itself on the
+  unit, and `wyrd inference local` does the same. Where there is no unit or no driver, the
+  processor serves as before. `WYRDSEKAI_GPU_LAYERS=0` keeps a model on the processor. `wyrd
+  doctor` now tells a model on the processor from one on the graphics unit by what the server
+  loaded, not by what it was asked. One household's 4B voice model ran on the processor for five
+  weeks beside an idle Radeon.
+
+### Changed
+
+- **Moving a companion to the large model happens on a stopped node.** `wyrd brain move` now
+  refuses while the node is running. The order is `wyrd stop`, `wyrd brain move <name>`,
+  `wyrd start`. Only the large model is up while she is measured; the move never starts or stops
+  the node itself; after a yes, `wyrd start` brings up the large model alone, and after a no or a
+  failed gate it brings the two models back. One household's computer, running its two usual models
+  and its companions' own turns beside the large model being measured on the same chip, reached
+  100 °C twice before its steward pulled the plug.
+- **The move waits for the chip to cool between turns**, when a sensor reads 92 °C or more, until
+  it is back under 82 °C.
+- **A hold holds.** When the launcher asks the node to hold still before a stop, an update or an
+  inference restart, no new turn starts until the launcher is done, or ten minutes pass. Before,
+  the companions' own time went on through the hold.
+- **The trainer no longer needs bitsandbytes** except to read the older training bundle's expert
+  files. The night reads the experts from the served model file itself, as it has since 0.5.0, so
+  the part that only ran on NVIDIA is no longer required.
+
+### Fixed
+
+- **The move's two questions were invisible.** "Write this into her identity?" and "Move her to
+  the large model?" were sent where nothing showed them, so pressing Enter answered no to a
+  question never seen. Both are printed now, and when there is no terminal to answer on the move
+  says so instead of silently taking no.
+- **The processor's own heat sensor is read.** The own-time slowdown and the move's wait read the
+  chip's sensor (k10temp on a Ryzen, coretemp on Intel, amdgpu) as well as the thermal zones. One
+  household's box reported its 100 °C only there, and nothing slowed down.
+- **Under the single large model, nothing on another machine is crowned in its place.** When the
+  large model was not up as the node started, the node took the first model of a remote Ollama as
+  its single brain, a 12B over the 20B beside it. The node now waits for its own large model and
+  gives it every lane when it comes up; when a server lists several models, the node's default
+  model is the one. A node set up without Docker also lists its own large model's address now,
+  where before it kept pointing at a port nothing served.
+- **A listed Ollama stays Ollama.** When the inference URL named an Ollama already in the list, it
+  was asked again as a llama-server first and registered as the wrong kind.
+- **On an AMD graphics unit the large model is planned on the memory the BIOS set aside**, not on
+  what the kernel says is in use, which right after a stop still counts the stopped model and made
+  the plan "not viable" so the model did not come back.
+- **Nightly learning on the large model could not be set up outside this house.** The training
+  bundle that `wyrd brain setup --trainer` downloads was listed at our server but never copied
+  there, so the download failed in any other household since 0.5.0 and their nights on the large
+  model never ran. The file is published now, and a release stops before it is built if any file
+  in the download list does not answer.
+- **A computer whose `nvidia-smi` is only a message was taken for an NVIDIA machine.** Some AMD
+  machines ship a stand-in `nvidia-smi` that prints a sentence and exits cleanly; the launcher
+  and the node read the clean exit as a card and planned nothing on the AMD unit beside it. A
+  card now has to answer with a name and a memory size.
+- **A tool of hers with one wrong word in its manifest is corrected before the workshop is asked.**
+  A companion asked the workshop for a tool; the workshop wrote sound code and named one capability
+  wrongly in the manifest (`notes.read` for `notes.list`, the very call the code makes). The whole
+  tool was refused for that word, the repair pass wrote the same word again, and the tool went into
+  her room as an object that did nothing, with nothing telling her why. Such a slip is now corrected
+  mechanically, from what the code actually calls, before any workshop round and on the mending
+  bench. A tool the loader still refuses is kept where the night's mending looks, she is told once
+  what is wrong, and the workshop tries it on a quiet night. Tools from earlier tasks that were left
+  behind this way are picked up at the next start.
+
 ## [0.5.7] — 2026-10-19
 
 ### Added

@@ -200,6 +200,11 @@ public class CapabilityRegistry {
      * @return A pre-populated registry
      */
     public static CapabilityRegistry fromBackends(List<InferenceBackend> backends) {
+        return fromBackends(backends, null);
+    }
+
+    /** @param defaultModel the node's default model, the one a single brain that lists several serves with */
+    public static CapabilityRegistry fromBackends(List<InferenceBackend> backends, String defaultModel) {
         var registry = new CapabilityRegistry();
         double largestLocal = largestLocalModelSize(backends);
         for (var backend : backends) {
@@ -208,7 +213,7 @@ public class CapabilityRegistry {
         registry.ensureReasoning(backends);
 
         if (WyrdConfig.get().singleBrain()) {
-            registerSingleBrain(registry, backends);
+            registerSingleBrain(registry, backends, defaultModel);
         }
 
         log.info("CapabilityRegistry auto-detected {} capabilities from {} backends: {}",
@@ -413,23 +418,40 @@ public class CapabilityRegistry {
         List.of("quick", "full", "reasoning", "summarize", "tool_dispatch");
 
     /**
-     * Serving profile {@code single-sparse}: one local model serves every lane. The size
+     * Serving profile {@code single-sparse}: the node's own large model serves every lane. The size
      * heuristics above name a lane from the digits in a model's file name, so a lone large model
      * registers {@code reasoning}/{@code full} and never {@code quick}; the voice lane then only
-     * reached it by falling through to priority order. Register the lanes on the first local
-     * backend deliberately, ahead of anything the heuristics registered for them.
+     * reached it by falling through to priority order. Register the lanes on the brain deliberately,
+     * ahead of anything the heuristics registered for them.
+     *
+     * <p>The brain is the llama-server or MLX server on this host, and nothing else is crowned: a
+     * household node whose brain had not come back after its move crowned a 12B on another
+     * machine's Ollama as its single brain (2026-10-19). While the brain is down (nothing listed
+     * yet), the lanes stay unregistered and the router registers them when it comes up. When the
+     * brain lists several models, the node's default model is the one.</p>
      */
-    static void registerSingleBrain(CapabilityRegistry registry, List<InferenceBackend> backends) {
+    static void registerSingleBrain(CapabilityRegistry registry, List<InferenceBackend> backends, String defaultModel) {
         for (var backend : backends) {
-            if (!"local".equals(inferTier(backend))) continue;
-            var model = backend.models().isEmpty() ? "default" : backend.models().getFirst();
+            if (!isTheLocalBrain(backend) || backend.models().isEmpty()) continue;
+            var models = backend.models();
+            var model = defaultModel != null && models.contains(defaultModel) ? defaultModel : models.getFirst();
             for (var cap : SINGLE_BRAIN_CAPABILITIES) {
                 registry.register(new CapabilityEntry(cap, backend.name(), model, "local", 0));
             }
             log.info("Single-brain profile: '{}' ({}) serves {}", backend.name(), model, SINGLE_BRAIN_CAPABILITIES);
             return;
         }
-        log.warn("Single-brain profile is set but no local backend is configured; lanes resolve by priority order");
+        log.warn("Single-brain profile: the brain is down (no llama-server or MLX server on this host has said what it "
+            + "serves); her lanes stay unregistered until it comes up — nothing on another machine is crowned in its place");
+    }
+
+    /** The node's own brain: a llama-server or MLX server on this host. */
+    static boolean isTheLocalBrain(InferenceBackend b) {
+        if (!(b instanceof InferenceBackend.LlamaServer || b instanceof InferenceBackend.Mlx)) return false;
+        var url = b.url();
+        if (url == null) return false;
+        var u = url.toLowerCase(Locale.ROOT);
+        return u.contains("://127.0.0.1") || u.contains("://localhost") || u.contains("://0.0.0.0") || u.contains("://[::1]");
     }
 
     /**

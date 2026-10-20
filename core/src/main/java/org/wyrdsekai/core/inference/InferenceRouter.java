@@ -2312,6 +2312,8 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                 capabilityRegistry.registerBackend(known, d.models(), CapabilityRegistry.largestLocalModelSize(backends));
                 capabilityRegistry.rankDefaultLane(backends);
                 capabilityRegistry.ensureReasoning(backends);
+                // The brain came up after the node did: it takes every lane now, as it would have at boot.
+                if (WyrdConfig.get().singleBrain()) CapabilityRegistry.registerSingleBrain(capabilityRegistry, backends, defaultModel);
             }
             log.info("Backend '{}' says it serves {} — its lanes are registered", b.name(), d.models());
         }

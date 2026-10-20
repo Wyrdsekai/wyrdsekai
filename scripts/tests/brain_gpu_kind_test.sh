@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 W="$HERE/bin/wyrd"
 eval "$(sed -n '/^BRAIN_LAYERS=/p;/^BRAIN_VRAM_HEADROOM_MB=/p;/^BRAIN_RAM_FLOOR_MB=/p;/^BRAIN_VOICE_RESERVE_MB=/p;/^BRAIN_DARWIN_RAM_MIN_MB=/p;/^BRAIN_UNIFIED_RAM_MIN_MB=/p' "$W")"
 eval "$(sed -n '/^BRAIN_FILE_MB=/p;/^BRAIN_SPINE_VRAM_MB=/p;/^BRAIN_LAYER_MB=/p' "$W")"
-for fn in _drm_gpu_kind _brain_gpu_kind _amd_card_dir _amd_mem_mb _brain_amd_vram_mb _brain_amd_vram_used_mb \
+for fn in _drm_gpu_kind _brain_gpu_kind _amd_card_dir _amd_mem_mb _brain_amd_vram_mb _brain_vram_others_mb \
           _brain_amd_gtt_mb _brain_amd_name _brain_vram_mb plan_brain_residency plan_for_profile \
           plan_brain_residency_darwin plan_brain_residency_unified _brain_plan_for_kind _brain_single_mem_limit; do
     eval "$(sed -n "/^${fn}() {/,/^}/p" "$W")"
@@ -48,7 +48,7 @@ WYRD_SYS_DRM="$T/kuebiko"
 check "kuebiko: kind"                      "$(_brain_gpu_kind)"            amd
 check "kuebiko: set aside for the GPU"     "$(_brain_vram_mb)"             32768
 check "kuebiko: to borrow"                 "$(_brain_amd_gtt_mb)"          48158
-check "kuebiko: in use"                    "$(_brain_amd_vram_used_mb)"    1370
+check "kuebiko: the carve-out is the brain's, whatever is in use (the plan read a stopped container's share, 2026-10-19)" "$(_brain_vram_others_mb)" 0
 check "kuebiko: name"                      "$(_brain_amd_name)"            "AMD GPU 1586"
 check "kuebiko: plan, whole model on the GPU" "$(_brain_plan_for_kind single-sparse 31398 96318 amd)" gpu-full
 check "kuebiko: the voice beside it"       "$(_brain_plan_for_kind sparse-drive 31398 96318 amd)"  gpu-full
@@ -58,8 +58,10 @@ check "amd: 4 GB set aside → not viable"   "$(_brain_plan_for_kind single-spar
 WYRD_SYS_DRM="$T/second-node"
 check "second-node without nvidia-smi: the 680M"  "$(_brain_gpu_kind)"            amd
 check "second-node: 1 GiB set aside → not viable" "$(_brain_plan_for_kind single-sparse "$(_brain_vram_mb)" 30820 amd)" not-viable
-nvidia-smi() { echo "NVIDIA GeForce RTX 5060 Ti"; }
+nvidia-smi() { echo "NVIDIA GeForce RTX 5060 Ti, 16311"; }
 check "second-node with nvidia-smi: nvidia"       "$(_brain_gpu_kind)"            nvidia
+nvidia-smi() { echo "nvidia-smi not found. This is AMD country."; }   # a rented AMD box's stub, exit 0 (2026-10-20)
+check "a stub nvidia-smi that talks is not a card: the AMD GPU"  "$(_brain_gpu_kind)"  amd
 WYRDSEKAI_BRAIN_BACKEND=vulkan
 check "second-node, Vulkan forced: the 680M"      "$(_brain_gpu_kind)"            amd
 unset WYRDSEKAI_BRAIN_BACKEND
@@ -70,7 +72,7 @@ check "home-server without nvidia-smi: intel"     "$(_brain_gpu_kind)"          
 check "intel: no memory of its own"        "$(_brain_vram_mb)"             0
 check "intel + 64 GB → whole model on the GPU" "$(_brain_plan_for_kind single-sparse 0 65536 intel)" gpu-full
 check "intel + 32 GB → not viable"         "$(_brain_plan_for_kind single-sparse 0 32768 intel)" not-viable
-nvidia-smi() { echo "NVIDIA GeForce RTX 4060 Ti"; }
+nvidia-smi() { echo "NVIDIA GeForce RTX 4060 Ti, 16311"; }
 check "home-server: nvidia first"                 "$(_brain_gpu_kind)"            nvidia
 WYRDSEKAI_BRAIN_BACKEND=vulkan
 check "home-server, Vulkan forced: the Intel iGPU" "$(_brain_gpu_kind)"           intel

@@ -4,6 +4,8 @@ import org.wyrdsekai.common.system.SystemPaths;
 import org.wyrdsekai.core.agent.Companions;
 import org.wyrdsekai.core.agent.SoulNames;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 
@@ -15,6 +17,10 @@ import java.time.Instant;
  * the manifest changes, in a new version. Archiving retires a soul from the respawn
  * sweep without deleting anything; a household that woke up with two after a rename
  * can put the accidental one to rest and keep its record.</p>
+ *
+ * <p>{@code identity <did-or-name> <text-file>} writes her description of herself into her
+ * record: the same lines the node's door runs ({@code POST /api/soul/{did}/identity}), for
+ * {@code wyrd brain move}, which runs on a stopped node (2026-10-19).</p>
  */
 public final class SoulAdminMain {
 
@@ -37,12 +43,16 @@ public final class SoulAdminMain {
                     : "archived by the steward";
                 System.exit(archive(store, soulsDir, args[1], reason));
             }
+            case "identity" -> {
+                if (args.length < 3) { usage(); System.exit(64); }
+                System.exit(identity(store, args[1], args[2]));
+            }
             default -> { usage(); System.exit(64); }
         }
     }
 
     private static void usage() {
-        System.err.println("usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason]");
+        System.err.println("usage: wyrd soul list | rename <old-name> <new-name> | archive <name> [reason] | identity <did-or-name> <text-file>");
     }
 
     private static void list(SqlSoulStore store, Path soulsDir) {
@@ -77,6 +87,32 @@ public final class SoulAdminMain {
         System.out.printf("Renamed '%s' → '%s' — same soul (%s), same entity id (%s), manifest v%d.%n",
             p.name(), to.trim(), m.did(), p.entityId(), m.manifestVersion() + 1);
         System.out.println("Set WYRDSEKAI_COMPANION_NAME" + " to '" + to.trim() + "' in the conf and restart; she keeps everything.");
+        return 0;
+    }
+
+    /**
+     * Her description of herself, into her record, in a new manifest version. Prints
+     * {@code version=<n>} last, for the launcher. 1 to 2000 characters, as at the door.
+     */
+    static int identity(SqlSoulStore store, String who, String file) {
+        String text;
+        try {
+            text = Files.readString(Path.of(file)).strip();
+        } catch (IOException e) {
+            System.err.println("Could not read " + file + ": " + e.getMessage());
+            return 1;
+        }
+        if (text.isEmpty() || text.length() > 2000) {
+            System.err.println("text: 1 to 2000 characters (" + text.length() + " given)");
+            return 1;
+        }
+        var m = who.startsWith("did:") ? store.latest(who).orElse(null) : byName(store, who);
+        if (m == null) { System.err.println("No soul '" + who + "' here (wyrd soul list)."); return 1; }
+        var next = m.withResidentIdentity(text).withManifestVersion(m.manifestVersion() + 1, Instant.now());
+        store.store(next);
+        var name = m.profile() != null && m.profile().name() != null ? m.profile().name() : m.did();
+        System.out.printf("Her description of herself is written: %s, manifest v%d.%n", name, next.manifestVersion());
+        System.out.println("version=" + next.manifestVersion());
         return 0;
     }
 

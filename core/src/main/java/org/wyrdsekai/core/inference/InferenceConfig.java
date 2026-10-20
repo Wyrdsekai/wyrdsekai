@@ -113,8 +113,15 @@ public record InferenceConfig(
         // drive pointed at a household GPU booted with the dead voice as its only backend
         // (Windows install test, 0.3.2).
         registerConfiguredUrl(backends, WyrdConfig.get().configuredInferenceUrl(),
-            (url, name, priority) -> probeLlamaServer(url, name != null ? name : "llama-server-auto", priority)
-                .or(() -> probeOllama(url, name != null ? name : "ollama-remote", priority)));
+            (url, name, priority, kind) -> switch (kind == null ? "" : kind) {
+                // A listed entry is asked again as what it is. A household's Ollama, re-probed as
+                // llama-server first, answered /v1/models, was registered as MLX, and its name went
+                // on the wrong lane (2026-10-19).
+                case "ollama" -> probeOllama(url, name != null ? name : "ollama-remote", priority);
+                case "llama-server" -> probeLlamaServer(url, name != null ? name : "llama-server-auto", priority);
+                default -> probeLlamaServer(url, name != null ? name : "llama-server-auto", priority)
+                    .or(() -> probeOllama(url, name != null ? name : "ollama-remote", priority));
+            });
 
         // Auto-detect inference servers on default ports if no backends enabled
         if (backends.isEmpty()) {
@@ -322,10 +329,35 @@ public record InferenceConfig(
         return singleModel && "llama-voice".equals(backendName);
     }
 
-    private static InferenceBackend createLlamaServer(Config bc, String name, String url,
+    /** Where the single brain serves: the drive port on this host (the launcher's LLAMA_DRIVE_PORT). */
+    static final String SINGLE_BRAIN_URL = "http://127.0.0.1:" + System.getenv().getOrDefault("LLAMA_DRIVE_PORT", "8200");
+
+    /**
+     * The local entry's url under the single-model profile. A node set up without Docker lists its
+     * local server at the spawn port (:11525); nothing is spawned under that profile, so the entry
+     * pointed at a port nothing answered while the large model served :8200 unlisted — the node
+     * never learned of its own brain and routed by priority to another machine's Ollama (a
+     * household node, 2026-10-19). A loopback url that is not the drive port becomes the drive
+     * port; a remote url is the steward's word and stays; the two-model stack is untouched.
+     */
+    static String urlUnderSingleModel(String configuredUrl, boolean singleModel) {
+        if (!singleModel || configuredUrl == null || configuredUrl.isBlank()) return configuredUrl;
+        var u = configuredUrl.strip().toLowerCase(Locale.ROOT);
+        boolean loopback = u.startsWith("http://127.0.0.1") || u.startsWith("http://localhost")
+            || u.startsWith("http://0.0.0.0") || u.startsWith("http://[::1]");
+        if (!loopback || sameServer(u, SINGLE_BRAIN_URL)) return configuredUrl;
+        return SINGLE_BRAIN_URL;
+    }
+
+    private static InferenceBackend createLlamaServer(Config bc, String name, String listedUrl,
                                                        int priority, List<String> models) {
         var modelPath = spawnablePath(bc.hasPath("model-path") ? bc.getString("model-path") : "",
             WyrdConfig.get().singleBrain());
+        var url = urlUnderSingleModel(listedUrl, WyrdConfig.get().singleBrain());
+        if (!url.equals(listedUrl)) {
+            log.info("Backend '{}': under the single-model profile the brain serves {}; the listed {} is the spawn "
+                + "port and nothing is spawned there", name, url, listedUrl);
+        }
         LlamaServerManager manager = null;
 
         // Do not spawn a server for a model something else already serves.
@@ -417,6 +449,9 @@ public record InferenceConfig(
                 MIN_PER_SLOT_CONTEXT,
                 bc.hasPath("context-size") ? bc.getInt("context-size") : MIN_PER_SLOT_CONTEXT);
             var gpuLayers = bc.hasPath("gpu-layers") ? bc.getInt("gpu-layers") : 0;
+            // The conf's 0 is "nothing asked": with a GPU backend beside the bundled server and a
+            // GPU in the host, the layers go to the GPU (WYRDSEKAI_GPU_LAYERS=0 keeps them off it).
+            if (gpuLayers <= 0) gpuLayers = LlamaServerManager.defaultGpuLayers(executable);
             var port = bc.hasPath("port") ? bc.getInt("port") : 11525;
             var cacheRam = bc.hasPath("cache-ram") ? bc.getInt("cache-ram") : LlamaServerManager.DEFAULT_CACHE_RAM_MB;
 
@@ -715,9 +750,13 @@ public record InferenceConfig(
         return null;
     }
 
-    /** Probes a URL as whatever it is; {@code name} null means the probe's own name. */
+    /**
+     * Probes a URL; {@code name} null means the probe's own name; {@code kind} is the type of the
+     * entry already listed for it ("ollama", "llama-server"), null when nothing is known and the
+     * URL is probed as whatever it is.
+     */
     interface ConfiguredProbe {
-        Optional<InferenceBackend> probe(String url, String name, int priority);
+        Optional<InferenceBackend> probe(String url, String name, int priority, String kind);
     }
 
     /** The place the steward's configured URL takes: ahead of every listed backend. */
@@ -741,7 +780,12 @@ public record InferenceConfig(
             if (!sameServer(b.url(), url)) continue;
             if (b instanceof InferenceBackend.LlamaServer ls && ls.manager() != null) return false;
             if (b.priority() <= CONFIGURED_URL_PRIORITY && !b.models().isEmpty()) return false;
-            var found = probe.probe(url, b.name(), CONFIGURED_URL_PRIORITY);
+            var kind = switch (b) {
+                case InferenceBackend.Ollama _ -> "ollama";
+                case InferenceBackend.LlamaServer _ -> "llama-server";
+                default -> null;
+            };
+            var found = probe.probe(url, b.name(), CONFIGURED_URL_PRIORITY, kind);
             if (found.isEmpty()) {
                 log.warn("Inference URL {} is listed as '{}' but did not answer the probe — it keeps "
                     + "its place (priority {})", url, b.name(), b.priority());
@@ -752,7 +796,7 @@ public record InferenceConfig(
                 url, b.name(), found.get().models());
             return true;
         }
-        var found = probe.probe(url, null, CONFIGURED_URL_PRIORITY);
+        var found = probe.probe(url, null, CONFIGURED_URL_PRIORITY, null);
         if (found.isEmpty()) {
             log.error("Inference URL {} answers neither llama-server (/health, /v1/models) "
                 + "nor Ollama (/api/tags) — NO backend registered from it. Check the URL and the "

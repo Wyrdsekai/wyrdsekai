@@ -13,6 +13,8 @@ import org.wyrdsekai.scripting.api.ItemManifestValidator;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import org.wyrdsekai.core.body.BodyMap;
+import org.wyrdsekai.core.item.BrokenItems;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -361,6 +363,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 // not exist. Say plainly what the person is about to be handed.
                 log.warn("CodingTaskItemBridge: {} did not register — it will be placed as "
                     + "an inert artifact, NOT a usable tool", p);
+                keepRefusedItem(p);
             }
             if (def.isPresent()) {
                 var scriptedId = def.get().itemId();
@@ -676,6 +679,91 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
      * Best-effort: a failure here leaves the item working for this session, which is
      * strictly better than refusing to place it.
      */
+    /**
+     * A tool the loader refused is still hers. It is kept where the broken-item record and the
+     * night's mending look, under the name its manifest gives, she is told once what is wrong, and
+     * the workshop tries it on a quiet night — instead of sitting in the task's workspace as an
+     * object nothing scans and nothing explains (a companion's diffusion tool, 2026-10-20).
+     * A tool of the same name already living there is never overwritten. Returns the kept copy.
+     */
+    static Path keepRefusedItem(Path source) {
+        try {
+            var dir = ScriptedItemLoader.householdItemsDir();
+            if (dir == null) return null;
+            var entry = adoptRefused(source, dir, true);
+            if (entry == null) return null;
+            tell(List.of(entry));
+            return entry.file();
+        } catch (Exception e) {
+            log.warn("CodingTaskItemBridge: could not keep the refused {}: {}", source, e.toString());
+            return null;
+        }
+    }
+
+    /** One sentence to her for the batch, however many; she is told once per problem, as the record keeps it. */
+    private static void tell(List<BrokenItems.Entry> entries) {
+        if (entries.isEmpty()) return;
+        try {
+            BrokenItems.tellOnce(entries, BodyMap.get(), ItemContractRepair.escalation() != null);
+        } catch (RuntimeException e) {
+            log.debug("CodingTaskItemBridge: she was not told about {} refused tool(s): {}", entries.size(), e.toString());
+        }
+    }
+
+    /**
+     * Tools from past tasks that never registered and were left in their workspaces (every one
+     * before 0.5.8): kept where mending looks, once, at the loader's scan. A file is adopted only
+     * when it is a tool by its manifest, no tool of that name lives in the items folder, no
+     * corrected sibling supersedes it, and the contract it fails is what kept it out. The mending
+     * bench's own working copies ({@code repair-*}) are not tasks.
+     */
+    public static int adoptRefusedTools(Path workspacesRoot, Path itemsDir) {
+        if (workspacesRoot == null || itemsDir == null || !Files.isDirectory(workspacesRoot)) return 0;
+        var adopted = new ArrayList<BrokenItems.Entry>();
+        try (var tasks = Files.list(workspacesRoot)) {
+            for (var task : tasks.filter(Files::isDirectory).sorted().toList()) {
+                if (task.getFileName().toString().startsWith("repair-")) continue;
+                try (var files = Files.list(task)) {
+                    for (var f : files.filter(x -> x.toString().endsWith(".js")).sorted().toList()) {
+                        try {
+                            var e = adoptRefused(f, itemsDir, false);
+                            if (e != null) adopted.add(e);
+                        } catch (Exception e) {
+                            log.debug("CodingTaskItemBridge: {} not adopted: {}", f, e.toString());
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            log.debug("CodingTaskItemBridge: workspaces not listed: {}", e.toString());
+        }
+        tell(adopted);
+        if (!adopted.isEmpty()) log.info("CodingTaskItemBridge: {} refused tool(s) from earlier tasks kept where mending looks", adopted.size());
+        return adopted.size();
+    }
+
+    /**
+     * One refused file into the items folder, as a broken-item entry for telling, or null. {@code fresh}
+     * = the loader refused it just now (adopted in any case); otherwise only a file the loader would
+     * refuse is adopted — never one it would load, which the smoke rejected for crashing in the hand.
+     * Nothing here runs the item.
+     */
+    private static BrokenItems.Entry adoptRefused(Path source, Path itemsDir, boolean fresh) throws IOException {
+        var script = Files.readString(source);
+        var name = ItemContractRepair.manifestName(script);
+        if (name == null || name.isBlank()) return null;                       // not a tool by its manifest
+        var target = itemsDir.resolve(name + ".js");
+        if (Files.exists(target) || Files.exists(itemsDir.resolve(source.getFileName()))) return null;
+        if (ItemContractRepair.supersededBy(source) != null) return null;      // the corrected sibling is the tool
+        var refusals = ItemContractCheck.loaderRefuses(script, source.getFileName().toString());
+        if (!fresh && refusals.isEmpty()) return null;                          // the loader would load it: not ours to adopt
+        Files.createDirectories(itemsDir);
+        Files.copy(source, target);
+        log.info("CodingTaskItemBridge: kept the refused '{}' at {} — she is told, and the workshop tries it on a quiet night ({})",
+            name, target, refusals.isEmpty() ? "refused at registration" : refusals.get(0));
+        return new BrokenItems.Entry(name, target, refusals.isEmpty() ? List.of("refused at registration") : refusals, true);
+    }
+
     private static void keepAcceptedItem(Path source, String scriptedId) {
         try {
             var dir = ScriptedItemLoader.householdItemsDir();

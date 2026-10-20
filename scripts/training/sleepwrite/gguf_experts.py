@@ -119,7 +119,7 @@ def self_check(gguf_path, device="cuda:0", layers=(0, 39)):
             t, qtype, shape = ex.index[(layer, kind)]
             rows = np.ascontiguousarray(t.data.reshape(-1, t.data.shape[-1])[:64])      # 64 rows is plenty
             ref = quants.dequantize(rows, t.tensor_type).astype(np.float32)
-            got = DEQUANT[qtype](torch.from_numpy(rows).to(device).reshape(-1, BLOCK_BYTES[qtype])).reshape(ref.shape).cpu().numpy()
+            got = DEQUANT[qtype](torch.from_numpy(rows.copy()).to(device).reshape(-1, BLOCK_BYTES[qtype])).reshape(ref.shape).cpu().numpy()
             worst = max(worst, float(np.abs(ref - got).max())); seen.add(qtype)
     return worst, sorted(seen)
 

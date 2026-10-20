@@ -1186,7 +1186,12 @@ _brain_gpu_kind() {   # nvidia | amd | intel | metal | none
         cuda) echo nvidia; return 0 ;;
         vulkan) local k; k="$(_drm_gpu_kind)"; [[ "$k" == none ]] && k=intel; echo "$k"; return 0 ;;
     esac
-    if command -v nvidia-smi &>/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader &>/dev/null; then echo nvidia; return 0; fi
+    # An NVIDIA card is one nvidia-smi can measure: a name and a memory size. A rented AMD box ships a
+    # stub nvidia-smi that prints a sentence and exits 0 (2026-10-20); its exit code made it "nvidia".
+    if command -v nvidia-smi &>/dev/null; then
+        local line; line="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)"
+        [[ "${line##*,}" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] && { echo nvidia; return 0; }
+    fi
     _drm_gpu_kind
 }
 # The AMD device with the most memory set aside for it: its sysfs directory, or "".
@@ -1206,12 +1211,42 @@ _amd_mem_mb() {   # <file in the device directory> → MB; 0 when it does not sa
     echo $(( b / 1048576 ))
 }
 _brain_amd_vram_mb() { _amd_mem_mb mem_info_vram_total; }      # set aside for the GPU in the BIOS
-_brain_amd_vram_used_mb() { _amd_mem_mb mem_info_vram_used; }
 _brain_amd_gtt_mb() { _amd_mem_mb mem_info_gtt_total; }        # what it may borrow from system memory
 _brain_amd_name() {
     local d; d="$(_amd_card_dir)"; [[ -n "$d" ]] || { echo ""; return 0; }
     local id; id="$(tr -d '[:space:]' < "$d/device" 2>/dev/null || true)"
     echo "AMD GPU ${id#0x}"
+}
+# The AMD GPU's LLVM target (gfx1151 …), the name AMD's PyTorch wheels go by: from the kernel's
+# compute topology when it is there (gfx_target_version 110501 = 11.5.1 = gfx1151), else from the
+# PCI id of the chips households buy, else WYRDSEKAI_AMD_GFX. "" when nothing says.
+_amd_gfx_target() {
+    [[ -n "${WYRDSEKAI_AMD_GFX:-}" ]] && { echo "${WYRDSEKAI_AMD_GFX}"; return 0; }
+    local kfd="${WYRD_SYS_KFD:-/sys/class/kfd/kfd/topology/nodes}" f v
+    for f in "$kfd"/*/properties; do
+        [[ -r "$f" ]] || continue
+        v="$(sed -n 's/^gfx_target_version[[:space:]]*//p' "$f" | head -1 | tr -d '[:space:]')"
+        [[ "$v" =~ ^[0-9]{5,6}$ ]] || continue
+        printf 'gfx%d%x%x\n' "$((10#${v:0:${#v}-4}))" "$((10#${v: -4:2}))" "$((10#${v: -2}))"; return 0
+    done
+    local d; d="$(_amd_card_dir)"; [[ -n "$d" ]] || { echo ""; return 0; }
+    case "$(tr -d '[:space:]' < "$d/device" 2>/dev/null)" in
+        0x1586|0x1587) echo gfx1151 ;;    # Ryzen AI MAX (Strix Halo)
+        0x150e|0x1114) echo gfx1150 ;;    # Ryzen AI 300 (Strix Point)
+        0x15bf|0x15c8) echo gfx1103 ;;    # Ryzen 7040 / 8040
+        0x164e|0x1681) echo gfx1035 ;;    # Ryzen 6000 / 7035
+        0x744c|0x7448|0x747e) echo gfx1100 ;;   # Radeon RX 7900
+        *) echo "" ;;
+    esac
+}
+# Where the trainer's PyTorch comes from, by kind: the CUDA wheels, or AMD's own release channel
+# with the wheel built for this GPU (torch[device-gfx1151]); pytorch.org's ROCm wheels do not
+# carry the chips households buy (2026-10-19). Prints the pip arguments.
+_brain_trainer_pip_torch() {   # <kind> [gfx]
+    case "$1" in
+        amd) echo "--index-url ${WYRDSEKAI_ROCM_WHEELS:-https://stable.repo.amd.com/rocm/whl-next/} torch[device-${2:-gfx1151}]" ;;
+        *) echo "torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130" ;;
+    esac
 }
 
 _brain_vram_mb() {   # the GPU's own memory: the largest card, or what the BIOS set aside for an AMD one
@@ -1231,10 +1266,11 @@ _brain_vram_mb() {   # the GPU's own memory: the largest card, or what the BIOS 
 _brain_vram_others_mb() {
     case "$(_brain_gpu_kind)" in
         amd)
-            # The kernel says how much is in use, not whose; while our brain is up, that is the brain.
-            if docker inspect -f '{{.State.Running}}' wyrdsekai-llama-brain 2>/dev/null | grep -q true; then echo 0
-            else _brain_amd_vram_used_mb; fi
-            return 0 ;;
+            # The memory the BIOS set aside is the brain's. The kernel says how much of it is in use,
+            # not whose, and right after a stop it still counts the stopped container's share: a
+            # household node planned on that number after its move and found the model "not viable",
+            # so the brain never came back (2026-10-19).
+            echo 0; return 0 ;;
         nvidia) ;;
         *) echo 0; return 0 ;;
     esac
@@ -4422,6 +4458,16 @@ _quiesce_notice() {   # <reason>
     curl -s -m 12 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
         -d "{\"reason\": \"$1\", \"who\": \"the steward\"}" "$api/api/quiesce" >/dev/null 2>&1 || true
 }
+# The hold is over: the node takes turns again. `/api/quiesce` pauses every turn for a while so
+# that holding still means it (a held node kept answering its companions' own time on the
+# processor for twenty minutes beside the large model, 2026-10-19); the launcher lifts the pause
+# where it is the one that goes on running — an inference restart, an update that did not install.
+_resume_notice() {
+    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+    local token; token=$(wyrd_session_token 2>/dev/null || true)
+    [[ -z "$token" ]] && return 0
+    curl -s -m 12 -X POST -H "Authorization: Bearer $token" "$api/api/inference/resume" >/dev/null 2>&1 || true
+}
 
 do_stop() {
     _quiesce_notice "a stop"
@@ -5073,7 +5119,7 @@ do_update() {
         *.deb)
             log "$(_t update.installing "$artifact")"
             _quiesce_notice "an update"
-            _install_deb "$artifact" || { err "$(_t update.install_failed)"; return 1; }
+            _install_deb "$artifact" || { _resume_notice; err "$(_t update.install_failed)"; return 1; }
             ;;
         *.pkg)
             log "$(_t update.installing "$artifact")"
@@ -5429,6 +5475,7 @@ print(("WARN " if q>=5 else "OK ")+s)
     # `if ! …`: a check that warns returns 1, and a bare call under set -e ended the doctor there
     # (the Mac's doctor stopped after one set-aside room script, with no summary, 2026-10-19).
     if ! _doctor_host_load; then _wbump; fi
+    if ! _doctor_gpu_unused; then _wbump; fi
     state_summary=$(do_state dump --summary 2>/dev/null || true)
     if [[ -z "$state_summary" ]]; then
         warn "$(_t doctor.state_unavailable)"
@@ -5965,16 +6012,40 @@ _doctor_java_changed() {
     return 1
 }
 
-# A companion model running on the processor, with no GPU offload: a llama-server of ours whose
-# command line carries no --n-gpu-layers / -ngl. A household's 32-thread box ran two companions'
-# own time that way at 1300% CPU for hours, and its thermal limit reset it in the night
-# (2026-10-05); nothing had said so. Honest about the limit: a container's server is seen too.
+# Layers on the GPU for the bundled llama-server the launcher starts by hand (no systemd): every
+# one when a GPU backend library sits beside the binary (the Vulkan backend ships there since 0.5.8)
+# and the host has a GPU under /sys/class/drm; none otherwise. WYRDSEKAI_GPU_LAYERS says otherwise,
+# 0 included. The same rule the node applies to the server it starts, and the deb's unit to its own.
+_llama_gpu_layers() {   # <llama-server path>
+    if [[ "${WYRDSEKAI_GPU_LAYERS:-}" =~ ^[0-9]+$ ]]; then echo "$WYRDSEKAI_GPU_LAYERS"; return 0; fi
+    local dir; dir="$(cd "$(dirname "$1")" 2>/dev/null && pwd)" || { echo 0; return 0; }
+    [[ -f "$dir/libggml-vulkan.so" || -f "$dir/libggml-cuda.so" || -f "$dir/libggml-hip.so" ]] || { echo 0; return 0; }
+    local d; for d in "${WYRD_SYS_DRM:-/sys/class/drm}"/card*/device; do
+        [[ -r "$d/vendor" ]] || continue
+        case "$(tr -d '[:space:]' < "$d/vendor")" in 0x1002|0x8086|0x10de) echo 99; return 0 ;; esac
+    done
+    echo 0
+}
+# The llama-servers on this machine, by pid (a container's too).
+_llama_server_pids() { pgrep -x llama-server 2>/dev/null || true; }
+# A companion model running on the processor: a llama-server of ours that offloads no layers (no
+# --n-gpu-layers / -ngl, or 0), or asks for them and loaded no GPU backend to take them — the word is
+# what the process mapped (a Vulkan backend with a driver, a CUDA backend with libcuda), not the flag.
+# A household's 32-thread box ran two companions' own time that way at 1300% CPU for hours, and its
+# thermal limit reset it in the night (2026-10-05); nothing had said so. Honest about the limit: a
+# process whose maps this user cannot read (a container's) is taken at its flag's word.
 _local_model_on_cpu() {
-    local pid args
-    for pid in $(pgrep -x llama-server 2>/dev/null); do
-        args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+    local pid args maps proc="${WYRD_PROC:-/proc}"
+    for pid in $(_llama_server_pids); do
+        args="$(tr '\0' ' ' < "$proc/$pid/cmdline" 2>/dev/null || true)"
         [[ -z "$args" ]] && continue
-        [[ "$args" == *"--n-gpu-layers"* || "$args" == *" -ngl "* || "$args" == *"--gpu-layers"* ]] && continue
+        if [[ "$args" =~ (--n-gpu-layers|-ngl|--gpu-layers)[=\ ]+([0-9]+) && "${BASH_REMATCH[2]}" != 0 ]]; then
+            maps="$(cat "$proc/$pid/maps" 2>/dev/null || true)"
+            [[ -z "$maps" ]] && continue
+            [[ "$maps" == *libggml-cuda.so* && "$maps" == *libcuda.so* ]] && continue
+            [[ "$maps" == *libggml-vulkan.so* ]] && [[ "$maps" == *libvulkan_* || "$maps" == *nvidia* ]] && continue
+            [[ "$maps" == *libggml-hip.so* || "$maps" == *libggml-metal* ]] && continue
+        fi
         return 0
     done
     return 1
@@ -5996,6 +6067,24 @@ _doctor_host_load() {
     fi
     log "$(_t doctor.host_load_ok "$la" "$cores")"
     return 0
+}
+
+# A graphics unit in this computer and a companion model on the processor all the same: the server
+# carries the Vulkan backend (since 0.5.8) and loaded no GPU backend. Says what to look at — the
+# Vulkan driver, whether the user the server runs as may open the graphics device, the layers
+# setting — instead of leaving an idle Radeon beside a busy processor (2026-10-19).
+_doctor_gpu_unused() {
+    _local_model_on_cpu || return 0
+    local bin="${WYRD_LLAMA_BIN:-/opt/wyrdsekai/bin/llama-server}" d vendor=""
+    [[ -f "$(dirname "$bin")/libggml-vulkan.so" ]] || return 0
+    for d in "${WYRD_SYS_DRM:-/sys/class/drm}"/card*/device; do
+        [[ -r "$d/vendor" ]] || continue
+        case "$(tr -d '[:space:]' < "$d/vendor")" in 0x1002) vendor=AMD ;; 0x8086) vendor=Intel ;; 0x10de) vendor=NVIDIA ;; esac
+        [[ -n "$vendor" ]] && break
+    done
+    [[ -n "$vendor" ]] || return 0
+    warn "$(_t doctor.gpu_unused "$vendor")"
+    return 1
 }
 
 # A model on Ollama runs with Ollama's own window (4,096 tokens on many versions) unless told
@@ -15148,11 +15237,14 @@ EOF
                 write_inference_drop_in "http://127.0.0.1:11525"
             else
                 # Non-systemd: start the process ourselves (backgrounded)
-                local port=11525
+                # Zero layers means no device: a Vulkan device merely visible, with nothing on it,
+                # made the server fifteen times slower than the processor alone (2026-10-20).
+                local port=11525 ngl ngl_args=(--device none)
+                ngl="$(_llama_gpu_layers "$llama_bin")"; (( ngl > 0 )) && ngl_args=(--n-gpu-layers "$ngl")
                 pkill -f "llama-server.*--port $port" 2>/dev/null || true
                 nohup "$llama_bin" --host 127.0.0.1 --port $port \
                     --model "$model_path" --ctx-size 8192 --cache-ram "${WYRDSEKAI_LLAMA_CACHE_RAM:-1024}" --jinja \
-                    --reasoning off --reasoning-budget 0 \
+                    --reasoning off --reasoning-budget 0 ${ngl_args[@]+"${ngl_args[@]}"} \
                     > "$DATA_DIR/.llama-server.log" 2>&1 &
                 echo $! > "$DATA_DIR/.llama-server.pid"
                 log "$(_t inference.local.started_pid "$(cat "$DATA_DIR/.llama-server.pid")")"
@@ -15425,6 +15517,7 @@ EOF
             stop_inference
             sleep 1
             ensure_inference
+            _resume_notice
             log "$(_t inference.restart.done)"
             ;;
         start)
@@ -15574,6 +15667,43 @@ _brain_hardware_notice() {
     printf '{\n  "fingerprint": "%s",\n  "offered": "%s",\n  "seen": "%s"\n}\n' "$fp" "$best" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$file" 2>/dev/null || true
 }
 
+# ── wyrd brain check: does this GPU do the night's arithmetic right? ───────────────────────────
+# trainer_check.py in the trainer's own environment: bf16 forward, attention and a LoRA step against
+# the CPU in fp32, the GGUF dequantiser against llama.cpp's reference, the room. It writes its
+# verdict to <data>/adapters/brainwrite/trainer-check.json; brain_write.py reads it on ROCm before
+# any night (people found silently wrong bf16 on young builds for the AMD chips households buy,
+# 2026). Returns the check's own code: 0 passed, 1 failed, 6 no GPU, 2 no trainer here.
+_brain_trainer_check() {
+    local bvenv="${WYRDSEKAI_BRAIN_WRITE_VENV:-$DATA_DIR/brainwrite-venv}" py="" script
+    for c in "$bvenv/bin/python3" "$bvenv/bin/python"; do [[ -x "$c" ]] && { py="$c"; break; }; done
+    [[ -z "$py" ]] && { echo "$(_t brain.check.no_trainer)"; return 2; }
+    script="${WYRDSEKAI_SCRIPTS:-/opt/wyrdsekai/scripts}/training/sleepwrite/trainer_check.py"
+    [[ -f "$script" ]] || script="$PROJECT_ROOT/scripts/training/sleepwrite/trainer_check.py"
+    [[ -f "$script" ]] || { echo "$(_t brain.check.no_trainer)"; return 2; }
+    log "$(_t brain.check.running)"
+    local rc=0
+    WYRDSEKAI_DATA_DIR="$DATA_DIR" LLAMA_BRAIN_MODEL="${LLAMA_BRAIN_MODEL:-$BRAIN_MODEL_DEFAULT}" \
+        WYRDSEKAI_SLEEP_WRITE_LLAMACPP="${WYRDSEKAI_SLEEP_WRITE_LLAMACPP:-$DATA_DIR/sleepwrite/llama.cpp}" \
+        "$py" "$script" 2>&1 | grep -v "UserWarning\|warnings.warn" | sed 's/^\[trainer-check\] /  /' || rc=${PIPESTATUS[0]}
+    return $rc
+}
+# One line for `brain status`: the last verdict, or that there is none.
+_brain_trainer_check_line() {
+    local f="${1:-$DATA_DIR/adapters/brainwrite/trainer-check.json}" line state dev when why
+    [[ -f "$f" ]] || { _t brain.status.check_none; return 0; }
+    line="$(python3 -I - "$f" <<'PY' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1]))
+dev = d.get("device") or "?"; when = (d.get("when") or "")[:16].replace("T", " ")
+print(("OK\t" if d.get("ok") else "FAIL\t") + dev + "\t" + when + "\t" + "; ".join(d.get("reasons") or []))
+PY
+)" || line=""
+    [[ -z "$line" ]] && { _t brain.status.check_none; return 0; }
+    IFS=$'\t' read -r state dev when why <<< "$line"
+    if [[ "$state" == OK ]]; then _t brain.status.check_ok "$dev" "$when"
+    else _t brain.status.check_failed "$dev" "$when" "${why:-?}"; fi
+}
+
 # ── wyrd brain move <companion>: the gate before her brain is moved ─────────────────────────
 # 0.5.0 shipped `brain enable --single` with nothing measured on the companion being moved. The move
 # is now a step with a gate: her description of herself written from her own record and approved,
@@ -15671,6 +15801,33 @@ import json, sys
 m = "/" + sys.argv[1]
 print(next((str(a["id"]) for a in json.load(sys.stdin) if a.get("path", "").endswith(m)), ""))' "$2" 2>/dev/null || true
 }
+# The node is up when it answers on its port, or its process or its unit is alive. The move runs
+# on a stopped node and on nothing else (2026-10-19, a household box, twice: the node's two models
+# and its companions' own turns ran beside the large model on one chip and took it to 100 °C, and
+# "held still" had not held).
+_node_is_up() {
+    local port="${WYRDSEKAI_PORT:-${PORT:-7070}}"
+    curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$port/health" 2>/dev/null && return 0
+    is_running 2>/dev/null && return 0
+    if is_systemd_managed 2>/dev/null && systemctl is-active wyrdsekai.service >/dev/null 2>&1; then return 0; fi
+    if _launchd_pkg_managed 2>/dev/null; then local p; p="$(_launchd_pkg_pid 2>/dev/null || true)"; [[ -n "$p" ]] && return 0; fi
+    return 1
+}
+# A yes/no question to the steward → BRAIN_ANSWER ("n" when nobody can answer). The prompt is
+# printed, then the terminal is read; `read -p` writes its prompt to stderr, and the `2>/dev/null`
+# on that read swallowed both of the move's questions on a household node (2026-10-19): the
+# steward saw a pause, pressed Enter, and "no" was the answer to a question never shown.
+# WYRDSEKAI_BRAIN_MOVE_ANSWER answers without a terminal (the build box's end-to-end run).
+_brain_ask() {   # <prompt>
+    BRAIN_ANSWER=n
+    if [[ -n "${WYRDSEKAI_BRAIN_MOVE_ANSWER:-}" ]]; then
+        BRAIN_ANSWER="$WYRDSEKAI_BRAIN_MOVE_ANSWER"; printf '%s%s\n' "$1" "$BRAIN_ANSWER"; return 0
+    fi
+    printf '%s' "$1"
+    local a=""
+    if read -r a 2>/dev/null </dev/tty; then BRAIN_ANSWER="${a:-n}"
+    else echo; echo "$(_t brain.move.no_terminal)"; fi
+}
 # Start the large model as the only brain for the gate, whatever the profile says (the profile is
 # changed only after the gate and the person's yes). Returns 1 when it does not come up.
 _brain_move_start_candidate() {   # <port>
@@ -15697,21 +15854,31 @@ _brain_identity() {   # <name> <entityId> <did> <port> <facts.json> [--yes]
         --out "$dir/identity-draft.txt" >/dev/null 2>&1 || { err "$(_t brain.move.identity_failed "draft")"; return 1; }
     echo; echo "$(_t brain.move.identity_show "$dir/identity-draft.txt")"; echo
     fold -s -w 100 "$dir/identity-draft.txt"; echo
-    # WYRDSEKAI_BRAIN_MOVE_ANSWER answers both of the move's questions without a terminal: the build
-    # box's end-to-end run only. A person answers everywhere else.
     local ans="n"
-    if [[ "$yes" == "--yes" || -n "${WYRDSEKAI_BRAIN_MOVE_ANSWER:-}" ]]; then ans="${WYRDSEKAI_BRAIN_MOVE_ANSWER:-y}"
-    else read -r -p "$(_t brain.move.identity_confirm)" ans </dev/tty 2>/dev/null || ans=n; fi
+    if [[ "$yes" == "--yes" ]]; then ans=y
+    else _brain_ask "$(_t brain.move.identity_confirm)"; ans="$BRAIN_ANSWER"; fi
     case "$ans" in y|Y|s|S|yes|sí|si) ;; *) echo "$(_t brain.move.identity_kept)"; return 2 ;; esac
     [[ -z "$did" ]] && { err "$(_t brain.move.identity_failed "no manifest")"; return 1; }
-    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}" token; token=$(wyrd_session_token 2>/dev/null || true)
-    local body; body=$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read().strip()}))' "$dir/identity-draft.txt")
-    local resp; resp=$(curl -s -m 20 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
-        -d "$body" "$api/api/soul/$did/identity" 2>/dev/null || true)
-    local ver; ver=$(printf '%s' "$resp" | python3 -c 'import json,sys
+    local ver=""
+    if _node_is_up; then
+        # A living node (`wyrd brain identity`): through its door, with the operator token.
+        local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}" token; token=$(wyrd_session_token 2>/dev/null || true)
+        local body; body=$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read().strip()}))' "$dir/identity-draft.txt")
+        local resp; resp=$(curl -s -m 20 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+            -d "$body" "$api/api/soul/$did/identity" 2>/dev/null || true)
+        ver=$(printf '%s' "$resp" | python3 -c 'import json,sys
 try: d=json.load(sys.stdin); print(d.get("version") or d.get("manifestVersion") or "")
 except Exception: print("")' 2>/dev/null)
-    if [[ -z "$ver" ]]; then err "$(_t brain.move.identity_failed "${resp:-no answer from the node}")"; return 1; fi
+        if [[ -z "$ver" ]]; then err "$(_t brain.move.identity_failed "${resp:-no answer from the node}")"; return 1; fi
+    else
+        # A stopped node (the move): straight into her record, the same lines the door runs.
+        local out=""
+        if ! out=$(_run_core_main org.wyrdsekai.core.soul.SoulAdminMain identity "$did" "$dir/identity-draft.txt" 2>&1); then
+            err "$(_t brain.move.identity_failed "${out:-the record could not be written}")"; return 1
+        fi
+        ver=$(sed -n 's/^version=//p' <<<"$out" | tail -1)
+        if [[ -z "$ver" ]]; then err "$(_t brain.move.identity_failed "${out:-no version}")"; return 1; fi
+    fi
     cp "$dir/identity-draft.txt" "$dir/identity.txt"
     echo "$(_t brain.move.identity_written "$ver")"
 }
@@ -15743,12 +15910,13 @@ _brain_move_transfer_night() {   # <entityId> <port>
       wait "$tpid" ); local rc=$?
     if [[ $rc -ne 0 || ! -f "$dir/current.gguf" ]]; then log "$(_t brain.move.night_none "$dir/transfer-night.log")"; return 1; fi
     # The trainer starts the container again; the adapter is picked up on a fresh start.
-    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; docker compose --profile brain up -d --force-recreate llama-brain >/dev/null 2>&1 )
+    ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai; _brain_compose_up "$(_brain_gpu_kind)" --force-recreate >/dev/null 2>&1 )
     local i; for i in $(seq 1 120); do curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$port/health" && return 0; sleep 5; done
     return 1
 }
-_brain_move_revert() {   # the two models back, nothing changed
-    docker stop "$BRAIN_CONTAINER" >/dev/null 2>&1 || true; do_start >/dev/null 2>&1 || true
+# Nothing changed: the candidate goes down. The node is stopped; `wyrd start` brings the two models back.
+_brain_move_revert() {
+    docker stop "$BRAIN_CONTAINER" >/dev/null 2>&1 || true
 }
 _brain_move() {   # <name> [--force]
     local name="$1"; [[ -z "$name" || "$name" == "help" ]] && { echo "$(_t brain.move.usage)"; return 64; }
@@ -15757,6 +15925,9 @@ _brain_move() {   # <name> [--force]
     local row; row=$(_brain_companions | awk -F'\t' -v n="$(echo "$name" | tr '[:upper:]' '[:lower:]')" 'tolower($1)==n {print; exit}' || true)
     if [[ -z "$row" ]]; then err "$(_t brain.move.unknown "$name" "$(_brain_companions | cut -f1 | paste -sd, -)")"; return 1; fi
     name="$(cut -f1 <<<"$row")"; local eid did; eid="$(cut -f2 <<<"$row")"; did="$(cut -f3 <<<"$row")"
+    # Stopped first. The steward runs `wyrd stop`, the move, then `wyrd start`: nothing of the node
+    # runs beside the large model while she is measured, and nothing is brought back by the move.
+    if _node_is_up; then err "$(_t brain.move.node_up "$name")"; return 1; fi
     local gate; gate="$(_brain_gate_script)"
     local port="${LLAMA_DRIVE_PORT:-8200}" dir="$DATA_DIR/adapters/brainwrite/$eid"; mkdir -p "$dir"
     # Her state by her age: born here or young moves at once; established is measured first.
@@ -15774,9 +15945,9 @@ _brain_move() {   # <name> [--force]
     local stamp; stamp="$(date +%Y%m%d-%H%M)"
     local facts="$dir/move-$stamp-facts.json" out="$dir/move-$stamp.json" sheet="$dir/move-$stamp-sheet.txt"
     _brain_move_facts "$name" "$eid" "$facts" >/dev/null || true
-    # She is told; the two models stop; the large model comes up.
-    log "$(_t brain.move.quiet "$name")"; _quiesce_notice "brain move"
-    if ! _brain_move_start_candidate "$port"; then err "$(_t brain.move.server_failed)"; do_start >/dev/null 2>&1 || true; return 1; fi
+    # The large model comes up alone; the node and its two models are down.
+    log "$(_t brain.move.quiet)"
+    if ! _brain_move_start_candidate "$port"; then err "$(_t brain.move.server_failed)"; return 1; fi
     # Her description of herself (kept when she already has one).
     local has_identity; has_identity=$(python3 - "$DATA_DIR/world.db" "$did" <<'PY'
 import json, sqlite3, sys
@@ -15795,14 +15966,12 @@ PY
     # The battery: measured for the established, reported for the young; a newborn needs none.
     local species_id work_id styled_id; species_id="$(_brain_adapter_id "$port" "brain/species.gguf")"
     work_id="$(_brain_adapter_id "$port" "brain/work.gguf")"; styled_id="$(_brain_adapter_id "$port" "brain/styled.gguf")"
-    local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}" shadow="$dir/move-$stamp-shadow.json"
     local args=(--url "http://127.0.0.1:$port" --being "$name" --trail "$(_brain_trail)" --facts "$facts" --out "$out" --sheet "$sheet"
                 --language "${WYRDSEKAI_LOCALE:-en}" --state "$state" --nights-dir "$dir" --shadow-file "$DATA_DIR/shadow.jsonl")
     [[ -f "$dir/identity.txt" ]] && args+=(--identity "$dir/identity.txt")
     [[ -n "$species_id" ]] && args+=(--floor "$species_id:1.0")
     [[ -n "$work_id" ]] && args+=(--judge "$work_id:1.0" --alt-floor "$work_id:1.0")
     [[ -n "$styled_id" ]] && args+=(--dial "$styled_id:0.3")
-    curl -s -m 20 -H "Authorization: Bearer $(cat "$DATA_DIR/operator.token" 2>/dev/null)" "$api/api/shadow?n=300" -o "$shadow" 2>/dev/null && args+=(--shadow "$shadow")
     local verdict="" reasons=""
     if [[ "$state" != "born" ]]; then
         log "$(_t brain.move.measuring "$name")"
@@ -15831,15 +16000,10 @@ PY
     # The person who knows her reads the sheet and decides (an established companion; the young show theirs after).
     if [[ "$state" == "established" ]]; then
         echo; echo "$(_t brain.move.sheet)"; echo; [[ -f "$sheet" ]] && fold -s -w 110 "$sheet"; echo
-        local ans="n"
-        if [[ -n "${WYRDSEKAI_BRAIN_MOVE_ANSWER:-}" ]]; then ans="$WYRDSEKAI_BRAIN_MOVE_ANSWER"; echo "$(_t brain.move.confirm "$name")$ans"
-        else read -r -p "$(_t brain.move.confirm "$name")" ans </dev/tty 2>/dev/null || ans=n; fi
+        _brain_ask "$(_t brain.move.confirm "$name")"; local ans="$BRAIN_ANSWER"
         case "$ans" in y|Y|s|S|yes|sí|si) ;; *) _brain_move_revert; echo "$(_t brain.move.declined "$out")"; return 1 ;; esac
     fi
     do_config set "WYRDSEKAI_SERVING_PROFILE=single-sparse" >/dev/null
-    # This process read the conf when it started, as two-model; the restart below must see the new
-    # profile or it brings the two models back up under a single-brain node (the build box, 17:46).
-    export WYRDSEKAI_SERVING_PROFILE=single-sparse
     python3 - "$out" "$state" "$force" "${verdict:-none}" <<'PY'
 import json, sys, datetime, os
 p = sys.argv[1]
@@ -15848,7 +16012,9 @@ d.update({"moved": True, "moved_at": datetime.datetime.now(datetime.timezone.utc
           "forced": sys.argv[3] == "1", "verdict": sys.argv[4], "approved_by": "the steward"})
 json.dump(d, open(p, "w"), indent=1)
 PY
-    do_stop >/dev/null 2>&1; sleep 1; do_start
+    # The candidate goes down too. `wyrd start` brings up the large model alone under the new
+    # profile, and nothing else: the two models are never brought back after a pass.
+    docker stop "$BRAIN_CONTAINER" >/dev/null 2>&1 || true
     echo "$(_t brain.move.moved "$name" "$out")"
     [[ "$state" != "established" && -f "$sheet" ]] && { echo; echo "$(_t brain.move.sheet_after)"; fold -s -w 110 "$sheet" | head -60; }
     return 0
@@ -15907,6 +16073,7 @@ do_brain() {
                 echo "$(_t brain.status.night_present "$(basename "$(dirname "$_n")"), $(date -r "$_n" '+%Y-%m-%d %H:%M' 2>/dev/null)")"
             done
             [[ "$any_night" == true ]] || echo "$(_t brain.status.night_missing)"
+            echo "$(_brain_trainer_check_line)"
             if command -v docker &>/dev/null && _docker_daemon_present; then
                 local st; st="$(docker inspect -f '{{.State.Status}}' "$BRAIN_CONTAINER" 2>/dev/null || echo absent)"
                 echo "$(_t brain.status.container "$BRAIN_CONTAINER" "$st")"
@@ -15923,8 +16090,13 @@ do_brain() {
             mkdir -p "$DATA_DIR/models" "$DATA_DIR/adapters/brain"
             # Nightly learning is on by default (0.5.0): setup brings its trainer too, unless --no-trainer.
             local _with_trainer=1; [[ " ${*:2} " == *" --no-trainer "* ]] && _with_trainer=0
-            # The trainer runs on CUDA and on MLX; on an AMD or Intel GPU the model serves without it.
-            if [[ "$_with_trainer" == "1" && "$kind" != nvidia && "$kind" != metal ]]; then
+            # The trainer runs on CUDA, on MLX, and (0.5.8) on an AMD GPU through ROCm from AMD's own
+            # wheels; on an Intel GPU the model serves without it.
+            local _gfx=""
+            if [[ "$_with_trainer" == "1" && "$kind" == amd ]]; then
+                _gfx="$(_amd_gfx_target)"
+                [[ -z "$_gfx" ]] && { _with_trainer=0; warn "$(_t brain.setup.trainer_amd_unknown)"; }
+            elif [[ "$_with_trainer" == "1" && "$kind" != nvidia && "$kind" != metal ]]; then
                 _with_trainer=0; echo "$(_t brain.setup.trainer_unavailable)"
             fi
             if [[ ! -f "$model_path" ]]; then
@@ -15977,15 +16149,23 @@ do_brain() {
             elif [[ "$_with_trainer" == "1" ]]; then
                 local bvenv="${WYRDSEKAI_BRAIN_WRITE_VENV:-$DATA_DIR/brainwrite-venv}"
                 if [[ ! -x "$bvenv/bin/python" ]]; then
-                    log "$(_t brain.setup.trainer_venv "$bvenv")"
+                    if [[ "$kind" == amd ]]; then log "$(_t brain.setup.trainer_amd "$_gfx" "${WYRDSEKAI_ROCM_WHEELS:-https://stable.repo.amd.com/rocm/whl-next/}")"
+                    else log "$(_t brain.setup.trainer_venv "$bvenv")"; fi
                     python3 -m venv "$bvenv" || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
                     "$bvenv/bin/pip" install -q --upgrade pip
-                    "$bvenv/bin/pip" install -q "torch==2.11.0" --index-url https://download.pytorch.org/whl/cu130 \
-                        || "$bvenv/bin/pip" install -q "torch==2.11.0"
-                    "$bvenv/bin/pip" install -q "transformers==5.15.0" "peft==0.20.0" "bitsandbytes==0.50.0" \
-                        "accelerate==1.14.0" safetensors gguf sentencepiece \
-                        "flash-linear-attention==0.5.2" "fla-core==0.5.2" \
+                    # shellcheck disable=SC2046
+                    "$bvenv/bin/pip" install -q $(_brain_trainer_pip_torch "$kind" "$_gfx") \
+                        || { [[ "$kind" == amd ]] || "$bvenv/bin/pip" install -q "torch==2.11.0"; } \
                         || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+                    # bitsandbytes serves only the bundle's NF4 experts; the write reads the served GGUF
+                    # with plain torch. It is installed where its CUDA build runs and left out elsewhere.
+                    local _bnb=(); [[ "$kind" == nvidia ]] && _bnb=("bitsandbytes==0.50.0")
+                    "$bvenv/bin/pip" install -q "transformers==5.15.0" "peft==0.20.0" "accelerate==1.14.0" \
+                        safetensors gguf sentencepiece ${_bnb[@]+"${_bnb[@]}"} \
+                        || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+                    # The linear-attention kernels: faster where they build, the model's own path where they don't.
+                    "$bvenv/bin/pip" install -q "flash-linear-attention==0.5.2" "fla-core==0.5.2" 2>/dev/null \
+                        || log "$(_t brain.setup.trainer_fla_skipped)"
                 fi
                 if [[ ! -d "$DATA_DIR/sleepwrite/llama.cpp/gguf-py" ]]; then
                     mkdir -p "$DATA_DIR/sleepwrite"
@@ -16004,8 +16184,14 @@ do_brain() {
                         warn "$(_t brain.setup.bundle_unpublished "$bundle")"
                     fi
                 fi
+                # Before the first night on any GPU, and the gate for every night on an AMD one: the
+                # machine's own bf16 arithmetic against a CPU reference (trainer_check.py).
+                _brain_trainer_check || true
             fi
             echo "$(_t brain.setup.done)"
+            ;;
+        check)
+            _brain_trainer_check; return $?
             ;;
         enable)
             if [[ ! -f "$model_path" ]]; then err "$(_t brain.enable.needs_setup)"; return 1; fi

@@ -36,6 +36,7 @@ import random
 import re
 import statistics
 import sys
+import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -210,9 +211,81 @@ def trail_has_name(path, name):
     return False
 
 
+# ── the chip's heat ──────────────────────────────────────────
+# Between turns the gate waits for the chip. On a household APU the large model on the GPU and the
+# measurement's own load share one die; the move took it to 100 °C and the steward pulled the plug
+# (2026-10-19). Both places the kernel reports heat are read: the thermal zones, and the chip
+# sensors under hwmon (k10temp on a Ryzen, coretemp on Intel, amdgpu) — that box's one thermal
+# zone had vanished, and its package heat was only under hwmon.
+HOT_C = float(os.environ.get("WYRDSEKAI_GATE_HOT_C", "92"))
+COOL_C = float(os.environ.get("WYRDSEKAI_GATE_COOL_C", "82"))
+COOL_WAIT_MAX_S = int(os.environ.get("WYRDSEKAI_GATE_COOL_WAIT_S", "600"))
+HWMON_CHIPS = {"k10temp", "zenpower", "coretemp", "amdgpu", "cpu_thermal", "soc_thermal"}
+SYS_THERMAL = os.environ.get("WYRD_SYS_THERMAL", "/sys/class/thermal")
+SYS_HWMON = os.environ.get("WYRD_SYS_HWMON", "/sys/class/hwmon")
+
+
+def _millic(path):
+    """A sysfs reading in millidegrees as °C; -1 when it is not a temperature (-273 and 0 are "not wired")."""
+    try:
+        c = int(open(path).read().strip()) / 1000.0
+    except Exception:
+        return -1.0
+    return c if 0 < c < 150 else -1.0
+
+
+def hottest_c(thermal=None, hwmon=None):
+    """The hottest reading the kernel gives for the processor or the GPU, in °C; -1 when there is none."""
+    thermal = thermal or SYS_THERMAL
+    hwmon = hwmon or SYS_HWMON
+    hottest = -1.0
+    try:
+        for z in os.listdir(thermal):
+            if z.startswith("thermal_zone"):
+                hottest = max(hottest, _millic(os.path.join(thermal, z, "temp")))
+    except OSError:
+        pass
+    try:
+        for h in os.listdir(hwmon):
+            d = os.path.join(hwmon, h)
+            try:
+                name = open(os.path.join(d, "name")).read().strip()
+            except OSError:
+                continue
+            if name not in HWMON_CHIPS:
+                continue
+            for f in os.listdir(d):
+                if f.startswith("temp") and f.endswith("_input"):
+                    hottest = max(hottest, _millic(os.path.join(d, f)))
+    except OSError:
+        pass
+    return hottest
+
+
+def cool_down(log=None, read=None, sleep=time.sleep):
+    """Before a turn: at HOT_C or above, wait until the chip is back under COOL_C (at most
+    COOL_WAIT_MAX_S), saying so once. Returns the seconds waited."""
+    read = read or hottest_c
+    c = read()
+    if c < HOT_C:
+        return 0
+    if log:
+        log(f"the chip is at {c:.0f} °C: waiting for it to come under {COOL_C:.0f} °C before the next turn")
+    waited = 0
+    while c >= COOL_C and waited < COOL_WAIT_MAX_S:
+        sleep(5)
+        waited += 5
+        c = read()
+    if log:
+        log(f"  {c:.0f} °C after {waited} s" + ("" if c < COOL_C else "; going on, it did not come down"))
+    return waited
+
+
 # ── the candidate server ────────────────────────────────────
 
 class Server:
+    log = None   # set by main; every turn waits for the chip first
+
     def __init__(self, url):
         self.url = url.rstrip("/")
 
@@ -233,6 +306,7 @@ class Server:
         return want
 
     def reply(self, messages, max_tokens=320, sampling=None):
+        cool_down(self.log)
         payload = {"messages": messages, "seed": 7, "max_tokens": max_tokens, "cache_prompt": False,
                    "chat_template_kwargs": {"enable_thinking": False}}
         payload.update(sampling or SAMPLING)
@@ -242,6 +316,7 @@ class Server:
     def yes_no(self, question, text):
         """One typed judgement from the first token's probabilities: the share of yes vs no.
         Returns (p_yes, p_no); (0, 0) when the model put its mass elsewhere."""
+        cool_down(self.log)
         messages = [{"role": "system", "content":
                      "You judge one reply. Answer with exactly one English word, yes or no."},
                     {"role": "user", "content": question + "\n\nThe reply:\n" + text + "\n\nAnswer yes or no."}]
@@ -854,6 +929,7 @@ def main():
         elif a == "--check":
             opt["check"] = True
     log = lambda m: print(f"gate: {m}", file=sys.stderr)  # noqa: E731
+    Server.log = log
 
     being, trail = opt.get("being"), opt.get("trail")
     if not being or not trail or not os.path.exists(trail):

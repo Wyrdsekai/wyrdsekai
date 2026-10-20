@@ -107,7 +107,47 @@ public final class HostSense {
      * it (2026-10-05); the reading is what lets her own time slow before that.
      */
     static double readHottestZoneC() {
-        return readHottestZoneC(Path.of("/sys/class/thermal"));
+        return Math.max(readHottestZoneC(Path.of("/sys/class/thermal")), readHottestChipC(Path.of("/sys/class/hwmon")));
+    }
+
+    /** The chips whose sensors under {@code /sys/class/hwmon} are the processor's or the GPU's own heat. */
+    static final java.util.Set<String> HWMON_CHIPS =
+        java.util.Set.of("k10temp", "zenpower", "coretemp", "amdgpu", "cpu_thermal", "soc_thermal");
+
+    /**
+     * The hottest sensor of a processor or GPU chip under hwmon, in °C; -1 when there is none. A
+     * Ryzen AI MAX household box reports its package heat only here (k10temp, Tctl): its one
+     * thermal zone had vanished, and the slowdown never fired while it sat at 100 °C (2026-10-19).
+     * A drive's or a battery's sensor is not the chip's and is not read.
+     */
+    public static double readHottestChipC(Path hwmon) {
+        double hottest = -1;
+        try {
+            if (!Files.isDirectory(hwmon)) return -1;
+            try (var chips = Files.list(hwmon)) {
+                for (var chip : (Iterable<Path>) chips::iterator) {
+                    String name;
+                    try { name = Files.readString(chip.resolve("name")).strip(); }
+                    catch (IOException | RuntimeException e) { continue; }
+                    if (!HWMON_CHIPS.contains(name)) continue;
+                    try (var files = Files.list(chip)) {
+                        for (var f : (Iterable<Path>) files::iterator) {
+                            var fn = f.getFileName().toString();
+                            if (!fn.startsWith("temp") || !fn.endsWith("_input")) continue;
+                            try {
+                                double c = Double.parseDouble(Files.readString(f).strip()) / 1000.0;
+                                if (c > 0 && c < 150 && c > hottest) hottest = c;
+                            } catch (IOException | RuntimeException ignored) {
+                                // this sensor does not say
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // the host does not say
+        }
+        return hottest;
     }
 
     public static double readHottestZoneC(Path thermal) {

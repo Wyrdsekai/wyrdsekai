@@ -11,8 +11,12 @@ import org.wyrdsekai.scripting.api.ItemManifestValidator;
 import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Does this agent-authored script satisfy the items-as-tools contract?
@@ -95,6 +99,87 @@ public final class ItemContractCheck {
      * it</b> — trading one rejection for another. A repair prompt has to show the whole
      * contract state, or fixing A costs you B.
      */
+    private static final Pattern WORLD_CALL = Pattern.compile("world\\.([a-z_]+)\\.([A-Za-z_]+)\\s*\\(");
+    private static final Pattern CAPS_ARRAY = Pattern.compile("capabilities\\s*:\\s*\\[([^\\]]*)\\]");
+    private static final Pattern QUOTED = Pattern.compile("[\"']([^\"']+)[\"']");
+    /** A capability this correction may add on its own: one that needs no rate limit to be declared. */
+    private static final int ADDABLE_TIER_MAX = 4;
+
+    /**
+     * A manifest that names a capability the world does not have, where the body calls the one it
+     * meant: {@code notes.read} declared, {@code world.notes.list(...)} called (a companion's tool,
+     * 2026-10-20). The loader refuses the whole manifest for one wrong word, and the workshop, asked
+     * to fix it, wrote the same word again; the tool went into her room as an object. So the slip is
+     * corrected mechanically before anyone is asked: an unknown declared capability is replaced by
+     * the known capabilities of its namespace that the body calls and the manifest does not yet
+     * declare, or dropped when the body calls none. A known capability is never touched, and
+     * nothing above tier {@value #ADDABLE_TIER_MAX} is added by this hand. Returns the corrected
+     * source, or empty when there was nothing to correct.
+     */
+    public static Optional<String> mendCapabilities(String script) {
+        if (script == null) return Optional.empty();
+        var array = CAPS_ARRAY.matcher(script);
+        if (!array.find()) return Optional.empty();
+        var declared = new ArrayList<String>();
+        var q = QUOTED.matcher(array.group(1));
+        while (q.find()) declared.add(q.group(1));
+        if (declared.stream().allMatch(ItemManifestValidator::isKnownCapability)) return Optional.empty();
+        // What the body calls, by namespace: only names the world knows.
+        Map<String, List<String>> called = new LinkedHashMap<>();
+        var call = WORLD_CALL.matcher(script);
+        while (call.find()) {
+            var cap = call.group(1) + "." + call.group(2);
+            var tier = ItemManifestValidator.KNOWN_CAPABILITIES.get(cap);
+            if (tier == null || tier > ADDABLE_TIER_MAX) continue;
+            var list = called.computeIfAbsent(call.group(1), k -> new ArrayList<>());
+            if (!list.contains(cap)) list.add(cap);
+        }
+        var out = new ArrayList<String>();
+        for (var cap : declared) {
+            if (ItemManifestValidator.isKnownCapability(cap)) {
+                if (!out.contains(cap)) out.add(cap);
+                continue;
+            }
+            var dot = cap.indexOf('.');
+            var ns = dot > 0 ? cap.substring(0, dot) : cap;
+            for (var meant : called.getOrDefault(ns, List.of())) {
+                if (!declared.contains(meant) && !out.contains(meant)) out.add(meant);
+            }
+        }
+        var rebuilt = "capabilities: [" + out.stream().map(c -> "\"" + c + "\"").collect(Collectors.joining(", ")) + "]";
+        return Optional.of(script.substring(0, array.start()) + rebuilt + script.substring(array.end()));
+    }
+
+    /**
+     * What the loader itself refuses a file for: no manifest, no embodiment, no commands, a
+     * manifest the validator rejects, no entrypoint. Nothing here runs the item, and the wiring
+     * is not asked (the loader loads a mis-wired item with a warning, by the 2026-09-08 rule).
+     * This is the question for "would this file be registered", where {@link #problems} is the
+     * question for "is this tool finished" and runs the invoke-once smoke on every call.
+     */
+    public static List<String> loaderRefuses(String script, String displayName) {
+        var out = new ArrayList<String>();
+        if (script == null || script.isBlank()) {
+            out.add("the file is empty — no manifest and no invoke().");
+            return List.copyOf(out);
+        }
+        ItemManifest manifest;
+        try {
+            manifest = ItemManifestParser.parse(script);
+        } catch (Exception e) {
+            out.add("the manifest could not be parsed: " + e.getMessage());
+            return List.copyOf(out);
+        }
+        var name = manifest != null && manifest.name() != null && !manifest.name().isBlank() ? manifest.name() : displayName;
+        try { DynamicFormValidator.requireEmbodiment(script, name); } catch (Exception e) { out.add(e.getMessage()); }
+        try { ItemManifestValidator.requireCommands(manifest, false, name); } catch (Exception e) { out.add(e.getMessage()); }
+        for (var error : ItemManifestValidator.validate(manifest).errors()) {
+            if (!out.contains(error)) out.add(error);
+        }
+        entrypointProblem(script, name).ifPresent(out::add);
+        return List.copyOf(out);
+    }
+
     public static List<String> problems(String script, String displayName) {
         var out = new ArrayList<String>();
         if (script == null || script.isBlank()) {

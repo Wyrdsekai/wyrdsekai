@@ -331,10 +331,10 @@ public final class NodeCapabilities {
     private static boolean probeHostGpu() {
         // NVIDIA
         try {
-            var proc = new ProcessBuilder("nvidia-smi", "--query-gpu=name",
+            var proc = new ProcessBuilder("nvidia-smi", "--query-gpu=name,memory.total",
                 "--format=csv,noheader,nounits").start();
             var output = new String(proc.getInputStream().readAllBytes()).trim();
-            if (proc.waitFor() == 0 && !output.isEmpty()) return true;
+            if (proc.waitFor() == 0 && nvidiaReportsACard(output)) return true;
         } catch (Exception ignored) {}
         // Apple Silicon (Metal)
         var os = System.getProperty("os.name", "").toLowerCase();
@@ -354,6 +354,17 @@ public final class NodeCapabilities {
      * memory under the given drm tree. A household's Ryzen AI MAX+ 395 advertised itself as a
      * CPU-only host for five weeks because only nvidia-smi was asked (2026-10-19).
      */
+    /**
+     * A card is a thing nvidia-smi can measure: "name, memory". A rented AMD box shipped a stub
+     * nvidia-smi that printed a sentence and exited 0 (2026-10-20); its exit code made it a GPU host.
+     */
+    static boolean nvidiaReportsACard(String output) {
+        if (output == null) return false;
+        var first = output.strip().split("\n")[0];
+        var comma = first.lastIndexOf(',');
+        return comma > 0 && first.substring(comma + 1).strip().matches("\\d+");
+    }
+
     static boolean amdGpuWithMemory(Path drm) {
         try {
             if (!Files.isDirectory(drm)) return false;

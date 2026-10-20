@@ -92,7 +92,7 @@ public final class CodingWorkspace {
         return dir == null ? "" : dir.getAbsolutePath();
     }
 
-    private static Path scratchRoot() {
+    public static Path scratchRoot() {
         var data = WyrdConfig.get().dataDir();
         if (data != null && !data.isBlank()) return Path.of(data, SCRATCH_DIR);
         // No data dir configured (tests, a bare checkout): use a temp root rather than

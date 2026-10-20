@@ -20,6 +20,7 @@ Exit codes (the launcher reads them): 0 staged, 3 nothing to consolidate, 4 gate
 """
 import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_HIP_ALLOC_CONF", "expandable_segments:True")   # the same knob's name on ROCm
 
 import gc
 import json
@@ -141,8 +142,6 @@ def main():
 
     import torch
     import torch.nn as nn
-    import bitsandbytes.functional as BF
-    from bitsandbytes.functional import QuantState
     from safetensors.torch import load_file, save_file
     from transformers import AutoTokenizer
     from transformers.activations import ACT2FN
@@ -182,6 +181,17 @@ def main():
     pause_server()
     if not torch.cuda.is_available() or not vram_ok(torch):
         return 6
+    # On ROCm (an AMD GPU; PyTorch still calls it cuda) the machine has to have proved its bf16
+    # arithmetic first: people found silently wrong bf16 on the young builds for the chips
+    # households buy for this (gfx1151, 2026). trainer_check.py writes the verdict; `wyrd brain check`.
+    hip = getattr(torch.version, "hip", None)
+    if hip:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from trainer_check import passed_here
+        why_not = passed_here(torch.__version__, hip)
+        if why_not:
+            print(f"[brainwrite] {why_not}")
+            return 6
     dev = torch.device("cuda:0")
     meta = json.loads((BUNDLE / "bundle.json").read_text())
     cls = getattr(M, meta["class"]); cfg = cls.config_class.from_pretrained(str(BUNDLE))
@@ -190,20 +200,29 @@ def main():
         model = cls(cfg).to(torch.bfloat16)
 
     class Q4Experts(nn.Module):
-        """Frozen NF4 experts, read from the bundle onto the GPU while their layer is active. Forward only."""
+        """Frozen NF4 experts, read from the bundle onto the GPU while their layer is active. Forward only.
+        The one path that needs bitsandbytes; the served-file path (ServedExperts) needs plain torch,
+        which is what an AMD or Intel GPU through ROCm has (2026-10-19)."""
         def __init__(self, path):
             super().__init__(); self.path = path; self.w = None
             self.num_experts = tcfg.num_experts; self.act_fn = ACT2FN[tcfg.hidden_act]
+            try:
+                import bitsandbytes.functional as BF
+                from bitsandbytes.functional import QuantState
+            except Exception as e:
+                raise RuntimeError(f"the bundle's NF4 experts need bitsandbytes, which this environment lacks ({e}); "
+                                   f"the serving GGUF {SERVING_GGUF} beside the node would be used instead") from e
+            self.BF, self.QuantState = BF, QuantState
         def resident(self, on):
             if not on:
                 self.w = None; return
             sd = load_file(self.path, device="cuda:0"); self.w = {}
             for wn in ("gate_up_proj", "down_proj"):
                 qd = {k[len(wn) + 1:]: v for k, v in sd.items() if k.startswith(wn + ".") and not k.endswith(".packed")}
-                self.w[wn] = (sd[wn + ".packed"], QuantState.from_dict(qd, device=dev))
+                self.w[wn] = (sd[wn + ".packed"], self.QuantState.from_dict(qd, device=dev))
         @torch.no_grad()
         def forward(self, hidden_states, top_k_index, top_k_weights):
-            W = {n: BF.dequantize_4bit(p, qs).reshape(qs.shape) for n, (p, qs) in self.w.items()}
+            W = {n: self.BF.dequantize_4bit(p, qs).reshape(qs.shape) for n, (p, qs) in self.w.items()}
             x = hidden_states.detach(); out = torch.zeros_like(x)
             mask = torch.nn.functional.one_hot(top_k_index, num_classes=self.num_experts).permute(2, 1, 0)
             for e in torch.greater(mask.sum(dim=(-1, -2)), 0).nonzero()[:, 0]:

@@ -538,7 +538,7 @@ class CapabilityRegistryTest {
         // The size heuristics alone never name a large model the voice lane.
         assertThat(registry.resolve("quick")).isEmpty();
 
-        CapabilityRegistry.registerSingleBrain(registry, List.of(brain));
+        CapabilityRegistry.registerSingleBrain(registry, List.of(brain), null);
 
         for (var cap : CapabilityRegistry.SINGLE_BRAIN_CAPABILITIES) {
             assertThat(registry.resolve(cap)).as(cap).isPresent();
@@ -552,7 +552,7 @@ class CapabilityRegistryTest {
             "vllm-remote", new InferenceClient("http://192.0.2.9:8000"), 20, List.of("some-70b"));
         var registry = new CapabilityRegistry();
         var localOnly = CapabilityRegistry.inferTier(cloud);
-        CapabilityRegistry.registerSingleBrain(registry, List.of(cloud));
+        CapabilityRegistry.registerSingleBrain(registry, List.of(cloud), null);
         if (!"local".equals(localOnly)) assertThat(registry.resolve("quick")).isEmpty();
     }
 

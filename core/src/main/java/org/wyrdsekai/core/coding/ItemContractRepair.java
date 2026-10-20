@@ -9,6 +9,7 @@ import org.wyrdsekai.scripting.api.ItemManifestParser;
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
@@ -279,9 +280,23 @@ public final class ItemContractRepair {
             var original = Files.readString(itemFile);
             var before = ItemContractCheck.problems(original, fileName);
             if (before.isEmpty()) return new PlacedRepair(fileName, false, before, before, "nothing to repair");
+            var stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
+            // The mechanical correction first: a slip in a capability's name needs no backend, and a
+            // file made whole by it is replaced here, the previous version kept.
+            var slip = ItemContractCheck.mendCapabilities(original);
+            if (slip.isPresent()) {
+                var afterSlip = ItemContractCheck.problems(slip.get(), fileName);
+                if (afterSlip.isEmpty()) {
+                    replacePlaced(itemFile, fileName, original, slip.get(), stamp);
+                    log.info("[item-contract] placed item {}: a capability the world does not have was corrected to what the "
+                        + "body calls; whole now, the previous version kept", fileName);
+                    return new PlacedRepair(fileName, true, before, List.of(),
+                        "mended: a capability name corrected to what the body calls; the previous version is kept under .repaired/");
+                }
+                original = slip.get();
+            }
             var run = escalation;
             if (run == null) return new PlacedRepair(fileName, false, before, before, "no coding backend is registered to repair with");
-            var stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
             var ws = CodingWorkspace.forTask(null, "repair-" + fileName.replaceAll("[^A-Za-z0-9_.-]", "_") + "-" + stamp);
             if (ws == null) return new PlacedRepair(fileName, false, before, before, "no scratch workspace");
             var copy = ws.toPath().resolve(fileName);
@@ -301,18 +316,23 @@ public final class ItemContractRepair {
             if (!current.isEmpty()) {
                 return new PlacedRepair(fileName, false, before, current, "could not be made whole; the placed item is unchanged");
             }
-            var kept = itemFile.resolveSibling(".repaired");
-            Files.createDirectories(kept);
-            Files.writeString(kept.resolve(fileName + "." + stamp + ".bak"), original);
-            var tmp = itemFile.resolveSibling(fileName + ".tmp");
-            Files.writeString(tmp, Files.readString(copy));
-            Files.move(tmp, itemFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            log.info("[item-contract] placed item {} repaired; the previous version is in {}", fileName, kept);
+            replacePlaced(itemFile, fileName, Files.readString(itemFile), Files.readString(copy), stamp);
+            log.info("[item-contract] placed item {} repaired; the previous version is in {}", fileName, itemFile.resolveSibling(".repaired"));
             return new PlacedRepair(fileName, true, before, List.of(), "repaired; the previous version is kept under .repaired/");
         } catch (Exception e) {
             log.warn("[item-contract] placed-item repair of {} failed: {}", fileName, e.toString());
             return new PlacedRepair(fileName, false, List.of(), List.of(), "the repair did not run: " + e.getMessage());
         }
+    }
+
+    /** The placed file becomes {@code repaired}; what it was is kept under {@code .repaired/}. */
+    private static void replacePlaced(Path itemFile, String fileName, String original, String repaired, String stamp) throws IOException {
+        var kept = itemFile.resolveSibling(".repaired");
+        Files.createDirectories(kept);
+        Files.writeString(kept.resolve(fileName + "." + stamp + ".bak"), original);
+        var tmp = itemFile.resolveSibling(fileName + ".tmp");
+        Files.writeString(tmp, repaired);
+        Files.move(tmp, itemFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
 
     public static void setEscalation(Escalation e) {
@@ -374,6 +394,14 @@ public final class ItemContractRepair {
             log.info("[item-contract] {} was superseded by {} — repairing that instead of "
                 + "the version the backend abandoned", name, superseded.getFileName());
             return;
+        }
+        // A capability name the world does not know, where the body calls the one meant, is
+        // corrected here, before the first round: the workshop asked about it wrote it again.
+        var slip = ItemContractCheck.mendCapabilities(Files.readString(script));
+        if (slip.isPresent()) {
+            Files.writeString(script, slip.get());
+            log.info("[item-contract] {}: a capability the world does not have was corrected to what the body calls, "
+                + "before any round", name);
         }
         for (int round = 1; round <= MAX_ROUNDS; round++) {
             var source = Files.readString(script);
@@ -525,7 +553,7 @@ public final class ItemContractRepair {
      * corrected name, not a different item that happens to share a directory, so a task
      * that legitimately writes two items still gets both repaired.
      */
-    private static Path supersededBy(Path script) {
+    static Path supersededBy(Path script) {
         try {
             var mine = manifestName(Files.readString(script));
             if (mine == null) return null;
@@ -551,7 +579,7 @@ public final class ItemContractRepair {
         return null;
     }
 
-    private static String manifestName(String source) {
+    static String manifestName(String source) {
         try {
             var m = ItemManifestParser.parse(source);
             return m == null || m.name() == null || m.name().isBlank() ? null : m.name();

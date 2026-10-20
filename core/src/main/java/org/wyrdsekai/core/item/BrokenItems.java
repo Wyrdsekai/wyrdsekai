@@ -72,6 +72,12 @@ public final class BrokenItems {
             var call = first.substring(0, first.indexOf(' '));
             return "The " + name + " that was made for me does not work yet: it reaches for a part of the world that is not there (" + call + ").";
         }
+        if (first.startsWith("unknown capability")) {
+            var q1 = first.indexOf('\''); var q2 = first.lastIndexOf('\'');
+            var cap = q1 >= 0 && q2 > q1 ? first.substring(q1 + 1, q2) : "";
+            return "The " + name + " that was made for me does not work yet: it asks for a capability this world does not have"
+                + (cap.isEmpty() ? "." : " (" + cap + ").");
+        }
         if (first.contains("never reads params.args")) {
             return "The " + name + " does not do all it says: it offers several commands and does the same thing for every one.";
         }

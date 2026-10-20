@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.7}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.8}"
 
 info()  { echo -e "\033[36m[pack]\033[0m $*"; }
 ok()    { echo -e "\033[32m[pack]\033[0m $*"; }
@@ -83,7 +83,18 @@ if [[ -z "${WYRDSEKAI_SKIP_BAKE:-}" ]]; then
         # after, unless it was already up — the build box's GPU is nobody's by
         # default (scripts/bake-server.sh; restart policy stays OFF either way).
         BAKE_SERVER_STARTED_HERE=false
-        if ! curl -fsS -m 3 http://127.0.0.1:8200/health >/dev/null 2>&1; then
+        # What answers on :8200 has to be the bake's own server, serving the bake model. A stand-in
+        # server of another project's test run answered on the port during the 0.5.8 release
+        # (2026-10-20); an answer on the port is not the server the bake was told to use.
+        BAKE_MODEL="${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf}"
+        if curl -fsS -m 3 http://127.0.0.1:8200/health >/dev/null 2>&1; then
+            if curl -fsS -m 3 http://127.0.0.1:8200/v1/models 2>/dev/null | grep -qF "${BAKE_MODEL%.gguf}"; then
+                info "Bake server :8200 is up with ${BAKE_MODEL%.gguf}"
+            else
+                err "port 8200 answers but does not serve ${BAKE_MODEL%.gguf} — something else holds the bake's port; stop it or wait, then build again"
+                exit 1
+            fi
+        else
             info "Bake server :8200 is down — starting it for the bake"
             "$PROJECT_DIR/scripts/bake-server.sh" start
             BAKE_SERVER_STARTED_HERE=true

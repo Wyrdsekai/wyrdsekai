@@ -32,6 +32,21 @@ class SingleModelProfileSpawnsNothingTest {
     }
 
     @Test
+    @DisplayName("under the single-model profile the local entry points at the brain's port, not the spawn port")
+    void theLocalEntryPointsAtTheBrain() {
+        // A household node set up without Docker: its local entry said :11525, nothing was spawned
+        // there, the large model served :8200 unlisted, and another machine's Ollama got every
+        // lane (2026-10-19).
+        assertThat(InferenceConfig.urlUnderSingleModel("http://127.0.0.1:11525", true)).isEqualTo(InferenceConfig.SINGLE_BRAIN_URL);
+        assertThat(InferenceConfig.urlUnderSingleModel("http://localhost:11525/", true)).isEqualTo(InferenceConfig.SINGLE_BRAIN_URL);
+        assertThat(InferenceConfig.urlUnderSingleModel("http://127.0.0.1:8200", true)).isEqualTo("http://127.0.0.1:8200");
+        assertThat(InferenceConfig.urlUnderSingleModel("http://198.51.100.20:8200", true))
+            .as("a remote server is the steward's word").isEqualTo("http://198.51.100.20:8200");
+        assertThat(InferenceConfig.urlUnderSingleModel("http://127.0.0.1:11525", false))
+            .as("the two-model stack is untouched").isEqualTo("http://127.0.0.1:11525");
+    }
+
+    @Test
     @DisplayName("only the voice backend is left out, and only under the single-model profile")
     void theVoiceBackendIsLeftOutUnderTheSingleModelProfile() {
         assertThat(InferenceConfig.unservedUnderSingleModel("llama-voice", true)).isTrue();

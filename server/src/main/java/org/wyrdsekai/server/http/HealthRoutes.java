@@ -172,16 +172,19 @@ public final class HealthRoutes {
             if (wasPaused) Quiesce.resumed("the steward");
             ctx.json(InferenceRouter.snapshot().asMap());
         });
-        // Hold still without pausing: the launcher calls this before a stop or an update so the
-        // mark names the reason and who asked, instead of the service finding out at SIGTERM.
+        // Hold still: the launcher calls this before a stop or an update so the mark names the
+        // reason and who asked, instead of the service finding out at SIGTERM — and no new turn
+        // starts while the hold lasts.
         app.post("/api/quiesce", ctx -> {
             String reason = null, who = null;
+            long holdMinutes = HOLD_MINUTES;
             try {
                 var node = JsonMapper.builder().build().readTree(ctx.body() == null || ctx.body().isBlank() ? "{}" : ctx.body());
                 if (node.hasNonNull("reason")) reason = node.get("reason").asText();
                 if (node.hasNonNull("who")) who = node.get("who").asText();
+                if (node.hasNonNull("hold_minutes")) holdMinutes = node.get("hold_minutes").asLong();
             } catch (Exception ignored) { }
-            var report = Quiesce.quiesce(reason, who == null ? "the steward" : who, Duration.ofSeconds(8));
+            var report = holdStill(reason, who, holdMinutes);
             // An event copy before whatever comes next (an update, a stop): flagged so the
             // retention tiers never take it.
             var vault = Vault.get();
@@ -301,5 +304,22 @@ public final class HealthRoutes {
 
     public boolean isReady() {
         return ready;
+    }
+
+    /** How long a hold lasts when the launcher does not say: a stop or an update follows well inside it. */
+    static final long HOLD_MINUTES = 10;
+
+    /**
+     * Hold still, and mean it: no new turn starts for {@code holdMinutes} while everyone saves what
+     * she carries. The launcher's stop or update follows within minutes; {@code wyrd inference
+     * restart} and an update that did not install lift the hold with {@code /api/inference/resume}.
+     * Until 2026-10-19 the hold only persisted state: a held household node kept sending its
+     * companions' own time to the processor model for twenty minutes, beside the large model
+     * being measured, and the mark said "held still".
+     */
+    static Quiesce.Report holdStill(String reason, String who, long holdMinutes) {
+        var r = reason == null || reason.isBlank() ? "a pause" : reason.strip();
+        InferenceRouter.pause(Duration.ofMinutes(Math.max(1, holdMinutes)), "held still for " + r);
+        return Quiesce.quiesce(r, who == null || who.isBlank() ? "the steward" : who, Duration.ofSeconds(8));
     }
 }

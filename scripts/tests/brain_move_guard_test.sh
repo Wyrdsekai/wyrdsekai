@@ -20,5 +20,5 @@ check "a companion who has spoken: redirected, by name" '! out=$(_brain_move_gua
 check "--force bypasses, for the build box" 'out=$(_brain_move_guard --force) && [[ -z "$out" ]]'
 check "the usage names move and identity" 'grep -q "move <companion>|identity <companion>" "$HERE/scripts/i18n/wyrd_en.json"'
 check "the launcher redirects enable --single through the guard" 'grep -q "_brain_move_guard \"\${@:2}\"" "$HERE/bin/wyrd"'
-check "the move exports the new profile before it restarts (the build box came back up on the two models, 2026-10-01)" 'grep -q "export WYRDSEKAI_SERVING_PROFILE=single-sparse" "$HERE/bin/wyrd"'
+check "the move never starts, stops or holds the node itself: it runs on a stopped node and wyrd start is the steward's (2026-10-19)" '! sed -n "/^_brain_move() {/,/^}/p" "$HERE/bin/wyrd" | grep -qE "do_start|do_stop|_quiesce_notice|export WYRDSEKAI_SERVING_PROFILE"'
 [[ $fail -eq 0 ]] && echo "all passed" || { echo "some failed"; exit 1; }

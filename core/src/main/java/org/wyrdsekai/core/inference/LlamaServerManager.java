@@ -170,6 +170,75 @@ public final class LlamaServerManager {
     }
 
     /**
+     * Layers on the GPU for a server this node starts, when the conf does not say (its default is
+     * 0): every layer when a GPU backend library ships beside the binary (the Vulkan backend does,
+     * since 0.5.8) and the host has a GPU under {@code /sys/class/drm}; none otherwise.
+     * {@code WYRDSEKAI_GPU_LAYERS} says otherwise, 0 included. A household's 4B voice model ran on
+     * the processor for five weeks beside an idle Radeon (2026-10-19). Where a Vulkan driver is
+     * missing the backend does not load and the server runs on the CPU with the flag; the doctor
+     * reads what the server loaded, not what it was asked.
+     */
+    static int defaultGpuLayers(String executable) {
+        return defaultGpuLayers(executable, Path.of("/sys/class/drm"), System.getenv("WYRDSEKAI_GPU_LAYERS"));
+    }
+
+    static int defaultGpuLayers(String executable, Path drm, String env) {
+        if (env != null && env.strip().matches("\\d+")) return Integer.parseInt(env.strip());
+        var exe = resolveExecutable(executable);
+        if (exe == null || exe.getParent() == null) return 0;
+        var dir = exe.getParent();
+        boolean backend = Files.exists(dir.resolve("libggml-vulkan.so")) || Files.exists(dir.resolve("libggml-cuda.so"))
+            || Files.exists(dir.resolve("libggml-hip.so"));
+        if (!backend) return 0;
+        var vendor = gpuVendorUnderDrm(drm);
+        if (vendor.isEmpty()) {
+            log.info("llama-server {}: a GPU backend sits beside it but the host shows no GPU — the model stays on the processor", exe);
+            return 0;
+        }
+        log.info("llama-server {}: a GPU backend sits beside it and the host has a GPU ({}) — every layer goes to the GPU", exe, vendor);
+        return 99;
+    }
+
+    /** The binary a bare name or a path means, as the process builder will find it; null when nothing does. */
+    static Path resolveExecutable(String executable) {
+        if (executable == null || executable.isBlank()) return null;
+        var p = Path.of(executable);
+        if (p.isAbsolute() || executable.contains("/")) return Files.isRegularFile(p) ? p.toAbsolutePath() : null;
+        var path = System.getenv("PATH");
+        if (path == null) return null;
+        for (var dir : path.split(java.io.File.pathSeparator)) {
+            if (dir.isBlank()) continue;
+            var c = Path.of(dir).resolve(executable);
+            if (Files.isRegularFile(c) && Files.isExecutable(c)) return c.toAbsolutePath();
+        }
+        return null;
+    }
+
+    /** The GPU vendor the kernel shows under {@code /sys/class/drm}: nvidia, amd, intel, or "" for none. */
+    static String gpuVendorUnderDrm(Path drm) {
+        var seen = new java.util.HashSet<String>();
+        try (var cards = Files.list(drm)) {
+            for (var card : (Iterable<Path>) cards::iterator) {
+                if (!card.getFileName().toString().matches("card\\d+")) continue;
+                try {
+                    switch (Files.readString(card.resolve("device/vendor")).strip().toLowerCase(java.util.Locale.ROOT)) {
+                        case "0x10de" -> seen.add("nvidia");
+                        case "0x1002" -> seen.add("amd");
+                        case "0x8086" -> seen.add("intel");
+                        default -> { }
+                    }
+                } catch (IOException | RuntimeException ignored) {
+                    // this card does not say
+                }
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // no drm here
+        }
+        for (var v : List.of("nvidia", "amd", "intel")) if (seen.contains(v)) return v;
+        return "";
+    }
+
+    /**
      * The child's command line. {@code --cache-ram} is always passed: llama-server's own
      * default is 8 GiB of host RAM per server, which on a 12 GB household box was the
      * difference between running and the OOM killer (the same cap the docker launchers carry).
@@ -182,6 +251,11 @@ public final class LlamaServerManager {
         cmd.add("--port"); cmd.add(String.valueOf(port));
         if (gpuLayers > 0) {
             cmd.add("--n-gpu-layers"); cmd.add(String.valueOf(gpuLayers));
+        } else {
+            // No layers on the GPU means no GPU at all: with a Vulkan device merely visible and
+            // zero layers, the server still routes work through it and runs fifteen times slower
+            // than the processor alone (0.7 against 10.5 tokens a second on the build box, 2026-10-20).
+            cmd.add("--device"); cmd.add("none");
         }
         cmd.add("--parallel"); cmd.add(String.valueOf(parallel));
         cmd.add("--ctx-size"); cmd.add(String.valueOf(totalContext));

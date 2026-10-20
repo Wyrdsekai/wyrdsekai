@@ -5932,7 +5932,7 @@ public class Main {
 
             // Build capability registry from configured backends
             var capabilityRegistry = CapabilityRegistry
-                    .fromBackends(inferenceConfig.backends());
+                    .fromBackends(inferenceConfig.backends(), inferenceConfig.defaultModel());
 
             // Register tier-specific models from env vars (overrides auto-detection)
             var routineModel = WyrdConfig.get().modelRoutine();
