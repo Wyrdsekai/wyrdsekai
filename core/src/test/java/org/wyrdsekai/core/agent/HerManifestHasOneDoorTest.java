@@ -85,7 +85,7 @@ class HerManifestHasOneDoorTest {
         while (direct.find()) n++;
         assertThat(n).as("one direct store, inside storeManifest").isEqualTo(1);
         assertThat(actor).contains("private SoulManifest storeManifest(SoulManifest manifest) {\n"
-            + "        var toStore = rebaseManifestOntoStoreHead(manifest);\n"
+            + "        var toStore = SoulFragments.withUniqueFragmentIds(rebaseManifestOntoStoreHead(manifest));\n"
             + "        soulStore.store(toStore);");
         // The sleep's route to the forge: carry what she wove, number past the head, then send.
         assertThat(actor).contains("final var manifestWithState = rebaseManifestOntoStoreHead(\n"

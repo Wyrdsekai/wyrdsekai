@@ -78,6 +78,7 @@ import org.wyrdsekai.core.soul.AgentNarration;
 import org.wyrdsekai.core.soul.DreamWeaver;
 import org.wyrdsekai.core.soul.SoulMaintenanceCycle;
 import org.wyrdsekai.core.soul.SoulManifest;
+import org.wyrdsekai.core.soul.SoulFragments;
 import org.wyrdsekai.core.soul.SoulVerifier;
 import org.wyrdsekai.core.soul.SoulStore;
 import org.wyrdsekai.core.soul.VitalitySnapshot;
@@ -25605,7 +25606,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * head + 1, and the caller keeps what was actually stored.
      */
     private SoulManifest storeManifest(SoulManifest manifest) {
-        var toStore = rebaseManifestOntoStoreHead(manifest);
+        var toStore = SoulFragments.withUniqueFragmentIds(rebaseManifestOntoStoreHead(manifest));
         soulStore.store(toStore);
         return toStore;
     }

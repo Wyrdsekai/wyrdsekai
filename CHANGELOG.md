@@ -4,6 +4,30 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.10] — 2026-10-23
+
+### Fixed
+
+- **The vault stopped making copies after the first hour on a large store.** Yesterday's release
+  taught the vault to read each copy's summary instead of the whole copy, but two readers were
+  missed: the status page, and the check that decides whether a test restore is due, which runs
+  every pass. On a store of 157 copies that read ran the node out of memory, and the error was of a
+  kind the vault's timer did not catch, so the timer stopped for good; the node went thirteen hours
+  without a copy and the only sign was a numb vault on the body map. Now every reader uses small
+  summary files kept beside each copy (older copies get theirs the first time they are read), the
+  timer survives anything a pass throws and marks the body map when a pass fails, and the next pass
+  runs on time.
+- **A companion's recent fragments could stop reaching the table she is loaded from.** When her
+  record held two fragments with the same name, the table refused the whole set and kept the old
+  one; everything she had woven since stayed only in her running copy, and a restart would have
+  dropped it. The two came from the sleep: formative memories that share a feeling share a label,
+  and the sleep matched old and new summaries by label, so two of them could replace the same old
+  one and archive it twice. The sleep now matches each summary to its own predecessor, and if a
+  record ever does hold two fragments with one name, the newer is kept and the name is written in
+  the log; nothing of hers is refused for it.
+- **`wyrd vault status` answered an error on a large store.** It read every copy whole; it now
+  reads the summaries and the newest copy only.
+
 ## [0.5.9] — 2026-10-22
 
 ### Added

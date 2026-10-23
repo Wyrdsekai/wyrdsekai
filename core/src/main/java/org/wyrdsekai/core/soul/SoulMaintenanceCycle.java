@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -741,6 +742,30 @@ public final class SoulMaintenanceCycle {
             && f.kind() != FragmentKind.DEXTERITY;
     }
 
+    /**
+     * The fragment a re-derived summary replaces: the current one with its own name first (the
+     * extractor's names are stable: "style-guide", "memory-formative-<node>"), else one with the
+     * same category and label; never one another new summary already replaced. Formative memories
+     * share a label per emotion ("Formative: joy"), so matching by label alone let two of them
+     * replace the same old one in one sleep: it was archived twice under one name, the fragment
+     * table refused her whole set, and the other one's history was lost (a household, 2026-10-23).
+     */
+    static Optional<SoulFragment> derivedPredecessor(List<SoulFragment> consolidatable, SoulFragment newFrag,
+                                                     Set<String> alreadyReplaced) {
+        var open = consolidatable.stream()
+            .filter(SoulFragment::isCurrent)
+            .filter(e -> e.id() == null || !alreadyReplaced.contains(e.id()))
+            .toList();
+        var sameName = open.stream().filter(e -> e.id() != null && e.id().equals(newFrag.id())).findFirst();
+        if (sameName.isPresent()) return sameName;
+        return open.stream()
+            .filter(e -> e.category() != null && e.category().equals(newFrag.category())
+                && e.label() != null && e.label().equals(newFrag.label()))
+            // a fragment that another new summary names as its own is that one's to replace
+            .filter(e -> e.id() == null || !e.id().startsWith("memory-formative-") || e.id().equals(newFrag.id()))
+            .findFirst();
+    }
+
     public static List<SoulFragment> reinforceFragments(List<SoulFragment> existing,
                                                    List<SoulFragment> newFragments) {
         if (existing == null || existing.isEmpty()) return newFragments;
@@ -762,11 +787,13 @@ public final class SoulMaintenanceCycle {
             // Match only CURRENT fragments. An archived copy carries the same
             // category+label as the live one, so without this the matcher could
             // supersede the archive and leave the live fragment untouched.
-            var match = consolidatable.stream()
-                .filter(SoulFragment::isCurrent)
-                .filter(e -> e.category() != null && e.category().equals(newFrag.category())
-                    && e.label() != null && e.label().equals(newFrag.label()))
-                .findFirst();
+            var match = isDerivedSummary(newFrag)
+                ? derivedPredecessor(consolidatable, newFrag, matchedExisting)
+                : consolidatable.stream()
+                    .filter(SoulFragment::isCurrent)
+                    .filter(e -> e.category() != null && e.category().equals(newFrag.category())
+                        && e.label() != null && e.label().equals(newFrag.label()))
+                    .findFirst();
 
             if (match.isPresent() && isDerivedSummary(newFrag)) {
                 // RE-DERIVED, not re-observed. Everything SoulFragmentExtractor emits is

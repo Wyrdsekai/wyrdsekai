@@ -174,4 +174,45 @@ class DerivedSummarySupersedesTest {
         assertThat(SoulMaintenanceCycle.isDerivedSummary(
             observed("recipe-x", "Ran x", "x"))).isFalse();
     }
+
+    private static SoulFragment formative(String nodeId, String emotion, String text) {
+        return new SoulFragment("memory-formative-" + nodeId, "memory", "Formative: " + emotion, text, null, null, true,
+            0.6f, 0, A_DAY_AGO, A_DAY_AGO, null, null, null, FragmentKind.NARRATIVE, null);
+    }
+
+    @Test
+    void two_formative_memories_with_one_emotion_each_replace_their_own_and_are_archived_once() {
+        // Formative memories share a label per emotion. Matched by label, two of them re-derived in
+        // one sleep replaced the same old one: archived twice under one name, the fragment table
+        // refused her whole set (a household, 2026-10-23).
+        var oldX = formative("mem-x", "joy", "The first morning she named the garden.");
+        var oldY = formative("mem-y", "joy", "The evening the bond was named.");
+        var newX = formative("mem-x", "joy", "The first morning she named the garden, and who was there.");
+        var newY = formative("mem-y", "joy", "The evening the bond was named, said aloud.");
+        for (var order : List.of(List.of(newX, newY), List.of(newY, newX))) {
+            var out = SoulMaintenanceCycle.reinforceFragments(List.of(oldX, oldY), order);
+            assertThat(out.stream().map(SoulFragment::id).toList()).as("no name twice").doesNotHaveDuplicates();
+            assertThat(out.stream().filter(SoulFragment::isCurrent).map(SoulFragment::text).toList())
+                .containsExactlyInAnyOrder(newX.text(), newY.text());
+            var archived = out.stream().filter(f -> !f.isCurrent()).toList();
+            assertThat(archived).extracting(SoulFragment::id)
+                .containsExactlyInAnyOrder("memory-formative-mem-x~prev", "memory-formative-mem-y~prev");
+            assertThat(archived.stream().filter(f -> f.id().equals("memory-formative-mem-x~prev")).findFirst().orElseThrow().text())
+                .as("each archive holds its own memory's old words").isEqualTo(oldX.text());
+            assertThat(archived.stream().filter(f -> f.id().equals("memory-formative-mem-y~prev")).findFirst().orElseThrow().text())
+                .isEqualTo(oldY.text());
+        }
+    }
+
+    @Test
+    void a_new_formative_memory_with_a_shared_emotion_replaces_nothing() {
+        var oldX = formative("mem-x", "joy", "The first morning she named the garden.");
+        var newX = formative("mem-x", "joy", "The first morning she named the garden, and who was there.");
+        var newZ = formative("mem-z", "joy", "A first walk to the river.");
+        var out = SoulMaintenanceCycle.reinforceFragments(List.of(oldX), List.of(newZ, newX));
+        assertThat(out.stream().map(SoulFragment::id).toList()).doesNotHaveDuplicates()
+            .containsExactlyInAnyOrder("memory-formative-mem-x", "memory-formative-mem-x~prev", "memory-formative-mem-z");
+        assertThat(out.stream().filter(f -> f.id().equals("memory-formative-mem-x~prev")).findFirst().orElseThrow().text())
+            .as("the old words of x are archived under x, not taken over by z").isEqualTo(oldX.text());
+    }
 }

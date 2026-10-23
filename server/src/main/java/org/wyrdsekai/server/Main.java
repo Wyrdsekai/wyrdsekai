@@ -1056,8 +1056,16 @@ public class Main {
                     vault.snapshot("continuous", false);
                     vault.prune();
                     if (vault.drillDue(Duration.ofDays(WyrdConfig.get().vaultDrillDays()))) vault.drill();
-                } catch (RuntimeException e) {
-                    log.warn("vault pass failed: {}", e.toString());
+                } catch (Throwable e) {
+                    // Everything, not only exceptions: an OutOfMemoryError escaped here on the household
+                    // node and the executor cancelled the vault's timer for good; no copy for thirteen
+                    // hours and nothing said but a numb part on the body map (2026-10-23).
+                    log.error("vault pass failed; the next pass runs on time: {}", e.toString());
+                    try {
+                        var map = BodyMap.get();
+                        if (map != null) map.mark("vault", "pass-failed", null,
+                            "A copy of the record did not finish: " + e.getClass().getSimpleName() + ". The next pass runs on time.", "error=" + e);
+                    } catch (RuntimeException ignored) { /* the mark is a courtesy */ }
                 } finally {
                     ActivityGauge.maintenanceFinished();
                 }

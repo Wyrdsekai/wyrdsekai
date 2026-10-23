@@ -6943,7 +6943,8 @@ if d.get("unclassified"): print("Unclassified in the data dir (not vaulted): %s"
 rec=d.get("recent",[])
 if rec:
     print(); print("%-22s %-24s %-5s %6s %9s  %s" % ("ID","AT","KEEP","FILES","MB","REASON"))
-    for m in rec: print("%-22s %-24s %-5s %6d %9.1f  %s" % (m["id"], m["at"], "keep" if m.get("keep") else "", m["files"], m["bytes"]/1e6, m["reason"]))
+    # files and bytes are given for the newest copy only: the others are listed from their summaries (0.5.10)
+    for m in rec: print("%-22s %-24s %-5s %6s %9s  %s" % (m["id"], m["at"], "keep" if m.get("keep") else "", m.get("files", ""), ("%.1f" % (m["bytes"]/1e6)) if m.get("bytes") is not None else "", m.get("reason", "")))
 ' ;;
         snapshot|copy)
             local reason="${2:-the steward asked}"

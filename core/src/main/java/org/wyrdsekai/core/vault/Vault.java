@@ -194,7 +194,7 @@ public final class Vault {
         var dir = vaultDir.resolve("manifests");
         if (!Files.isDirectory(dir)) return false;
         try (var s = Files.list(dir)) {
-            for (var f : s.filter(p -> p.toString().endsWith(".json")).toList()) {
+            for (var f : s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).toList()) {
                 try (var in = Files.newInputStream(f)) {
                     var head = in.readNBytes(VaultCipher.MAGIC.length);
                     if (Arrays.equals(head, VaultCipher.MAGIC)) return true;
@@ -620,16 +620,65 @@ public final class Vault {
         var tmp = f.resolveSibling(f.getFileName() + ".tmp");
         Files.write(tmp, cipher.seal(JSON.writeValueAsBytes(m)));
         Files.move(tmp, f, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        writeSidecars(m);
+    }
+
+    /**
+     * Beside each manifest, two small sealed files: its head, and the names of the chunks it
+     * references. A pass of the vault reads these, kilobytes, and never the manifests themselves:
+     * reading 157 copies of 80,000 files whole on every pass ran the household node out of memory
+     * and ended the vault's timer (2026-10-23). A copy from before this gets its sidecars the
+     * first time it is read.
+     */
+    private void writeSidecars(Manifest m) throws IOException {
+        var head = headFile(m.id());
+        var tmp = head.resolveSibling(head.getFileName() + ".tmp");
+        Files.write(tmp, cipher.seal(JSON.writeValueAsBytes(m.head())));
+        Files.move(tmp, head, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        var names = new java.util.TreeSet<String>();
+        if (m.files() != null) for (var e : m.files()) if (e != null && e.chunks() != null) names.addAll(e.chunks());
+        var chunks = chunksFile(m.id());
+        tmp = chunks.resolveSibling(chunks.getFileName() + ".tmp");
+        Files.write(tmp, cipher.seal(String.join("\n", names).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        Files.move(tmp, chunks, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    }
+    private Path headFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".head.json"); }
+    private Path chunksFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".chunks"); }
+    private static String idOf(Path manifest) {
+        var n = manifest.getFileName().toString();
+        return n.endsWith(".json") ? n.substring(0, n.length() - ".json".length()) : n;
     }
 
     private Manifest readManifest(Path f) throws IOException {
         MANIFESTS_READ_WHOLE.incrementAndGet();
         return JSON.readValue(open(Files.readAllBytes(f), f), Manifest.class);
     }
-    /** The head alone: the file list is skipped as it is parsed and never held. */
+    /** The head of a copy: from its sidecar; a copy without one is read whole, once, and gets its sidecars. */
     private Head readHead(Path f) throws IOException {
-        HEADS_READ.incrementAndGet();
-        return JSON.readValue(open(Files.readAllBytes(f), f), Head.class);
+        var side = headFile(idOf(f));
+        if (Files.isRegularFile(side)) {
+            HEADS_READ.incrementAndGet();
+            return JSON.readValue(open(Files.readAllBytes(side), side), Head.class);
+        }
+        var m = readManifest(f);
+        try { writeSidecars(m); } catch (IOException e) { log.debug("vault: sidecars for {} not written: {}", m.id(), e.getMessage()); }
+        return m.head();
+    }
+    /** The chunk names a copy references: from its sidecar; a copy without one is read whole, once, and gets its sidecars. */
+    private Set<String> chunkNamesOf(String id) throws IOException {
+        var side = chunksFile(id);
+        if (Files.isRegularFile(side)) {
+            var text = new String(open(Files.readAllBytes(side), side), java.nio.charset.StandardCharsets.UTF_8);
+            var out = new HashSet<String>();
+            for (var line : text.split("\n")) if (!line.isBlank()) out.add(line.strip());
+            return out;
+        }
+        var f = manifestFile(id).orElseThrow(() -> new IOException("no manifest " + id));
+        var m = readManifest(f);
+        try { writeSidecars(m); } catch (IOException e) { log.debug("vault: sidecars for {} not written: {}", m.id(), e.getMessage()); }
+        var out = new HashSet<String>();
+        if (m.files() != null) for (var e : m.files()) if (e != null && e.chunks() != null) out.addAll(e.chunks());
+        return out;
     }
     /** The one manifest file of a copy, by id; empty when the id is not a plain name or there is no such copy. */
     private Optional<Path> manifestFile(String id) {
@@ -684,7 +733,7 @@ public final class Vault {
         var dir = vaultDir.resolve("manifests");
         if (!Files.isDirectory(dir)) return out;
         try (var s = Files.list(dir)) {
-            for (var f : s.filter(p -> p.toString().endsWith(".json")).toList()) {
+            for (var f : s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).toList()) {
                 try { out.add(readManifest(f)); }
                 catch (IOException e) { log.warn("vault: unreadable manifest {}: {}", f, e.getMessage()); }
             }
@@ -700,7 +749,7 @@ public final class Vault {
         var dir = vaultDir.resolve("manifests");
         if (!Files.isDirectory(dir)) return out;
         try (var s = Files.list(dir)) {
-            for (var f : s.filter(p -> p.toString().endsWith(".json")).toList()) {
+            for (var f : s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).toList()) {
                 try { out.add(readHead(f)); }
                 catch (IOException e) { log.warn("vault: unreadable manifest {}: {}", f, e.getMessage()); }
             }
@@ -900,20 +949,19 @@ public final class Vault {
         var referenced = new HashSet<String>();
         for (var m : all) {
             if (keep.contains(m.id())) {
-                // One kept copy's file list at a time: its chunk names are kept, the list is not.
-                var f = manifestFile(m.id());
-                if (f.isPresent()) {
-                    try {
-                        for (var e : readManifest(f.get()).files()) referenced.addAll(e.chunks());
-                    } catch (IOException e) {
-                        log.warn("vault: kept copy {} not read for its chunks; nothing is swept: {}", m.id(), e.getMessage());
-                        return removed;   // a sweep that cannot see a kept copy's chunks must not run
-                    }
+                // A kept copy's chunk names, from its sidecar; never its file list.
+                try {
+                    referenced.addAll(chunkNamesOf(m.id()));
+                } catch (IOException e) {
+                    log.warn("vault: kept copy {} not read for its chunks; nothing is swept: {}", m.id(), e.getMessage());
+                    return removed;   // a sweep that cannot see a kept copy's chunks must not run
                 }
                 continue;
             }
             try {
                 Files.deleteIfExists(vaultDir.resolve("manifests").resolve(m.id() + ".json"));
+                Files.deleteIfExists(headFile(m.id()));
+                Files.deleteIfExists(chunksFile(m.id()));
                 removed++;
             } catch (IOException e) {
                 log.warn("vault: could not remove manifest {}: {}", m.id(), e.getMessage());
@@ -947,13 +995,14 @@ public final class Vault {
 
     public Map<String, Object> status() {
         var out = new LinkedHashMap<String, Object>();
-        var all = list();
+        var all = heads();
+        var newest = all.isEmpty() ? Optional.<Manifest>empty() : find(all.get(0).id());
         out.put("dir", vaultDir.toString());
         out.put("copies", all.size());
-        out.put("kept", all.stream().filter(Manifest::keep).count());
+        out.put("kept", all.stream().filter(Head::keep).count());
         out.put("latest", all.isEmpty() ? null : all.get(0).at().toString());
         out.put("latestId", all.isEmpty() ? null : all.get(0).id());
-        out.put("latestBytes", all.isEmpty() ? 0 : all.get(0).bytes());
+        out.put("latestBytes", newest.map(Manifest::bytes).orElse(0L));
         out.put("chunkStoreBytes", storeBytes());
         var drilled = all.stream().filter(m -> m.drill() != null).max(Comparator.comparing(m -> m.drill().at()));
         out.put("lastDrill", drilled.map(m -> m.drill().at().toString()).orElse(null));
@@ -964,7 +1013,7 @@ public final class Vault {
         out.put("keyId", cipher.id());
         out.put("keyFile", keyFile.toString());
         out.put("keyMismatch", keyMismatch == null ? "" : keyMismatch);
-        if (!all.isEmpty()) out.put("unclassified", all.get(0).classes().getOrDefault("unclassified", List.of()));
+        newest.ifPresent(m -> out.put("unclassified", m.classes() == null ? List.of() : m.classes().getOrDefault("unclassified", List.of())));
         return out;
     }
 
@@ -985,7 +1034,7 @@ public final class Vault {
 
     /** True when the newest drill is older than {@code every} or there has never been one. */
     public boolean drillDue(Duration every) {
-        return list().stream().filter(m -> m.drill() != null).map(m -> m.drill().at())
+        return heads().stream().filter(m -> m.drill() != null).map(m -> m.drill().at())
             .max(Comparator.naturalOrder())
             .map(t -> Duration.between(t, Instant.now()).compareTo(every) > 0)
             .orElse(true);

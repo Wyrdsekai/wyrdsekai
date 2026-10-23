@@ -193,6 +193,8 @@ public final class SqlSoulStore implements SoulStore, AutoCloseable {
                 + "upstream handed something that is not a manifest");
             return;
         }
+        // One fragment per id, or the fragment table refuses her whole set (2026-10-23).
+        manifest = SoulFragments.withUniqueFragmentIds(manifest);
         // SIGN AT EVERY STORE, with the soul's own key, when this node holds it.
         //
         // The canonical form covers the manifest version, so a version bump

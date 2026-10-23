@@ -302,10 +302,25 @@ class TheVaultKeepsTheSelfTest {
         }
         Files.delete(manifests.resolve(real.id() + ".json"));
 
+        // The hand-written copies have no sidecars: the first listing reads each whole, once, and writes them.
+        Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
+        assertEquals(12, vault.heads().size());
+        assertEquals(12, Vault.MANIFESTS_READ_WHOLE.get(), "a copy without sidecars is read whole once");
+        assertEquals(0, Vault.HEADS_READ.get());
+        assertTrue(Files.isRegularFile(manifests.resolve("m30.head.json")) && Files.isRegularFile(manifests.resolve("m30.chunks")),
+            "and gets its sidecars");
+
         Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
         assertEquals("m30", vault.latest().orElseThrow().id());
-        assertEquals(12, Vault.HEADS_READ.get(), "every copy's head");
+        assertEquals(12, Vault.HEADS_READ.get(), "every copy's head, from the sidecars");
         assertEquals(1, Vault.MANIFESTS_READ_WHOLE.get(), "one copy whole: the newest");
+
+        Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
+        assertTrue(vault.drillDue(Duration.ofDays(7)));
+        var status = vault.status();
+        assertEquals(12, status.get("copies"));
+        assertEquals(1, Vault.MANIFESTS_READ_WHOLE.get(), "the status reads the newest copy whole for its bytes, nothing else");
+        assertEquals(24, Vault.HEADS_READ.get(), "the drill check and the status page read heads");
 
         Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
         assertEquals("m45", vault.find("m45").orElseThrow().id());
@@ -318,10 +333,25 @@ class TheVaultKeepsTheSelfTest {
         int removed = vault.prune(now);
         assertEquals(4, removed);
         assertEquals(12, Vault.HEADS_READ.get(), "the tiers are decided on the heads");
-        assertEquals(8, Vault.MANIFESTS_READ_WHOLE.get(), "the kept copies are read whole one at a time, for their chunk names");
+        assertEquals(0, Vault.MANIFESTS_READ_WHOLE.get(), "the kept copies' chunk names come from their sidecars; no copy is read whole");
         assertEquals(8, vault.heads().size());
+        assertFalse(Files.exists(manifests.resolve("old.head.json")) || Files.exists(manifests.resolve("old.chunks")),
+            "a removed copy takes its sidecars with it");
         assertTrue(countChunks(vault.dir()) > 0, "chunks the kept copies reference survive the sweep");
         assertEquals(List.of("d3a", "h20", "h3a", "kept", "m30", "m45", "m6", "w3"),
             vault.heads().stream().map(Vault.Head::id).sorted().toList());
+    }
+
+    @Test
+    @DisplayName("the vault's timer survives anything a pass throws; a failed pass is marked, and the next one runs on time")
+    void theTimerSurvivesAnything() throws Exception {
+        var rel = "server/src/main/java/org/wyrdsekai/server/Main.java";
+        var from = Path.of("..", rel);
+        var main = Files.readString(Files.exists(from) ? from : Path.of(rel));
+        int pass = main.indexOf("vault.snapshot(\"continuous\", false);");
+        assertTrue(pass > 0);
+        int catchAll = main.indexOf("} catch (Throwable e) {", pass);
+        assertTrue(catchAll > pass && catchAll - pass < 600, "the pass catches Throwable, not only RuntimeException (an OutOfMemoryError ended the timer, 2026-10-23)");
+        assertTrue(main.indexOf("map.mark(\"vault\", \"pass-failed\"", catchAll) > catchAll, "and marks the body map");
     }
 }
