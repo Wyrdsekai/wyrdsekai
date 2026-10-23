@@ -32,32 +32,57 @@ class AReflexNeverWaitsTest {
         map = BodyMap.inMemory();
         arena = new ReflexArena(ReflexArena.defaults());
         InferenceRouter.resume();
+        InferenceRouter.releaseOwnTime();
     }
 
     @AfterEach
     void tearDown() {
         InferenceRouter.resume();
+        InferenceRouter.releaseOwnTime();
         BodyMap.resetForTests();
     }
 
     @Test
-    @DisplayName("memory pressure: two pulses, then a throttle and a mark; not again inside the hold")
-    void memoryPressureThrottles() {
+    @DisplayName("memory pressure: two pulses, then her own time is held and a mark; a person's turn is still answered; not again inside the hold")
+    void memoryPressureHoldsHerOwnTime() {
         var now = Instant.now();
         assertTrue(arena.evaluate(host(40, 50, 60), map, now).isEmpty(), "one pulse is not a flinch");
-        assertFalse(InferenceRouter.isPaused());
+        assertFalse(InferenceRouter.isOwnTimeHeld());
 
         var fired = arena.evaluate(host(40, 50, 60), map, now.plusSeconds(30));
         assertEquals(1, fired.size());
         assertEquals("memory-pressure", fired.get(0).id());
-        assertTrue(InferenceRouter.isPaused(), "the router is paused, without anyone thinking about it");
+        assertEquals(ReflexArena.Action.HOLD_OWN_TIME, fired.get(0).action());
+        assertTrue(InferenceRouter.isOwnTimeHeld(), "her own time is held, without anyone thinking about it");
+        assertFalse(InferenceRouter.isPaused(), "a person's turn is still answered (2026-10-22)");
         var mark = map.recentMarks(1).get(0);
         assertEquals("reflex", mark.kind());
         assertTrue(mark.text().startsWith("I held my breath for a minute"), mark.text());
+        assertTrue(mark.text().contains("no turns of my own"), mark.text());
 
         assertTrue(arena.evaluate(host(40, 50, 60), map, now.plusSeconds(60)).isEmpty(), "inside the hold");
         assertEquals(1, map.recentMarks(10).size());
         assertEquals(1, arena.evaluate(host(40, 50, 60), map, now.plusSeconds(200)).size(), "after the hold it may fire again");
+    }
+
+    @Test
+    @DisplayName("a nearly full heap holds her own time for a minute, and never a person's turn")
+    void heapFullHoldsHerOwnTime() {
+        var now = Instant.now();
+        arena.evaluate(host(0, 96, 60), map, now);
+        var fired = arena.evaluate(host(0, 96, 60), map, now.plusSeconds(30));
+        assertEquals(1, fired.size());
+        assertEquals("heap-full", fired.get(0).id());
+        assertEquals(ReflexArena.Action.HOLD_OWN_TIME, fired.get(0).action());
+        assertTrue(InferenceRouter.isOwnTimeHeld());
+        assertFalse(InferenceRouter.isPaused());
+        assertTrue(map.recentMarks(1).get(0).text().startsWith("My own memory was nearly full"));
+        // An unknown heap (no collection of the old generation yet) is not a flinch.
+        var fresh = new ReflexArena(ReflexArena.defaults());
+        InferenceRouter.releaseOwnTime();
+        fresh.evaluate(host(0, -1, 60), map, now);
+        assertTrue(fresh.evaluate(host(0, -1, 60), map, now.plusSeconds(30)).isEmpty());
+        assertFalse(InferenceRouter.isOwnTimeHeld());
     }
 
     @Test

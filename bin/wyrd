@@ -1129,6 +1129,46 @@ _serving_profile() {
     esac
 }
 
+# A profile that serves the large model on this box (single-sparse, sparse-drive) needs the local
+# stack, and the inference mode decides whether `wyrd start` starts one. A household set up with
+# its models on another machine (mode cloud) moved a companion, and `wyrd start` brought up the
+# JVM alone with the brain down and nothing said (2026-10-22). Now enabling or moving sets the mode
+# to local, keeps the old one, and says so; disabling puts the old mode back.
+_brain_mode_for_profile() {
+    local profile="$1" mode; mode="$(effective_inference_mode)"
+    case "$profile" in
+        single-sparse|sparse-drive)
+            [[ "$mode" == "local" ]] && return 0
+            if [[ -z "${WYRDSEKAI_BRAIN_MODE_BEFORE:-}" ]]; then
+                do_config set "WYRDSEKAI_BRAIN_MODE_BEFORE=${WYRDSEKAI_INFERENCE_MODE:-local}" >/dev/null
+                export WYRDSEKAI_BRAIN_MODE_BEFORE="${WYRDSEKAI_INFERENCE_MODE:-local}"
+            fi
+            do_config set "WYRDSEKAI_INFERENCE_MODE=local" >/dev/null
+            export WYRDSEKAI_INFERENCE_MODE=local
+            if [[ -n "${WYRDSEKAI_INFERENCE_URL:-}" ]]; then echo "$(_t brain.mode.set_local_url "$mode" "$WYRDSEKAI_INFERENCE_URL")"
+            else echo "$(_t brain.mode.set_local "$mode")"; fi
+            ;;
+        *)
+            local before="${WYRDSEKAI_BRAIN_MODE_BEFORE:-}"
+            [[ -n "$before" ]] || return 0
+            do_config set "WYRDSEKAI_INFERENCE_MODE=$before" >/dev/null
+            do_config unset WYRDSEKAI_BRAIN_MODE_BEFORE >/dev/null 2>&1 || true
+            export WYRDSEKAI_INFERENCE_MODE="$before"; unset WYRDSEKAI_BRAIN_MODE_BEFORE
+            echo "$(_t brain.mode.restored "$before")"
+            ;;
+    esac
+}
+
+# The reason `wyrd start` under a brain profile would leave the brain down, or nothing when it
+# would not: the mode never starts a local stack (cloud, zone), or local inference is switched off.
+_start_mode_blocks_profile() {
+    local profile mode; profile="$(_serving_profile)"; mode="$(effective_inference_mode)"
+    [[ "$profile" == "two-model" ]] && return 1
+    if [[ "$mode" != "local" ]]; then echo "$mode"; return 0; fi
+    if ! local_inference_wanted; then echo "local, WYRDSEKAI_LLAMA_ENABLED=false"; return 0; fi
+    return 1
+}
+
 # Profile `sparse-drive`: the large sparse model takes the DRIVE's place on :8200 and the voice
 # model keeps speaking on :8201 (polish, the conversation lane and the night's write all stay on
 # the voice model). For a companion whose voice already lives in a tuned voice model this gives
@@ -1472,7 +1512,7 @@ _start_brain_native() {
         --batch-size 2048 --ubatch-size 2048 --host 0.0.0.0 --jinja
         --reasoning off --reasoning-budget 0 --flash-attn on --metrics)
     if [[ -f "$generic" ]]; then
-        brain_args+=(--lora-scaled "$generic:1.0")
+        brain_args+=(--lora-scaled "$generic:0.0")   # the floor rests until a request names it (2026-10-22)
         # The styled species adapter, raised per turn by her state (the register dial); at 0 until asked.
         [[ -f "$DATA_DIR/adapters/brain/styled.gguf" ]] && brain_args+=(--lora-scaled "$DATA_DIR/adapters/brain/styled.gguf:0.0")
         # The working-turn adapter, raised on the turns that call tools and zeroed when she speaks; at 0 until asked.
@@ -3984,6 +4024,12 @@ maybe_start_inference() {
         start_inference "$model"
         return $?
     fi
+    # Under a brain profile this branch leaves the brain down: say so (do_start refuses earlier;
+    # a node already running under the mismatch gets the warning here).
+    local _blocked_by
+    if _blocked_by="$(_start_mode_blocks_profile)"; then
+        warn "$(_t start.brain_needs_local "$(_serving_profile)" "$_blocked_by")"
+    fi
     case "$(effective_inference_mode)" in
         cloud)
             log "Inference mode: cloud — not starting local inference."
@@ -4035,6 +4081,14 @@ do_start() {
             return 1
         fi
         echo ""
+    fi
+
+    # A brain profile with a mode that never starts a local stack: refuse before the JVM, with the
+    # way out, instead of a node up with its brain down (a household's 0.5.8 report, 2026-10-22).
+    local _blocked_by
+    if _blocked_by="$(_start_mode_blocks_profile)"; then
+        err "$(_t start.brain_needs_local "$(_serving_profile)" "$_blocked_by")"
+        return 1
     fi
 
     # bring up the SSH reverse tunnel (if opted in) before
@@ -5615,10 +5669,12 @@ PY
     # wound entries without a release/amends. Pure local file scan — no
     # server required.
     _doctor_substrate_neglect
-    _doctor_brain_move
     local _sub_rc=$?
     if [[ "$_sub_rc" -eq 1 ]]; then _wbump; fi
     if [[ "$_sub_rc" -eq 2 ]]; then _ebump; fi
+    _doctor_brain_move
+    # The brain profile and the inference mode disagree: `wyrd start` would leave the brain down.
+    _doctor_brain_mode || _wbump
 
     # ── Her own time: turns that never become acts ──
     # The trail is the one instrument that sees own time; the live suites are a person asking.
@@ -5972,6 +6028,18 @@ PY
         local who days verdict; IFS='|' read -r who days verdict <<<"$line"
         log "doctor.brain: $who moved to the large model $days day(s) ago (gate $verdict); the way back is: wyrd brain disable. Record: $f"
     done
+}
+
+# The serving profile puts the large model on this box but the inference mode never starts a
+# local stack: `wyrd start` would bring up the node with its brain down (a household, 2026-10-22).
+# Returns 1 on the mismatch.
+_doctor_brain_mode() {
+    local _why
+    if _why="$(_start_mode_blocks_profile)"; then
+        warn "$(_t doctor.brain.mode_mismatch "$(_serving_profile)" "$_why")"
+        return 1
+    fi
+    return 0
 }
 
 _doctor_own_time() {
@@ -7114,7 +7182,13 @@ do_config() {
             fi
             rm -f "$tmp"
             log "$(_t config.set.applied "$key" "$target_conf")"
-            info "$(_t config.set.apply_hint)"
+            # Keys the local model servers read: the service restart only restarts the JVM, so
+            # `config apply` would leave a changed mode or profile unapplied (2026-10-22).
+            case "$key" in
+                WYRDSEKAI_INFERENCE_MODE|WYRDSEKAI_INFERENCE_URL|WYRDSEKAI_SERVING_PROFILE|WYRDSEKAI_MODEL_PATH|WYRDSEKAI_INFERENCE_ENABLED|WYRDSEKAI_LLAMA_*|LLAMA_*)
+                    info "$(_t config.set.apply_hint_stack)" ;;
+                *) info "$(_t config.set.apply_hint)" ;;
+            esac
             ;;
         unset)
             local key="${2:-}"
@@ -7665,7 +7739,7 @@ do_soul() {
         err "Stop the server first (wyrd stop): a running companion holds her name."
         return 1
     fi
-    _run_core_main org.wyrdsekai.core.soul.SoulAdminMain "$@"
+    _run_core_main org.wyrdsekai.server.SoulCliMain "$@"
 }
 
 # `wyrd seed generate [<companion>] [--out <file>] | verify <file> | restore <file>` — the
@@ -15873,7 +15947,7 @@ except Exception: print("")' 2>/dev/null)
     else
         # A stopped node (the move): straight into her record, the same lines the door runs.
         local out=""
-        if ! out=$(_run_core_main org.wyrdsekai.core.soul.SoulAdminMain identity "$did" "$dir/identity-draft.txt" 2>&1); then
+        if ! out=$(_run_core_main org.wyrdsekai.server.SoulCliMain identity "$did" "$dir/identity-draft.txt" 2>&1); then
             err "$(_t brain.move.identity_failed "${out:-the record could not be written}")"; return 1
         fi
         ver=$(sed -n 's/^version=//p' <<<"$out" | tail -1)
@@ -16004,6 +16078,7 @@ PY
         case "$ans" in y|Y|s|S|yes|sí|si) ;; *) _brain_move_revert; echo "$(_t brain.move.declined "$out")"; return 1 ;; esac
     fi
     do_config set "WYRDSEKAI_SERVING_PROFILE=single-sparse" >/dev/null
+    _brain_mode_for_profile single-sparse
     python3 - "$out" "$state" "$force" "${verdict:-none}" <<'PY'
 import json, sys, datetime, os
 p = sys.argv[1]
@@ -16048,9 +16123,37 @@ do_brain() {
             *) _t brain.status.plan_n "$1" "$BRAIN_LAYERS" ;;
         esac
     }
+    # Her latest move record that says moved: "YYYY-MM-DD|verdict", or nothing (not moved).
+    _brain_moved_since() {
+        local d="$DATA_DIR/adapters/brainwrite/$1"; [[ -d "$d" ]] || return 0
+        python3 - "$d" <<'PY' 2>/dev/null || true
+import json, glob, os, sys
+best = None
+for f in glob.glob(os.path.join(sys.argv[1], "move-*.json")):
+    try: d = json.load(open(f))
+    except Exception: continue
+    if d.get("moved") and (best is None or str(d.get("moved_at", "")) > str(best.get("moved_at", ""))): best = d
+if best: print(f"{str(best.get('moved_at', ''))[:10]}|{best.get('verdict', '?')}")
+PY
+    }
     case "$sub" in
         status|plan)
             echo "$(_t brain.status.profile "$(_serving_profile)")"
+            # The mode decides whether `wyrd start` starts the brain here; say which (2026-10-22).
+            local _mode_block
+            if _mode_block="$(_start_mode_blocks_profile)"; then echo "$(_t brain.status.mode_blocks "$_mode_block")"
+            else echo "$(_t brain.status.mode "$(effective_inference_mode)")"; fi
+            # Each companion: on the large model since her move, or on the two-model stack still.
+            if [[ "$sub" == "status" ]]; then
+                local _crows _cname _ceid _crest _m _since _verdict
+                _crows="$(_brain_companions 2>/dev/null || true)"
+                while IFS=$'\t' read -r _cname _ceid _crest; do
+                    [[ -n "$_cname" && -n "$_ceid" ]] || continue
+                    _m="$(_brain_moved_since "$_ceid")"
+                    if [[ -n "$_m" ]]; then IFS='|' read -r _since _verdict <<<"$_m"; echo "$(_t brain.status.companion_moved "$_cname" "$_since" "$_verdict")"
+                    else echo "$(_t brain.status.companion_home "$_cname")"; fi
+                done <<<"$_crows"
+            fi
             echo "$(_brain_hardware_line)"
             echo "$(_t brain.status.plan "$(_brain_plan_text "$plan")")"
             [[ "$kind" == nvidia || "$kind" == amd ]] && echo "$(_brain_plan_words "$plan" "$avail" "$others" "$cap")"
@@ -16217,10 +16320,12 @@ do_brain() {
             do_config set "WYRDSEKAI_SERVING_PROFILE=$want" >/dev/null
             if [[ "$want" == "sparse-drive" ]]; then echo "$(_t brain.enable.done_drive)"
             else echo "$(_t brain.enable.done)"; fi
+            _brain_mode_for_profile "$want"
             ;;
         disable)
             do_config set "WYRDSEKAI_SERVING_PROFILE=two-model" >/dev/null
             echo "$(_t brain.disable.done)"
+            _brain_mode_for_profile two-model
             ;;
         move)
             _brain_move "${2:-}" "${@:3}"

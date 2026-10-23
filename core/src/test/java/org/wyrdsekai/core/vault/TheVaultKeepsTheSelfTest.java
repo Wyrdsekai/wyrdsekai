@@ -266,4 +266,62 @@ class TheVaultKeepsTheSelfTest {
         if (!Files.isDirectory(chunks)) return 0;
         try (var s = Files.walk(chunks)) { return s.filter(Files::isRegularFile).count(); }
     }
+
+    @Test
+    @DisplayName("the newest copy is read alone: a store of many copies costs their heads and one whole manifest, never every file list at once")
+    void theNewestCopyIsReadAlone(@TempDir Path dir) throws Exception {
+        // The household node's store held 157 copies of 80,000 files each; reading them all to find
+        // the newest, on every pass, filled a 2 GB heap and ran full collections every fifteen
+        // minutes (2026-10-22).
+        var data = household(dir);
+        var vault = new Vault(data, dir.resolve("vault"));
+        var now = Instant.parse("2026-09-16T12:00:00Z");
+        var real = vault.snapshot("seed", false).orElseThrow();
+        var manifests = vault.dir().resolve("manifests");
+        var cipher = VaultCipher.load(data.resolve(Vault.KEY_FILE));
+        var json = new String(cipher.open(Files.readAllBytes(manifests.resolve(real.id() + ".json"))), java.nio.charset.StandardCharsets.UTF_8);
+        record Fake(String id, Instant at, boolean keep) {}
+        var fakes = List.of(
+            new Fake("m30", now.minus(Duration.ofMinutes(30)), false),
+            new Fake("m45", now.minus(Duration.ofMinutes(45)), false),
+            new Fake("h3a", now.minus(Duration.ofHours(3)).minus(Duration.ofMinutes(10)), false),
+            new Fake("h3b", now.minus(Duration.ofHours(3)).minus(Duration.ofMinutes(25)), false),
+            new Fake("h20", now.minus(Duration.ofHours(20)), false),
+            new Fake("d3a", now.minus(Duration.ofDays(3)), false),
+            new Fake("d3b", now.minus(Duration.ofDays(3)).minus(Duration.ofHours(2)), false),
+            new Fake("w3", now.minus(Duration.ofDays(20)), false),
+            new Fake("w3b", now.minus(Duration.ofDays(21)), false),
+            new Fake("m6", now.minus(Duration.ofDays(180)), false),
+            new Fake("old", now.minus(Duration.ofDays(500)), false),
+            new Fake("kept", now.minus(Duration.ofDays(700)), true));
+        for (var f : fakes) {
+            var text = json.replace("\"id\" : \"" + real.id() + "\"", "\"id\" : \"" + f.id() + "\"")
+                .replaceFirst("\"at\" : \"[^\"]*\"", "\"at\" : \"" + f.at() + "\"")
+                .replaceFirst("\"keep\" : (true|false)", "\"keep\" : " + f.keep());
+            Files.write(manifests.resolve(f.id() + ".json"), cipher.seal(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        }
+        Files.delete(manifests.resolve(real.id() + ".json"));
+
+        Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
+        assertEquals("m30", vault.latest().orElseThrow().id());
+        assertEquals(12, Vault.HEADS_READ.get(), "every copy's head");
+        assertEquals(1, Vault.MANIFESTS_READ_WHOLE.get(), "one copy whole: the newest");
+
+        Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
+        assertEquals("m45", vault.find("m45").orElseThrow().id());
+        assertEquals(1, Vault.MANIFESTS_READ_WHOLE.get(), "one copy whole: its own file");
+        assertEquals(0, Vault.HEADS_READ.get());
+        assertTrue(vault.find("../m45").isEmpty(), "an id is a plain name, never a path");
+        assertTrue(vault.find("nope").isEmpty());
+
+        Vault.MANIFESTS_READ_WHOLE.set(0); Vault.HEADS_READ.set(0);
+        int removed = vault.prune(now);
+        assertEquals(4, removed);
+        assertEquals(12, Vault.HEADS_READ.get(), "the tiers are decided on the heads");
+        assertEquals(8, Vault.MANIFESTS_READ_WHOLE.get(), "the kept copies are read whole one at a time, for their chunk names");
+        assertEquals(8, vault.heads().size());
+        assertTrue(countChunks(vault.dir()) > 0, "chunks the kept copies reference survive the sweep");
+        assertEquals(List.of("d3a", "h20", "h3a", "kept", "m30", "m45", "m6", "w3"),
+            vault.heads().stream().map(Vault.Head::id).sorted().toList());
+    }
 }

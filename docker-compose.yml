@@ -269,8 +269,8 @@ services:
         if [ -f /adapters/brain/species.gguf ]; then GENERIC=/adapters/brain/species.gguf
         elif [ -f /adapters/brain/honesty.gguf ]; then GENERIC=/adapters/brain/honesty.gguf; fi
         if [ -n "$$GENERIC" ]; then
-          ARGS="$$ARGS --lora-scaled $$GENERIC:1.0"
-          echo "[brain] adapter 0: $${GENERIC#/adapters/} (the floor)"
+          ARGS="$$ARGS --lora-scaled $$GENERIC:0.0"
+          echo "[brain] adapter 0: $${GENERIC#/adapters/} (the floor; at rest until a request names it, so a client that names nothing gets the bare model)"
           N=1
           # The styled species adapter: raised per turn by her state (the register dial); loads at 0.
           if [ -f /adapters/brain/styled.gguf ]; then

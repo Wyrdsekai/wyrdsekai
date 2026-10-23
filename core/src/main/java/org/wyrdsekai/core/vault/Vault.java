@@ -113,7 +113,14 @@ public final class Vault {
                            Map<String, List<String>> classes, Drill drill) {
         public long bytes() { return files.stream().mapToLong(Entry::size).sum(); }
         Manifest withDrill(Drill d) { return new Manifest(id, at, reason, keep, files, classes, d); }
+        public Head head() { return new Head(id, at, reason, keep, drill); }
     }
+    /** A copy as the listing and the retention see it: everything but its file list. */
+    public record Head(String id, Instant at, String reason, boolean keep, Drill drill) {}
+
+    /** How many manifests were read whole, and how many as heads only; for the tests. */
+    static final java.util.concurrent.atomic.AtomicInteger MANIFESTS_READ_WHOLE = new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger HEADS_READ = new java.util.concurrent.atomic.AtomicInteger();
 
     private static volatile Vault instance;
     public static Vault get() { return instance; }
@@ -616,7 +623,19 @@ public final class Vault {
     }
 
     private Manifest readManifest(Path f) throws IOException {
+        MANIFESTS_READ_WHOLE.incrementAndGet();
         return JSON.readValue(open(Files.readAllBytes(f), f), Manifest.class);
+    }
+    /** The head alone: the file list is skipped as it is parsed and never held. */
+    private Head readHead(Path f) throws IOException {
+        HEADS_READ.incrementAndGet();
+        return JSON.readValue(open(Files.readAllBytes(f), f), Head.class);
+    }
+    /** The one manifest file of a copy, by id; empty when the id is not a plain name or there is no such copy. */
+    private Optional<Path> manifestFile(String id) {
+        if (id == null || id.isBlank() || id.contains("/") || id.contains("\\") || id.contains("..")) return Optional.empty();
+        var f = vaultDir.resolve("manifests").resolve(id + ".json");
+        return Files.isRegularFile(f) ? Optional.of(f) : Optional.empty();
     }
 
     /**
@@ -653,7 +672,13 @@ public final class Vault {
         return n;
     }
 
-    /** Every manifest, newest first. */
+    /**
+     * Every manifest, whole, newest first. This holds every copy's file list at once: the household
+     * node's store had 157 copies of 80,000 files each, and reading them all to find the newest, on
+     * every pass, filled a 2 GB heap and ran full collections every fifteen minutes (2026-10-22).
+     * The listing, the newest copy and the retention now go through {@link #heads()}; this is for
+     * the few callers that need every file of every copy.
+     */
     public List<Manifest> list() {
         var out = new ArrayList<Manifest>();
         var dir = vaultDir.resolve("manifests");
@@ -669,14 +694,37 @@ public final class Vault {
         out.sort(Comparator.comparing(Manifest::at).reversed());
         return out;
     }
-
-    public Optional<Manifest> latest() {
-        return list().stream().findFirst();
+    /** Every copy's head, newest first; no file list is held. */
+    public List<Head> heads() {
+        var out = new ArrayList<Head>();
+        var dir = vaultDir.resolve("manifests");
+        if (!Files.isDirectory(dir)) return out;
+        try (var s = Files.list(dir)) {
+            for (var f : s.filter(p -> p.toString().endsWith(".json")).toList()) {
+                try { out.add(readHead(f)); }
+                catch (IOException e) { log.warn("vault: unreadable manifest {}: {}", f, e.getMessage()); }
+            }
+        } catch (IOException e) {
+            log.warn("vault: could not list manifests: {}", e.getMessage());
+        }
+        out.sort(Comparator.comparing(Head::at).reversed());
+        return out;
     }
-
+    /** The newest copy, whole: one manifest read, after the heads. */
+    public Optional<Manifest> latest() {
+        return heads().stream().findFirst().flatMap(h -> find(h.id()));
+    }
+    /** One copy, whole, by id: its own file and no other. */
     public Optional<Manifest> find(String id) {
         if (id == null || id.isBlank() || "latest".equals(id)) return latest();
-        return list().stream().filter(m -> m.id().equals(id)).findFirst();
+        var f = manifestFile(id);
+        if (f.isEmpty()) return Optional.empty();
+        try {
+            return Optional.of(readManifest(f.get()));
+        } catch (IOException e) {
+            log.warn("vault: unreadable manifest {}: {}", f.get(), e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // ── restore ──
@@ -828,12 +876,12 @@ public final class Vault {
     }
 
     synchronized int prune(Instant now) {
-        var all = list();
+        var all = heads();
         var keep = new HashSet<String>();
-        var newestPerHour = new TreeMap<String, Manifest>();
-        var newestPerDay = new TreeMap<String, Manifest>();
-        var newestPerWeek = new TreeMap<String, Manifest>();
-        var newestPerMonth = new TreeMap<String, Manifest>();
+        var newestPerHour = new TreeMap<String, Head>();
+        var newestPerDay = new TreeMap<String, Head>();
+        var newestPerWeek = new TreeMap<String, Head>();
+        var newestPerMonth = new TreeMap<String, Head>();
         for (var m : all) {
             if (m.keep()) { keep.add(m.id()); continue; }
             var age = Duration.between(m.at(), now);
@@ -852,7 +900,16 @@ public final class Vault {
         var referenced = new HashSet<String>();
         for (var m : all) {
             if (keep.contains(m.id())) {
-                for (var e : m.files()) referenced.addAll(e.chunks());
+                // One kept copy's file list at a time: its chunk names are kept, the list is not.
+                var f = manifestFile(m.id());
+                if (f.isPresent()) {
+                    try {
+                        for (var e : readManifest(f.get()).files()) referenced.addAll(e.chunks());
+                    } catch (IOException e) {
+                        log.warn("vault: kept copy {} not read for its chunks; nothing is swept: {}", m.id(), e.getMessage());
+                        return removed;   // a sweep that cannot see a kept copy's chunks must not run
+                    }
+                }
                 continue;
             }
             try {
@@ -882,7 +939,7 @@ public final class Vault {
         return removed;
     }
 
-    private static Manifest newer(Manifest a, Manifest b) {
+    private static Head newer(Head a, Head b) {
         return a.at().isAfter(b.at()) ? a : b;
     }
 

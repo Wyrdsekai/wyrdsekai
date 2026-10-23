@@ -32,8 +32,12 @@ public final class ReflexArena {
     /** What a reflex watches. */
     public enum Input { MEMORY_STALL, HEAP_PCT, DISK_FREE_PCT, PART_NUMB }
 
-    /** What a reflex may do. Nothing here thinks. {@code CLOSE_DOOR} shuts the door named by the subject. */
-    public enum Action { THROTTLE, NOTIFY, CLOSE_DOOR }
+    /**
+     * What a reflex may do. Nothing here thinks. {@code THROTTLE} pauses every request; {@code HOLD_OWN_TIME}
+     * holds her own time and the background work while a person's turn is still answered;
+     * {@code CLOSE_DOOR} shuts the door named by the subject.
+     */
+    public enum Action { THROTTLE, HOLD_OWN_TIME, NOTIFY, CLOSE_DOOR }
 
     /**
      * One row of the table.
@@ -64,10 +68,12 @@ public final class ReflexArena {
     /** The household's innate table. Thresholds are percentages. */
     public static List<Reflex> defaults() {
         return List.of(
-            new Reflex("memory-pressure", Input.MEMORY_STALL, null, 30.0, 2, Action.THROTTLE, Duration.ofSeconds(90),
-                "I held my breath for a minute: the box was under memory pressure, so I took no new turns until it eased."),
-            new Reflex("heap-full", Input.HEAP_PCT, null, 95.0, 2, Action.THROTTLE, Duration.ofSeconds(60),
-                "My own memory was nearly full; I took no new turns for a minute to let it clear."),
+            // The two memory reflexes hold her own time, not a person's turn: fewer turns ease the
+            // memory, a person going unanswered eases nothing (2026-10-22).
+            new Reflex("memory-pressure", Input.MEMORY_STALL, null, 30.0, 2, Action.HOLD_OWN_TIME, Duration.ofSeconds(90),
+                "I held my breath for a minute: the box was under memory pressure, so I took no turns of my own until it eased."),
+            new Reflex("heap-full", Input.HEAP_PCT, null, 95.0, 2, Action.HOLD_OWN_TIME, Duration.ofSeconds(60),
+                "My own memory was nearly full; I took no turns of my own for a minute to let it clear."),
             new Reflex("record-numb", Input.PART_NUMB, BodyWatch.RECORD, 1.0, 1, Action.THROTTLE, Duration.ofMinutes(5),
                 "The record stopped answering, so I stopped taking turns: nothing I did would have been kept."),
             new Reflex("disk-tight", Input.DISK_FREE_PCT, null, 3.0, 2, Action.NOTIFY, Duration.ofHours(6),
@@ -116,6 +122,10 @@ public final class ReflexArena {
             case THROTTLE -> {
                 InferenceRouter.pause(r.hold(), "reflex: " + r.id());
                 log.warn("Reflex {}: inference paused for {}s", r.id(), r.hold().toSeconds());
+            }
+            case HOLD_OWN_TIME -> {
+                InferenceRouter.holdOwnTime(r.hold(), "reflex: " + r.id());
+                log.warn("Reflex {}: her own time held for {}s; a person's turn is still answered", r.id(), r.hold().toSeconds());
             }
             case NOTIFY -> log.warn("Reflex {}: {}", r.id(), r.text());
             case CLOSE_DOOR -> {

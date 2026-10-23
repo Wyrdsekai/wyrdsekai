@@ -83,7 +83,9 @@ public final class SoulAdminMain {
         if (slug.isBlank()) { System.err.println("'" + to + "' leaves no usable name."); return 1; }
         var p = m.profile();
         var renamed = Companions.forPersistedSoul(to.trim(), p.entityId(), p.archetype());
-        store.store(m.withProfile(renamed).withManifestVersion(m.manifestVersion() + 1, Instant.now()));
+        var next = m.withProfile(renamed).withManifestVersion(m.manifestVersion() + 1, Instant.now());
+        noteIfUnsigned(next);
+        store.store(SoulManifestEdits.unsignedUnlessThisNodeCanSign(next));
         System.out.printf("Renamed '%s' → '%s' — same soul (%s), same entity id (%s), manifest v%d.%n",
             p.name(), to.trim(), m.did(), p.entityId(), m.manifestVersion() + 1);
         System.out.println("Set WYRDSEKAI_COMPANION_NAME" + " to '" + to.trim() + "' in the conf and restart; she keeps everything.");
@@ -94,7 +96,7 @@ public final class SoulAdminMain {
      * Her description of herself, into her record, in a new manifest version. Prints
      * {@code version=<n>} last, for the launcher. 1 to 2000 characters, as at the door.
      */
-    static int identity(SqlSoulStore store, String who, String file) {
+    public static int identity(SqlSoulStore store, String who, String file) {
         String text;
         try {
             text = Files.readString(Path.of(file)).strip();
@@ -109,11 +111,20 @@ public final class SoulAdminMain {
         var m = who.startsWith("did:") ? store.latest(who).orElse(null) : byName(store, who);
         if (m == null) { System.err.println("No soul '" + who + "' here (wyrd soul list)."); return 1; }
         var next = m.withResidentIdentity(text).withManifestVersion(m.manifestVersion() + 1, Instant.now());
-        store.store(next);
+        noteIfUnsigned(next);
+        store.store(SoulManifestEdits.unsignedUnlessThisNodeCanSign(next));
         var name = m.profile() != null && m.profile().name() != null ? m.profile().name() : m.did();
         System.out.printf("Her description of herself is written: %s, manifest v%d.%n", name, next.manifestVersion());
         System.out.println("version=" + next.manifestVersion());
         return 0;
+    }
+
+    /** Said once, before the store: this process holds no key for her, so the edit goes in unsigned. */
+    private static void noteIfUnsigned(SoulManifest next) {
+        if (SoulManifestEdits.willBeUnsigned(next)) {
+            System.err.println("note: this node holds no signing key for her here, so her record is written "
+                + "unsigned; her next forge signs it again.");
+        }
     }
 
     private static int archive(SqlSoulStore store, Path soulsDir, String name, String reason) {

@@ -4,6 +4,64 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.9] — 2026-10-22
+
+### Added
+
+- **`wyrd brain status` says which companions are on the large model.** One line per companion:
+  on the large model since her move, with how the move's check went, or still on the two smaller
+  models. It also says whether `wyrd start` will bring the large model up on this computer, and
+  why not when it won't.
+
+### Changed
+
+- **The large model's extra layers start switched off.** The large model carries small add-on
+  layers that give the companions their voice. They used to be switched on for every program that
+  used the model, including the library's research model when it shares the brain. Now they start
+  switched off, and each companion's own requests switch on exactly what they need. The companions
+  sound as they did; anything else that borrows the brain gets the plain model.
+- **A few seconds of heat no longer count.** One busy processor core can push a chip's temperature
+  reading to 100 °C for a few seconds, when the node starts or during a sleep's bookkeeping, and be
+  back down before anything should react. A companion's own time now slows only when the heat
+  holds across two readings, and the move waits for the chip to cool only after two more readings,
+  five seconds apart, agree. Where a chip reports the temperature of its silicon as well as its
+  control reading, the silicon's is used.
+
+### Fixed
+
+- **A household whose models used to answer from another computer could not start its brain.**
+  Such a household's settings say that models answer from elsewhere, which tells `wyrd start`
+  never to start one here. Moving a companion to the large model changed what should be served but
+  not that setting, so `wyrd start` brought the node up with its brain down and said nothing. Now
+  `wyrd brain enable` and `wyrd brain move` change the setting themselves, say so, and remember the
+  old one; `wyrd brain disable` puts it back. If the two ever disagree anyway, `wyrd start` refuses
+  and names the fix, and `wyrd doctor` reports it.
+- **Notes the language healer had put into the household's language came back in the old
+  language after a sleep.** The healer waits for a quiet moment, and a quiet moment is also when
+  sleep comes. The sleep's result was made from her record as it stood before the healer's pass and
+  wrote the old notes back, so the same notes were translated again every five minutes, for hours,
+  on one household's graphics unit. The sleep's result now keeps what the healer did, and the
+  healer writes in the log why it left any note alone.
+- **A companion stopped answering for a minute at a time while the steward was in the room.** A
+  safety reflex watches the node's own memory and pauses when it is nearly full. The number it
+  watched fills up with discarded data between clean-ups, so it read "nearly full" when only a
+  tenth was in use, thirty-six times in one day. It now reads what is left after a clean-up, and
+  the two memory reflexes hold only the companion's own time and background work; a person's turn
+  is always answered.
+- **The vault filled the node's memory every fifteen minutes.** To find its newest copy, the vault
+  read every copy it keeps, whole, with every file's list, on every pass. A store that had grown to
+  157 copies of 80,000 files filled the node's memory each pass; that is what first tripped the
+  memory reflex above. The vault now reads only each copy's summary for its listing and its
+  clean-up, and one copy whole when it needs the files.
+- **A companion moved on a stopped node read as tampered at her next start.** Writing her
+  description of herself while the node was down kept the previous version's signature on the new
+  version. The commands that run while the node is down now sign with her key as the node does,
+  and where no key is in reach they write her unsigned, which her next consolidation signs again,
+  instead of leaving a signature that no longer fits.
+- **`wyrd config set` pointed at the wrong way to apply a model-server setting.** It said
+  `wyrd config apply`, which only restarts the node's own service and leaves the model servers as
+  they were. For the settings those servers read it now says `wyrd stop`, then `wyrd start`.
+
 ## [0.5.8] — 2026-10-20
 
 ### Added

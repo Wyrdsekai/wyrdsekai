@@ -90,7 +90,12 @@ class HerManifestHasOneDoorTest {
         // The sleep's route to the forge: carry what she wove, number past the head, then send.
         assertThat(actor).contains("final var manifestWithState = rebaseManifestOntoStoreHead(\n"
             + "            carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt)");
-        assertThat(actor).contains("cachedManifest = carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt);");
+        assertThat(actor).contains("var carried = carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt, householdLocale);");
+        assertThat(actor).as("what the sleep carried of hers is stored through the door too (2026-10-22)")
+            .contains("if (carried != newManifest && soulStore != null) {\n"
+                + "                // What came along is hers in the store too, or the steward's scan reads the result without it.\n"
+                + "                try {\n"
+                + "                    carried = storeManifest(carried);");
         // A new name and a notification change used to store at the SAME version, which the key refused.
         assertThat(actor).doesNotContain("            soulStore.store(cachedManifest);\n        }\n        var registry = EntityRegistry.get();");
 

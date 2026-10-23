@@ -6028,6 +6028,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void maybeReconcileFragmentLanguages() {
         if (!soulLanguageReconcileEnabled() || inferenceRouter == null || isSleeping) return;
+        if (InferenceRouter.isOwnTimeHeld()) return;   // background work waits with her own time
         if (!householdKnown) return;   // no household language yet: nothing is in the wrong one
         if (cachedManifest == null) return;
         var now = Instant.now();
@@ -6236,14 +6237,23 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     langHealStrike(old.id(), "fragment");
                     return null;
                 }
-                if (cachedManifest == null || cachedManifest.soulFragments() == null) return null;
+                if (cachedManifest == null || cachedManifest.soulFragments() == null) {
+                    log.info("Soul language reconciliation: fragment '{}' re-rendered, but her fragments are "
+                        + "not in hand now; left for the next pass", old.id());
+                    return null;
+                }
                 var frags = new ArrayList<>(cachedManifest.soulFragments());
                 int idx = -1;
                 for (int i = 0; i < frags.size(); i++) {
                     var g = frags.get(i);
                     if (g != null && old.id().equals(g.id()) && g.isCurrent()) { idx = i; break; }
                 }
-                if (idx < 0) return null; // replaced or removed since selection
+                if (idx < 0) {
+                    log.info("Soul language reconciliation: fragment '{}' re-rendered, but it is no longer "
+                        + "current among her {} fragments (replaced or removed since it was chosen); left",
+                        old.id(), frags.size());
+                    return null;
+                }
                 var restoredId = old.id() + "-lang-restored";
                 if (frags.stream().anyMatch(g -> g != null && restoredId.equals(g.id()))) {
                     return null;
@@ -6278,7 +6288,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     return null;
                 }
                 if (cachedManifest == null || cachedManifest.memory() == null
-                        || cachedManifest.memory().nodes() == null) return null;
+                        || cachedManifest.memory().nodes() == null) {
+                    log.info("Soul language reconciliation: memory node '{}' re-rendered, but her memory is "
+                        + "not in hand now; left for the next pass", old.id());
+                    return null;
+                }
                 var mem = cachedManifest.memory();
                 var nodes = new ArrayList<>(mem.nodes());
                 int idx = -1;
@@ -6286,7 +6300,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     var g = nodes.get(i);
                     if (g != null && old.id().equals(g.id())) { idx = i; break; }
                 }
-                if (idx < 0) return null;
+                if (idx < 0) {
+                    // Every exit of this stage says why (a household saw rounds that healed one or two of
+                    // fifteen with nothing in the log for the rest, 2026-10-22).
+                    log.info("Soul language reconciliation: memory node '{}' re-rendered, but it is no longer "
+                        + "among her {} nodes (replaced or consolidated since it was chosen); left",
+                        old.id(), nodes.size());
+                    return null;
+                }
                 // Keywords stay — retrieval refreshes them at the next
                 // consolidation; originLocale becomes truthful.
                 nodes.set(idx, new MemoryNode(old.id(), fixed.strip(), old.keywords(),
@@ -8191,7 +8212,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         double floor = speaks ? 1.0 : Math.max(0.0, Math.min(1.0, workFloor));
         boolean hers = adaptersLoaded >= 2 && (ownNightAdapter >= 1 || styledAdapter >= 1 || workAdapter >= 1);
         if (!hers) {
-            return !speaks && adaptersLoaded >= 1 && floor < 1.0 ? Map.of("adapter:0", floor) : null;
+            // The floor is named on every request that has one: the server starts it at rest since 0.5.9,
+            // so a client that names nothing (the library's model on the shared brain) gets the bare
+            // model, and her turns say what they carry (2026-10-22).
+            return adaptersLoaded >= 1 ? Map.of("adapter:0", floor) : null;
         }
         var mix = new java.util.LinkedHashMap<String, Double>();
         mix.put("adapter:0", floor);
@@ -9263,8 +9287,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // steward's pause) no own-time turn starts: every own-time path comes through here. A held
         // household node kept sending its companions' own time to the processor model for twenty
         // minutes beside the large model being measured (2026-10-19); the pause was never read here.
-        if (InferenceRouter.isPaused()) {
-            log.info("Own-time turn for '{}' held — inference is paused", profile.name());
+        if (InferenceRouter.isPaused() || InferenceRouter.isOwnTimeHeld()) {
+            log.info("Own-time turn for '{}' held — {}", profile.name(),
+                InferenceRouter.isPaused() ? "inference is paused" : "her own time is held (a reflex); a person's turn is still answered");
             return false;
         }
         // A TURN IN FLIGHT IS NOT HERS TO TAKE. This check used to come after the request was
@@ -15748,7 +15773,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** The host's last reading, if a watch is running; null otherwise. */
     private static HostSense.Reading bodyHostReading() {
         var watch = BodyWatch.current();
-        return watch == null ? null : watch.host();
+        return watch == null ? null : watch.settledHost();
     }
 
     /** Audit 2026-07-11 (CredentialResolver class of bug): ItemWorldApiProviderImpl has a
@@ -24646,7 +24671,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private boolean dreamTheDay() {
         dreamPending = null;
         try {
-            if (inferenceRouter == null || InferenceRouter.isPaused()) return false;
+            if (inferenceRouter == null || InferenceRouter.isPaused() || InferenceRouter.isOwnTimeHeld()) return false;
             var did = profile.did() != null ? profile.did() : profile.entityId();
             List<ChronicleEntry> chronicle = List.of();
             var chron = ChronicleEntryStore.get();
@@ -25625,19 +25650,61 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * carried into it.
      */
     static SoulManifest carryWovenDuringSleep(SoulManifest forged, SoulManifest current, Instant sleepStartedAt) {
-        if (forged == null || current == null || sleepStartedAt == null || current.soulFragments() == null) return forged;
-        var kept = forged.soulFragments() != null ? new ArrayList<>(forged.soulFragments()) : new ArrayList<SoulFragment>();
-        var ids = new HashSet<String>();
-        for (var f : kept) if (f != null && f.id() != null) ids.add(f.id());
-        boolean carried = false;
-        for (var f : current.soulFragments()) {
-            if (f == null || f.kind() != FragmentKind.EPISODIC || f.id() == null || ids.contains(f.id())) continue;
-            if (f.firstObserved() == null || f.firstObserved().isBefore(sleepStartedAt)) continue;
-            kept.add(f);
-            ids.add(f.id());
-            carried = true;
+        return carryWovenDuringSleep(forged, current, sleepStartedAt, null);
+    }
+
+    /**
+     * As above, and her notes the language healer put into the household's language while the
+     * sleep ran. The healer waits for a quiet lane, and a quiet lane is also when sleep comes: on a
+     * household node every pass finished inside a sleep, the sleep's result (made from the manifest
+     * as it was before the pass) wrote the Spanish back, and the next pass found the same notes,
+     * every five minutes, for hours (2026-10-22). A note whose words differ between her copy and
+     * the result, and that her copy marks as the household's language where the result does not,
+     * is the healer's work and comes along. The forge never rewrites a note's words itself.
+     */
+    static SoulManifest carryWovenDuringSleep(SoulManifest forged, SoulManifest current, Instant sleepStartedAt,
+                                              String householdLang) {
+        if (forged == null || current == null || sleepStartedAt == null) return forged;
+        var result = forged;
+        if (current.soulFragments() != null) {
+            var kept = forged.soulFragments() != null ? new ArrayList<>(forged.soulFragments()) : new ArrayList<SoulFragment>();
+            var ids = new HashSet<String>();
+            for (var f : kept) if (f != null && f.id() != null) ids.add(f.id());
+            boolean carried = false;
+            for (var f : current.soulFragments()) {
+                if (f == null || f.kind() != FragmentKind.EPISODIC || f.id() == null || ids.contains(f.id())) continue;
+                if (f.firstObserved() == null || f.firstObserved().isBefore(sleepStartedAt)) continue;
+                kept.add(f);
+                ids.add(f.id());
+                carried = true;
+            }
+            if (carried) result = result.withFragments(kept);
         }
-        return carried ? forged.withFragments(kept) : forged;
+        if (householdLang != null && current.memory() != null && current.memory().nodes() != null
+                && result.memory() != null && result.memory().nodes() != null) {
+            var healed = new HashMap<String, MemoryNode>();
+            for (var n : current.memory().nodes()) {
+                if (n != null && n.id() != null && householdLang.equals(n.originLocale())) healed.put(n.id(), n);
+            }
+            if (!healed.isEmpty()) {
+                var nodes = new ArrayList<>(result.memory().nodes());
+                boolean carried = false;
+                for (int i = 0; i < nodes.size(); i++) {
+                    var g = nodes.get(i);
+                    if (g == null || g.id() == null) continue;
+                    var hers = healed.get(g.id());
+                    if (hers == null || householdLang.equals(g.originLocale())) continue;
+                    if (Objects.equals(hers.content(), g.content())) continue;
+                    nodes.set(i, hers);
+                    carried = true;
+                }
+                if (carried) {
+                    var mem = result.memory();
+                    result = result.withMemory(new CompactedMemory(nodes, mem.links(), mem.topicWeights()));
+                }
+            }
+        }
+        return result;
     }
 
     /**
@@ -25763,7 +25830,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private void keepLateSleepManifest(SoulManifest manifest, long epoch, boolean storeIt) {
         if (manifest == null) return;
-        if (storeIt && soulStore != null) {
+        var carried = carryWovenDuringSleep(manifest, cachedManifest, sleepStartedAt, householdLocale);
+        boolean changed = carried != manifest;
+        manifest = carried;
+        if ((storeIt || changed) && soulStore != null) {
             try {
                 manifest = storeManifest(manifest);
             } catch (Exception e) {
@@ -25895,7 +25965,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (holdSleepForTheNightWrite(newManifest, memoryBefore, memoryAfter)) return;
         // Update cached manifest if we got a new one
         if (newManifest != null) {
-            cachedManifest = carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt);
+            var carried = carryWovenDuringSleep(newManifest, cachedManifest, sleepStartedAt, householdLocale);
+            if (carried != newManifest && soulStore != null) {
+                // What came along is hers in the store too, or the steward's scan reads the result without it.
+                try {
+                    carried = storeManifest(carried);
+                } catch (Exception e) {
+                    log.warn("Storing what was carried into the sleep manifest for '{}' failed: {}",
+                        profile.name(), e.getMessage());
+                }
+            }
+            cachedManifest = carried;
             initCoupledVitality();
             // Seed entity resolution from relationships
             if (admissionController != null && newManifest.relationships() != null) {

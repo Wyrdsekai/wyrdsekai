@@ -56,6 +56,35 @@ public final class AgentIdentityBootstrap {
      *
      * @param jdbcUrl the world database
      */
+    /**
+     * Signing only, for a command that runs while the node is down ({@code wyrd soul …},
+     * {@code wyrd bond …}): the same key derivation as {@link #run}, without the bookkeeping a
+     * boot does. The soul CLI wrote her description of herself on a stopped node with no key in
+     * hand, so the store kept the signature of the version before, and her first start read her
+     * as tampered (a household, 2026-10-22). Call after {@code ZoneSecrets.bootstrapLocalZone}.
+     *
+     * @return true when this node holds the zone master and can sign as its companions
+     */
+    public static boolean enableSigningOnly(String jdbcUrl) {
+        String zoneId;
+        try {
+            zoneId = WyrdConfig.get().zoneId();
+        } catch (RuntimeException e) {
+            return false;
+        }
+        var service = ZoneSecrets.service();
+        if (jdbcUrl == null || zoneId == null || zoneId.isBlank() || !service.has(zoneId)) return false;
+        AgentIdentityProvisioner.init(jdbcUrl, () -> {
+            try {
+                return service.derive(zoneId, PURPOSE, 32);
+            } catch (RuntimeException e) {
+                log.warn("[AgentIdentity] could not derive household secret: {}", e.getMessage());
+                return null;
+            }
+        });
+        return AgentIdentityProvisioner.isEnabled();
+    }
+
     public static Result run(String jdbcUrl) {
         String zoneId;
         try {

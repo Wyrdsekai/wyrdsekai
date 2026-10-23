@@ -223,11 +223,19 @@ with tempfile.TemporaryDirectory() as d:
     os.makedirs(os.path.join(th, "thermal_zone1")); open(os.path.join(th, "thermal_zone1", "temp"), "w").write("101000\n")
     check("the thermal zones still count", g.hottest_c(th, hw) == 101.0)
     check("no sensors anywhere: -1", g.hottest_c(os.path.join(d, "none"), os.path.join(d, "none2")) == -1)
-reads = iter([95.0, 91.0, 86.0, 80.0]); slept = []; said = []
+    os.remove(os.path.join(th, "thermal_zone1", "temp"))
+    k = os.path.join(hw, "hwmon1")
+    open(os.path.join(k, "temp1_label"), "w").write("Tctl\n"); open(os.path.join(k, "temp3_label"), "w").write("Tdie\n")
+    check("a chip that labels a die sensor is read there, not at the control sensor", g.hottest_c(th, hw) == 97.0, g.hottest_c(th, hw))
+reads = iter([95.0, 94.0, 93.0, 91.0, 86.0, 80.0]); slept = []; said = []
 waited = g.cool_down(log=said.append, read=lambda: next(reads), sleep=slept.append)
-check("hot: the gate waits until the chip is under the cool mark, and says so once", waited == 15 and slept == [5, 5, 5]
-      and len(said) == 2 and "95" in said[0], (waited, slept, said))
-check("cool: no wait, nothing said", g.cool_down(log=said.append, read=lambda: 61.0, sleep=slept.append) == 0 and len(said) == 2)
+check("heat that holds: two more readings agree, then the gate waits until the chip is under the cool mark, and says so once",
+      waited == 25 and slept == [5, 5, 5, 5, 5] and len(said) == 2 and "93" in said[0], (waited, slept, said))
+reads = iter([100.0, 70.0, 51.0]); slept = []; said = []
+waited = g.cool_down(log=said.append, read=lambda: next(reads), sleep=slept.append)
+check("a burst: one core at full boost touches 100 and is gone; the gate says so and does not wait",
+      waited == 5 and slept == [5] and len(said) == 1 and "burst" in said[0] and "100" in said[0], (waited, slept, said))
+check("cool: no wait, nothing said", g.cool_down(log=said.append, read=lambda: 61.0, sleep=slept.append) == 0 and len(said) == 1)
 check("every turn the gate takes waits first", "cool_down(self.log)" in open(os.path.join(HERE, "move_gate.py")).read().split("def reply")[1].split("def yes_no")[0]
       and "cool_down(self.log)" in open(os.path.join(HERE, "move_gate.py")).read().split("def yes_no")[1][:600])
 

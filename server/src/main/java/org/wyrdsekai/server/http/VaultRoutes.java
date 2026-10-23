@@ -48,14 +48,20 @@ public final class VaultRoutes {
         if (v == null) return;
         var out = new LinkedHashMap<String, Object>(v.status());
         var copies = new ArrayList<Map<String, Object>>();
-        for (var m : v.list().stream().limit(20).toList()) {
+        // The heads of the copies, and the newest one whole: every copy's file list at once filled the
+        // node's heap on the household node (2026-10-22).
+        var heads = v.heads();
+        var newest = heads.isEmpty() ? java.util.Optional.<Vault.Manifest>empty() : v.find(heads.get(0).id());
+        for (var m : heads.stream().limit(20).toList()) {
             var row = new LinkedHashMap<String, Object>();
             row.put("id", m.id());
             row.put("at", m.at().toString());
             row.put("reason", m.reason());
             row.put("keep", m.keep());
-            row.put("files", m.files().size());
-            row.put("bytes", m.bytes());
+            if (newest.isPresent() && newest.get().id().equals(m.id())) {
+                row.put("files", newest.get().files().size());
+                row.put("bytes", newest.get().bytes());
+            }
             row.put("drill", m.drill() == null ? null : Map.of("at", m.drill().at().toString(), "ok", m.drill().ok(), "detail", m.drill().detail()));
             copies.add(row);
         }
@@ -102,7 +108,7 @@ public final class VaultRoutes {
         var v = vault(ctx);
         if (v == null) return;
         int removed = v.prune();
-        ctx.json(Map.of("ok", true, "removed", removed, "copies", v.list().size()));
+        ctx.json(Map.of("ok", true, "removed", removed, "copies", v.heads().size()));
     }
 
     /** The same status as prose, for the boiler room. */

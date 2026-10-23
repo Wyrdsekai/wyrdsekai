@@ -33,6 +33,7 @@ public final class BodyWatch {
     private final Path dataDir;
     private final Duration every;
     private final AtomicReference<HostSense.Reading> lastHost = new AtomicReference<>();
+    private final AtomicReference<HostSense.Reading> prevHost = new AtomicReference<>();
     private ScheduledExecutorService exec;
     private volatile ReflexArena arena;
     private final java.util.List<Source> sources = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -113,11 +114,22 @@ public final class BodyWatch {
         return lastHost.get();
     }
 
+    /**
+     * The host as it has held across the last two pulses, for what paces her: a single-core
+     * boost pins a Ryzen AI MAX package sensor at 100 °C for seconds (the JVM's start, a
+     * consolidation replay) and is over before anything should change (2026-10-22). Heat here is
+     * the lower of the two readings; one pulse alone claims nothing.
+     */
+    public HostSense.Reading settledHost() {
+        var last = lastHost.get();
+        return last == null ? null : last.settledWith(prevHost.get());
+    }
+
     void pulse() {
         try {
             map.heartbeat(RECORD, recordAnswers(), recordDetail());
             var host = HostSense.read(dataDir);
-            lastHost.set(host);
+            prevHost.set(lastHost.getAndSet(host));
             map.heartbeat(HOST, true, host.gauges());
             pulses++;
             for (var src : sources) {

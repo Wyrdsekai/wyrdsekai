@@ -89,7 +89,7 @@ A companion needs a model to think with. Running a model to get an answer is cal
 
 | Setting | Default | What it does |
 |---|---|---|
-| `WYRDSEKAI_INFERENCE_MODE` | `local` | `local`: a model runs on this computer. This is the point of the project. `cloud`: an online service answers, at the address in `WYRDSEKAI_INFERENCE_URL`. `zone`: another computer in your household answers, over the Between. |
+| `WYRDSEKAI_INFERENCE_MODE` | `local` | `local`: a model runs on this computer. This is the point of the project. `cloud`: an online service answers, at the address in `WYRDSEKAI_INFERENCE_URL`. `zone`: another computer in your household answers, over the Between. The large model (`wyrd brain enable`, `wyrd brain move`) is always served on this computer, so those commands set this to `local` themselves and keep the old value for `wyrd brain disable` to put back; under a brain profile with any other mode, `wyrd start` refuses and names the fix. |
 
 A value Wyrdsekai does not recognise counts as `local`, and it warns you.
 
@@ -791,7 +791,7 @@ By default the library reads with the companions' brain. `wyrd researcher setup`
 - On the `single-sparse` profile the brain answers with the companion's adapter at its default scale unless a request sets each adapter to zero. ResearchZosho's requests set none.
 - The library's check for a question about harming oneself is the model's own judgment. In ResearchZosho's measurements it caught 10 of 10 crisis questions on a 27B, 9 of 10 on the 35B brain, and 5 of 10 on the default 9B drive.
 
-`wyrd researcher gpu` shows where the library's model runs now (the companions' brain, a server of its own on this machine, or another machine), this machine's NVIDIA cards with the one that holds the brain, and the command that changes it:
+`wyrd researcher gpu` shows where the library's model runs now (the companions' brain, a server of its own on this machine, or another machine), this machine's NVIDIA cards with the one that holds the brain, and the command that changes it. On the companions' brain the library's calls get the plain model: the model's extra layers start switched off, and only the companions' own requests switch them on.
 
 ```
 wyrd researcher gpu              # where it runs now, and the command to change it

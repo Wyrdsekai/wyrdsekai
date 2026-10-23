@@ -685,6 +685,28 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         var p = pausedUntil;
         return p != null && p.isAfter(Instant.now());
     }
+    private static volatile Instant ownTimeHeldUntil;
+    private static volatile String ownTimeHoldReason;
+    /**
+     * Her own time and the background work wait; a person's turn is still answered. A nearly full
+     * heap or a box under memory pressure is eased by fewer turns, not by a person in the room going
+     * unanswered: on the household node the heap reflex paused everything four times in a row while
+     * the steward was greeting them (2026-10-22).
+     */
+    public static void holdOwnTime(Duration forHowLong, String reason) {
+        ownTimeHeldUntil = Instant.now().plus(forHowLong);
+        ownTimeHoldReason = reason == null || reason.isBlank() ? "the household needs the hardware" : reason;
+        log.warn("Own time HELD until {} — {}; a person's turn is still answered", ownTimeHeldUntil, ownTimeHoldReason);
+    }
+    public static void releaseOwnTime() {
+        if (ownTimeHeldUntil != null) log.info("Own time released");
+        ownTimeHeldUntil = null;
+        ownTimeHoldReason = null;
+    }
+    public static boolean isOwnTimeHeld() {
+        var p = ownTimeHeldUntil;
+        return p != null && p.isAfter(Instant.now());
+    }
 
     /** The error text a paused request gets — the actor keys on the prefix. */
     public static final String PAUSED_PREFIX = "PAUSED:";

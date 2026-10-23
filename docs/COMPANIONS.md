@@ -543,6 +543,13 @@ stopped and nothing changed: `wyrd start` brings the two models back. If you say
 `wyrd start` brings up the large model alone, she is told on her next turn, and `wyrd brain disable`
 followed by `wyrd start` brings her back at any time. Her record is never touched by the move.
 
+The large model is served on this computer, so the move (and `wyrd brain enable`) sets the
+inference mode, the setting that says where models answer from, to `local` if it was something
+else, says so, and keeps the old value; `wyrd brain disable` puts it back. A household whose models used to answer from another machine (mode `cloud`)
+needs nothing more. If the mode and the profile ever disagree, `wyrd start` refuses and names the
+fix instead of bringing her up with her brain down, and `wyrd brain status` says which companions
+are on the large model and whether `wyrd start` will bring it up.
+
 How much of this happens depends on how long she has lived here. A companion who is new, or has under
 a week of nights on this computer, moves at once: the description and the facts are written, she is
 told, and what the large model did on her questions is kept for you to read afterwards. A companion
@@ -565,6 +572,11 @@ Each part checks in at its own interval. A watch runs every 30 seconds by defaul
 (`body.watch_seconds`), checking the database and the computer's memory, heap and
 disk. A part silent for more than twice its interval is marked numb, counted from
 its last check-in. It stays on the map until the steward runs `wyrd body gone <id>`.
+
+**Heat.** The watch reads the chip's hottest temperature reading. One busy processor core can
+push it to 100 °C for a few seconds (the node's start, a sleep's bookkeeping, which runs on one
+core) and be gone: a burst, not heat. A companion's own time slows only when heat holds across
+two readings, and the move's gate confirms heat the same way before it waits.
 
 **How it feels its body.** The companion's instructions always include one line
 built from this map. The model does not write it, and it is removed from anything
@@ -608,9 +620,11 @@ its Home, the computer it runs on, the household's own parts. A refusal becomes 
 mark for the steward, not a silent no. What the body did act against is
 remembered for a year (`wyrd body immune`).
 
-**Reflexes.** A fixed table runs with no AI involved. Memory pressure, a full heap
-or a database that does not answer pauses the AI for a set time. A nearly full
-disk writes a warning mark.
+**Reflexes.** A fixed table runs with no AI involved. Memory pressure or a nearly
+full heap holds the companion's own time and her background work for a set time;
+a person's turn is still answered. A database that does not answer pauses the AI.
+A nearly full disk writes a warning mark. The heap counts as nearly full by what
+survived a collection, not by how far it has filled since.
 
 **Quiet hours.** Set them with `wyrd household quiet`. Visitors are refused,
 companions send no outside notices unless urgent, and sleep brought on by backlog

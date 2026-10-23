@@ -36,6 +36,13 @@ public final class ServedAdapters {
 
     private ServedAdapters() {}
 
+    /** Tests: what the server would say it has loaded, without a server. */
+    static void primeForTests(Map<Integer, String> loaded) {
+        paths = loaded == null ? Map.of() : Map.copyOf(loaded);
+        count = loaded == null ? -1 : loaded.size();
+        checkedAtMs = System.currentTimeMillis();
+    }
+
     /** Last known adapter count at {@code baseUrl}, or -1 when not yet known. Never blocks. */
     public static int count(String baseUrl) {
         if (baseUrl != null && System.currentTimeMillis() - checkedAtMs > MAX_AGE.toMillis()

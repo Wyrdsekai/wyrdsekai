@@ -1703,7 +1703,7 @@ function Start-BrainServer {
     if (Test-Path (Join-Path $AdaptersDir "brain\species.gguf")) { $floor = "brain\species.gguf" }
     elseif (Test-Path (Join-Path $AdaptersDir "brain\honesty.gguf")) { $floor = "brain\honesty.gguf" }
     if ($floor) {
-        $loraArgs += @("--lora-scaled", "$($floor):1.0")
+        $loraArgs += @("--lora-scaled", "$($floor):0.0")   # the floor rests until a request names it (2026-10-22)
         # The styled species adapter: raised per turn by her state (the register dial); loads at 0.
         if (Test-Path (Join-Path $AdaptersDir "brain\styled.gguf")) {
             $loraArgs += @("--lora-scaled", "brain\styled.gguf:0.0")
@@ -3833,7 +3833,7 @@ function Invoke-Soul {
         exit 1
     }
     $soulArgs = if ($Rest.Count -ge 1) { @($Rest) } else { @('list') }
-    $rc = Invoke-WyrdJavaClassStream -Class "org.wyrdsekai.core.soul.SoulAdminMain" -JavaArgs $soulArgs
+    $rc = Invoke-WyrdJavaClassStream -Class "org.wyrdsekai.server.SoulCliMain" -JavaArgs $soulArgs
     if ($rc -ne 0) { exit $rc }
 }
 

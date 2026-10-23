@@ -6,6 +6,7 @@ import org.wyrdsekai.core.persistence.SqlDialect;
 import org.wyrdsekai.core.soul.Bond;
 import org.wyrdsekai.core.soul.BondStore;
 import org.wyrdsekai.core.soul.SoulManifest;
+import org.wyrdsekai.core.soul.SoulManifestEdits;
 import org.wyrdsekai.core.soul.SqlSoulStore;
 
 import java.io.PrintStream;
@@ -63,7 +64,10 @@ public final class BondAdminMain {
     }
 
     static int run(PrintStream out, PrintStream err, String... args) {
-        return run(resolveJdbcUrl(), out, err, args);
+        var jdbcUrl = resolveJdbcUrl();
+        // Her key, so the manifest this writes is re-signed like the node's own writes (2026-10-22).
+        CliSigning.enable(jdbcUrl, Path.of(WyrdConfig.get().dataDir()));
+        return run(jdbcUrl, out, err, args);
     }
 
     /** Test-friendly entry: caller supplies the JDBC URL. */
@@ -167,7 +171,11 @@ public final class BondAdminMain {
             existing.removeIf(b -> b.bondId().equals(bond.bondId()));
             existing.add(bond);
             var updated = manifest.withBonds(existing).bumpedVersion();
-            soulStore.store(updated);
+            if (SoulManifestEdits.willBeUnsigned(updated)) {
+                err.println("note: this node holds no signing key for her here, so her record is written "
+                    + "unsigned; her next forge signs it again.");
+            }
+            soulStore.store(SoulManifestEdits.unsignedUnlessThisNodeCanSign(updated));
 
             out.printf("bond %s created: %s ↔ %s (depth=%s)%n",
                 bond.bondId(), companionDid, playerDid, depth);

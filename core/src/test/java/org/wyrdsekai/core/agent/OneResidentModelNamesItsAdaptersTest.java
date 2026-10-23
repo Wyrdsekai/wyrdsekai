@@ -26,9 +26,12 @@ class OneResidentModelNamesItsAdaptersTest {
     }
 
     @Test
-    void withoutANightAdapterLoadedNothingIsNamed() {
-        assertThat(CompanionActor.singleBrainAdapterMix(true, 1, -1, 0.5)).as("honesty adapter only: server defaults apply").isNull();
-        assertThat(CompanionActor.singleBrainAdapterMix(true, 0, -1, 0.5)).isNull();
+    void withoutANightAdapterLoadedOnlyTheFloorIsNamed() {
+        // The server starts the floor at rest since 0.5.9 (so a client that names nothing gets the
+        // bare model); her request says it carries the floor (2026-10-22).
+        assertThat(CompanionActor.singleBrainAdapterMix(true, 1, -1, 0.5)).as("the floor alone: named at 1.0 on her turn")
+            .containsExactly(java.util.Map.entry("adapter:0", 1.0));
+        assertThat(CompanionActor.singleBrainAdapterMix(true, 0, -1, 0.5)).as("no adapter loaded: nothing to name").isNull();
         assertThat(CompanionActor.singleBrainAdapterMix(true, -1, -1, 0.5)).as("count not known yet").isNull();
     }
 
@@ -42,8 +45,8 @@ class OneResidentModelNamesItsAdaptersTest {
     @Test
     void aBeingWithNoAdapterOfHerOwnSpeaksThroughNoOneElses() {
         assertThat(CompanionActor.singleBrainAdapterMix(true, 2, -1, 0.5))
-            .as("another being's night adapter is loaded, hers is not: nothing is named and the server's defaults keep it at 0")
-            .isNull();
+            .as("another being's night adapter is loaded, hers is not: the floor is named, the other's adapter is not and rests at 0")
+            .containsExactly(java.util.Map.entry("adapter:0", 1.0));
     }
 
     @Test
@@ -82,12 +85,12 @@ class OneResidentModelNamesItsAdaptersTest {
 
     @Test
     void aWorkingTurnCanLowerThePlainFloorAndTheTurnsSheSpeaksKeepIt() {
-        // one adapter loaded: the server's defaults, as before — unless a working turn lowers the floor
-        assertThat(CompanionActor.singleBrainAdapterMix(false, false, 1, -1, 0.3, -1, 0.0, 1.0)).as("floor 1.0: unchanged").isNull();
+        // one adapter loaded: the floor is named on every request (the server starts it at rest since 0.5.9)
+        assertThat(CompanionActor.singleBrainAdapterMix(false, false, 1, -1, 0.3, -1, 0.0, 1.0)).as("floor 1.0: named").containsOnly(entry("adapter:0", 1.0));
         assertThat(CompanionActor.singleBrainAdapterMix(false, false, 1, -1, 0.3, -1, 0.0, 0.0))
             .as("a working turn names the plain adapter at the working floor").containsOnly(entry("adapter:0", 0.0));
-        assertThat(CompanionActor.singleBrainAdapterMix(true, false, 1, -1, 0.3, -1, 0.0, 0.0)).as("a conversation turn keeps the floor").isNull();
-        assertThat(CompanionActor.singleBrainAdapterMix(false, true, 1, -1, 0.3, -1, 0.0, 0.0)).as("her own time keeps the floor").isNull();
+        assertThat(CompanionActor.singleBrainAdapterMix(true, false, 1, -1, 0.3, -1, 0.0, 0.0)).as("a conversation turn keeps the floor").containsOnly(entry("adapter:0", 1.0));
+        assertThat(CompanionActor.singleBrainAdapterMix(false, true, 1, -1, 0.3, -1, 0.0, 0.0)).as("her own time keeps the floor").containsOnly(entry("adapter:0", 1.0));
         assertThat(CompanionActor.singleBrainAdapterMix(false, false, -1, -1, 0.3, -1, 0.0, 0.0)).as("count not known yet").isNull();
         // styled and night loaded: the working turn carries the lowered floor and zeroes the rest
         var work = CompanionActor.singleBrainAdapterMix(false, false, 3, 2, 0.3, 1, 0.42, 0.25);
@@ -117,7 +120,8 @@ class OneResidentModelNamesItsAdaptersTest {
         var allTalk = CompanionActor.singleBrainAdapterMix(true, false, 4, 3, 0.3, 1, 0.42, 0.0, 2, 0.8);
         assertThat(allTalk).containsEntry("adapter:0", 1.0).containsEntry("adapter:1", 0.42).containsEntry("adapter:2", 0.0).containsEntry("adapter:3", 0.3);
         // not served: nothing changes from the working-floor contract
-        assertThat(CompanionActor.singleBrainAdapterMix(false, false, 1, -1, 0.3, -1, 0.0, 1.0, -1, 1.0)).isNull();
+        assertThat(CompanionActor.singleBrainAdapterMix(false, false, 1, -1, 0.3, -1, 0.0, 1.0, -1, 1.0))
+            .as("no working adapter loaded: the floor alone, named").containsOnly(entry("adapter:0", 1.0));
         assertThat(CompanionActor.singleBrainAdapterMix(false, false, 1, -1, 0.3, -1, 0.0, 0.0, -1, 1.0)).containsOnly(entry("adapter:0", 0.0));
     }
 

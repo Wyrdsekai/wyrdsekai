@@ -3,6 +3,9 @@ package org.wyrdsekai.core.body;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryType;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +35,16 @@ public final class HostSense {
         public boolean pinned() { return loadPerCore() >= 0.9; }
         /** A thermal zone reads at or past 90 °C. */
         public boolean hot() { return hottestC >= 90.0; }
+        /**
+         * This reading with the heat it shares with the previous one: the lower of the two, and
+         * none when either does not say. A single-core boost pins a package sensor at 100 °C for
+         * seconds; heat that paces her is heat that holds (2026-10-22).
+         */
+        public Reading settledWith(Reading previous) {
+            double held = previous == null || previous.hottestC < 0 || hottestC < 0 ? -1 : Math.min(hottestC, previous.hottestC);
+            return held == hottestC ? this
+                : new Reading(memoryStallPct10, heapPct, diskFreePct, load1, cpus, diskFreeBytes, held);
+        }
 
         public boolean memoryPressure() { return memoryStallPct10 >= 10.0 || heapPct >= 90.0; }
         public boolean diskTight() { return diskFreePct >= 0 && diskFreePct < 10.0; }
@@ -40,7 +53,7 @@ public final class HostSense {
         /** The steward's gauges, one line. */
         public String gauges() {
             var sb = new StringBuilder();
-            sb.append(String.format(Locale.ROOT, "heap %.0f%%", heapPct));
+            sb.append(heapPct >= 0 ? String.format(Locale.ROOT, "heap %.0f%%", heapPct) : "heap: no recent full collection");
             if (memoryStallPct10 >= 0) sb.append(String.format(Locale.ROOT, ", memory stall %.1f%%", memoryStallPct10));
             if (diskFreePct >= 0) sb.append(String.format(Locale.ROOT, ", disk free %.0f%% (%.1f GB)", diskFreePct, diskFreeBytes / 1e9));
             if (load1 >= 0) sb.append(String.format(Locale.ROOT, ", load %.2f/%d", load1, cpus));
@@ -52,29 +65,69 @@ public final class HostSense {
     private HostSense() {}
 
     /**
-     * The heap as the live set, not the fill line. Used-over-max from the runtime touches 95%
-     * every few seconds on a healthy JVM, right before each collection: the heap-full reflex
-     * fired on that three times in a row on the household node and paused her for three
-     * minutes. The number that means something is what survived the last collection, which
-     * the memory pools report as collection usage. Falls back to used-over-max where a pool
-     * cannot say.
+     * The heap as the live set, not the fill line. Used-over-max touches 95% every few seconds on a
+     * healthy JVM, right before each collection (the reflex fired on that, 2026-09). The pools'
+     * collection usage was the next try, and under the default collector the old generation's
+     * collection usage is its fill line between mixed collections, garbage included: on the
+     * household node it read 92% with 180 MB alive and paused her turns four times in a row while
+     * the steward was in the room (2026-10-22). What means "nearly full" is what survived a
+     * collection of the old generation; until one has run, the heap does not say.
      */
     static double heapAfterGcPct(Runtime rt) {
         if (rt.maxMemory() <= 0) return -1;
-        long live = 0; boolean any = false;
         try {
+            var heapPools = new HashSet<String>();
             for (var pool : ManagementFactory.getMemoryPoolMXBeans()) {
-                if (pool.getType() != MemoryType.HEAP || !pool.isCollectionUsageThresholdSupported()) continue;
-                var cu = pool.getCollectionUsage();
-                if (cu == null) continue;
-                live += cu.getUsed();
-                any = true;
+                if (pool.getType() == MemoryType.HEAP) heapPools.add(pool.getName());
             }
+            var afterByCollector = new LinkedHashMap<String, Long>();
+            long uptime = ManagementFactory.getRuntimeMXBean().getUptime();
+            for (var gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+                if (!(gc instanceof com.sun.management.GarbageCollectorMXBean sun)) continue;
+                var info = sun.getLastGcInfo();
+                if (info == null || !recentEnough(uptime, info.getEndTime(), LIVE_SET_STALE_AFTER_MS)) continue;
+                long used = 0;
+                for (var e : info.getMemoryUsageAfterGc().entrySet()) {
+                    if (heapPools.contains(e.getKey()) && e.getValue() != null) used += e.getValue().getUsed();
+                }
+                afterByCollector.put(gc.getName(), used);
+            }
+            return liveAfterOldCollectionPct(rt.maxMemory(), afterByCollector);
         } catch (RuntimeException ignored) {
-            any = false;
+            return -1;
         }
-        if (!any) return 100.0 * (rt.totalMemory() - rt.freeMemory()) / rt.maxMemory();
-        return 100.0 * live / rt.maxMemory();
+    }
+
+    /**
+     * The heap in use after the last collection of the old generation, as a share of the maximum;
+     * -1 when no such collection has run. The young collectors say nothing about the live set.
+     */
+    static double liveAfterOldCollectionPct(long maxBytes, Map<String, Long> usedAfterLastGcByCollector) {
+        if (maxBytes <= 0 || usedAfterLastGcByCollector == null) return -1;
+        for (var e : usedAfterLastGcByCollector.entrySet()) {
+            if (e.getKey() != null && collectsTheOldGeneration(e.getKey()) && e.getValue() != null && e.getValue() >= 0) {
+                return 100.0 * e.getValue() / maxBytes;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * A collection older than this says nothing about now: a burst that filled the heap and ended
+     * leaves its full collection's "after" reading behind (the household node read 87% for an hour
+     * with 280 MB in use, 2026-10-22). Were the heap still that full, the collector would run again.
+     */
+    static final long LIVE_SET_STALE_AFTER_MS = 5 * 60 * 1000;
+
+    /** Whether a collection that ended at {@code gcEndMs} (ms since the JVM started) is recent enough to speak for now. */
+    static boolean recentEnough(long uptimeMs, long gcEndMs, long maxAgeMs) {
+        return gcEndMs >= 0 && uptimeMs - gcEndMs <= maxAgeMs;
+    }
+
+    /** The collectors that clear the old generation, by the names the runtimes give them. */
+    static boolean collectsTheOldGeneration(String collector) {
+        var n = collector.toLowerCase(Locale.ROOT);
+        return n.contains("old") || n.contains("full") || n.contains("marksweep") || n.contains("tenured") || n.contains("major");
     }
 
     public static Reading read(Path dataDir) {
@@ -130,18 +183,30 @@ public final class HostSense {
                     try { name = Files.readString(chip.resolve("name")).strip(); }
                     catch (IOException | RuntimeException e) { continue; }
                     if (!HWMON_CHIPS.contains(name)) continue;
+                    // A chip that labels a die sensor (Tdie, Tccd…) is read there: the control sensor
+                    // (Tctl) runs an offset above the die on desktop Ryzens. A chip that labels only
+                    // Tctl, as a Ryzen AI MAX does, is read at Tctl.
+                    double die = -1, any = -1;
                     try (var files = Files.list(chip)) {
                         for (var f : (Iterable<Path>) files::iterator) {
                             var fn = f.getFileName().toString();
                             if (!fn.startsWith("temp") || !fn.endsWith("_input")) continue;
                             try {
                                 double c = Double.parseDouble(Files.readString(f).strip()) / 1000.0;
-                                if (c > 0 && c < 150 && c > hottest) hottest = c;
+                                if (!(c > 0 && c < 150)) continue;
+                                if (c > any) any = c;
+                                var label = chip.resolve(fn.substring(0, fn.length() - "_input".length()) + "_label");
+                                if (Files.isRegularFile(label)) {
+                                    var l = Files.readString(label).strip();
+                                    if ((l.startsWith("Tdie") || l.startsWith("Tccd")) && c > die) die = c;
+                                }
                             } catch (IOException | RuntimeException ignored) {
                                 // this sensor does not say
                             }
                         }
                     }
+                    double chipC = die > 0 ? die : any;
+                    if (chipC > hottest) hottest = chipC;
                 }
             }
         } catch (IOException | RuntimeException ignored) {

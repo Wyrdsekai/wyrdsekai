@@ -32,6 +32,19 @@ class HerOwnTimeSlowsOnAHotHostTest {
     }
 
     @Test
+    @DisplayName("heat is what holds across two pulses: one core's boost to 100 °C is not it")
+    void aBurstIsNotHeat() {
+        var burst = host(3.0, 32, 100);
+        assertThat(OwnTimeCadence.hostFactor(burst.settledWith(host(3.0, 32, 55)))).as("100 then 55: a burst").isEqualTo(1.0);
+        assertThat(OwnTimeCadence.hostFactor(burst.settledWith(null))).as("one pulse alone claims nothing").isEqualTo(1.0);
+        assertThat(OwnTimeCadence.hostFactor(burst.settledWith(host(3.0, 32, -1)))).as("the previous pulse did not say").isEqualTo(1.0);
+        assertThat(OwnTimeCadence.hostFactor(host(3.0, 32, 93).settledWith(host(3.0, 32, 95)))).as("93 after 95: heat that holds").isEqualTo(2.0);
+        assertThat(host(3.0, 32, 93).settledWith(host(3.0, 32, 95)).hottestC()).isEqualTo(93.0);
+        var same = host(3.0, 32, 93);
+        assertThat(same.settledWith(host(3.0, 32, 93))).as("the same heat twice is the reading itself").isSameAs(same);
+    }
+
+    @Test
     @DisplayName("the household box that night: pinned and hot, four times the interval")
     void pinnedAndHot() {
         assertThat(OwnTimeCadence.hostFactor(host(29.5, 32, -1))).as("pinned alone").isEqualTo(2.0);

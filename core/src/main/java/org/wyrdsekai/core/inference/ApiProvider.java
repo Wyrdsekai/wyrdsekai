@@ -180,6 +180,22 @@ public sealed interface ApiProvider permits ApiProvider.OpenAI, ApiProvider.Anth
                             if (!lora.isEmpty()) obj.set("lora", lora);
                         }
                     }
+                    // The species floor is named on every request to the brain that does not name it:
+                    // at 1.0, hers. The server starts every adapter at rest since 0.5.9, so a client that
+                    // names nothing (the library's model on the shared brain, 2026-10-22) gets the bare
+                    // model; her turns, her one-shots and her summaries carry the floor as they did when
+                    // the server's own default was 1.0.
+                    if ("llama-server".equals(backendHint) && ServedAdapters.slotZeroIsSpeciesFloor(baseUrl)) {
+                        var lora = obj.has("lora") && obj.get("lora").isArray()
+                            ? (com.fasterxml.jackson.databind.node.ArrayNode) obj.get("lora")
+                            : Json.mapper().createArrayNode();
+                        boolean named = false;
+                        for (var e : lora) if (e.has("id") && e.get("id").asInt() == 0) named = true;
+                        if (!named) {
+                            lora.addObject().put("id", 0).put("scale", 1.0);
+                            obj.set("lora", lora);
+                        }
+                    }
 
                     // --- Tool choice: respect explicit value, default to "required" ---
                     if (obj.has("tools") && !obj.has("tool_choice")) {

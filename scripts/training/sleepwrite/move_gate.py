@@ -254,9 +254,20 @@ def hottest_c(thermal=None, hwmon=None):
                 continue
             if name not in HWMON_CHIPS:
                 continue
+            # A chip that labels a die sensor (Tdie, Tccd…) is read there; one that labels only the
+            # control sensor (Tctl), as a Ryzen AI MAX does, is read at Tctl.
+            die, any_ = -1.0, -1.0
             for f in os.listdir(d):
                 if f.startswith("temp") and f.endswith("_input"):
-                    hottest = max(hottest, _millic(os.path.join(d, f)))
+                    c = _millic(os.path.join(d, f))
+                    any_ = max(any_, c)
+                    try:
+                        label = open(os.path.join(d, f[: -len("_input")] + "_label")).read().strip()
+                    except OSError:
+                        label = ""
+                    if label.startswith(("Tdie", "Tccd")):
+                        die = max(die, c)
+            hottest = max(hottest, die if die > 0 else any_)
     except OSError:
         pass
     return hottest
@@ -269,9 +280,21 @@ def cool_down(log=None, read=None, sleep=time.sleep):
     c = read()
     if c < HOT_C:
         return 0
+    # Heat that holds, not a burst: one core at full boost pins a Ryzen AI MAX package sensor at
+    # 100 °C for seconds and is over before a wait could matter (2026-10-22). Two more readings,
+    # five seconds apart, have to agree before the gate waits.
+    waited = 0
+    first = c
+    for _ in range(2):
+        sleep(5)
+        waited += 5
+        c = read()
+        if c < HOT_C:
+            if log:
+                log(f"the chip touched {first:.0f} °C and is at {c:.0f} °C after {waited} s: a burst, not heat; going on")
+            return waited
     if log:
         log(f"the chip is at {c:.0f} °C: waiting for it to come under {COOL_C:.0f} °C before the next turn")
-    waited = 0
     while c >= COOL_C and waited < COOL_WAIT_MAX_S:
         sleep(5)
         waited += 5
