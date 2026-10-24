@@ -62,7 +62,16 @@ params:
     default: 0.80
   pretrained_dir:
     type: string
-    default: core/src/main/resources/classifier/pretrained
+    # Where the retrained head is deployed: the companion's OWN classifier
+    # folder (<data dir>/classifiers/<did>/), which ClassifierArm reads before
+    # the shipped head and watches for changes (2026-10-24). It used to be the
+    # source tree's pretrained/ directory — right for the release bake, which
+    # still passes it explicitly, and read by nothing on an installed node (the
+    # shipped heads live inside the core jar; the install's copy of that path
+    # is overwritten by every update). {{agent_classifier_dir}} is seeded by
+    # the runtime for a run that belongs to a companion; a run that belongs to
+    # no one must pass pretrained_dir itself.
+    default: "{{agent_classifier_dir}}"
   # Local-first expansion knobs (added 2026-05-25 for release-bake). At
   # variants_per_seed=20 the local 9B produces ~940 lines (~2h on CPU);
   # the release-bake passes variants_per_seed=4 (~190 lines, ~15min)
@@ -253,11 +262,14 @@ steps:
     #    "misclassified": K, "max_misses": M, "per_lang_misses": {...}}
     # The SHELL step's stdout JSON merges into RecipeContext, which the
     # gate-regression step reads (ProbeHeadMain guarantees stdout purity —
-    # logs go to stderr). Classpath comes from cli/build/probe-classpath.txt,
-    # written by `gradlew :cli:writeProbeClasspath` at bake prep — plain
-    # `java -cp` because a nested gradlew inside the bakeRecipe JVM would
-    # contend for the project lock. probe_overrouting.py remains for offline
-    # dev exploration; it no longer decides deploys.
+    # logs go to stderr). It runs on the node's OWN java and class path
+    # ({{runtime_java}} / {{runtime_classpath}}, seeded by the runtime), so it
+    # works on an installed node exactly as on a developer's checkout. Until
+    # 2026-10-24 the class path came from cli/build/probe-classpath.txt, a
+    # Gradle-written dev file, and the class lived in the CLI module: neither
+    # exists on an install, and the step failed on every household node from
+    # 2026-09-22. probe_overrouting.py remains for offline dev exploration; it
+    # no longer decides deploys.
     #
     # NOTE: no --embedding passthrough. The runtime probe always embeds with
     # the committed classifier encoder — that IS the parity guarantee. Train
@@ -268,9 +280,9 @@ steps:
       if [ -n "{{max_overrouting_misses_per_lang_map}}" ]; then \
         PERLANG_FLAG="--max-misses-per-lang-map {{max_overrouting_misses_per_lang_map}}" ; \
       fi ; \
-      java --enable-native-access=ALL-UNNAMED \
-        -cp "$(cat cli/build/probe-classpath.txt)" \
-        org.wyrdsekai.cli.ProbeHeadMain \
+      "{{runtime_java}}" --enable-native-access=ALL-UNNAMED \
+        -cp "{{runtime_classpath}}" \
+        org.wyrdsekai.core.agent.classifier.ProbeHeadMain \
         --head {{head}} \
         --classifier /tmp/{{head}}.onnx \
         --labels /tmp/{{head}}.labels.json \
@@ -317,27 +329,33 @@ steps:
     # 2026-07-22 while evaluating a request_type vocabulary change. The sidecars
     # are load-bearing — labels.json is the index→label map ClassifierArm routes
     # on; val-accuracy.json is the OPEN-R4 welfare floor (which was therefore
-    # ALSO stale across every prior retrain). Deploy them atomically with the
+    # ALSO stale across every prior retrain). Deploy them together with the
     # onnx, each with its own .bak so rollback restores a consistent triple.
     # labels/val-accuracy guarded on existence (train_classifier.py always
     # writes both, but stay defensive).
+    #
+    # FIRST DEPLOY (2026-10-24): the companion's own folder holds no head until
+    # the first retrain lands (she runs on the shipped one). A file that was not
+    # there is remembered with a .none marker so rollback removes what was
+    # deployed instead of failing on a missing backup — and she is back on the
+    # shipped head, which is what "undo" means for a first deploy.
     kind: SHELL
     command: |-
-      P={{pretrained_dir}}/{{head}} ; \
-      cp -f "$P.onnx" "$P.onnx.bak" && cp -f /tmp/{{head}}.onnx "$P.onnx" ; \
-      if [ -f /tmp/{{head}}.labels.json ]; then \
-        [ -f "$P.labels.json" ] && cp -f "$P.labels.json" "$P.labels.json.bak" ; \
-        cp -f /tmp/{{head}}.labels.json "$P.labels.json" ; \
-      fi ; \
-      if [ -f /tmp/{{head}}.val-accuracy.json ]; then \
-        [ -f "$P.val-accuracy.json" ] && cp -f "$P.val-accuracy.json" "$P.val-accuracy.json.bak" ; \
-        cp -f /tmp/{{head}}.val-accuracy.json "$P.val-accuracy.json" ; \
-      fi
+      D="{{pretrained_dir}}" ; P="$D/{{head}}" ; mkdir -p "$D" ; \
+      for f in onnx labels.json val-accuracy.json; do \
+        rm -f "$P.$f.bak" "$P.$f.none" ; \
+        if [ -f "$P.$f" ]; then cp -f "$P.$f" "$P.$f.bak" ; else touch "$P.$f.none" ; fi ; \
+      done ; \
+      cp -f /tmp/{{head}}.onnx "$P.onnx" ; \
+      if [ -f /tmp/{{head}}.labels.json ]; then cp -f /tmp/{{head}}.labels.json "$P.labels.json" ; fi ; \
+      if [ -f /tmp/{{head}}.val-accuracy.json ]; then cp -f /tmp/{{head}}.val-accuracy.json "$P.val-accuracy.json" ; fi
     rollback: |-
-      P={{pretrained_dir}}/{{head}} ; \
-      cp -f "$P.onnx.bak" "$P.onnx" && rm -f "$P.onnx.bak" ; \
-      [ -f "$P.labels.json.bak" ] && cp -f "$P.labels.json.bak" "$P.labels.json" && rm -f "$P.labels.json.bak" ; \
-      [ -f "$P.val-accuracy.json.bak" ] && cp -f "$P.val-accuracy.json.bak" "$P.val-accuracy.json" && rm -f "$P.val-accuracy.json.bak" ; \
+      P="{{pretrained_dir}}/{{head}}" ; \
+      for f in onnx labels.json val-accuracy.json; do \
+        if [ -f "$P.$f.bak" ]; then cp -f "$P.$f.bak" "$P.$f" && rm -f "$P.$f.bak" ; \
+        elif [ -f "$P.$f.none" ]; then rm -f "$P.$f" ; fi ; \
+        rm -f "$P.$f.none" ; \
+      done ; \
       true
 
   - id: smoke

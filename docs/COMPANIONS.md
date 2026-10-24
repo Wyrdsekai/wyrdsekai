@@ -861,6 +861,24 @@ in repair, or the household was under sustained strain in the last 24 hours, the
 run is refused. Maintenance draws on the same resources the companions are made
 of, so it gives way to them.
 
+The workshop shares the brain. A coding job is a long conversation with the model,
+and on a node with one brain that is the model the companions speak through, so
+the workshop has as many lanes as the brain has spare: on the usual two-lane brain,
+one job at a time. A second job waits its turn, its time limit starts when it
+starts, and the companion says whose job she is waiting behind.
+
+A recipe that fails three times in a row is paused. It gets one more try after a
+wait, and each further failure doubles the wait, up to a week. The count belongs
+to the version of Wyrdsekai that produced it: after an update the recipe gets its
+three tries again, since the update may have removed the cause. `wyrd recipes
+status` shows where each recipe stands.
+
+The classifier recipe retrains the small model a companion uses to tell a request
+from a remark, checks it against a set of known sentences, and keeps it only if
+it passes. The result goes into the companion's own classifier folder, under the
+data directory, and she starts using it within a minute. If the result is later
+undone, she is back on the shipped classifier just as quickly.
+
 ### What not to expect
 
 - **A schedule.** There is no bedtime. Two companions drift onto different

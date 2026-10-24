@@ -112,7 +112,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -868,9 +870,28 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
                 }
             };
         } catch (Exception e) {
-            log.error("Item LLM call failed: {}", e.getMessage());
-            return "[error] LLM call timed out or failed: " + e.getMessage();
+            var why = describeFailure(e, LLM_TIMEOUT);
+            log.error("Item LLM call failed: {}", why);
+            return "[error] " + why;
         }
+    }
+
+    /**
+     * The cause in words. A timed-out wait has no message of its own, so the line used to
+     * read "LLM call timed out or failed: null" — and was recorded as a finding and spoken
+     * (household node, 2026-10-23). Name what happened; the findings path refuses an error
+     * marker regardless.
+     */
+    static String describeFailure(Throwable e, Duration waited) {
+        if (e instanceof ExecutionException ex && ex.getCause() != null) e = ex.getCause();
+        if (e instanceof TimeoutException) {
+            return "the brain did not answer within " + waited.toSeconds() + " s";
+        }
+        var message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            return "the brain call failed (" + e.getClass().getSimpleName() + ")";
+        }
+        return "the brain call failed: " + message;
     }
 
     // ─── Agent Actions ───────────────────────────────────────────

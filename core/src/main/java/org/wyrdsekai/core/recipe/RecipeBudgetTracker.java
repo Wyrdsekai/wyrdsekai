@@ -153,8 +153,19 @@ public final class RecipeBudgetTracker {
     }
 
     public int consecutiveDeployFailures(String recipeId, String agentDid) {
+        return consecutiveDeployFailures(recipeId, agentDid, SqlRecipeQueue.nodeVersion());
+    }
+
+    /**
+     * The failure streak as seen by {@code nodeVersion}: walking newest-first, a
+     * SUCCEEDED row ends it, and so does a row written by a different build (or
+     * by a build from before the column existed). Failures under the previous
+     * build may have had a cause the update removed; the ceiling exists to stop
+     * a recipe grinding on the same cause, not to hold a fixed one for a week.
+     */
+    int consecutiveDeployFailures(String recipeId, String agentDid, String nodeVersion) {
         if (recipeId == null) return 0;
-        var sql = "SELECT status FROM recipe_queue "
+        var sql = "SELECT status, node_version FROM recipe_queue "
             + "WHERE recipe_id = ? "
             + "  AND status IN ('SUCCEEDED', 'FAILED') "
             + "  AND ((agent_did = ?) OR (? IS NULL AND agent_did IS NULL)) "
@@ -173,6 +184,8 @@ public final class RecipeBudgetTracker {
             try (var rs = st.executeQuery()) {
                 while (rs.next()) {
                     if ("SUCCEEDED".equals(rs.getString(1))) break;
+                    var writtenBy = rs.getString(2);
+                    if (writtenBy == null || !writtenBy.equals(nodeVersion)) break;
                     run++;
                 }
             }

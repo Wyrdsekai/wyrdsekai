@@ -244,7 +244,7 @@ if [[ -z "${WYRDSEKAI_SKIP_RUNTIME_GATE:-}" ]]; then
         [[ -f "$onnx" && -f "$labels" ]] || { warn "runtime gate: $gate_head artifacts missing — skipping head"; continue; }
         result="$(cd "$PROJECT_DIR" && java --enable-native-access=ALL-UNNAMED \
             -cp "$(cat cli/build/probe-classpath.txt)" \
-            org.wyrdsekai.cli.ProbeHeadMain \
+            org.wyrdsekai.core.agent.classifier.ProbeHeadMain \
             --head "$gate_head" --classifier "$onnx" --labels "$labels" \
             --max-misses "$floor" 2>/dev/null)" || { err "runtime gate: probe errored for $gate_head"; runtime_gate_failed=1; continue; }
         passes="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['overrouting_probe_passes'])" "$result" 2>/dev/null)"

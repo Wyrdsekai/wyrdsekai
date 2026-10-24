@@ -446,6 +446,9 @@ public final class InviteService {
     /**
      * 256-word list of evocative, easy-to-spell English words.
      * Chosen to be unambiguous when spoken aloud and thematically appropriate.
+     * No entry may contain a hyphen or a space: a recovery key joins eight of
+     * these with hyphens, so a hyphenated entry made a nine-word key out of an
+     * eight-word one (one entry did, until 2026-10-24).
      */
     /** Get the word list (used by AuthService for recovery key generation). */
     public static String[] getWordList() { return WORD_LIST; }
@@ -470,7 +473,7 @@ public final class InviteService {
         "mesa", "mist", "moon", "moss", "moth", "myrtle", "needle", "nest",
         "night", "north", "oak", "oar", "opal", "orbit", "orchid", "otter",
         "owl", "palm", "path", "pearl", "pebble", "pine", "plum", "pond",
-        "quartz", "quill", "rain", "relay-node", "reef", "ridge", "ring", "river",
+        "quartz", "quill", "rain", "rook", "reef", "ridge", "ring", "river",
         "robin", "rock", "root", "rose", "ruby", "sage", "sand", "satin",
         "scale", "seal", "seed", "shade", "shell", "shield", "shore", "silk",
         "silver", "slate", "smoke", "snow", "solar", "south", "spark", "spire",

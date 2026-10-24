@@ -67,14 +67,37 @@ public final class ClassifierArm {
     private final OrtEnvironment env;
     private final Map<ClassifierHead, Head> heads = new ConcurrentHashMap<>();
     private final ClassifierEventLog eventLog;
+    /**
+     * Sessions replaced by a reload. ONNX sessions must not be closed while an
+     * inference may still be running on them, so a replaced head is kept until
+     * the arm closes; reloads are rare (a retrain lands at most once a day).
+     */
+    private final List<Head> retired = Collections.synchronizedList(new ArrayList<>());
+    /** Next time (nanos) {@link #classify} looks at her folder for a changed head. */
+    private volatile long nextFolderCheckNanos = 0L;
+
+    /** How often her folder is looked at for a changed head. */
+    static final long FOLDER_CHECK_INTERVAL_NANOS = 60_000_000_000L;
+    /**
+     * A head whose files changed in the last few seconds is left alone: a deploy
+     * writes the model and its labels one after the other, and a model read with
+     * the labels of another would name every class wrong.
+     */
+    static final long SETTLE_MILLIS = 5_000L;
 
     /** Loaded state for a single head. */
     private static final class Head {
         final OrtSession session;
         final List<String> labels;
-        Head(OrtSession session, List<String> labels) {
+        /** The per-companion model file this head was loaded from, or null for the shipped one. */
+        final Path source;
+        /** Modification time of {@link #source} at load; -1 for the shipped head. */
+        final long sourceModifiedMillis;
+        Head(OrtSession session, List<String> labels, Path source, long sourceModifiedMillis) {
             this.session = session;
             this.labels = labels;
+            this.source = source;
+            this.sourceModifiedMillis = sourceModifiedMillis;
         }
     }
 
@@ -104,6 +127,25 @@ public final class ClassifierArm {
      * @param agentDid identity key — used to locate per-agent model overrides
      */
     public static ClassifierArm forAgent(String agentDid) {
+        return forAgentAt(agentDid, perAgentDirFor(agentDid));
+    }
+
+    /**
+     * Where one companion's own classifier heads live:
+     * {@code <data dir>/classifiers/<did>/<head>.onnx} (+ {@code .labels.json}).
+     * The retrain recipe deploys here and {@link #classify} reads from here
+     * first, so the two agree on the place by construction.
+     */
+    public static Path perAgentDirFor(String agentDid) {
+        var homeDir = WyrdConfig.get().dataDir();
+        if (homeDir == null || homeDir.isBlank()) {
+            homeDir = System.getProperty("user.home") + "/.wyrdsekai";
+        }
+        return Path.of(homeDir, "classifiers", safeDid(agentDid));
+    }
+
+    /** {@link #forAgent} with the per-companion folder given — the test seam. */
+    static ClassifierArm forAgentAt(String agentDid, Path perAgent) {
         OrtEnvironment env;
         try {
             env = OrtEnvironment.getEnvironment();
@@ -111,11 +153,6 @@ public final class ClassifierArm {
             log.warn("OrtEnvironment unavailable — classifier arm disabled: {}", t.getMessage());
             return null;
         }
-        var homeDir = WyrdConfig.get().dataDir();
-        if (homeDir == null || homeDir.isBlank()) {
-            homeDir = System.getProperty("user.home") + "/.wyrdsekai";
-        }
-        var perAgent = Path.of(homeDir, "classifiers", safeDid(agentDid));
         var arm = new ClassifierArm(agentDid, perAgent, env);
         // Preload all heads eagerly — they're all on hot paths and share
         // construction cost. Having them warm avoids blocking the actor
@@ -134,6 +171,7 @@ public final class ClassifierArm {
      */
     public Classification classify(ClassifierHead head, String text) {
         if (text == null || text.isBlank()) return Classification.unavailable();
+        followHerFolder();
         var h = heads.get(head);
         if (h == null) {
             // Lazy-load if not preloaded
@@ -173,26 +211,98 @@ public final class ClassifierArm {
         return result;
     }
 
+    // ── Following her folder ────────────────────────────────────────────
+
+    /**
+     * Once a minute, look at her folder: a head whose files appeared, changed or
+     * went away since it was loaded is loaded again (from her folder, or from the
+     * shipped resources when hers is gone). This is how a retrained head — from
+     * the retrain recipe, the Forge, or a steward's hand — takes effect without a
+     * restart, and how a rollback does too.
+     */
+    private void followHerFolder() {
+        long now = System.nanoTime();
+        if (now - nextFolderCheckNanos < 0) return;
+        nextFolderCheckNanos = now + FOLDER_CHECK_INTERVAL_NANOS;
+        refreshChangedHeads();
+    }
+
+    /** Reload every loaded head whose source changed. Package-private for tests. */
+    void refreshChangedHeads() {
+        for (var e : heads.entrySet()) {
+            var head = e.getKey();
+            var loaded = e.getValue();
+            var model = perAgentDir.resolve(head.resourceName() + ".onnx");
+            var labels = perAgentDir.resolve(head.resourceName() + ".labels.json");
+            boolean hersNow = Files.exists(model) && Files.exists(labels);
+            if (hersNow && !settled(model, labels)) continue;  // being written: look again later
+            long modifiedNow = hersNow ? modifiedMillis(model) : -1L;
+            boolean wasHers = loaded.source != null;
+            if (hersNow == wasHers && modifiedNow == loaded.sourceModifiedMillis) continue;
+            var fresh = loadHeadFresh(head);
+            if (fresh == null) continue;
+            heads.put(head, fresh);
+            retired.add(loaded);
+            log.info("Classifier head {} reloaded from {} (her folder changed)",
+                head.name(), fresh.source == null ? "shipped resources" : fresh.source);
+        }
+    }
+
+    private static boolean settled(Path... files) {
+        long now = System.currentTimeMillis();
+        for (var f : files) {
+            if (now - modifiedMillis(f) < SETTLE_MILLIS) return false;
+        }
+        return true;
+    }
+
+    private static long modifiedMillis(Path f) {
+        try {
+            return Files.getLastModifiedTime(f).toMillis();
+        } catch (IOException e) {
+            return -1L;
+        }
+    }
+
+    /** Where the head came from — "her folder" or "shipped"; null when not loaded. Test seam. */
+    String sourceOf(ClassifierHead head) {
+        var h = heads.get(head);
+        if (h == null) return null;
+        return h.source == null ? "shipped" : "her folder";
+    }
+
     // ── Loading ─────────────────────────────────────────────────────────
 
     private Head loadHead(ClassifierHead head) {
         var existing = heads.get(head);
         if (existing != null) return existing;
+        var loaded = loadHeadFresh(head);
+        if (loaded != null) heads.put(head, loaded);
+        return loaded;
+    }
+
+    /** Load a head from her folder or the shipped resources, without touching the cache. */
+    private Head loadHeadFresh(ClassifierHead head) {
         byte[] modelBytes = null;
         String labelsJson = null;
+        Path source = null;
+        long sourceModified = -1L;
 
         // 1. Per-agent override
         var perAgentModel = perAgentDir.resolve(head.resourceName() + ".onnx");
         var perAgentLabels = perAgentDir.resolve(head.resourceName() + ".labels.json");
         if (Files.exists(perAgentModel) && Files.exists(perAgentLabels)) {
             try {
+                sourceModified = modifiedMillis(perAgentModel);
                 modelBytes = Files.readAllBytes(perAgentModel);
                 labelsJson = Files.readString(perAgentLabels);
+                source = perAgentModel;
                 log.info("Loaded classifier head {} from per-agent path {}",
                     head.name(), perAgentModel);
             } catch (Exception e) {
                 log.warn("Failed to load per-agent classifier {}: {}",
                     perAgentModel, e.getMessage());
+                sourceModified = -1L;
             }
         }
 
@@ -234,9 +344,7 @@ public final class ClassifierArm {
                 session.close();
                 return null;
             }
-            var loaded = new Head(session, labels);
-            heads.put(head, loaded);
-            return loaded;
+            return new Head(session, labels, source, sourceModified);
         } catch (Exception e) {
             log.warn("Failed to initialize classifier head {}: {}", head.name(), e.getMessage());
             return null;
@@ -279,7 +387,7 @@ public final class ClassifierArm {
         }
         try {
             var session = env.createSession(modelBytes, new OrtSession.SessionOptions());
-            return new CandidateHead(env, new Head(session, labels));
+            return new CandidateHead(env, new Head(session, labels, onnxPath, -1L));
         } catch (OrtException e) {
             throw new IOException("failed to load candidate onnx " + onnxPath, e);
         }
@@ -430,5 +538,14 @@ public final class ClassifierArm {
             }
         }
         heads.clear();
+        synchronized (retired) {
+            for (var h : retired) {
+                try {
+                    h.session.close();
+                } catch (Exception ignored) {
+                }
+            }
+            retired.clear();
+        }
     }
 }

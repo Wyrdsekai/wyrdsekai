@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.10}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.11}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -154,6 +154,30 @@ if (( ${#MISSING_HEADS[@]} )); then
     exit 1
 fi
 ok "classifier gate: all 4 trained heads present in $(basename "$DIST_CORE_JAR")"
+
+# ── HARD gate: the retrain recipe's probe runs from the staged server jars ──
+# The recipe's regression-probe step starts ProbeHeadMain with the node's own
+# java and class path (lib/server/*). Until 2026-10-24 the class lived in the
+# CLI module and the step read a Gradle-written dev file, so on every installed
+# node the step failed and the recipe never deployed. This runs the probe the
+# way an installed node will — same jars, same shipped head — and refuses the
+# dist if it cannot. Skip with WYRDSEKAI_SKIP_PROBE_GATE=1 (never for a release).
+if [[ -z "${WYRDSEKAI_SKIP_PROBE_GATE:-}" ]]; then
+    PROBE_JAVA="${JAVA_HOME:+$JAVA_HOME/bin/java}"; [[ -x "$PROBE_JAVA" ]] || PROBE_JAVA="java"
+    PROBE_HEAD_DIR="$PROJECT_DIR/core/src/main/resources/classifier/pretrained"
+    probe_out="$("$PROBE_JAVA" --enable-native-access=ALL-UNNAMED \
+        -cp "$DIST_DIR/lib/server/*" org.wyrdsekai.core.agent.classifier.ProbeHeadMain \
+        --head task_present --classifier "$PROBE_HEAD_DIR/task_present.onnx" \
+        --labels "$PROBE_HEAD_DIR/task_present.labels.json" --max-misses 90 2>"$DIST_DIR/.probe-gate.err")" \
+        || { err "probe gate: ProbeHeadMain did not run from $DIST_DIR/lib/server (the retrain recipe would fail on every install)"; tail -5 "$DIST_DIR/.probe-gate.err" >&2; exit 1; }
+    rm -f "$DIST_DIR/.probe-gate.err"
+    probe_n="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['anchors_tested'])" "$probe_out" 2>/dev/null || echo 0)"
+    if [[ "$probe_n" -lt 1 ]]; then
+        err "probe gate: ProbeHeadMain ran but tested no anchors (stdout: ${probe_out:0:200})"
+        exit 1
+    fi
+    ok "probe gate: the retrain recipe's probe runs from lib/server ($probe_n anchors)"
+fi
 
 # ── Launcher scripts ──
 mkdir -p "$DIST_DIR/bin"

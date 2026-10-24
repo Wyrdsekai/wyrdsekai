@@ -39,11 +39,13 @@ import org.wyrdsekai.core.library.FindingsLedger;
 import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.library.LibraryPatron;
 import org.wyrdsekai.core.library.LibraryRecall;
+import org.wyrdsekai.core.coding.CodeZaikuBackend;
 import org.wyrdsekai.core.coding.CodingTaskBroadcast;
 import org.wyrdsekai.core.coding.GooseBackend;
 import org.wyrdsekai.core.coding.TaskResult;
 import org.wyrdsekai.core.coding.TaskSpec;
 import org.wyrdsekai.core.coding.TaskStatus;
+import org.wyrdsekai.core.coding.WorkshopLane;
 import org.wyrdsekai.core.host.HostActionService;
 import org.wyrdsekai.core.persistence.VitalityPersistence;
 import org.wyrdsekai.core.persistence.WorldDnaService;
@@ -14086,6 +14088,40 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * answer back, kept it out of her findings and told the loop it was useless (review of
      * 2026-09-23).
      */
+    /**
+     * Another companion's name from her DID: the house's presence register first, then the
+     * companion register when the node has a database; the DID's tail when neither knows her.
+     */
+    private String nameOfCompanion(String did) {
+        if (did == null || did.isBlank()) return "";
+        try {
+            var present = EntityRegistry.get();
+            if (present != null) {
+                var known = present.nameOf(did);
+                if (known.isPresent()) return known.get();
+            }
+        } catch (RuntimeException ignored) {
+            // no register yet
+        }
+        try {
+            var jdbc = System.getProperty("wyrdsekai.jdbc.url", System.getenv("WYRDSEKAI_JDBC_URL"));
+            if (jdbc != null && !jdbc.isBlank()) {
+                var row = new CompanionRegistry(jdbc).get(did);
+                if (row.isPresent()) return row.get().name();
+            }
+        } catch (RuntimeException ignored) {
+            // no database
+        }
+        return did.length() > 8 ? did.substring(did.length() - 8) : did;
+    }
+
+    /** A tool result that is the brain's failure wearing the findings key: "[error] …". */
+    static boolean looksLikeErrorMarker(String findings) {
+        if (findings == null) return false;
+        var t = findings.strip();
+        return t.regionMatches(true, 0, "[error]", 0, 7);
+    }
+
     static boolean looksLikeAbsenceFinding(String findings) {
         if (findings == null) return false;
         if (CITES_A_SOURCE.matcher(findings).find()) return false;
@@ -29158,10 +29194,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         // Build result summary for working memory
         String resultSummary;
+        // A script that hands the brain's failure back as its findings ("[error] the brain
+        // did not answer…") has not found anything: it is a tool error, kept out of her
+        // Study and out of her mouth (one was recorded as a draft finding and spoken on
+        // the household node, 2026-10-23).
+        boolean findingsAreAnError = result.containsKey("findings")
+            && looksLikeErrorMarker(String.valueOf(result.get("findings")));
         if (!env.ok()) {
             resultSummary = "[Tool error] " + env.error();
             log.warn("Scripted tool error for '{}' ({}): {}",
                 profile.name(), toolName != null ? toolName : "unknown tool", env.error());
+        } else if (findingsAreAnError) {
+            resultSummary = "[Tool error] " + String.valueOf(result.get("findings")).strip();
+            log.warn("Scripted tool '{}' returned an error as its findings for '{}': {}",
+                toolName != null ? toolName : "unknown tool", profile.name(),
+                truncate(String.valueOf(result.get("findings")), 200));
         } else if (result.containsKey("findings")) {
             var findings = String.valueOf(result.get("findings"));
             log.info("Scripted tool result — findings ({} chars) for '{}'",
@@ -29268,7 +29315,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 && pendingDelegateReply == null
                 && !(pendingAskReply != null && owedFindings.entityId().equals(pendingAskSenderId));
         boolean findingsSpoken = false;
-        if (result.containsKey("findings") && !resultSummary.isBlank()) {
+        if (result.containsKey("findings") && !findingsAreAnError && !resultSummary.isBlank()) {
             // Scaffold hygiene mirror of the ReAct-path direct-speak (second-node
             // 2026-07-11 #27 case a) — LLM-composed findings can carry
             // pseudo-tags the param strip never saw. Speech starts from the BARE
@@ -36222,6 +36269,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             Map.of("action", "dispatch_task",
                 "backend", chosen.name(),
                 "task_id", spec.taskId().toString()));
+        // The workshop has as many lanes as the brain has spare slots; when they are taken
+        // her job waits its turn, and she says so rather than let the wait look like silence.
+        if (chosen instanceof CodeZaikuBackend cz && WorkshopLane.isFull(cz.config().driveUrl())) {
+            var holder = WorkshopLane.whoHoldsALane().orElse(null);
+            var whose = holder == null || holder.companionDid() == null
+                ? catalog.get("dispatch.spoken.workshop_busy.someone")
+                : nameOfCompanion(holder.companionDid());
+            speakProduct(catalog.get("dispatch.spoken.workshop_busy", whose),
+                Map.of("action", "dispatch_task", "backend", chosen.name(),
+                    "task_id", spec.taskId().toString(), "waits_for", whose));
+        }
         remember(catalog.get("dispatch.log.dispatched", description, chosen.name()));
         log.info("Companion '{}' dispatch_task — backend={} hostWorkspace='{}' desc='{}'",
             profile.name(), chosen.name(), hostWorkspace.isBlank() ? "(default)" : hostWorkspace,

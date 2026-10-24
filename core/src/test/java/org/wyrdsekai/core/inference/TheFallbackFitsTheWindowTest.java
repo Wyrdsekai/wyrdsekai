@@ -91,19 +91,50 @@ class TheFallbackFitsTheWindowTest {
         assertThat(src).contains("if (neededTokens > 0 && BackendWindows.tooSmall(b.name(), neededTokens)) continue;");
         assertThat(src).contains("final var req = fitted != null ? fitted : chatReq;\n        var call = backend.chatCompletion(req);");
         var cfg = Files.readString(Path.of("src/main/java/org/wyrdsekai/core/inference/InferenceConfig.java"));
-        assertThat(cfg).contains("BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(url + \"/props\", 1500)), \"/props\");");
+        assertThat(cfg).contains("BackendWindows.learnedFromLlamaProps(name, url, readBody(url + \"/props\", 1500), \"/props\");");
         assertThat(cfg).contains("int window = BackendWindows.windowFromOllamaPs(readBody(url + \"/api/ps\", 1500));");
         assertThat(cfg).contains("window = BackendWindows.windowFromOllamaShow(");
         // A configured backend learns it too, from the server's own word only: at boot when it is
         // up, and once more when it comes up. The configured size is never a stand-in — on the
         // household node it read 8192 while the brain ran with four times that (2026-10-09).
-        assertThat(cfg).contains("BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(client.getBaseUrl() + \"/props\", 1500)), \"/props\");");
-        assertThat(cfg).contains("BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(url + \"/props\", 1500)), \"/props\");");
+        // Since 2026-10-24 the same read also learns the slot count and the address (one call).
+        assertThat(cfg).contains("BackendWindows.learnedFromLlamaProps(name, client.getBaseUrl(), readBody(client.getBaseUrl() + \"/props\", 1500), \"/props\");");
+        assertThat(cfg).doesNotContain("BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(");
         assertThat(cfg).doesNotContain("config context-size");
         assertThat(src).contains("if (result.healthy() && BackendWindows.of(result.backendName()) == 0\n"
             + "                && windowAsks.merge(result.backendName(), 1, Integer::sum) <= WINDOW_ASKS) {");
         assertThat(src).as("no up-transition is waited for: every backend starts healthy in the router's map")
             .doesNotContain("&& (prev == null || !prev) && windowAsked");
         assertThat(src).contains("static void learnWindow(InferenceBackend backend) {");
+    }
+
+    @Test
+    @DisplayName("the slot count is read beside the window, and one slot's share is what a full pool leaves")
+    void slotsAndShare() {
+        var props = "{\"default_generation_settings\":{\"n_ctx\":32768},\"total_slots\":2}";
+        assertThat(BackendWindows.slotsFromLlamaProps(props)).isEqualTo(2);
+        assertThat(BackendWindows.slotsFromLlamaProps("{\"default_generation_settings\":{\"n_ctx\":8192}}")).isZero();
+        BackendWindows.learnedFromLlamaProps("brain", "http://127.0.0.1:8200", props, "/props");
+        assertThat(BackendWindows.of("brain")).isEqualTo(32768);
+        assertThat(BackendWindows.slots("brain")).isEqualTo(2);
+        assertThat(BackendWindows.shareOf("brain")).as("the window divided by the slots").isEqualTo(16384);
+        BackendWindows.learned("voice", 8192, "/props");
+        assertThat(BackendWindows.shareOf("voice")).as("one slot, or an unknown count: the whole window").isEqualTo(8192);
+        assertThat(BackendWindows.shareOf("nobody")).isZero();
+    }
+
+    @Test
+    @DisplayName("the node remembers which backend answers at which address, every spelling of this machine as one")
+    void addresses() {
+        BackendWindows.learnedFromLlamaProps("brain", "http://0.0.0.0:8200",
+            "{\"default_generation_settings\":{\"n_ctx\":32768},\"total_slots\":2}", "/props");
+        assertThat(BackendWindows.nameServing("http://localhost:8200")).isEqualTo("brain");
+        assertThat(BackendWindows.nameServing("http://127.0.0.1:8200/")).isEqualTo("brain");
+        assertThat(BackendWindows.nameServing("http://127.0.0.1:8201")).isNull();
+        assertThat(BackendWindows.nameServing("http://198.51.100.65:8200")).as("another machine is another address").isNull();
+        assertThat(BackendWindows.isThisMachine("http://localhost:8200")).isTrue();
+        assertThat(BackendWindows.isThisMachine("http://198.51.100.65:8200")).isFalse();
+        assertThat(BackendWindows.addressKey("not a url")).isNull();
+        assertThat(BackendWindows.addressKey(null)).isNull();
     }
 }

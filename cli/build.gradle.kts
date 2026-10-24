@@ -43,11 +43,13 @@ tasks.register("printRuntimeCp") {
 }
 
 // Gate-runtime parity (2026-07-22): write the runtime classpath to a file so
-// the retrain recipe's regression-probe step can run ProbeHeadMain with plain
-// `java -cp "$(cat cli/build/probe-classpath.txt)"`. A nested `./gradlew`
-// inside the bakeRecipe JVM would contend for the project lock mid-recipe —
-// the file sidesteps that. packaging/build-evolved-artifact.sh runs this
-// during bake prep.
+// packaging/build-evolved-artifact.sh can run the runtime floor gate
+// (core's ProbeHeadMain) with plain `java -cp "$(cat cli/build/probe-classpath.txt)"`
+// after the bake. A nested `./gradlew` there would contend for the project
+// lock. The recipe's own regression-probe step no longer reads this file:
+// it uses the running node's java and class path ({{runtime_java}} /
+// {{runtime_classpath}}), which exist on an installed node where this file
+// does not (2026-10-24).
 tasks.register("writeProbeClasspath") {
     inputs.files(sourceSets["main"].runtimeClasspath)
     val outFile = layout.buildDirectory.file("probe-classpath.txt")

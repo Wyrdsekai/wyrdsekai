@@ -460,7 +460,7 @@ public record InferenceConfig(
                 var client = manager.start();
                 log.info("llama-server started on port {} for backend '{}'", port, name);
                 // Its window: the server's own word, here if it answers already, else when it comes up.
-                BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(client.getBaseUrl() + "/props", 1500)), "/props");
+                BackendWindows.learnedFromLlamaProps(name, client.getBaseUrl(), readBody(client.getBaseUrl() + "/props", 1500), "/props");
                 // Its model, by name, so the registry can size it: a managed 4B voice with no name was
                 // the nameless default of a whole household (2026-10-19).
                 var served = models.isEmpty() ? discoverModels(client.getBaseUrl()) : models;
@@ -487,7 +487,7 @@ public record InferenceConfig(
         // and answered nothing here, 2026-10-09). The configured size is NOT a stand-in: on that
         // node it read 8192 while the brain ran with four times that, and a window believed too
         // small shrinks prompts that fit.
-        BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(url + "/props", 1500)), "/props");
+        BackendWindows.learnedFromLlamaProps(name, url, readBody(url + "/props", 1500), "/props");
         return new InferenceBackend.LlamaServer(
                 name, new InferenceClient(url, null, INFERENCE_TIMEOUT,
                     new ApiProvider.OpenAI("llama-server")), priority, effectiveModels, manager);
@@ -917,7 +917,7 @@ public record InferenceConfig(
 
         if (isLlamaServer) {
             // The window each slot runs with, from the server itself (default_generation_settings.n_ctx).
-            BackendWindows.learned(name, BackendWindows.windowFromLlamaProps(readBody(url + "/props", 1500)), "/props");
+            BackendWindows.learnedFromLlamaProps(name, url, readBody(url + "/props", 1500), "/props");
             log.info("Auto-detected llama-server at {} as '{}' (model: {}, priority: {})",
                 url, name, modelName, priority);
             return Optional.of(new InferenceBackend.LlamaServer(

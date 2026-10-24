@@ -98,20 +98,53 @@ public final class RecipeRunner {
 
     public RecipeRun run(RecipeManifest manifest, Map<String, Object> params) {
         RecipeContext ctx = new RecipeContext();
-        // Seed declared param defaults first, then overlay caller-supplied values.
+        // Seed what the node knows about itself first (lowest precedence), then the
+        // declared param defaults, then the caller's values. A default may name a
+        // runtime fact ("{{agent_classifier_dir}}") and is resolved against what is
+        // already seeded; a caller's value is taken as given.
+        ctx.putAll(RecipeRuntimeFacts.ofThisProcess());
+        if (params != null) {
+            ctx.putAll(RecipeRuntimeFacts.ofAgent(
+                    params.get(RecipeRuntimeFacts.AGENT_DID) instanceof String did ? did : null));
+        }
+        var defaulted = new ArrayList<String>();
         manifest.params().forEach((name, p) -> {
-            if (p.defaultValue() != null) ctx.put(name, p.defaultValue());
+            if (p.defaultValue() != null) {
+                ctx.put(name, p.defaultValue());
+                defaulted.add(name);
+            }
         });
         if (params != null) ctx.putAll(params);
+        // A default may name a runtime fact or another parameter ("data/library/probes/
+        // {{collection}}.jsonl"): resolved once the caller's values are in, a few passes
+        // for a default that names a default. A caller's own value is taken as given.
+        for (int pass = 0; pass < 3; pass++) {
+            boolean changed = false;
+            for (var name : defaulted) {
+                if (params != null && params.containsKey(name)) continue;
+                if (ctx.get(name) instanceof String v && v.contains("{{")) {
+                    var resolved = ctx.resolve(v);
+                    if (!resolved.equals(v)) {
+                        ctx.put(name, resolved);
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) break;
+        }
         // Fail fast on missing required params. Without this check the literal
         // "{{name}}" survives substitution (RecipeContext leaves unknown vars
         // as-is) and shell steps cryptically exit 2 against a non-existent
         // path. Discovered 2026-05-27 on mac-node when `wyrd recipes run`
-        // omitted --params head=<head>.
+        // omitted --params head=<head>. A declared param whose default named a
+        // fact this run does not have (a companion's folder on a run that
+        // belongs to no companion) is missing in the same way.
         List<String> missing = new ArrayList<>();
         for (var e : manifest.params().entrySet()) {
             if (e.getValue().required() && !ctx.has(e.getKey())) {
                 missing.add(e.getKey());
+            } else if (ctx.get(e.getKey()) instanceof String v && v.contains("{{")) {
+                missing.add(e.getKey() + " (its default needs " + v + ")");
             }
         }
         if (!missing.isEmpty()) {

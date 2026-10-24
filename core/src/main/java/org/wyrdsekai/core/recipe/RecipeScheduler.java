@@ -343,8 +343,9 @@ public final class RecipeScheduler extends AbstractBehavior<RecipeScheduler.Comm
      */
     void notifyStewardDeployCeiling(QueuedRecipe peeked, String detail) {
         log.warn("RecipeScheduler STEWARD-NOTIFY deploy-ceiling: recipe={} "
-            + "agent={} paused=true detail=\"{}\" — steward must investigate "
-            + "and clear via ForceFire to resume",
+            + "agent={} paused=true detail=\"{}\" — one more attempt goes through "
+            + "after the cooldown (see `wyrd recipes status`); an update of "
+            + "Wyrdsekai starts the failure count afresh",
             peeked.recipeId(), peeked.agentDid(), detail);
     }
 

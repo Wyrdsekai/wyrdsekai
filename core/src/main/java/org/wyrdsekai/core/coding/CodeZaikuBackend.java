@@ -24,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.stream.Stream;
 
 /**
@@ -118,8 +119,20 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
         Thread.ofVirtual().name("codezaiku-task-" + taskId).start(() -> {
             ActivityGauge.codingTaskStarted();
             try {
+                // One lane per spare slot of the brain this job thinks on: a second job
+                // waits here rather than take the companions' last slot (2026-10-23).
+                var laneWait = WorkshopLane.enter(config.driveUrl(), taskId.toString(),
+                    spec != null ? spec.companionDid() : null);
+                var runStarted = System.currentTimeMillis();
+                // The lane is held through the repair rounds below as well: a repair is another
+                // conversation with the same brain. It is given back in the finally at the end.
                 var result = runner.run(args, env, workdir, config.maxWallclock(), spec != null ? spec.companionDid() : null);
-                long durationMs = System.currentTimeMillis() - started;
+                noteAlive();   // a job that ran is the surest health probe there is
+                long durationMs = System.currentTimeMillis() - runStarted;
+                if (laneWait.toSeconds() >= 1) {
+                    log.info("[codezaiku] task {} waited {} s for a workshop lane before its {} min cap began",
+                        taskId, laneWait.toSeconds(), config.maxWallclock().toMinutes());
+                }
 
                 if (result.timedOut()) {
                     future.complete(new TaskResult(taskId, NAME, TaskStatus.TIMED_OUT,
@@ -220,6 +233,7 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
                 future.complete(failed(taskId,
                     "CodeZaiku subprocess error: " + e.getMessage(), started));
             } finally {
+                WorkshopLane.leave(taskId.toString());
                 ActivityGauge.codingTaskFinished();
             }
         });
@@ -268,22 +282,70 @@ public final class CodeZaikuBackend implements CodingTaskBackend {
             .map(s -> (CodingArtifact) s);
     }
 
+    /**
+     * What the last probe found, and of which executable. The body map asks every two
+     * minutes; CodeZaiku is a JVM, and answering {@code --version} starts one each time.
+     * A healthy answer is kept for an hour, an unhealthy one for five minutes, and
+     * either is dropped the moment the executable changes on disk, so an update or a
+     * fix is noticed at the next ask. A job that actually ran refreshes it for free.
+     */
+    private record HealthMemo(boolean alive, long atMillis, String executableStamp) {}
+
+    static final Duration HEALTH_MEMO_ALIVE = Duration.ofHours(1);
+    static final Duration HEALTH_MEMO_DOWN = Duration.ofMinutes(5);
+    private volatile HealthMemo healthMemo;
+    /** Test seam: the clock the memo ages by. */
+    volatile LongSupplier clock = System::currentTimeMillis;
+
     @Override
     public CompletableFuture<Boolean> healthCheck() {
+        if (!config.enabled()) return CompletableFuture.completedFuture(false);
+        var memo = healthMemo;
+        var stamp = executableStamp();
+        if (memo != null && memo.executableStamp().equals(stamp)) {
+            long age = clock.getAsLong() - memo.atMillis();
+            var keep = memo.alive() ? HEALTH_MEMO_ALIVE : HEALTH_MEMO_DOWN;
+            if (age >= 0 && age < keep.toMillis()) {
+                return CompletableFuture.completedFuture(memo.alive());
+            }
+        }
         return CompletableFuture.supplyAsync(() -> {
-            if (!config.enabled()) return false;
+            boolean alive;
             try {
                 var result = runner.run(
                     List.of(config.executablePath(), "--version"),
                     Map.of(), null, HEALTH_PROBE_TIMEOUT);
-                return !result.timedOut() && result.exitCode() == 0;
+                alive = !result.timedOut() && result.exitCode() == 0;
             } catch (Exception e) {
                 log.info("CodeZaiku binary not found at '{}' ({})",
                     config.executablePath(), e.getMessage());
-                return false;
+                alive = false;
             }
+            healthMemo = new HealthMemo(alive, clock.getAsLong(), stamp);
+            return alive;
         });
     }
+
+    /** A job ran: the hand is there. */
+    private void noteAlive() {
+        healthMemo = new HealthMemo(true, clock.getAsLong(), executableStamp());
+    }
+
+    /** Size and modification time of the executable, or its name when it is not a file we can see. */
+    private String executableStamp() {
+        try {
+            var path = Path.of(config.executablePath());
+            if (Files.isRegularFile(path)) {
+                return Files.size(path) + "@" + Files.getLastModifiedTime(path).toMillis();
+            }
+        } catch (Exception ignored) {
+            // a bare command name, or unreadable: the name is the stamp
+        }
+        return String.valueOf(config.executablePath());
+    }
+
+    /** Tests: forget the last probe. */
+    void forgetHealthForTests() { healthMemo = null; }
 
     /** Local — no per-token billing; cost policy never gates it. */
     @Override

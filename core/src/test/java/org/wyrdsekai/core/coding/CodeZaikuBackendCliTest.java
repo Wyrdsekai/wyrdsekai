@@ -5,11 +5,14 @@ import org.wyrdsekai.core.coding.GooseBackend.ProcessResult;
 import org.wyrdsekai.core.coding.GooseBackend.ProcessRunner;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -162,5 +165,54 @@ class CodeZaikuBackendCliTest {
 
         backend.submitTask(s).get(5, TimeUnit.SECONDS);
         assertThat(seenArgs.get().get(3)).isEqualTo("ls -la");
+    }
+
+    @Test
+    void the_hand_is_probed_once_an_hour_not_once_a_pulse() throws Exception {
+        // The body map asks every two minutes; answering `--version` starts a JVM each time.
+        var probes = new AtomicInteger();
+        ProcessRunner runner = (args, env, workdir, timeout) -> {
+            if (args.contains("--version")) probes.incrementAndGet();
+            return new ProcessResult(0, RESULT_JSON, "", false);
+        };
+        var backend = new CodeZaikuBackend(config(), null, runner);
+        var now = new AtomicLong(1_000_000L);
+        backend.clock = now::get;
+
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isTrue();
+        now.addAndGet(Duration.ofMinutes(30).toMillis());
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(probes.get()).as("one probe serves the hour").isEqualTo(1);
+
+        now.addAndGet(Duration.ofMinutes(31).toMillis());
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(probes.get()).as("the hour is up: asked again").isEqualTo(2);
+
+        // A job that ran is the surest probe: it refreshes the memo for free.
+        now.addAndGet(Duration.ofMinutes(61).toMillis());
+        backend.submitTask(spec(null)).get(5, TimeUnit.SECONDS);
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(probes.get()).as("no probe after a job just ran").isEqualTo(2);
+    }
+
+    @Test
+    void a_hand_that_is_down_is_asked_again_sooner() throws Exception {
+        var probes = new AtomicInteger();
+        ProcessRunner missing = (args, env, workdir, timeout) -> {
+            probes.incrementAndGet();
+            throw new IOException("no such file");
+        };
+        var backend = new CodeZaikuBackend(config(), null, missing);
+        var now = new AtomicLong(5_000_000L);
+        backend.clock = now::get;
+
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isFalse();
+        now.addAndGet(Duration.ofMinutes(4).toMillis());
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isFalse();
+        assertThat(probes.get()).isEqualTo(1);
+        now.addAndGet(Duration.ofMinutes(2).toMillis());
+        assertThat(backend.healthCheck().get(5, TimeUnit.SECONDS)).isFalse();
+        assertThat(probes.get()).as("five minutes: a fix would be noticed by now").isEqualTo(2);
     }
 }

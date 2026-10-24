@@ -4,6 +4,23 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.11] — 2026-10-24
+
+### Fixed
+
+- **A nightly routine that keeps the companion sharp never worked.** It had failed every night since
+  September 22 and paused itself. It runs now, and the companion uses the result within a minute.
+- **A paused routine stayed paused after an update.** An update now gives it a fresh start.
+- **Two workshop jobs at once could crowd the companions out of the brain.** A second job now waits
+  its turn, and the companion says whose job she is waiting behind. If the brain is full for a moment,
+  the node tries again instead of giving up.
+- **A failed question was kept as if it were an answer.** When the brain did not answer in time, the
+  failure was saved as something the companion had found, and she said it out loud. A failure is now
+  just a failure: noted, not kept, not spoken.
+- **The coding helper was checked by starting it every two minutes.** It is now checked once an hour.
+- **A recovery key could show nine words instead of eight.** Fixed.
+- **Two routines looked for a file by the wrong name.** Fixed.
+
 ## [0.5.10] — 2026-10-23
 
 ### Fixed

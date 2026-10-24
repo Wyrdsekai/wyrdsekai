@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.recipe;
 
 import org.junit.jupiter.api.Test;
+import org.wyrdsekai.core.agent.classifier.ClassifierArm;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -407,5 +408,75 @@ class RecipeRunnerTest {
         assertEquals(Boolean.FALSE, run.context().get("overrouting_probe_passes"));
         assertFalse(cmds.ran.contains("cp new prod"),
             "deploy must NOT run when overrouting probe fails — welfare floor");
+    }
+
+    // ── what the node tells a recipe about itself (2026-10-24) ──────────────
+
+    @Test void the_node_tells_a_recipe_its_own_java_and_class_path() {
+        // The retrain recipe's probe step used to read a Gradle-written dev file
+        // for its class path; an installed node has no such file. The runtime
+        // now seeds the node's own java and class path into every run.
+        String yaml = """
+            recipe: t-runtime-facts
+            steps:
+              - { id: probe, kind: SHELL, command: "{{runtime_java}} -cp {{runtime_classpath}} Probe" }
+            """;
+        var cmds = new StubCommands(c -> ok(""));
+        var run = new RecipeRunner(cmds).run(RecipeParser.parseManifest(yaml), Map.of());
+        assertEquals(RecipeRunner.Status.SUCCESS, run.status());
+        assertEquals(RecipeRuntimeFacts.javaBinary() + " -cp "
+                + System.getProperty("java.class.path") + " Probe", cmds.ran.get(0));
+        assertFalse(cmds.ran.get(0).contains("{{"), "every fact must resolve");
+    }
+
+    @Test void a_param_default_may_name_her_folder_and_a_caller_still_wins() {
+        String yaml = """
+            recipe: t-fact-default
+            params: { deploy_dir: { type: string, default: "{{agent_classifier_dir}}" } }
+            steps:
+              - { id: deploy, kind: SHELL, command: "cp new {{deploy_dir}}" }
+            """;
+        var cmds = new StubCommands(c -> ok(""));
+        var manifest = RecipeParser.parseManifest(yaml);
+        var hers = new RecipeRunner(cmds).run(manifest, Map.of("agent_did", "did:key:z6Mktest"));
+        assertEquals(RecipeRunner.Status.SUCCESS, hers.status(), hers.message());
+        assertEquals("cp new " + ClassifierArm.perAgentDirFor("did:key:z6Mktest"), cmds.ran.get(0));
+
+        new RecipeRunner(cmds).run(manifest,
+                Map.of("agent_did", "did:key:z6Mktest", "deploy_dir", "/elsewhere"));
+        assertEquals("cp new /elsewhere", cmds.ran.get(1), "an explicit value is taken as given");
+    }
+
+    @Test void a_default_that_needs_a_fact_this_run_lacks_is_a_missing_param_not_a_shell_error() {
+        String yaml = """
+            recipe: t-fact-missing
+            params: { deploy_dir: { type: string, default: "{{agent_classifier_dir}}" } }
+            steps:
+              - { id: deploy, kind: SHELL, command: "cp new {{deploy_dir}}" }
+            """;
+        var cmds = new StubCommands(c -> ok(""));
+        var run = new RecipeRunner(cmds).run(RecipeParser.parseManifest(yaml), Map.of());
+        assertEquals(RecipeRunner.Status.ERROR, run.status());
+        assertTrue(run.message().contains("deploy_dir"), run.message());
+        assertTrue(run.message().contains("agent_classifier_dir"), run.message());
+        assertTrue(cmds.ran.isEmpty(), "no step may run against a literal {{…}} path");
+    }
+
+    @Test void a_default_that_names_another_param_resolves_once_the_callers_value_is_in() {
+        // Two bundled recipes do this (compact-library-index, extract-steering-vector). Before
+        // 2026-10-24 the inner name was never filled: the command ran with the literal
+        // "{{collection}}" in its path, and the dry-run tests, which stub by step id, never saw it.
+        String yaml = """
+            recipe: t-default-names-a-param
+            params:
+              collection: { type: string, required: true }
+              probe_path: { type: string, default: "data/library/probes/{{collection}}.jsonl" }
+            steps:
+              - { id: probe, kind: SHELL, command: "probe {{probe_path}}" }
+            """;
+        var cmds = new StubCommands(c -> ok(""));
+        var run = new RecipeRunner(cmds).run(RecipeParser.parseManifest(yaml), Map.of("collection", "library"));
+        assertEquals(RecipeRunner.Status.SUCCESS, run.status(), run.message());
+        assertEquals("probe data/library/probes/library.jsonl", cmds.ran.get(0));
     }
 }

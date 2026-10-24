@@ -137,6 +137,7 @@ public final class SchemaInitializer {
         runMigration(conn, 20, "made_things", () -> MadeThingsStore.ensure(conn));
         runMigration(conn, 21, "made_things_archive", () -> MadeThingsStore.ensureArchive(conn));
         runMigration(conn, 22, "reading_bookmarks", () -> org.wyrdsekai.core.library.ReadingLedger.ensure(conn));
+        runMigration(conn, 23, "recipe_queue_node_version", () -> migrateRecipeQueueNodeVersion(conn));
 
         // Retry deferred indexes after migrations
         for (var statement : cleaned.split(";")) {
@@ -161,7 +162,7 @@ public final class SchemaInitializer {
      * {@link DataVersion} so an OLDER binary opening a NEWER data dir can refuse
      * instead of silently mangling tables it doesn't understand. Append-only.
      */
-    public static final int SCHEMA_VERSION = 22;
+    public static final int SCHEMA_VERSION = 23;
 
     @FunctionalInterface
     private interface Migration { void run() throws SQLException; }
@@ -241,6 +242,24 @@ public final class SchemaInitializer {
             stmt.execute("ALTER TABLE households ADD COLUMN x25519_public_key BLOB");
         }
         log.info("households x25519_public_key column added");
+    }
+
+    /**
+     * Migration — {@code node_version} on recipe_queue: the build that wrote each
+     * finished row. The deploy-ceiling failure streak counts only rows written by the
+     * running build, so an update that removes a failure's cause lets the recipe try
+     * again instead of waiting out a week-long cooldown earned under the old build.
+     * Rows from before the column are null and end the streak. {@code SqlRecipeQueue}
+     * adds the same column lazily; this runs it at boot, before any reader asks.
+     */
+    private static void migrateRecipeQueueNodeVersion(Connection conn) throws SQLException {
+        if (!hasTable(conn, "recipe_queue")) return;
+        if (hasColumn(conn, "recipe_queue", "node_version")) return;
+
+        log.info("Migrating recipe_queue: adding node_version column");
+        try (var stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE recipe_queue ADD COLUMN node_version TEXT");
+        }
     }
 
     /**

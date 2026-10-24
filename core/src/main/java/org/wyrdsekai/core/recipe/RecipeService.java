@@ -152,7 +152,11 @@ public final class RecipeService {
 
     public StartedRun run(String name, Map<String, Object> params) {
         RecipeManifest m = loadManifest(name);
-        RecipeRunner.RecipeRun result = runner.run(m, effectiveParams(m.recipe(), params));
+        var eff = new LinkedHashMap<String, Object>(effectiveParams(m.recipe(), params));
+        // A run bound to a companion carries her DID so the runner can seed her
+        // facts (her classifier folder); a caller's own value still wins.
+        if (agentDid != null) eff.putIfAbsent(RecipeRuntimeFacts.AGENT_DID, agentDid);
+        RecipeRunner.RecipeRun result = runner.run(m, eff);
         String runId = UUID.randomUUID().toString();
         runs.put(runId, result);
         // P6 — feed the sleep-pass Forge: a completed run becomes a DEXTERITY fragment at next

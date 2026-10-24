@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.common.model.AppVersion;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -115,7 +116,7 @@ public final class SqlRecipeQueue {
         }
         var sql = "UPDATE recipe_queue "
             + "SET status = ?, completed_at = ?, cadence_tier = ?, "
-            + "    consecutive_successes = ?, run_id = ?, message = ? "
+            + "    consecutive_successes = ?, run_id = ?, message = ?, node_version = ? "
             + "WHERE id = ?";
         try (var conn = DriverManager.getConnection(jdbcUrl)) {
             ensureMigrated(conn);
@@ -128,7 +129,8 @@ public final class SqlRecipeQueue {
                 else st.setString(5, runId);
                 if (message == null) st.setNull(6, Types.VARCHAR);
                 else st.setString(6, message);
-                st.setString(7, id);
+                st.setString(7, nodeVersion());
+                st.setString(8, id);
                 return st.executeUpdate() > 0;
             }
         } catch (SQLException e) {
@@ -341,6 +343,16 @@ public final class SqlRecipeQueue {
      * {@code sqlite-create-schema.sql} entry, so a fresh install via
      * the schema file and an upgrade-in-place via this method converge.
      */
+    /**
+     * The build this node runs, as written on every terminal row. The failure
+     * streak behind the deploy ceiling counts only rows written by the build
+     * that is running: a cause fixed by an update is not a cause any more, so
+     * the update gives the recipe a fresh count instead of a week's wait.
+     */
+    public static String nodeVersion() {
+        return AppVersion.get().toString();
+    }
+
     void ensureMigrated(Connection conn) throws SQLException {
         if (migrated) return;
         if (!hasTable(conn, "recipe_queue")) {
@@ -361,7 +373,8 @@ public final class SqlRecipeQueue {
                       cadence_tier           TEXT NOT NULL DEFAULT 'WARMUP',
                       consecutive_successes  INTEGER NOT NULL DEFAULT 0,
                       run_id                 TEXT,
-                      message                TEXT
+                      message                TEXT,
+                      node_version           TEXT
                     )
                     """);
                 stmt.execute("CREATE INDEX IF NOT EXISTS idx_recipe_queue_status_enqueued"
@@ -370,6 +383,12 @@ public final class SqlRecipeQueue {
                     + " ON recipe_queue(recipe_id, agent_did)");
                 stmt.execute("CREATE INDEX IF NOT EXISTS idx_recipe_queue_agent"
                     + " ON recipe_queue(agent_did)");
+            }
+        }
+        if (!hasColumn(conn, "recipe_queue", "node_version")) {
+            log.info("Adding recipe_queue.node_version (migration)");
+            try (var stmt = conn.createStatement()) {
+                stmt.execute("ALTER TABLE recipe_queue ADD COLUMN node_version TEXT");
             }
         }
         retireNeverRanFailures(conn);
@@ -407,6 +426,12 @@ public final class SqlRecipeQueue {
 
     private static boolean hasTable(Connection conn, String table) throws SQLException {
         try (var rs = conn.getMetaData().getTables(null, null, table, null)) {
+            return rs.next();
+        }
+    }
+
+    private static boolean hasColumn(Connection conn, String table, String column) throws SQLException {
+        try (var rs = conn.getMetaData().getColumns(null, null, table, column)) {
             return rs.next();
         }
     }

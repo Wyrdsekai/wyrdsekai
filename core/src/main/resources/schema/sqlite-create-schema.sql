@@ -1091,7 +1091,8 @@ CREATE TABLE IF NOT EXISTS recipe_queue(
   cadence_tier           TEXT NOT NULL DEFAULT 'WARMUP', -- WARMUP | SETTLING | MATURE
   consecutive_successes  INTEGER NOT NULL DEFAULT 0,
   run_id                 TEXT,                         -- RecipeRunner.runId post-dispatch
-  message                TEXT                          -- terminal-state detail / failure mode
+  message                TEXT,                         -- terminal-state detail / failure mode
+  node_version           TEXT                           -- build that wrote the terminal row (the failure streak counts one build)
 );
 
 CREATE INDEX IF NOT EXISTS idx_recipe_queue_status_enqueued

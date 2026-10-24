@@ -11,6 +11,7 @@ import org.wyrdsekai.core.coding.CodingTaskBackend;
 import org.wyrdsekai.core.coding.GooseBackend;
 import org.wyrdsekai.core.coding.GooseRuntimeConfig;
 import org.wyrdsekai.core.recipe.CodingBackendDispatcher;
+import org.wyrdsekai.core.agent.classifier.ProbeHeadMain;
 import org.wyrdsekai.core.recipe.ProcessCommandRunner;
 import org.wyrdsekai.core.recipe.RecipeForgeIngester;
 import org.wyrdsekai.core.recipe.RecipeRunLog;

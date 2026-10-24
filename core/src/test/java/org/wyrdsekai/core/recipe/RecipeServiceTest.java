@@ -2,10 +2,12 @@ package org.wyrdsekai.core.recipe;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.wyrdsekai.core.agent.classifier.ClassifierArm;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -76,5 +78,24 @@ class RecipeServiceTest {
         var svc = new RecipeService(dir, new RecipeRunner(okRunner()));
         assertThrows(RecipeValidationException.class, () -> svc.inspect("../secrets"));
         assertThrows(RecipeValidationException.class, () -> svc.run("a/b", Map.of()));
+    }
+
+    @Test void a_run_bound_to_a_companion_knows_her_classifier_folder(@TempDir Path dir) throws IOException {
+        // The scheduler binds a RecipeService to the companion a run belongs to;
+        // the run then deploys into HER folder, the one her ClassifierArm reads.
+        Files.writeString(dir.resolve("hers.recipe.yaml"), """
+            recipe: hers
+            params: { deploy_dir: { type: string, default: "{{agent_classifier_dir}}" } }
+            steps:
+              - { id: deploy, kind: SHELL, command: "cp new {{deploy_dir}}" }
+            """);
+        var ran = new ArrayList<String>();
+        CommandRunner recording = command -> { ran.add(command); return new CommandRunner.Result(0, "", ""); };
+        var did = "did:key:z6MkserviceTest";
+        var svc = new RecipeService(dir, new RecipeRunner(recording), did);
+        var started = svc.run("hers", Map.of());
+        assertEquals(RecipeRunner.Status.SUCCESS, started.run().status(), started.run().message());
+        assertEquals("cp new " + ClassifierArm.perAgentDirFor(did), ran.get(0));
+        assertEquals(did, started.run().context().get("agent_did"));
     }
 }

@@ -358,4 +358,14 @@ class ContextOverflowCompactionTest {
         assertTrue(shape.startsWith("2 message(s) [system:"), shape);
         assertTrue(shape.contains(", user:") && shape.endsWith("tools=0"), shape);
     }
+
+    @Test
+    @DisplayName("llama-server's numberless refusal (a full shared pool) is an overflow with no window in it")
+    void aNumberlessRefusalIsAnOverflow() {
+        var pool = "Chat completion failed: HTTP 500 — {\"error\":{\"code\":500,"
+            + "\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}}";
+        assertTrue(InferenceRouter.isContextOverflowError(pool));
+        assertEquals(0, InferenceRouter.parseAvailableContext(pool),
+            "no number to learn a window from — the router falls back to one slot's share");
+    }
 }

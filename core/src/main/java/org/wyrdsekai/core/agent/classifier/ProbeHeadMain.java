@@ -1,7 +1,6 @@
-package org.wyrdsekai.cli;
+package org.wyrdsekai.core.agent.classifier;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.wyrdsekai.core.agent.classifier.ClassifierArm;
 import org.wyrdsekai.core.search.EmbeddingService;
 
 import java.io.InputStream;
@@ -38,6 +37,15 @@ import java.util.Map;
  * is REJECTED if non-empty: this probe's whole point is the committed
  * runtime encoder; probing an arbitrary encoder would reintroduce the
  * wrong-space bug under a runtime-probe banner.
+ *
+ * <p>Lives in {@code core} (moved from the CLI module 2026-10-24) so that an
+ * installed node can run it: the retrain recipe's {@code regression-probe}
+ * step starts it with the node's own java and class path
+ * ({@code {{runtime_java}}} / {@code {{runtime_classpath}}}, seeded by
+ * {@link org.wyrdsekai.core.recipe.RecipeRuntimeFacts}). The CLI module is
+ * not on the node's class path, and the dev-only
+ * {@code cli/build/probe-classpath.txt} does not exist on an install, so the
+ * step failed on every household node from 2026-09-22 until this move.
  */
 public final class ProbeHeadMain {
 
@@ -49,7 +57,7 @@ public final class ProbeHeadMain {
     /**
      * Classify every anchor for {@code head} through the candidate at
      * {@code onnx}/{@code labels} using the production inference path.
-     * Also used in-process by {@link RecipeBakeMain} for the baseline side
+     * Also used in-process by the release bake for the baseline side
      * of the comparison — both sides measured in the same space.
      */
     public static ProbeResult probe(String head, Path onnx, Path labels)

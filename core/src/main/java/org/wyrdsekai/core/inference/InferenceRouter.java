@@ -1420,6 +1420,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
 
     private Behavior<Command> onInferResult(InferResult result) {
         loadingRetries.remove(result.requestId());
+        poolWaits.remove(result.requestId());
         onTheWire.remove(result.requestId());
         cancelled.remove(result.requestId());
         var usage = result.usage();
@@ -1514,6 +1515,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         // backend is not blamed for a request nobody waited for.
         if (cancelled.remove(failure.requestId())) {
             loadingRetries.remove(failure.requestId());
+            poolWaits.remove(failure.requestId());
             recordLatency(failure.requestId(), failure.failedBackend(), false, 0, 0);
             endRequest();
             failure.replyTo().tell(new InferError(failure.requestId(), "cancelled by its caller"));
@@ -1554,13 +1556,19 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         // layer is WORTH in tokens is not — a 16931-token prompt compacted by an
         // estimated 2083 tokens came back at 16420, 36 over, and the single-shot
         // rule failed it fast (household node, 2026-09-07 18:34).
-        if (isContextOverflowError(failure.error())
-                && failure.compactRounds() < MAX_COMPACT_ROUNDS
-                && failure.chatReq() != null) {
+        if (isContextOverflowError(failure.error()) && failure.chatReq() != null) {
             var backend = findBackendByName(failure.failedBackend());
             var window = parseAvailableContext(failure.error());
             if (window > 0) BackendWindows.learned(failure.failedBackend(), window, "an overflow error");
-            if (backend != null && window > 0) {
+            // No number in the error: llama-server's "Context size has been exceeded." (HTTP 500)
+            // on a server whose slots share one pool — the prompt was not too big for the window,
+            // the pool was full of the other slots' work (two workshop jobs held both slots of the
+            // household brain while her own time and an item asked, 2026-10-23). The share one
+            // slot can count on is the target; when nothing more can be shed, the pool is waited
+            // for instead of the turn being lost.
+            boolean poolFull = window <= 0;
+            if (poolFull) window = BackendWindows.shareOf(failure.failedBackend());
+            if (backend != null && window > 0 && failure.compactRounds() < MAX_COMPACT_ROUNDS) {
                 int round = failure.compactRounds() + 1;
                 var compacted = compactToFit(failure.chatReq(), window,
                     parseRequestTokens(failure.error()), compactMarginMultiplier(round));
@@ -1575,9 +1583,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                         describeShape(failure.chatReq()), failure.requestId());
                 }
                 if (compacted != null) {
-                    log.warn("Context overflow on '{}' ({}) — compacting prompt to fit {} tokens "
+                    log.warn("Context overflow on '{}' ({}) — compacting prompt to fit {} tokens{} "
                             + "and retrying (round {} of {}, requestId={}).",
                         failure.failedBackend(), summarize(failure.error()), window,
+                        poolFull ? " (one slot's share of a full pool)" : "",
                         round, MAX_COMPACT_ROUNDS, failure.requestId());
                     healthStatus.put(failure.failedBackend(), true);  // backend is fine; the prompt wasn't
                     dispatchWithRetry(backend, compacted, failure.requestId(),
@@ -1585,6 +1594,22 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
                         failure.fallbackAttempted());
                     return this;
                 }
+            }
+            if (poolFull && backend != null) {
+                int waits = poolWaits.merge(failure.requestId(), 1, Integer::sum);
+                if (waits <= POOL_WAITS_MAX) {
+                    if (waits == 1) {
+                        log.info("Backend '{}' has no room in its context pool for request {}; it waits and asks again (every {} s, up to {} min)",
+                            failure.failedBackend(), failure.requestId(), POOL_WAIT.toSeconds(),
+                            POOL_WAIT.multipliedBy(POOL_WAITS_MAX).toMinutes());
+                    }
+                    healthStatus.put(failure.failedBackend(), true);   // a full pool is not an unhealthy backend
+                    timers.startSingleTimer("pool-wait-" + failure.requestId(), new RetryAfterLoading(failure), POOL_WAIT);
+                    return this;
+                }
+                poolWaits.remove(failure.requestId());
+                log.warn("Backend '{}' had no room in its context pool for request {} for {} min — giving up on this request",
+                    failure.failedBackend(), failure.requestId(), POOL_WAIT.multipliedBy(POOL_WAITS_MAX).toMinutes());
             }
         }
 
@@ -1710,6 +1735,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
     static final Duration LOADING_RETRY_DELAY = Duration.ofSeconds(10);
     static final int LOADING_RETRIES_MAX = 30;
     private final Map<String, Integer> loadingRetries = new HashMap<>();
+    /** A full context pool: asked again every {@link #POOL_WAIT}, up to {@link #POOL_WAITS_MAX} times. */
+    static volatile Duration POOL_WAIT = Duration.ofSeconds(10);   // volatile: tests shorten it
+    static final int POOL_WAITS_MAX = 18;
+    private final Map<String, Integer> poolWaits = new HashMap<>();
     private final TimerScheduler<Command> timers;
 
     /** A request held while the model server loaded, asked again. */
@@ -1720,6 +1749,7 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         var backend = findBackendByName(f.failedBackend());
         if (backend == null) {
             loadingRetries.remove(f.requestId());
+            poolWaits.remove(f.requestId());
             f.replyTo().tell(new InferError(f.requestId(), f.error()));
             return this;
         }
@@ -2353,9 +2383,9 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         if (url == null || !url.startsWith("http")) return;
         switch (backend) {
             case InferenceBackend.LlamaServer b ->
-                BackendWindows.learned(b.name(), BackendWindows.windowFromLlamaProps(InferenceConfig.readBody(url + "/props", 1500)), "/props");
+                BackendWindows.learnedFromLlamaProps(b.name(), url, InferenceConfig.readBody(url + "/props", 1500), "/props");
             case InferenceBackend.Mlx b ->
-                BackendWindows.learned(b.name(), BackendWindows.windowFromLlamaProps(InferenceConfig.readBody(url + "/props", 1500)), "/props");
+                BackendWindows.learnedFromLlamaProps(b.name(), url, InferenceConfig.readBody(url + "/props", 1500), "/props");
             case InferenceBackend.Ollama b -> {
                 int w = BackendWindows.windowFromOllamaPs(InferenceConfig.readBody(url + "/api/ps", 1500));
                 if (w <= 0 && !b.models().isEmpty()) {
