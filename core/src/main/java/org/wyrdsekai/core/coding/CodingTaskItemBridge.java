@@ -67,11 +67,14 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
      * input. Both false/empty means there was nothing to judge (no .js, an
      * unreadable workspace): the legacy router path, not a known-broken item.
      */
-    public record RegistrationOutcome(boolean registered, List<String> problems) {
+    public record RegistrationOutcome(boolean registered, List<String> problems, boolean keptPrevious) {
+        public RegistrationOutcome(boolean registered, List<String> problems) { this(registered, problems, false); }
         static final RegistrationOutcome NOTHING_TO_JUDGE =
             new RegistrationOutcome(false, List.of());
         static RegistrationOutcome ok() { return new RegistrationOutcome(true, List.of()); }
-        boolean knownBroken() { return !registered && !problems.isEmpty(); }
+        /** The rebuilt file did less than the one in use: nothing new is placed, the old one stays. */
+        static RegistrationOutcome keptPrevious(String why) { return new RegistrationOutcome(false, List.of(why), true); }
+        boolean knownBroken() { return !registered && !problems.isEmpty() && !keptPrevious; }
     }
 
     /**
@@ -140,10 +143,16 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         var primary = toRoomObject(artifact);
         if (primary != null) {
             var outcome = stampRegistry(primary, artifact, zb.roomId());
-            if (outcome != null && outcome.knownBroken()) {
+            if (outcome != null && outcome.keptPrevious()) {
+                // The one in use stays and is already in the world; a second object for the
+                // lesser copy would only be a thing to trip over.
+                log.info("CodingTaskItemBridge: task {} rebuilt a tool that did less than the one in use — nothing new placed ({})",
+                    artifact.taskId(), outcome.problems());
+                primary = null;
+            } else if (outcome != null && outcome.knownBroken()) {
                 primary = markUnfinished(primary, outcome.problems());
             }
-            roomObjects.add(primary);
+            if (primary != null) roomObjects.add(primary);
         }
 
         // Best-effort: pull any sibling artifacts the adapter knows about
@@ -337,6 +346,22 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                     case PASS -> log.debug(
                         "CodingTaskItemBridge: invoke-once smoke PASS for {}", p);
                 }
+                // A rebuild of a tool she already has must not hollow it: lower version, or
+                // fewer abilities and nothing kept where the one in use kept notes, and the
+                // one in use stays. The new file is kept beside it as a candidate, and she is
+                // told that the old one stands (household node, 2026-10-25).
+                var keptDir = ScriptedItemLoader.householdItemsDir();
+                var inUse = keptDir == null || manifestName == null ? null : keptDir.resolve(manifestName + ".js");
+                if (inUse != null && Files.isRegularFile(inUse)) {
+                    var why = ItemRevision.doesLess(Files.readString(inUse), script);
+                    if (why.isPresent()) {
+                        ItemRevision.keepCandidate(keptDir, manifestName, p);
+                        log.warn("CodingTaskItemBridge: the rebuilt '{}' from {} does less than the one in use ({}) — the one in use stays",
+                            manifestName, p, why.get());
+                        ItemContractRepair.noteKeptPrevious(String.valueOf(src.taskId()), manifestName, why.get());
+                        return RegistrationOutcome.keptPrevious(why.get());
+                    }
+                }
             } catch (ItemManifestValidator.ManifestEmbodimentMissingException ex) {
                 var denial = DynamicFormValidator.denialFrom(
                     ex, p.getFileName().toString());
@@ -370,6 +395,8 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 log.info("CodingTaskItemBridge: registered scripted item '{}' "
                     + "from {} (placed as RoomObject '{}')",
                     scriptedId, p, roomObject.id());
+                // The verdict she hears comes from here, not from the repair loop's last word.
+                ItemContractRepair.notePlaced(String.valueOf(src.taskId()), scriptedId);
                 // Keep it. Registration is in-memory and the script lives in the task's
                 // scratch workspace, which nothing scans at boot — so an accepted item
                 // worked until the next restart and then quietly stopped existing, while
@@ -419,6 +446,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             problems = List.of("the item passed its pre-checks but the loader "
                 + "refused it — see the server log");
         }
+        ItemContractRepair.noteRefused(String.valueOf(src.taskId()), problems.getFirst());
         return new RegistrationOutcome(false, problems);
     }
 

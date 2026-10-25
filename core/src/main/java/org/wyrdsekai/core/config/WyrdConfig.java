@@ -430,6 +430,19 @@ public final class WyrdConfig {
     /** {@code WYRDSEKAI_VAULT_DRILL_DAYS} — how often the newest copy is restored into scratch and checked. */
     public int vaultDrillDays() { return intOr("WYRDSEKAI_VAULT_DRILL_DAYS", "vault.drill_days", 30); }
 
+    /** {@code WYRDSEKAI_VAULT_RECORD_DRILL_DAYS} — how often the record alone (no index) is restored and checked. */
+    public int vaultRecordDrillDays() { return intOr("WYRDSEKAI_VAULT_RECORD_DRILL_DAYS", "vault.record_drill_days", 7); }
+
+    /**
+     * {@code WYRDSEKAI_VAULT_FLOOR_GB} — the least free space the vault leaves on its disk. Below it,
+     * older copies give up their search index first and, if that is not enough, a pass copies the
+     * record alone. {@code 0} turns the floor off.
+     */
+    public int vaultFloorGb() {
+        var v = resolve("WYRDSEKAI_VAULT_FLOOR_GB", "vault.floor_gb", () -> "25");
+        try { return Math.max(0, Integer.parseInt(v.trim())); } catch (Exception e) { return 25; }
+    }
+
     private int intOr(String env, String key, int dflt) {
         var v = resolve(env, key, () -> null);
         if (v == null || v.isBlank()) return dflt;

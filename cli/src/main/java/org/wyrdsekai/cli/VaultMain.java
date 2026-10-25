@@ -3,9 +3,12 @@ package org.wyrdsekai.cli;
 import org.wyrdsekai.common.util.Json;
 import org.wyrdsekai.core.vault.Vault;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 
 /**
@@ -16,6 +19,7 @@ import java.util.LinkedHashMap;
  *   list    --vault DIR
  *   restore --vault DIR --to DIR [ID|latest]      rebuild every file of a copy under a directory
  *   stage   --vault DIR --data DIR [ID|latest]    rebuild world.db and stage it for the next boot
+ *   forget  --vault DIR PATH --yes                remove a store nothing reads (never the vault itself)
  * </pre>
  *
  * Staging reuses the maintenance service's marker: the server applies it before opening the
@@ -28,6 +32,7 @@ public final class VaultMain {
     public static void main(String[] args) throws Exception {
         if (args.length == 0) { usage(); System.exit(64); }
         String vaultDir = null, to = null, data = null, key = null, id = "latest";
+        boolean yes = false;
         var cmd = args[0];
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
@@ -35,10 +40,12 @@ public final class VaultMain {
                 case "--to" -> to = args[++i];
                 case "--data" -> data = args[++i];
                 case "--key" -> key = args[++i];
+                case "--yes" -> yes = true;
                 default -> id = args[i];
             }
         }
         if (vaultDir == null) { System.err.println("--vault DIR is required"); System.exit(64); }
+        if ("forget".equals(cmd)) { System.exit(forget(Path.of(vaultDir), id, yes)); }
         var dataPath = data == null ? Path.of(vaultDir).getParent() : Path.of(data);
         var keyPath = key != null ? Path.of(key) : dataPath.resolve(Vault.KEY_FILE);
         if (!Files.isRegularFile(keyPath) && !"key".equals(cmd)) {
@@ -94,7 +101,7 @@ public final class VaultMain {
                     System.exit(1);
                 }
                 var bak = backups.resolve("vault.world.db." + m.id() + ".bak");
-                Files.move(db, bak, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Files.move(db, bak, StandardCopyOption.REPLACE_EXISTING);
                 // Everything else in the copy is left beside the staged database for the steward.
                 var rest = backups.resolve("vault.files." + m.id());
                 if (Files.exists(rest)) deleteTree(rest);
@@ -112,13 +119,51 @@ public final class VaultMain {
         }
     }
 
-    private static void deleteTree(Path p) throws java.io.IOException {
+    /**
+     * Remove a store nothing reads: an earlier vault at a place the vault was moved off (the
+     * household node carried 145 GB of one for a month, 2026-10-25). Refuses the vault itself,
+     * anything that is not a vault store, and runs only with {@code --yes}. Needs no key.
+     */
+    static int forget(Path vaultDir, String path, boolean yes) {
+        if (path == null || "latest".equals(path)) { System.err.println("forget needs the PATH of the store to remove"); return 64; }
+        var target = Path.of(path).toAbsolutePath().normalize();
+        var active = vaultDir.toAbsolutePath().normalize();
+        try {
+            if (Files.exists(target) && Files.exists(active) && Files.isSameFile(target, active)) {
+                System.err.println(target + " is the vault in use; it is not forgotten."); return 1;
+            }
+        } catch (IOException e) {
+            if (target.equals(active)) { System.err.println(target + " is the vault in use; it is not forgotten."); return 1; }
+        }
+        if (target.equals(active) || active.startsWith(target)) { System.err.println(target + " holds the vault in use; it is not forgotten."); return 1; }
+        if (!Files.isDirectory(target.resolve("manifests")) || !Files.isDirectory(target.resolve("chunks"))) {
+            System.err.println(target + " is not a vault store (no manifests/ and chunks/ in it); nothing removed."); return 1;
+        }
+        long copies = 0, bytes = 0;
+        try (var s = Files.list(target.resolve("manifests"))) {
+            copies = s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).count();
+        } catch (IOException ignored) { /* counted as unknown */ }
+        try (var s = Files.walk(target)) {
+            bytes = s.filter(Files::isRegularFile).mapToLong(f -> { try { return Files.size(f); } catch (IOException e) { return 0; } }).sum();
+        } catch (IOException ignored) { /* counted as unknown */ }
+        System.out.printf("%s: %d copies, %.1f GB, not the vault in use (%s)%n", target, copies, bytes / 1e9, active);
+        if (!yes) { System.out.println("Nothing removed. Run again with --yes to remove it."); return 2; }
+        try {
+            deleteTree(target);
+        } catch (IOException e) {
+            System.err.println("Could not remove " + target + ": " + e.getMessage()); return 1;
+        }
+        System.out.printf("Removed %s (%.1f GB freed).%n", target, bytes / 1e9);
+        return 0;
+    }
+
+    private static void deleteTree(Path p) throws IOException {
         try (var s = Files.walk(p)) {
-            s.sorted(java.util.Comparator.reverseOrder()).forEach(f -> { try { Files.delete(f); } catch (java.io.IOException ignored) { } });
+            s.sorted(Comparator.reverseOrder()).forEach(f -> { try { Files.delete(f); } catch (IOException ignored) { } });
         }
     }
 
     private static void usage() {
-        System.err.println("usage: VaultMain key|list|restore|stage --vault DIR [--to DIR] [--data DIR] [--key FILE] [ID|latest]");
+        System.err.println("usage: VaultMain key|list|restore|stage|forget --vault DIR [--to DIR] [--data DIR] [--key FILE] [--yes] [ID|latest|PATH]");
     }
 }

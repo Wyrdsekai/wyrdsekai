@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.config.WyrdConfig;
 
+import org.wyrdsekai.core.project.Projects;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -88,6 +90,15 @@ public final class PersonalProjectStore {
                 if (p != null && p.id() != null) projects.put(p.id(), p);
             }
             log.info("Loaded {} personal projects for {}", projects.size(), agentDid);
+            // One piece of work, one project: what the matching split before is folded back
+            // here, with every title and entry kept (Projects.fold).
+            var fold = Projects.fold(new ArrayList<>(projects.values()));
+            if (!fold.report().isEmpty()) {
+                projects.clear();
+                for (var p : fold.projects()) projects.put(p.id(), p);
+                for (var line : fold.report()) log.info("Projects of {}: {}", agentDid, line);
+                save();
+            }
         } catch (IOException e) {
             log.warn("Failed to load personal projects for {}: {}",
                 agentDid, e.getMessage());

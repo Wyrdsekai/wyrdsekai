@@ -31,6 +31,8 @@ import org.wyrdsekai.core.coding.BackendRegistry;
 import org.wyrdsekai.core.coding.CodingBackendPreference;
 import org.wyrdsekai.core.coding.CodingItemRegistry;
 import org.wyrdsekai.core.coding.ItemContractRepair;
+import org.wyrdsekai.core.project.Projects;
+import org.wyrdsekai.core.coding.ItemRevision;
 import org.wyrdsekai.core.coding.NightMending;
 import org.wyrdsekai.core.forge.GuardQuestions;
 import org.wyrdsekai.core.forge.HouseholdNight;
@@ -4181,6 +4183,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             })
             .onMessage(ReactDispatch.class, this::onReactDispatch)
             .onMessage(DispatchHandoff.class, this::onDispatchHandoff)
+            .onMessage(DispatchVerdict.class, this::onDispatchVerdict)
             .onMessage(ForceEnergy.class, msg -> {
                 vitality = vitality.withEnergy(msg.energy());
                 log.info("ForceEnergy: '{}' energy set to {}", profile.name(), msg.energy());
@@ -12557,7 +12560,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             case "CREATE" -> {
                 sb.append("Create something the world doesn't have yet. ");
                 sb.append("A new room, a new tool, something that makes the world more interesting. ");
-                sb.append("Use create_room or workbench_submit.");
+                sb.append("Use create_room or workbench_submit. ");
+                sb.append("If what you want is to write something down, that is project_note or journal, not the workshop.");
             }
             case "SOCIALIZE" -> {
                 if (currentSnapshot != null && currentSnapshot.entities() != null) {
@@ -36138,6 +36142,30 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 Map.of("action", "dispatch_task", "outcome", "refused"));
             return;
         }
+        // A notebook entry sent to the workshop is written in the notebook. Six "create a
+        // project_note entry for tonight's check-in" jobs ran in one night on the household
+        // node, each writing a file into a scratch folder nothing reads, and she found her
+        // book empty every time (2026-10-25).
+        var note = Projects.noteFromDispatch(description);
+        if (note.isPresent()) {
+            handleProjectNote(new ActionParser.AgentAction.ProjectNote(null, note.get(), null, false));
+            lastDispatchTaskOutcome = "That was a notebook entry, not a build, so it went to the notebook: "
+                + lastBuiltinOutcome;
+            log.info("Companion '{}' dispatch_task carried a notebook entry — written with project_note instead: {}",
+                profile.name(), truncate(note.get(), 100));
+            return;
+        }
+        // "Fix diffusion_practice-3 …" names a tool she has: that is a revision of it, by any
+        // spelling of its name, and the workshop edits the file instead of building a
+        // neighbour from nothing (2026-10-25).
+        var revisionOf = ItemRevision.revisionNamedIn(description);
+        if (revisionOf.isPresent()) {
+            var instruction = ItemRevision.instructionFor(revisionOf.get(), description);
+            if (instruction.isPresent()) {
+                log.info("Companion '{}' dispatch_task asks to fix '{}' — sent as a revision of it", profile.name(), revisionOf.get());
+                description = instruction.get();
+            }
+        }
         // Same clean-room contract as handleDispatchBunshin: the worker never
         // sees her working memory, so this description is the one channel her
         // context-bleed travels through. On a human turn, the person's exact
@@ -36398,18 +36426,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         var unresolved = result.taskId() == null ? List.<String>of()
             : ItemContractRepair.consumeUnresolved(result.taskId().toString());
-        if (result.status() == TaskStatus.SUCCEEDED && !unresolved.isEmpty()) {
-            // The task ran, but the item did not survive its checks — saying "done"
-            // here is the talks-but-doesn't-do bug in her own mouth (live 2026-08-25:
-            // "The workshop task finished" for a reading tool that crashed on first
-            // use). Say what actually happened.
-            speakProduct(catalog.get("dispatch.spoken.needs_repair", summary,
-                    truncate(unresolved.getFirst(), 140)),
-                Map.of("action", "dispatch_task", "outcome", "needs_repair",
-                    "backend", result.backend()), msg.requester());
+        if (result.status() == TaskStatus.SUCCEEDED && result.taskId() != null) {
+            // What she says about a finished build waits for what the bridge DID with it:
+            // placed and usable, refused, or set beside the one in use. The repair loop's
+            // last word was spoken here before, and on the household node a tool was
+            // registered and placed in the same second she said it "didn't pass its checks"
+            // (2026-10-25). The bridge rides the event stream; a few seconds is enough.
+            timers.startSingleTimer("dispatch-verdict-" + result.taskId(),
+                new DispatchVerdict(result.taskId().toString(), summary, unresolved, result.backend(),
+                    msg.requester(), 1), Duration.ofSeconds(2));
         } else if (result.status() == TaskStatus.SUCCEEDED) {
-            speakProduct(catalog.get("dispatch.spoken.done", summary),
-                Map.of("action", "dispatch_task", "outcome", "succeeded",
+            // No task id to wait on: the old word, at once.
+            speakProduct(catalog.get(unresolved.isEmpty() ? "dispatch.spoken.done" : "dispatch.spoken.needs_repair",
+                    summary, unresolved.isEmpty() ? "" : truncate(unresolved.getFirst(), 140)),
+                Map.of("action", "dispatch_task", "outcome", unresolved.isEmpty() ? "succeeded" : "needs_repair",
                     "backend", result.backend()), msg.requester());
         } else {
             speakProduct(catalog.get("dispatch.spoken.not_done", result.status().name(), summary),
@@ -40124,6 +40154,54 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** Deferred hand-off of a dispatched artifact once the bridge has placed it. */
     private record DispatchHandoff(String taskId, WorldEvent.Said requester, int attempt)
         implements Command {}
+
+    /** What she says of a finished build, once the bridge has said what became of it. */
+    private record DispatchVerdict(String taskId, String summary, List<String> unresolved, String backend,
+                                   WorldEvent.Said requester, int attempt) implements Command {}
+
+    private static final int VERDICT_ATTEMPTS = 5;
+
+    private Behavior<Command> onDispatchVerdict(DispatchVerdict msg) {
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
+        var outcome = ItemContractRepair.outcomeOf(msg.taskId());
+        if (outcome.isEmpty() && msg.attempt() < VERDICT_ATTEMPTS) {
+            timers.startSingleTimer("dispatch-verdict-" + msg.taskId(),
+                new DispatchVerdict(msg.taskId(), msg.summary(), msg.unresolved(), msg.backend(),
+                    msg.requester(), msg.attempt() + 1), Duration.ofSeconds(2));
+            return this;
+        }
+        var facts = Map.of("action", "dispatch_task", "backend", String.valueOf(msg.backend()));
+        if (outcome.isPresent()) {
+            switch (outcome.get().fate()) {
+                case PLACED -> speakProduct(catalog.get("dispatch.spoken.done", msg.summary()),
+                    withOutcome(facts, "succeeded"), msg.requester());
+                case KEPT_PREVIOUS -> speakProduct(catalog.get("dispatch.spoken.kept_previous",
+                        String.valueOf(outcome.get().itemId()), truncate(outcome.get().detail(), 140)),
+                    withOutcome(facts, "kept_previous"), msg.requester());
+                case REFUSED -> speakProduct(catalog.get("dispatch.spoken.needs_repair", msg.summary(),
+                        truncate(outcome.get().detail(), 140)),
+                    withOutcome(facts, "needs_repair"), msg.requester());
+            }
+            log.info("Companion '{}' dispatch verdict for {}: {} {}", profile.name(), msg.taskId(),
+                outcome.get().fate(), truncate(outcome.get().detail(), 120));
+            return this;
+        }
+        // The bridge said nothing (a run that made no files, or placed nothing): the repair
+        // loop's word is what there is.
+        if (!msg.unresolved().isEmpty()) {
+            speakProduct(catalog.get("dispatch.spoken.needs_repair", msg.summary(), truncate(msg.unresolved().getFirst(), 140)),
+                withOutcome(facts, "needs_repair"), msg.requester());
+        } else {
+            speakProduct(catalog.get("dispatch.spoken.done", msg.summary()), withOutcome(facts, "succeeded"), msg.requester());
+        }
+        return this;
+    }
+
+    private static Map<String, String> withOutcome(Map<String, String> facts, String outcome) {
+        var m = new LinkedHashMap<>(facts);
+        m.put("outcome", outcome);
+        return m;
+    }
 
     /**
      * How many times to look for the placed artifact before giving up.

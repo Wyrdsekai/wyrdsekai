@@ -4,6 +4,26 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.12] — 2026-10-25
+
+### Changed
+
+- **The vault stops filling the disk.** Every copy taken before a stop or an update was kept whole forever, and each one held the full search index. Your companions' record in those copies is still kept forever. The search index in them now ages out like everything else, and is rebuilt if a copy is ever restored.
+- **The vault keeps 25 GB of its disk free.** When space runs low, old copies give up their index first. You can set a different amount.
+- **`wyrd vault status` says more.** The room left and how many days that is, which copies hold the record only, and any old store still taking up space. `wyrd vault forget` removes an old store.
+- **The record is test-restored every week.** The full copy with its index is still tested every month.
+- **Smaller copies.** Caches and tool folders inside a companion's home are no longer copied.
+
+### Fixed
+
+- **A rebuilt tool could replace a better one.** When the workshop rebuilt a tool a companion already had, the new one took over even when it did less. The old one now stays until the new one is at least as good, and she is told.
+- **She was told a new tool was broken while it was still being set up.** She now hears what actually happened: it works, it was refused, or the old one was kept.
+- **"Fix this tool" built a new tool instead.** It now repairs the one she has.
+- **Notebook entries went to the wrong place.** A note meant for a project's notebook was sent to the workshop and lost. It now goes in the notebook, and "read the notebook" opens it.
+- **A notebook tool that saved nothing counted as finished.** It is now reported as unfinished.
+- **One wish became ten projects.** Saying the same wish in different words started a new project each time. It now stays one project, and the ones already split are folded back together with nothing lost.
+- **Missing apostrophes.** Some lines the companions said lost their apostrophes ("didnt", "roses"). Fixed.
+
 ## [0.5.11] — 2026-10-24
 
 ### Fixed

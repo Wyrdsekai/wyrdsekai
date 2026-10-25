@@ -62,6 +62,12 @@ public final class ItemIntentCheck {
         "exercise me", "train me", "training tool", "test me", "help me get better",
         "help me learn", "small practice");
 
+    /** Words that ask for something that KEEPS: a notebook, a log, a book of entries. */
+    private static final List<String> KEEP_WORDS = List.of(
+        "notebook", "note book", "history log", "logbook", "log book", "ledger", "diary",
+        "journal of", "book for recording", "record what", "records what", "keep track",
+        "keeps track", "keep a record", "keep a log", "project note");
+
     /** How an item reaches the open web. */
     private static final List<String> SCRAPES = List.of(
         "world.web.search", "world.web.fetch");
@@ -145,6 +151,19 @@ public final class ItemIntentCheck {
                 + "restructure the file.");
         }
 
+        // A book that forgets every entry is not a book. On the household node a companion had the
+        // workshop make a "project note history log" whose entries lived in a local list inside
+        // invoke(): "show" answered "The book is empty" forever, and she read it as empty every
+        // night (2026-10-25). Same mechanical test as the practice rule: does the body call a store.
+        if (wantsToKeep(asked) && !wantsPractice(asked) && !persistsAnything(lower)) {
+            out.add("the request asks for something that KEEPS entries (\"" + keepWordIn(asked)
+                + "\"), but invoke() never writes to any persistent namespace, so nothing written "
+                + "survives the call and every reading finds it empty. Store each entry with "
+                + "world.notes.add(text, [\"<item name>\"]) and read them back with "
+                + "world.notes.list(\"<item name>\"); declare \"notes.add\" in the manifest "
+                + "capabilities. CHANGE ONLY invoke()'s body and the capabilities array.");
+        }
+
         if (wantsComposition(asked) && summarisesOnly(lower)) {
             out.add("the request asks for something WRITTEN (\"" + composeWordIn(asked)
                 + "\"), but this item only calls world.llm.summarize, which condenses "
@@ -199,6 +218,35 @@ public final class ItemIntentCheck {
         return practiceWordIn(lowerRequest) != null;
     }
 
+    static boolean wantsToKeep(String lowerRequest) {
+        return keepWordIn(lowerRequest) != null;
+    }
+
+    static String keepWordIn(String lowerRequest) {
+        if (lowerRequest == null) return null;
+        for (var w : KEEP_WORDS) {
+            if (lowerRequest.contains(w)) return w;
+        }
+        return null;
+    }
+
+    /**
+     * The gaps that mean the tool cannot do its job at all, as opposed to doing it another way:
+     * asked to keep or to practise, and keeping nothing. These reach the companion's verdict
+     * ("built, but it keeps nothing"); the other gaps stay advice to the author.
+     */
+    public static List<String> unfinished(String request, String script) {
+        var out = new ArrayList<String>();
+        if (request == null || script == null) return out;
+        var asked = request.toLowerCase(Locale.ROOT);
+        var lower = script.toLowerCase(Locale.ROOT);
+        if ((wantsPractice(asked) || wantsToKeep(asked)) && !persistsAnything(lower)) {
+            out.add("it keeps nothing: every use starts from zero (asked for \""
+                + (wantsPractice(asked) ? practiceWordIn(asked) : keepWordIn(asked)) + "\")");
+        }
+        return out;
+    }
+
     static String practiceWordIn(String lowerRequest) {
         if (lowerRequest == null) return null;
         for (var w : PRACTICE_WORDS) {
@@ -210,10 +258,12 @@ public final class ItemIntentCheck {
     /** Every persistent namespace a crafted item may write. Any one of them
      *  counts — the point is that SOMETHING survives between uses, not which
      *  store the author chose. */
-    static boolean persistsAnything(String lowerScript) {
+    public static boolean persistsAnything(String lowerScript) {
         return lowerScript.contains("world.notes.add")
             || lowerScript.contains("world.journal.write")
             || lowerScript.contains("world.memory.add")
-            || lowerScript.contains("world.library.add");
+            || lowerScript.contains("world.library.add")
+            || lowerScript.contains("world.pinboard.pin")
+            || lowerScript.contains("world.room.set_property");
     }
 }

@@ -5,6 +5,11 @@
 # probe used `timeout` (not on a stock Mac). This test fails if any of those comes back in code, and
 # runs the relay-leg functions it touched. Run it with the Mac's own bash too: /bin/bash <this file>.
 set -euo pipefail
+ROOT_FOR_PARSE="$(cd "$(dirname "$0")/../.." && pwd)"
+# The launcher has to parse before anything else is worth asking (a syntax error left the household node down, 2026-10-25).
+bash -n "$ROOT_FOR_PARSE/bin/wyrd" || { echo "FAIL: bin/wyrd does not parse"; exit 1; }
+echo "ok   bin/wyrd parses"
+
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 W="$HERE/bin/wyrd"
 fail=0

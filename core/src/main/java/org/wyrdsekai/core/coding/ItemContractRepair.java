@@ -9,6 +9,7 @@ import org.wyrdsekai.scripting.api.ItemManifestParser;
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Instant;
@@ -372,6 +373,34 @@ public final class ItemContractRepair {
         return left == null ? List.of() : left;
     }
 
+    /**
+     * What became of a task's file at the end: placed and usable, refused, or set beside the one
+     * in use because it did less. The repair loop's unresolved list is what was true when the
+     * rounds ran out; this is what was true when the bridge finished. On the household node a
+     * tool was registered and placed in the same second the companion was told it "didn't pass
+     * its checks", because only the first record was read (2026-10-25).
+     */
+    public enum Fate { PLACED, REFUSED, KEPT_PREVIOUS }
+    public record Outcome(Fate fate, String itemId, String detail) {}
+    private static final Map<String, Outcome> OUTCOMES = new ConcurrentHashMap<>();
+
+    public static void notePlaced(String taskId, String itemId) { note(taskId, new Outcome(Fate.PLACED, itemId, "")); }
+    public static void noteRefused(String taskId, String why) { note(taskId, new Outcome(Fate.REFUSED, null, why == null ? "" : why)); }
+    public static void noteKeptPrevious(String taskId, String itemId, String why) { note(taskId, new Outcome(Fate.KEPT_PREVIOUS, itemId, why == null ? "" : why)); }
+    private static void note(String taskId, Outcome o) {
+        if (taskId == null) return;
+        if (OUTCOMES.size() > 256) OUTCOMES.clear();
+        // The first file placed wins over a later refusal of a sibling; a refusal never overwrites a placement.
+        OUTCOMES.merge(taskId, o, (a, b) -> a.fate() == Fate.PLACED ? a : b);
+    }
+    /** The bridge's verdict for a task, removing the record; empty while the bridge has not spoken. */
+    public static Optional<Outcome> outcomeOf(String taskId) {
+        if (taskId == null) return Optional.empty();
+        return Optional.ofNullable(OUTCOMES.remove(taskId));
+    }
+    /** Tests: forget every verdict. */
+    public static void resetOutcomesForTests() { OUTCOMES.clear(); UNRESOLVED.clear(); }
+
     private static void repairOne(Path script, String taskId, Reprompt reprompt)
             throws Exception {
         var name = script.getFileName().toString();
@@ -452,12 +481,15 @@ public final class ItemContractRepair {
                 return;
             }
         }
-        var left = ItemContractCheck.problems(Files.readString(script), name);
+        var left = new ArrayList<>(ItemContractCheck.problems(Files.readString(script), name));
         // Intent gaps are advisory: an item that scrapes the web on purpose is
         // legitimate. Exhausting the rounds on one is not a reason to complain again.
         if (!left.isEmpty()) {
-            left = tryEscalation(script, name, left);
+            left = new ArrayList<>(tryEscalation(script, name, left));
         }
+        // Except the gap that means the tool cannot do its job: asked to keep or to practise
+        // and keeping nothing. That one is said, so "finished" is never said of an empty book.
+        left.addAll(ItemIntentCheck.unfinished(REQUEST.get(), Files.readString(script)));
         if (!left.isEmpty()) {
             log.warn("[item-contract] repair exhausted for {} after {} rounds: still {} "
                 + "— shipping it anyway; the bridge decides", name, MAX_ROUNDS, left);

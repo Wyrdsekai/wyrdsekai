@@ -58,6 +58,7 @@ public final class VaultRoutes {
             row.put("at", m.at().toString());
             row.put("reason", m.reason());
             row.put("keep", m.keep());
+            row.put("thin", v.isThin(m.id()));
             if (newest.isPresent() && newest.get().id().equals(m.id())) {
                 row.put("files", newest.get().files().size());
                 row.put("bytes", newest.get().bytes());

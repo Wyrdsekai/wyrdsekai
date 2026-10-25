@@ -101,10 +101,33 @@ public final class ScriptMessageCatalog {
             return fallback != null ? fallback.get(key, args) : key;
         }
         try {
-            return MessageFormat.format(pattern, args);
+            return MessageFormat.format(apostrophesAreApostrophes(pattern), args);
         } catch (IllegalArgumentException e) {
             return pattern; // malformed pattern
         }
+    }
+
+    /**
+     * An apostrophe in a message is an apostrophe. To MessageFormat a lone {@code '} opens a
+     * quoted stretch: the apostrophe vanishes and a placeholder inside the stretch is never
+     * filled. Fourteen shipped lines carried one — a companion said "didnt pass its checks and
+     * cant be used yet", and the Atrium's search hint showed a raw {0} three times (household
+     * node, 2026-10-25). Every lone apostrophe is doubled here before formatting, so {@code ''}
+     * and {@code '} both come out as one apostrophe and a {@code '{0}'} substitutes between two.
+     */
+    static String apostrophesAreApostrophes(String pattern) {
+        if (pattern == null || pattern.indexOf('\'') < 0) return pattern;
+        var sb = new StringBuilder(pattern.length() + 8);
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '\'') {
+                if (i + 1 < pattern.length() && pattern.charAt(i + 1) == '\'') { sb.append("''"); i++; }
+                else sb.append("''");
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /** Whether this catalog has a translation for the given key. */

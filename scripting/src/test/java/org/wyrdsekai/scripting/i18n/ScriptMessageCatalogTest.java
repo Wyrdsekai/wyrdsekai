@@ -94,10 +94,25 @@ class ScriptMessageCatalogTest {
     // narrating "...searches for {0}..." into the room. These tests pin both the
     // semantics and the shipped files so it can't silently come back.
 
-    @Test void singleQuotedPlaceholder_is_a_literal_NOT_substituted() {
+    @Test void singleQuotedPlaceholder_substitutes_between_two_apostrophes() {
         var catalog = ScriptMessageCatalog.ofMap("en", Map.of("k", "searches for '{0}'"));
-        // The bug shape: the arg is swallowed, {0} survives verbatim.
-        assertThat(catalog.get("k", "Norse myth")).isEqualTo("searches for {0}");
+        // Until 2026-10-25 this was the bug shape: the arg was swallowed and {0} survived
+        // verbatim. An apostrophe is an apostrophe now, so the value lands between two.
+        assertThat(catalog.get("k", "Norse myth")).isEqualTo("searches for 'Norse myth'");
+    }
+
+    @Test void aLoneApostropheStaysAndTheBlankIsStillFilled() {
+        var catalog = ScriptMessageCatalog.ofMap("en", Map.of(
+            "busy", "The workshop is busy with {0}'s job, so mine waits; I'll report when it comes back.",
+            "repair", "The workshop task ran, but what it made didn't pass its checks and can't be used yet: {1} — I can take it back.",
+            "hint", "try 'tag {0}' or 'capability {0}'; from outside use 'wyrd discover --search \"{0}\"'.",
+            "plain", "It's done."));
+        assertThat(catalog.get("busy", "rose")).isEqualTo("The workshop is busy with rose's job, so mine waits; I'll report when it comes back.");
+        assertThat(catalog.get("repair", "x", "the manifest does not declare it"))
+            .isEqualTo("The workshop task ran, but what it made didn't pass its checks and can't be used yet: the manifest does not declare it — I can take it back.");
+        assertThat(catalog.get("hint", "weather")).isEqualTo("try 'tag weather' or 'capability weather'; from outside use 'wyrd discover --search \"weather\"'.");
+        assertThat(catalog.get("plain")).isEqualTo("It's done.");
+        assertThat(catalog.get("plain", "unused")).isEqualTo("It's done.");
     }
 
     @Test void doubledQuotedPlaceholder_substitutes_with_literal_apostrophes() {

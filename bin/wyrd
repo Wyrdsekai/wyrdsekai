@@ -6940,11 +6940,23 @@ if d.get("lastError"): print("Last error: %s" % d["lastError"])
 if d.get("keyId"): print("Sealed with key %s (%s); keep a copy of that file off this disk" % (d["keyId"], d.get("keyFile","")))
 if d.get("keyMismatch"): print("KEY MISMATCH: %s" % d["keyMismatch"])
 if d.get("unclassified"): print("Unclassified in the data dir (not vaulted): %s" % ", ".join(d["unclassified"]))
+fb=d.get("freeBytes"); fl=d.get("floorBytes") or 0; g=d.get("growthPerDayBytes") or 0; dl=d.get("daysLeft")
+if fb is not None:
+    line="Disk: %.1f GB free where the vault lives" % (fb/1e9)
+    if fl: line+=" (the vault keeps %.0f GB free)" % (fl/1e9)
+    if g: line+="; the store grows %.1f GB a day" % (g/1e9)
+    if dl is not None: line+=" — about %d day(s) of room at that rate" % dl
+    print(line)
+    if fl and fb < fl: print("UNDER THE FLOOR: older copies keep the record only; make room on this disk")
+tk=d.get("thinKept") or 0
+if tk: print("%d older kept cop%s hold the record only (their search index aged out; it is rebuilt after a restore)" % (tk, "y" if tk==1 else "ies"))
+o=d.get("orphanStore")
+if o: print("Another store at %s (%s copies, %.1f GB) is not in use: wyrd vault forget %s removes it" % (o.get("dir"), o.get("copies"), (o.get("bytes") or 0)/1e9, o.get("dir")))
 rec=d.get("recent",[])
 if rec:
     print(); print("%-22s %-24s %-5s %6s %9s  %s" % ("ID","AT","KEEP","FILES","MB","REASON"))
     # files and bytes are given for the newest copy only: the others are listed from their summaries (0.5.10)
-    for m in rec: print("%-22s %-24s %-5s %6s %9s  %s" % (m["id"], m["at"], "keep" if m.get("keep") else "", m.get("files", ""), ("%.1f" % (m["bytes"]/1e6)) if m.get("bytes") is not None else "", m.get("reason", "")))
+    for m in rec: print("%-22s %-24s %-5s %6s %9s  %s%s" % (m["id"], m["at"], "keep" if m.get("keep") else "", m.get("files", ""), ("%.1f" % (m["bytes"]/1e6)) if m.get("bytes") is not None else "", m.get("reason", ""), " (record only)" if m.get("thin") else ""))
 ' ;;
         snapshot|copy)
             local reason="${2:-the steward asked}"
@@ -6984,8 +6996,14 @@ if rec:
                 err "The server is running. Stop it first (wyrd stop), then stage, then start."; return 1
             fi
             _vault_java stage --vault "$vault_dir" --data "$DATA_DIR" "${@:3}" "$id" ;;
+        forget)
+            # Remove a store nothing reads: an earlier vault left where the vault was moved off.
+            # Never the vault in use; shows what it would remove and does it only with --yes.
+            local old="${2:-}"
+            [[ -z "$old" ]] && { err "Usage: wyrd vault forget <path> [--yes]   (wyrd vault status names a store that is not in use)"; return 64; }
+            _vault_java forget --vault "$vault_dir" "${@:3}" "$old" ;;
         *)
-            echo "Usage: wyrd vault [status] | snapshot [reason] | drill | prune | sync [dest] | key | list | restore <id|latest> <dir> [--key FILE] | stage <id|latest> [--key FILE]"
+            echo "Usage: wyrd vault [status] | snapshot [reason] | drill | prune | sync [dest] | key | list | restore <id|latest> <dir> [--key FILE] | stage <id|latest> [--key FILE] | forget <path> [--yes]"
             return 64 ;;
     esac
 }

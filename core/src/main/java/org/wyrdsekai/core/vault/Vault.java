@@ -28,6 +28,7 @@ import java.sql.DriverManager;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.function.LongSupplier;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
@@ -145,6 +146,15 @@ public final class Vault {
     private volatile Instant lastOk;
     private volatile String lastError;
     private boolean resealed;
+    /**
+     * The least free space the vault leaves on its disk, in bytes; 0 = no floor. Below it the
+     * index is kept only in the newest copy and, if that is not enough, a pass copies the record
+     * alone. A full disk stops the vault, and the vault is the one thing that must not stop
+     * (the household node's data disk was at 87% with two weeks left, 2026-10-25).
+     */
+    private volatile long floorBytes;
+    /** How much room the vault's disk has; a seam for the tests, the file store otherwise. */
+    LongSupplier freeSpace = this::usableSpace;
 
     /** The key lives beside the data, never inside the store: {@code <data>/vault.key}. */
     public Vault(Path dataDir, Path vaultDir) {
@@ -313,11 +323,25 @@ public final class Vault {
         var parts = rel.split("/");
         for (var part : parts) if (part.equals("node_modules") || part.equals("__pycache__")) return true;
         if (parts.length < 4 || !parts[2].equals("home")) return false;
+        // A virtual environment anywhere in her home is a refill, like node_modules.
+        for (var part : parts) if (part.equals(".venv") || part.equals("venv")) return true;
         var inHome = String.join("/", Arrays.copyOfRange(parts, 3, parts.length));
         return inHome.equals(".cache") || inHome.startsWith(".cache/")
             || inHome.equals(".npm") || inHome.startsWith(".npm/")
             || inHome.equals(".local/lib") || inHome.startsWith(".local/lib/")
-            || inHome.equals(".local/bin") || inHome.startsWith(".local/bin/");
+            || inHome.equals(".local/bin") || inHome.startsWith(".local/bin/")
+            // The coding helper's own environments and caches: 7 GB of them in one home on the
+            // household node, copied as hers (2026-10-25). It makes them again.
+            || inHome.equals(".codezaiku/envs") || inHome.startsWith(".codezaiku/envs/")
+            || inHome.equals(".codezaiku/cache") || inHome.startsWith(".codezaiku/cache/")
+            || inHome.equals(".gradle") || inHome.startsWith(".gradle/")
+            || inHome.equals(".m2") || inHome.startsWith(".m2/");
+    }
+
+    /** Whether a path in the data directory is one of the dear indexes. */
+    static boolean isDear(String rel) {
+        for (var d : DEAR_DIRS) if (rel.equals(d) || rel.startsWith(d + "/")) return true;
+        return false;
     }
 
     static Class classify(String rel) {
@@ -334,6 +358,26 @@ public final class Vault {
         var id = ID.format(at) + (keep ? "-keep" : "");
         Path scratch = null;
         if (keyMismatch != null) { lastError = keyMismatch; return Optional.empty(); }
+        // The floor: below it, older copies give up their index first; if the disk is still
+        // low, this copy is the record alone. Her record is never what gives way.
+        boolean recordOnly = false;
+        if (floorBytes > 0 && freeSpace.getAsLong() < floorBytes) {
+            log.warn("Vault: {} MB free on the vault's disk, under the floor of {} MB — the index stays only in the newest copy",
+                freeSpace.getAsLong() / 1_000_000, floorBytes / 1_000_000);
+            prune(Instant.now(), true);
+            if (freeSpace.getAsLong() < floorBytes) {
+                recordOnly = true;
+                log.warn("Vault: still under the floor after the sweep — this copy holds the record alone, not the index");
+            }
+            var map = BodyMap.get();
+            if (map != null) {
+                try {
+                    map.mark("vault", "disk-low", null, "The vault's disk is nearly full: " + freeSpace.getAsLong() / 1_000_000_000 + " GB free. "
+                        + "Older copies have given up their search index; the record itself is still copied every pass. The steward should make room.",
+                        "free=" + freeSpace.getAsLong() + " floor=" + floorBytes);
+                } catch (RuntimeException ignored) { /* the mark is a courtesy */ }
+            }
+        }
         try {
             Files.createDirectories(vaultDir.resolve("chunks"));
             Files.createDirectories(vaultDir.resolve("manifests"));
@@ -412,6 +456,7 @@ public final class Vault {
             for (var rel : DEAR_DIRS) {
                 var d = dataDir.resolve(rel);
                 if (!Files.isDirectory(d)) continue;
+                if (recordOnly) continue;
                 dear.add(rel);
                 Files.walkFileTree(d, new SimpleFileVisitor<>() {
                     @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
@@ -442,6 +487,7 @@ public final class Vault {
             classes.put("unclassified", unclassified);
             var m = new Manifest(id, at, reason == null ? "continuous" : reason, keep, List.copyOf(entries), classes, null);
             writeManifest(m);
+            if (recordOnly) markThin(id);
             lastOk = Instant.now();
             lastError = null;
             log.info("Vault: copy {} ({}, {} files, {} MB){}", id, m.reason(), entries.size(), m.bytes() / 1_000_000,
@@ -641,9 +687,57 @@ public final class Vault {
         tmp = chunks.resolveSibling(chunks.getFileName() + ".tmp");
         Files.write(tmp, cipher.seal(String.join("\n", names).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         Files.move(tmp, chunks, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        // The chunks that belong to the dear indexes alone, so the retention can let a kept copy's
+        // index go while its record stays (2026-10-25).
+        var dear = new java.util.TreeSet<String>();
+        if (m.files() != null) for (var e : m.files()) if (e != null && e.chunks() != null && isDear(e.path())) dear.addAll(e.chunks());
+        var dearFile = dearFile(m.id());
+        tmp = dearFile.resolveSibling(dearFile.getFileName() + ".tmp");
+        Files.write(tmp, cipher.seal(String.join("\n", dear).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        Files.move(tmp, dearFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
     private Path headFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".head.json"); }
     private Path chunksFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".chunks"); }
+    private Path dearFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".dear"); }
+    private Path thinFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".thin"); }
+
+    /** A copy whose index chunks were let go: it restores the record; the index is rebuilt. */
+    public boolean isThin(String id) { return id != null && Files.isRegularFile(thinFile(id)); }
+    private void markThin(String id) {
+        try { Files.writeString(thinFile(id), Instant.now().toString()); }
+        catch (IOException e) { log.debug("vault: thin mark for {} not written: {}", id, e.getMessage()); }
+    }
+    /**
+     * The dear chunks of a copy, from its sidecar. A copy from before the sidecar is not read whole
+     * here (the pass that read every copy whole ended the vault once); empty means "not known yet",
+     * and the caller keeps everything of that copy until {@link #backfillDearSidecars} has reached it.
+     */
+    private Optional<Set<String>> dearChunksOf(String id) throws IOException {
+        var side = dearFile(id);
+        if (!Files.isRegularFile(side)) return Optional.empty();
+        var text = new String(open(Files.readAllBytes(side), side), java.nio.charset.StandardCharsets.UTF_8);
+        var out = new HashSet<String>();
+        for (var line : text.split("\n")) if (!line.isBlank()) out.add(line.strip());
+        return Optional.of(out);
+    }
+    /** Give up to {@code max} older copies their dear sidecar: one whole read each, once. */
+    int backfillDearSidecars(int max) {
+        int done = 0;
+        var dir = vaultDir.resolve("manifests");
+        if (!Files.isDirectory(dir)) return 0;
+        try (var s = Files.list(dir)) {
+            for (var f : s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).sorted().toList()) {
+                if (done >= max) break;
+                var id = idOf(f);
+                if (Files.isRegularFile(dearFile(id))) continue;
+                try { writeSidecars(readManifest(f)); done++; }
+                catch (IOException e) { log.debug("vault: dear sidecar for {} not written: {}", id, e.getMessage()); }
+            }
+        } catch (IOException e) {
+            log.debug("vault: dear backfill: {}", e.getMessage());
+        }
+        return done;
+    }
     private static String idOf(Path manifest) {
         var n = manifest.getFileName().toString();
         return n.endsWith(".json") ? n.substring(0, n.length() - ".json".length()) : n;
@@ -811,7 +905,15 @@ public final class Vault {
      */
     public List<String> restoreTo(Manifest m, Path target) {
         var failed = new ArrayList<String>();
+        boolean thin = isThin(m.id());
+        boolean saidThin = false;
         for (var e : m.files()) {
+            if (thin && isDear(e.path())) {
+                // This copy gave its index up to make room; the record is whole and the index is
+                // rebuilt on the first start after a restore.
+                if (!saidThin) { log.info("vault: copy {} holds the record only; the search index is not in it and is rebuilt on first start", m.id()); saidThin = true; }
+                continue;
+            }
             var dest = target.resolve(e.path()).normalize();
             try {
                 if (!dest.startsWith(target.normalize())) throw new IOException("path leaves the restore directory");
@@ -842,15 +944,34 @@ public final class Vault {
      * household is in it. The verdict is written into the manifest and returned.
      */
     public synchronized Optional<Drill> drill() {
+        return drill(false);
+    }
+
+    /**
+     * The record alone, every week: the newest copy's database, identity and souls come up in
+     * scratch, without the hours a hash pass over the index takes. The question that matters,
+     * "can she be restored", is answered often; the index is checked on the monthly drill.
+     */
+    public synchronized Optional<Drill> recordDrill() {
+        return drill(true);
+    }
+
+    static final String RECORD_DRILL = "record: ";
+
+    private Optional<Drill> drill(boolean recordOnly) {
         var m = latest().orElse(null);
         if (m == null) return Optional.empty();
         var scratch = vaultDir.resolve(".drill");
         deleteTree(scratch);
-        var detail = new StringBuilder();
+        var detail = new StringBuilder(recordOnly ? RECORD_DRILL : "");
         boolean ok = true;
         try {
             Files.createDirectories(scratch);
-            var failed = restoreTo(m, scratch, DEAR_DIRS);
+            var toRestore = recordOnly
+                ? new Manifest(m.id(), m.at(), m.reason(), m.keep(),
+                    m.files().stream().filter(e -> !isDear(e.path())).toList(), m.classes(), m.drill())
+                : m;
+            var failed = restoreTo(toRestore, scratch, DEAR_DIRS);
             if (!failed.isEmpty()) { ok = false; detail.append("could not rebuild: ").append(failed).append("; "); }
             var db = scratch.resolve("world.db");
             if (Files.exists(db)) {
@@ -900,7 +1021,7 @@ public final class Vault {
                 : "The vault was tested and the newest copy did not come up whole: " + d.detail() + ". The steward should look.",
                 "manifest=" + m.id() + " ok=" + ok);
         }
-        log.info("Vault drill {}: {} ({})", ok ? "PASSED" : "FAILED", m.id(), d.detail());
+        log.info("Vault {}drill {}: {} ({})", recordOnly ? "record " : "", ok ? "PASSED" : "FAILED", m.id(), d.detail());
         return Optional.of(d);
     }
 
@@ -921,37 +1042,66 @@ public final class Vault {
      * manifests were removed.
      */
     public synchronized int prune() {
-        return prune(Instant.now());
+        return prune(Instant.now(), false);
     }
 
     synchronized int prune(Instant now) {
+        return prune(now, false);
+    }
+
+    /**
+     * The tiers decide which copies stay whole. A flagged copy outside the tiers stays forever, but
+     * for her record alone: its index chunks go with the tiers like any other copy's. The 120
+     * "before an update" copies on the household node each pinned the 127 GB index as it stood that
+     * minute, for good; her record in them is a few gigabytes (2026-10-25). With
+     * {@code indexOnlyInNewest} (the disk is under the floor) only the newest tiered copy keeps
+     * its index.
+     */
+    synchronized int prune(Instant now, boolean indexOnlyInNewest) {
         var all = heads();
-        var keep = new HashSet<String>();
+        var tier = new HashSet<String>();      // whole, by age
+        var flagged = new HashSet<String>();   // forever, for the record
         var newestPerHour = new TreeMap<String, Head>();
         var newestPerDay = new TreeMap<String, Head>();
         var newestPerWeek = new TreeMap<String, Head>();
         var newestPerMonth = new TreeMap<String, Head>();
+        Head newest = null;
         for (var m : all) {
-            if (m.keep()) { keep.add(m.id()); continue; }
+            if (newest == null || m.at().isAfter(newest.at())) newest = m;
+            if (m.keep()) flagged.add(m.id());
             var age = Duration.between(m.at(), now);
             var z = m.at().atZone(ZoneOffset.UTC);
-            if (age.compareTo(Duration.ofHours(2)) <= 0) { keep.add(m.id()); continue; }
+            if (age.compareTo(Duration.ofHours(2)) <= 0) { tier.add(m.id()); continue; }
             if (age.compareTo(Duration.ofDays(1)) <= 0) { newestPerHour.merge(z.toLocalDate() + "T" + z.getHour(), m, Vault::newer); continue; }
             if (age.compareTo(Duration.ofDays(7)) <= 0) { newestPerDay.merge(z.toLocalDate().toString(), m, Vault::newer); continue; }
             if (age.compareTo(Duration.ofDays(35)) <= 0) { newestPerWeek.merge(z.getYear() + "-W" + z.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR), m, Vault::newer); continue; }
             if (age.compareTo(Duration.ofDays(400)) <= 0) { newestPerMonth.merge(z.getYear() + "-" + z.getMonthValue(), m, Vault::newer); }
         }
-        for (var m : newestPerHour.values()) keep.add(m.id());
-        for (var m : newestPerDay.values()) keep.add(m.id());
-        for (var m : newestPerWeek.values()) keep.add(m.id());
-        for (var m : newestPerMonth.values()) keep.add(m.id());
+        for (var m : newestPerHour.values()) tier.add(m.id());
+        for (var m : newestPerDay.values()) tier.add(m.id());
+        for (var m : newestPerWeek.values()) tier.add(m.id());
+        for (var m : newestPerMonth.values()) tier.add(m.id());
+        // Which copies keep their index: the tiers, or under the floor the newest alone.
+        var indexKept = new HashSet<String>(indexOnlyInNewest && newest != null ? Set.of(newest.id()) : tier);
+        var keep = new HashSet<String>(tier);
+        keep.addAll(flagged);
+        backfillDearSidecars(3);   // older copies learn which of their chunks are the index, a few per pass
         int removed = 0;
+        int thinned = 0;
         var referenced = new HashSet<String>();
         for (var m : all) {
             if (keep.contains(m.id())) {
                 // A kept copy's chunk names, from its sidecar; never its file list.
                 try {
-                    referenced.addAll(chunkNamesOf(m.id()));
+                    var names = chunkNamesOf(m.id());
+                    if (!indexKept.contains(m.id())) {
+                        var dear = dearChunksOf(m.id());
+                        if (dear.isPresent()) {
+                            names.removeAll(dear.get());
+                            if (!dear.get().isEmpty() && !isThin(m.id())) { markThin(m.id()); thinned++; }
+                        }   // not known yet: everything of this copy stays until its sidecar exists
+                    }
+                    referenced.addAll(names);
                 } catch (IOException e) {
                     log.warn("vault: kept copy {} not read for its chunks; nothing is swept: {}", m.id(), e.getMessage());
                     return removed;   // a sweep that cannot see a kept copy's chunks must not run
@@ -983,8 +1133,93 @@ public final class Vault {
                 log.warn("vault: chunk sweep failed: {}", e.getMessage());
             }
         }
-        if (removed > 0) log.info("Vault: pruned {} manifest(s); {} kept", removed, keep.size());
+        if (removed > 0 || thinned > 0) {
+            log.info("Vault: pruned {} manifest(s); {} kept{}{}", removed, keep.size(),
+                thinned > 0 ? ", " + thinned + " older kept copies now hold the record only" : "",
+                indexOnlyInNewest ? " (under the floor: the index stays in the newest copy alone)" : "");
+        }
+        noteSize();
         return removed;
+    }
+
+    // ── the disk ──
+
+    /** The vault leaves at least this much free on its disk; 0 turns the floor off. */
+    public Vault withFloor(long bytes) { this.floorBytes = Math.max(0, bytes); return this; }
+    public long floorBytes() { return floorBytes; }
+    public long freeBytes() { return freeSpace.getAsLong(); }
+
+    private long usableSpace() {
+        try {
+            var probe = Files.isDirectory(vaultDir) ? vaultDir : vaultDir.getParent();
+            return Files.getFileStore(probe).getUsableSpace();
+        } catch (IOException | RuntimeException e) {
+            return Long.MAX_VALUE;   // unknown is not low
+        }
+    }
+
+    /** One line per pass: when, how big the store is, how much room is left — for the rate on the status page. */
+    private void noteSize() {
+        try {
+            var line = Instant.now().toEpochMilli() + " " + storeBytes() + " " + freeSpace.getAsLong() + "\n";
+            Files.writeString(vaultDir.resolve("size.log"), line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            log.debug("vault: size not noted: {}", e.getMessage());
+        }
+    }
+
+    /** Bytes the store grows a day, from the last week of size notes; 0 when there is not a day of them. */
+    long growthPerDay() {
+        var f = vaultDir.resolve("size.log");
+        if (!Files.isRegularFile(f)) return 0;
+        try {
+            long first = -1, firstAt = 0, last = -1, lastAt = 0;
+            long since = Instant.now().minus(Duration.ofDays(7)).toEpochMilli();
+            for (var line : Files.readAllLines(f)) {
+                var parts = line.trim().split(" ");
+                if (parts.length < 3) continue;
+                long at = Long.parseLong(parts[0]), size = Long.parseLong(parts[1]);
+                if (at < since) continue;
+                if (first < 0) { first = size; firstAt = at; }
+                last = size; lastAt = at;
+            }
+            if (first < 0 || lastAt - firstAt < Duration.ofHours(12).toMillis()) return 0;
+            return Math.max(0, (last - first) * Duration.ofDays(1).toMillis() / (lastAt - firstAt));
+        } catch (IOException | RuntimeException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * A store at the old default place, {@code <data>/vault-store}, when the vault lives elsewhere:
+     * copies nothing reads, on a disk they were moved off. Named on the status page; removed by
+     * {@code wyrd vault forget}. The household node carried 145 GB of one for a month (2026-10-25).
+     */
+    public Optional<Map<String, Object>> orphanStore() {
+        var old = dataDir.resolve("vault-store");
+        try {
+            if (Files.isSameFile(old, vaultDir)) return Optional.empty();
+        } catch (IOException e) {
+            if (old.toAbsolutePath().normalize().equals(vaultDir.toAbsolutePath().normalize())) return Optional.empty();
+        }
+        var manifests = old.resolve("manifests");
+        if (!Files.isDirectory(manifests)) return Optional.empty();
+        long copies = 0, bytes = 0;
+        try (var s = Files.list(manifests)) {
+            copies = s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).count();
+        } catch (IOException ignored) { /* partial is fine */ }
+        try {
+            final long[] total = {0};
+            Files.walkFileTree(old, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) { total[0] += attrs.size(); return FileVisitResult.CONTINUE; }
+            });
+            bytes = total[0];
+        } catch (IOException ignored) { /* partial is fine */ }
+        var out = new LinkedHashMap<String, Object>();
+        out.put("dir", old.toString());
+        out.put("copies", copies);
+        out.put("bytes", bytes);
+        return Optional.of(out);
     }
 
     private static Head newer(Head a, Head b) {
@@ -1014,6 +1249,15 @@ public final class Vault {
         out.put("keyFile", keyFile.toString());
         out.put("keyMismatch", keyMismatch == null ? "" : keyMismatch);
         newest.ifPresent(m -> out.put("unclassified", m.classes() == null ? List.of() : m.classes().getOrDefault("unclassified", List.of())));
+        // The disk: what is left, the floor, how fast the store grows and so how long that is.
+        long free = freeSpace.getAsLong();
+        out.put("freeBytes", free == Long.MAX_VALUE ? null : free);
+        out.put("floorBytes", floorBytes);
+        long growth = growthPerDay();
+        out.put("growthPerDayBytes", growth);
+        out.put("daysLeft", growth > 0 && free != Long.MAX_VALUE ? Math.max(0, (free - floorBytes) / growth) : null);
+        out.put("thinKept", all.stream().filter(h -> h.keep() && isThin(h.id())).count());
+        orphanStore().ifPresent(o -> out.put("orphanStore", o));
         return out;
     }
 
@@ -1034,6 +1278,14 @@ public final class Vault {
 
     /** True when the newest drill is older than {@code every} or there has never been one. */
     public boolean drillDue(Duration every) {
+        return heads().stream().filter(m -> m.drill() != null && !m.drill().detail().startsWith(RECORD_DRILL)).map(m -> m.drill().at())
+            .max(Comparator.naturalOrder())
+            .map(t -> Duration.between(t, Instant.now()).compareTo(every) > 0)
+            .orElse(true);
+    }
+
+    /** True when no drill of either kind is younger than {@code every}. */
+    public boolean recordDrillDue(Duration every) {
         return heads().stream().filter(m -> m.drill() != null).map(m -> m.drill().at())
             .max(Comparator.naturalOrder())
             .map(t -> Duration.between(t, Instant.now()).compareTo(every) > 0)

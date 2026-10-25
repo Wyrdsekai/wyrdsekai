@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -88,6 +89,19 @@ class HerOwnWordIsKeptTest {
         assertThat(HerWord.named("I'll read what I said I would.", OFFERED, false).tool()).as("no book open: the search finds one").isEqualTo("library_card");
         assertThat(HerWord.named("I'll read what I said I would.", OFFERED, true).tool()).as("a book open: read on").isEqualTo("read_book");
         assertThat(HerWord.named("Then I'll read the next chapter.", OFFERED, false).tool()).as("a chapter names a book").isEqualTo("read_book");
+    }
+
+    @Test
+    void her_own_notebook_comes_before_the_library() {
+        // Rita, 2026-10-24: "I'll read the project note now" went to the library four times and found no such book.
+        var offered = List.of("library_card", "project_note", "read_book", "dispatch_task", "journal");
+        assertThat(HerWord.named("I'll read the project note now. It's been waiting.", offered, false).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("I'll open the project note's notebook and read through what's been written there.", offered, false).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("I'll check my notebook before I start.", offered, false).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("I'll read the library on the project note.", offered, false).tool())
+            .as("the library, when she names it").isEqualTo("library_card");
+        assertThat(HerWord.named("I'll read the project note now.", List.of("library_card", "read_book"), false))
+            .as("not offered the notebook: the words name an act she has no tool for, and she does not guess at another").isNull();
     }
 
     /** "Open" a room that exists is to go there; rose built her lab twice and a practice space twice on

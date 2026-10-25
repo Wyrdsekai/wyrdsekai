@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.11}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.12}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 
@@ -182,7 +182,10 @@ fi
 # ── Launcher scripts ──
 mkdir -p "$DIST_DIR/bin"
 
-# Copy the real wyrd script
+# Copy the real wyrd script — after bash has parsed it. A syntax error in the launcher takes
+# every `wyrd` command with it, `wyrd start` included: on 2026-10-25 a dev build installed on the
+# household node with an apostrophe inside a single-quoted block, and the node stayed down.
+bash -n "$PROJECT_DIR/bin/wyrd" || { err "bin/wyrd does not parse — nothing is packaged until it does"; exit 1; }
 cp "$PROJECT_DIR/bin/wyrd" "$DIST_DIR/bin/wyrd"
 # Release model index (data-durability, 2026-07-09) — `wyrd model` reads this.
 cp "$PROJECT_DIR/models-index.json" "$DIST_DIR/models-index.json" 2>/dev/null || true

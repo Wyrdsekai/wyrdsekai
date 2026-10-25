@@ -1165,6 +1165,7 @@
   "dispatch.spoken.no_backend": "工房のバックエンドが入っていないので、それは依頼できない。`wyrd coding install goose` で導入できる。",
   "dispatch.spoken.plan": "それを工房に持っていく：{0}。{1} に任せて、終わったら報告する。",
   "dispatch.spoken.workshop_busy": "工房は {0} の仕事で手一杯だから、私のは順番を待つ。戻ってきたら報告する。",
+  "dispatch.spoken.kept_previous": "工房が作り直した {0} は今あるものより出来ることが少なかった（{1}）。だから古いほうをそのまま使う。",
   "dispatch.spoken.workshop_busy.someone": "ほかの誰か",
   "dispatch.spoken.needs_repair": "工房の作業は動いたけれど、できたものは検査を通らず、まだ使えない：{1} — 工房に持ち帰って直せるよ。",
   "dispatch.spoken.done": "工房の作業が完了した：{0}",

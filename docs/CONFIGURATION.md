@@ -405,17 +405,24 @@ The vault is Wyrdsekai's own backup. It takes a copy of your data every 15 minut
 | `WYRDSEKAI_VAULT_MINUTES` | `vault.minutes` | `15` | How often a copy is taken. `0` turns the vault off. |
 | `WYRDSEKAI_VAULT_DIR` | `vault.dir` | `<data>/vault-store` | Where the copies are kept. |
 | `WYRDSEKAI_VAULT_REMOTE` | `vault.remote` | none | Where `wyrd vault sync` sends a copy, using rsync. |
-| `WYRDSEKAI_VAULT_DRILL_DAYS` | `vault.drill_days` | `30` | How often, in days, the newest copy is rebuilt and checked. |
+| `WYRDSEKAI_VAULT_DRILL_DAYS` | `vault.drill_days` | `30` | How often, in days, the newest copy is rebuilt and checked, search index included. |
+| `WYRDSEKAI_VAULT_RECORD_DRILL_DAYS` | `vault.record_drill_days` | `7` | How often, in days, the record alone is rebuilt and checked. Quick, because it leaves the search index out. |
+| `WYRDSEKAI_VAULT_FLOOR_GB` | `vault.floor_gb` | `25` | How much free space the vault always leaves on its disk. Below it, older copies give up their search index first; if that is not enough, a copy holds the record alone. `0` turns the floor off. |
 | `WYRDSEKAI_VAULT_ALLOW_UNSEALED` | none | `false` | Read unencrypted files in an encrypted vault, and encrypt them on the next copy. Only for a 0.4.0 vault you copied in on purpose. Every use is logged as a warning. |
 
 Since 0.5.0 the vault also holds the library's search indexes, `search/search/knowledge` and `search/search/study`. A large index can take hours to rebuild on a computer with a strong graphics card, and days on an ordinary home computer. The first copy stores the index once. Later copies store only its new files. A file that has not changed is reused from the previous copy without being read again.
 
 Since 0.5.5 the vault also holds each companion's home folder, `beings/<slug>/home`, with the file that names who it belongs to. That is where its coding helpers keep what they learned. The caches its tools fill again on their own are left out: `.cache`, `.npm`, `.local/lib`, `.local/bin`, and any `node_modules` or `__pycache__` folder. A restore gives the home back to the companion's own user at the next start. The vault also keeps a few small files it used to leave out: the tunnel key that phones are paired by, the relay certificate the node trusts, the companion's recent turns, and what the body last saw of its machine and its brain. `wyrd vault status` lists anything in the data folder that is still not classified.
 
+**How long copies are kept.** A copy from the last two hours is kept whole. After that the vault keeps the newest of each hour for a day, of each day for a week, of each week for five weeks, and of each month for a year. A copy taken before a stop or an update, or one you asked for, is kept for as long as the vault exists, but only for the record itself: its search index ages out on the same schedule as everyone else's, because the index can be rebuilt and the record cannot. `wyrd vault status` marks such copies "record only"; a restore from one brings the record back and rebuilds the index on the first start. The status page also shows how much room is left on the vault's disk and, once it has a week of history, how many days that is at the current rate.
+
+If the vault was moved to another folder, the old one is left behind with copies nothing reads. The status page names it; `wyrd vault forget <path> --yes` removes it. It never removes the vault in use.
+
 If you have a second disk, set `vault.dir` to a folder on it, so the copy is not on the same disk as your data. Set `vault.remote` to keep a copy on another computer. The drill checks the index piece by piece and does not write it out.
 
 ```bash
-wyrd vault status                                      # copies, size, the last drill, and anything in the data folder not yet classified
+wyrd vault status                                      # copies, size, room on the disk, the last drill, and anything in the data folder not yet classified
+wyrd vault forget <path> --yes                         # remove an old store that is not in use
 wyrd vault stage <id>                                  # restore a copy; stop the server first
 wyrd vault sync user@vaultnode:/srv/wyrdsekai-vault    # send a copy to another computer
 wyrd vault key                                         # where the key is, and its short id

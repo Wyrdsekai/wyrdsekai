@@ -1045,7 +1045,8 @@ public class Main {
             // Not <data>/vault: that directory is the Vault room's shelf of scrolls, which is
             // itself part of the self and gets copied. The store lives beside it.
             var vaultDir = vaultDirCfg == null || vaultDirCfg.isBlank() ? SystemPaths.dataDir().resolve("vault-store") : Path.of(vaultDirCfg);
-            final var vault = new Vault(SystemPaths.dataDir(), vaultDir);
+            final var vault = new Vault(SystemPaths.dataDir(), vaultDir)
+                .withFloor(WyrdConfig.get().vaultFloorGb() * 1_000_000_000L);
             Vault.install(vault);
             var vaultScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 var t = new Thread(r, "vault"); t.setDaemon(true); return t;
@@ -1055,7 +1056,9 @@ public class Main {
                 try {
                     vault.snapshot("continuous", false);
                     vault.prune();
+                    // The record alone every week; the record and the index every month.
                     if (vault.drillDue(Duration.ofDays(WyrdConfig.get().vaultDrillDays()))) vault.drill();
+                    else if (vault.recordDrillDue(Duration.ofDays(WyrdConfig.get().vaultRecordDrillDays()))) vault.recordDrill();
                 } catch (Throwable e) {
                     // Everything, not only exceptions: an OutOfMemoryError escaped here on the household
                     // node and the executor cancelled the vault's timer for good; no copy for thirteen
@@ -1078,7 +1081,8 @@ public class Main {
                 () -> vault.lastOk() != null && Duration.between(vault.lastOk(), Instant.now()).compareTo(Duration.ofMinutes(vaultMinutes).multipliedBy(2)) <= 0
                     || Duration.between(Instant.ofEpochMilli(ManagementFactory.getRuntimeMXBean().getStartTime()), Instant.now()).compareTo(Duration.ofMinutes(5)) < 0,
                 () -> vault.lastOk() == null ? "no copy yet" : "last copy " + vault.lastOk(), 1);
-            log.info("Vault enabled — every {} min, dir={}, drill every {} days", vaultMinutes, vaultDir, WyrdConfig.get().vaultDrillDays());
+            log.info("Vault enabled — every {} min, dir={}, record drill every {} days, full drill every {} days, floor {} GB",
+                vaultMinutes, vaultDir, WyrdConfig.get().vaultRecordDrillDays(), WyrdConfig.get().vaultDrillDays(), WyrdConfig.get().vaultFloorGb());
         } else {
             log.info("Vault disabled (WYRDSEKAI_VAULT_MINUTES=0)");
         }

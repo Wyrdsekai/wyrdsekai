@@ -2,11 +2,16 @@ package org.wyrdsekai.core.coding;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wyrdsekai.core.item.ScriptedItemDef;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
+import org.wyrdsekai.core.update.ReleaseManifest;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Collection;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -59,10 +64,10 @@ public final class ItemRevision {
         if (itemName == null || itemName.isBlank()) return Optional.empty();
         var loader = ScriptedItemLoader.get();
         if (loader == null) return Optional.empty();
-        var wanted = itemName.trim();
+        var wanted = normalize(itemName);
         var def = loader.all().stream()
-            .filter(d -> wanted.equalsIgnoreCase(d.itemId())
-                || wanted.equalsIgnoreCase(d.displayName()))
+            .filter(d -> wanted.equals(normalize(d.itemId()))
+                || wanted.equals(normalize(d.displayName())))
             .findFirst().orElse(null);
         if (def == null) {
             log.debug("[item-revision] nothing registered as '{}' — this is a build, "
@@ -108,6 +113,110 @@ public final class ItemRevision {
     /** Is there something registered under this name to revise? */
     public static boolean exists(String itemName) {
         return instructionFor(itemName, "probe").isPresent();
+    }
+
+    /**
+     * One spelling for an item's name: she wrote "diffusion_practice-3" for an item registered as
+     * {@code diffusion_practice_3}, the match was exact, and the workshop built a new tool from
+     * nothing beside the one she meant (household node, 2026-10-25).
+     */
+    static String normalize(String name) {
+        if (name == null) return "";
+        var n = name.trim().toLowerCase(Locale.ROOT);
+        if (n.endsWith(".js")) n = n.substring(0, n.length() - 3);
+        return n.replaceAll("[\\s\\-]+", "_").replaceAll("_+", "_");
+    }
+
+    private static final Pattern FIX_ASK = Pattern.compile(
+        "^\\s*(?:please\\s+)?(?:fix|repair|mend|revise|update|change|improve|patch|correct)\\s+"
+            + "(?:the\\s+|my\\s+|this\\s+|that\\s+|item\\s+|tool\\s+)*([^:;,.(\\n]{3,90})",
+        Pattern.CASE_INSENSITIVE);
+
+    /** The registered item a "fix X …" request names, by any spelling, or empty. */
+    public static Optional<String> revisionNamedIn(String description) {
+        var loader = ScriptedItemLoader.get();
+        if (loader == null) return Optional.empty();
+        return revisionNamedIn(description, loader.all().stream().map(ScriptedItemDef::itemId).toList());
+    }
+
+    /** The pure form: which of {@code knownIds} a "fix X …" request names, by any spelling. */
+    static Optional<String> revisionNamedIn(String description, Collection<String> knownIds) {
+        if (description == null || knownIds == null || knownIds.isEmpty()) return Optional.empty();
+        if (description.startsWith("REVISE AN EXISTING ITEM")) return Optional.empty();   // already one
+        var m = FIX_ASK.matcher(description);
+        if (!m.find()) return Optional.empty();
+        // What follows the verb, in one spelling; the longest known name it starts with is the item.
+        var asked = normalize(m.group(1).replace("`", "").replace(".js", ""));
+        String best = null;
+        for (var id : knownIds) {
+            var n = normalize(id);
+            if (n.isEmpty()) continue;
+            if (asked.equals(n) || asked.startsWith(n + "_")) {
+                if (best == null || n.length() > normalize(best).length()) best = id;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    private static final Pattern CAPABILITIES = Pattern.compile("capabilities\\s*:\\s*\\[([^\\]]*)\\]");
+
+    private static Set<String> capabilitiesOf(String source) {
+        var out = new TreeSet<String>();
+        if (source == null) return out;
+        var m = CAPABILITIES.matcher(source);
+        if (!m.find()) return out;
+        for (var part : m.group(1).split(",")) {
+            var c = part.trim().replaceAll("^[\"']|[\"']$", "").trim();
+            if (!c.isEmpty()) out.add(c);
+        }
+        return out;
+    }
+
+    /**
+     * Why a rebuilt file must not replace the one in use, or empty when it may. A rebuild that
+     * carries a LOWER version, or that declares fewer abilities and keeps nothing where the one
+     * in use kept notes, is a hollow copy: on the household node a 775-byte practice tool with no
+     * abilities replaced the 10 KB one that used the model and her notes, at a lower version,
+     * and nothing said so (2026-10-25). The one in use stays; the new file is kept beside it.
+     */
+    public static Optional<String> doesLess(String previousSource, String newSource) {
+        if (previousSource == null || newSource == null) return Optional.empty();
+        var prevVersion = versionOf(previousSource);
+        var newVersion = versionOf(newSource);
+        if (!"prev".equals(prevVersion) && !"prev".equals(newVersion)
+                && ReleaseManifest.compareVersions(newVersion, prevVersion) < 0) {
+            return Optional.of("its version " + newVersion + " is lower than the " + prevVersion + " in use");
+        }
+        var prevCaps = capabilitiesOf(previousSource);
+        var newCaps = capabilitiesOf(newSource);
+        var prevKeeps = ItemIntentCheck.persistsAnything(previousSource.toLowerCase(Locale.ROOT));
+        var newKeeps = ItemIntentCheck.persistsAnything(newSource.toLowerCase(Locale.ROOT));
+        if (newCaps.size() < prevCaps.size() && prevCaps.containsAll(newCaps) && prevKeeps && !newKeeps) {
+            return Optional.of("it declares fewer abilities (" + (newCaps.isEmpty() ? "none" : String.join(", ", newCaps))
+                + " where the one in use has " + String.join(", ", prevCaps) + ") and keeps nothing where the one in use kept notes");
+        }
+        return Optional.empty();
+    }
+
+    /** Keep a rebuilt file that did not replace the one in use, beside it, as a candidate. */
+    public static Optional<Path> keepCandidate(Path itemsDir, String itemId, Path source) {
+        if (itemsDir == null || itemId == null || source == null) return Optional.empty();
+        try {
+            var versions = itemsDir.resolve(VERSIONS_DIR);
+            Files.createDirectories(versions);
+            var stamp = versionOf(Files.readString(source));
+            var target = versions.resolve(itemId + "." + stamp + "-candidate.js");
+            int n = 2;
+            while (Files.exists(target)) {
+                target = versions.resolve(itemId + "." + stamp + "-candidate-" + n++ + ".js");
+            }
+            Files.copy(source, target, StandardCopyOption.COPY_ATTRIBUTES);
+            log.info("[item-revision] the rebuilt '{}' is kept as a candidate at {}; the one in use stays", itemId, target);
+            return Optional.of(target);
+        } catch (Exception e) {
+            log.warn("[item-revision] could not keep the candidate '{}': {}", itemId, e.toString());
+            return Optional.empty();
+        }
     }
 
     /**

@@ -77,6 +77,11 @@ public final class HerWord {
                 + "read what (?:the library|it says|they say)|research|find out (?:about|more)|learn (?:about|more)|"
                 + "dig into|search (?:for|the library)|look (?:it|that|this) up)\\b"),
             List.of("library_card", "searching_glass", "research_assistant", "research_tool", "library_search")),
+        // Her own notebook comes before a book: "I'll read the project note now" went to the library
+        // four times in one night and found no such book (household node, 2026-10-24). After the
+        // research rule, which stays first: a book with no title falls back to it by index.
+        new Rule(Pattern.compile("\\b(?:read|open|check|look at|look in|review|see)\\b[^.]*\\b(?:project[ _]?notes?|notebook|project notebook)\\b"),
+            List.of("project_note")),
         new Rule(Pattern.compile("\\b(?:read|keep reading|finish reading|next chapter|the book)\\b"),
             List.of(READ_BOOK)),
         // Mending an unfinished thing is the workshop's: dispatch_task, not the furniture called workbench.

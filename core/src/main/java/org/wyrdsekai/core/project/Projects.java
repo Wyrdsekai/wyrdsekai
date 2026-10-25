@@ -1,6 +1,8 @@
 package org.wyrdsekai.core.project;
 
 import org.wyrdsekai.core.companion.PersonalProject;
+import java.util.Optional;
+import java.util.Comparator;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -63,13 +65,117 @@ public final class Projects {
         return n;
     }
 
-    /** Whether a want is about the same work as a project: two subject words in common, or all of the shorter. */
+    /**
+     * Whether a want is about the same work as a project: two subject words in common, or all of
+     * the shorter, or the same subject beside the same kind of work. The third rule is the one
+     * that keeps one practice one project: "keep the diffusion practice going" and "that
+     * diffusion practice, quietly" share only "diffusion" by the first two, because "practice" is
+     * a kind word and not a subject, and a companion's one wish became ten projects with two
+     * entries between them (household node, 2026-10-25).
+     */
     public static boolean about(PersonalProject p, String wantText) {
         if (p == null || wantText == null) return false;
         var whole = p.title() + " " + (p.description() == null ? "" : p.description());
         int n = shared(whole, wantText);
         int shorter = Math.min(words(p.title()).size(), words(wantText).size());
-        return n >= 2 || (shorter >= 1 && n >= shorter);
+        if (n >= 2 || (shorter >= 1 && n >= shorter)) return true;
+        var a = kindSubjects(whole);
+        if (a.isEmpty()) return false;
+        for (var w : kindSubjects(wantText)) if (a.contains(w)) return true;
+        return false;
+    }
+
+    /** Words for the kind of long work a want names. */
+    private static final Set<String> KIND_WORDS = Set.of("practice", "practise", "practising", "practicing", "study",
+        "studying", "learn", "learning", "build", "building", "project", "research", "researching", "exercise", "training");
+
+    /** The subject words that stand within two words of a kind word: "diffusion" in "the diffusion practice". */
+    static Set<String> kindSubjects(String text) {
+        var out = new LinkedHashSet<String>();
+        if (text == null) return out;
+        var toks = text.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+");
+        for (int i = 0; i < toks.length; i++) {
+            if (!KIND_WORDS.contains(toks[i])) continue;
+            for (int j = Math.max(0, i - 2); j <= Math.min(toks.length - 1, i + 2); j++) {
+                if (j == i) continue;
+                var w = toks[j];
+                if (w.length() < 3 || NOT_WORDS.contains(w) || KIND_WORDS.contains(w)) continue;
+                out.add(w.endsWith("s") && w.length() > 4 ? w.substring(0, w.length() - 1) : w);
+            }
+        }
+        return out;
+    }
+
+    private static final Pattern NOTE_TO_WORKSHOP = Pattern.compile(
+        "^\\s*(?:please\\s+)?(?:create|write|add|make|record|log|put)\\s+(?:a\\s+|an\\s+|the\\s+|one\\s+)?(?:new\\s+)?"
+            + "(?:project[ _]?notes?|notebook|project notebook|notes?\\s+entry)\\s*(?:entry|line|page)?\\s*(?:for|about|on|of|:)?\\s*",
+        Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The entry in a workshop request that is really a notebook entry: "Create a project_note
+     * entry for tonight's check-in: …" is a line for the notebook, not a program to write. Six of
+     * these went to the workshop in one night on the household node, each into a scratch folder
+     * nothing reads, and she found her book empty every time (2026-10-25). Empty when the request
+     * is a build.
+     */
+    public static Optional<String> noteFromDispatch(String description) {
+        if (description == null) return Optional.empty();
+        var m = NOTE_TO_WORKSHOP.matcher(description);
+        if (!m.find()) return Optional.empty();
+        var rest = description.substring(m.end()).strip();
+        // A request that goes on to ask for code or a file is a build after all.
+        var low = rest.toLowerCase(Locale.ROOT);
+        if (low.contains(".js") || low.contains("script") || low.contains("function") || low.contains("manifest")
+                || low.contains("tool that") || low.contains("item that")) return Optional.empty();
+        if (rest.isBlank()) rest = description.strip();
+        return Optional.of(oneLine(rest, 600));
+    }
+
+    /** The result of folding projects that are about one piece of work into one. */
+    public record Fold(List<PersonalProject> projects, List<String> report) {}
+
+    /**
+     * Projects that are about the same work, folded into the oldest of them: entries merged in
+     * order, the other titles kept in its description, the newest next step kept, active if any
+     * was. Finished projects are left alone. Nothing of hers is dropped: the titles she gave and
+     * every entry travel into the one that stays.
+     */
+    public static Fold fold(List<PersonalProject> all) {
+        var report = new ArrayList<String>();
+        if (all == null || all.size() < 2) return new Fold(all == null ? List.of() : all, report);
+        var byAge = new ArrayList<>(all);
+        byAge.sort(Comparator.comparing(PersonalProject::createdAt));
+        var kept = new ArrayList<PersonalProject>();
+        for (var p : byAge) {
+            if (p.finished() || isDraftBin(p)) { kept.add(p); continue; }
+            PersonalProject home = null;
+            for (var k : kept) {
+                if (k.finished() || isDraftBin(k)) continue;
+                if (about(k, p.title()) || about(p, k.title())) { home = k; break; }
+            }
+            if (home == null) { kept.add(p); continue; }
+            var merged = merge(home, p);
+            kept.set(kept.indexOf(home), merged);
+            report.add("\"" + p.title() + "\" folded into \"" + home.title() + "\" (" + p.entries().size() + " entries carried)");
+        }
+        return new Fold(List.copyOf(kept), report);
+    }
+
+    private static PersonalProject merge(PersonalProject home, PersonalProject other) {
+        var entries = new ArrayList<>(home.entries());
+        entries.addAll(other.entries());
+        entries.sort(Comparator.comparing(PersonalProject.Entry::at));
+        var alsoCalled = "also called: " + other.title();
+        var description = home.description() == null || home.description().isBlank() ? alsoCalled
+            : home.description().contains(other.title()) ? home.description() : home.description() + "; " + alsoCalled;
+        var status = home.active() || other.active() ? "active" : home.status();
+        var touched = home.lastTouched().isAfter(other.lastTouched()) ? home.lastTouched() : other.lastTouched();
+        var next = other.lastTouched().isAfter(home.lastTouched()) && other.nextStep() != null && !other.nextStep().isBlank()
+            ? other.nextStep() : home.nextStep();
+        var room = home.roomId() != null ? home.roomId() : other.roomId();
+        var tags = new LinkedHashSet<>(home.tags()); tags.addAll(other.tags());
+        return new PersonalProject(home.id(), home.title(), description, status, home.createdAt(), touched,
+            List.copyOf(entries), List.copyOf(tags), home.scope(), next, room);
     }
 
     /** Of her projects, the one a want belongs to; an active one before a paused one. Null when none. */
