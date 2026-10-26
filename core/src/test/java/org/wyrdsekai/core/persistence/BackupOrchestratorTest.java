@@ -6,6 +6,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.HashSet;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -209,7 +213,7 @@ class BackupOrchestratorTest {
 
     // --- VACUUM INTO tests (Phase F7b backup hardening) ---
 
-    @Test void snapshot_real_sqlite_uses_vacuum_into() throws Exception {
+    @Test void snapshot_real_sqlite_is_a_database_copy() throws Exception {
         var sourceDb = tempDir.resolve("real.db");
         var jdbcUrl = "jdbc:sqlite:" + sourceDb.toAbsolutePath();
         try (var conn = DriverManager.getConnection(jdbcUrl);
@@ -263,6 +267,60 @@ class BackupOrchestratorTest {
                 .as("WAL-resident rows captured by VACUUM INTO")
                 .isEqualTo(3);
         }
+    }
+
+    /**
+     * Two copies of an almost unchanged database share almost all of their pages. The copy used
+     * to be a rebuild that renumbered every page: on the household node two rebuilt copies two
+     * hours apart shared 18.5% of their pages, a page-for-page copy 98.5% (2026-10-26). The vault
+     * stores copies in content pieces, so what the copy keeps identical is what it does not store
+     * twice.
+     */
+    @Test void a_days_copy_shares_its_unchanged_pages_with_the_day_before() throws Exception {
+        var sourceDb = tempDir.resolve("pages.db");
+        var jdbcUrl = "jdbc:sqlite:" + sourceDb.toAbsolutePath();
+        var big = "m".repeat(200_000);   // rows that live in overflow pages, like a soul manifest
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA journal_mode=WAL");
+            stmt.execute("CREATE TABLE m (id INTEGER PRIMARY KEY, body TEXT)");
+            stmt.execute("CREATE TABLE e (id INTEGER PRIMARY KEY, line TEXT)");
+            for (int i = 0; i < 40; i++) stmt.execute("INSERT INTO m (body) VALUES ('" + big + i + "')");
+            for (int i = 0; i < 2000; i++) stmt.execute("INSERT INTO e (line) VALUES ('event " + i + "')");
+        }
+        var first = orchestrator.snapshot(sourceDb).orElseThrow().location();
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var stmt = conn.createStatement()) {
+            stmt.execute("INSERT INTO m (body) VALUES ('" + big + "new')");   // the day's one new manifest
+            for (int i = 0; i < 50; i++) stmt.execute("INSERT INTO e (line) VALUES ('event new " + i + "')");
+        }
+        var second = orchestrator.snapshot(sourceDb).orElseThrow().location();
+
+        var before = new HashSet<String>();
+        for (var h : pageHashes(first)) before.add(h);
+        var after = pageHashes(second);
+        long shared = after.stream().filter(before::contains).count();
+        assertThat(shared * 100.0 / after.size()).as("pages of the later copy also in the earlier one").isGreaterThan(90.0);
+
+        var backupJdbc = "jdbc:sqlite:" + second.toAbsolutePath();
+        try (var conn = DriverManager.getConnection(backupJdbc);
+             var stmt = conn.createStatement();
+             var rs = stmt.executeQuery("SELECT count(*) FROM m")) {
+            rs.next();
+            assertThat(rs.getInt(1)).as("the copy is complete, WAL included").isEqualTo(41);
+        }
+    }
+
+    private static List<String> pageHashes(Path db) throws Exception {
+        var md = MessageDigest.getInstance("SHA-256");
+        var out = new ArrayList<String>();
+        var bytes = Files.readAllBytes(db);
+        for (int off = 0; off + 4096 <= bytes.length; off += 4096) {
+            md.reset();
+            md.update(bytes, off, 4096);
+            out.add(HexFormat.of().formatHex(md.digest()));
+        }
+        return out;
     }
 
     @Test void snapshot_non_sqlite_falls_back_to_file_copy() throws IOException {

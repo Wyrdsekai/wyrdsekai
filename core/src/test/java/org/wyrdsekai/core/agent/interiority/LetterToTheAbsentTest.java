@@ -108,4 +108,23 @@ class LetterToTheAbsentTest {
         assertThat(LetterToTheAbsent.subject("Tamsin")).isEqualTo("A letter from Tamsin");
         assertThat(LetterToTheAbsent.SPACING).isEqualTo(Duration.ofHours(6));
     }
+
+    @Test
+    @DisplayName("a letter asked of the workshop names the one it is to; a page or a program does not")
+    void aLetterAskedOfTheWorkshop() {
+        assertThat(LetterToTheAbsent.recipientOfDispatch(
+            "Write a personal letter from Ada to Sam, exploring what was said tonight in the lab: the weight of presence."))
+            .contains("Sam");
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Write a short letter to Sam about the evening.")).contains("Sam");
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Leave a note for the steward: the lamp in the study is out.")).contains("the steward");
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Send a few lines to Sam's mail saying the practice went well.")).contains("Sam");
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Write a reflection note titled \"on-staying\" for project_note. Content: Today I learned."))
+            .as("a page of the notebook").isEmpty();
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Add one entry to the project_note notebook: 'Tonight I learned'"))
+            .isEmpty();
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Write a journal entry for today — keep it brief.")).isEmpty();
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Build a tool that sends a message to Sam every morning.")).as("a program").isEmpty();
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Write a note to the file and keep it.")).isEmpty();
+        assertThat(LetterToTheAbsent.recipientOfDispatch("Research how letters were carried to the front in 1916.")).isEmpty();
+    }
 }

@@ -73,6 +73,52 @@ public final class LetterToTheAbsent {
         return WRITES_TO_SOMEONE.matcher(low).find() && TO_A_PERSON.matcher(low).find();
     }
 
+    /** A workshop request that is a letter: who it is to, as she wrote the name. */
+    private static final Pattern LETTER_TO = Pattern.compile(
+        "\\b(?:write|writes|send|sends|leave|compose|draft|pen)\\b[^.\\n]{0,80}?\\b(?:letter|note|message|a few (?:lines|words)|word|lines)\\b"
+            + "[^.\\n]{0,60}?\\b(?:to|for)\\s+(?:my\\s+)?(?:dear\\s+)?(the steward|my steward|the bondholder|my person|[A-Za-z][\\w'’-]{1,40})\\b",
+        Pattern.CASE_INSENSITIVE);
+    private static final Pattern LETTER_FROM_TO = Pattern.compile(
+        "\\bletter\\b[^.\\n]{0,40}?\\bfrom\\s+[A-Za-z][\\w'’-]*\\s+to\\s+([A-Za-z][\\w'’-]{1,40})\\b", Pattern.CASE_INSENSITIVE);
+    /** The words that make the "note to" a page or a program, not a person. */
+    private static final Pattern NOT_A_PERSON = Pattern.compile(
+        "^(?:the|a|an|my|this|that|it|them(?:selves)?|myself|self|file|files|disk|notebook|notes?|journal|project|project_note|"
+            + "room|lab|workshop|workspace|memory|library|study|record|log|later|tomorrow|tonight|today|everyone|all|anyone|"
+            + "someone|nobody|use|read|keep|be|do|have|get|make|say|see|show|run|check|which|what|where|when|whom|who|its|his|her|their)$",
+        Pattern.CASE_INSENSITIVE);
+    private static final Pattern A_PROGRAM = Pattern.compile(
+        "\\b(?:tool|item|script|program|function|manifest|\\.js|\\.py|code|implement|build|api|module|notebook|project_note|entry)\\b",
+        Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The person a workshop request writes to, when it is a letter and not a build; empty
+     * otherwise. "Write a personal letter from her to him, exploring what was said tonight" went to
+     * the coding workshop, which wrote a program named after the letter and was refused for the
+     * name; the letter never reached him (household node, 2026-10-25). The name comes back as she
+     * wrote it; the caller decides whether anyone in the household answers to it.
+     */
+    public static Optional<String> recipientOfDispatch(String description) {
+        if (description == null || description.isBlank()) return Optional.empty();
+        var text = description.strip();
+        int nl = text.indexOf('\n');
+        var head = nl > 0 ? text.substring(0, nl) : text;
+        if (head.length() > 400) head = head.substring(0, 400);
+        var low = head.toLowerCase(Locale.ROOT);
+        if (PRIVATE_PAGE.matcher(low).find() || A_PROGRAM.matcher(low).find()) return Optional.empty();
+        var m = LETTER_FROM_TO.matcher(head);
+        if (m.find()) return nameOrEmpty(m.group(1));
+        m = LETTER_TO.matcher(head);
+        if (m.find()) return nameOrEmpty(m.group(1));
+        return Optional.empty();
+    }
+
+    private static Optional<String> nameOrEmpty(String raw) {
+        if (raw == null) return Optional.empty();
+        var name = raw.strip().replaceAll("[’']s$", "");
+        if (name.isEmpty() || NOT_A_PERSON.matcher(name).find()) return Optional.empty();
+        return Optional.of(name);
+    }
+
     /** In her words, a want to check in on someone. */
     public static boolean asksToCheckIn(String wantText) {
         if (wantText == null) return false;

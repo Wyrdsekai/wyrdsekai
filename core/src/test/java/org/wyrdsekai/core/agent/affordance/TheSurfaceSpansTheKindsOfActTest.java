@@ -96,4 +96,25 @@ class TheSurfaceSpansTheKindsOfActTest {
         assertThat(ca).contains("ToolAffordanceRanker.dominantPull(pressures, WantActBridge.NON_PULL),");
         assertThat(ca.split("noteEmittedTool\\(", -1).length - 1).as("both own-time dispatch paths, and the method").isEqualTo(3);
     }
+
+    /**
+     * Two companions' own-time prompts named the workshop door on nearly every turn and the
+     * notebook on the same turns; one pin went to the workshop and the notebook was ranked out:
+     * in her hand on 6% and 13% of turns (household node, 2026-10-26). Every door the prompt
+     * names now survives the trim.
+     */
+    @Test
+    void every_named_door_survives_the_trim_not_only_the_first() {
+        var withOne = ToolAffordanceRanker.rankSpanning(LEVELS, "dispatch_task", CANDIDATES, SEED, 8, RELEVANCE::get, KIND, 2);
+        assertThat(withOne).startsWith("dispatch_task");
+        var withBoth = ToolAffordanceRanker.rankSpanning(LEVELS, "dispatch_task", CANDIDATES, SEED, 8, RELEVANCE::get, KIND, 2,
+            List.of("dispatch_task", "note", "write_letter"));
+        assertThat(withBoth).hasSize(8).startsWith("dispatch_task").contains("note", "write_letter");
+        assertThat(withBoth.indexOf("note")).as("kept names come right after the front").isLessThan(3);
+        var flat = ToolAffordanceRanker.rank(LEVELS, null, CANDIDATES, SEED, 8, RELEVANCE::get, List.of("recall", "absent_tool"));
+        assertThat(flat).hasSize(8).contains("recall").doesNotContain("absent_tool");
+        assertThat(ToolAffordanceRanker.rank(LEVELS, null, CANDIDATES, SEED, 8, RELEVANCE::get, List.of()))
+            .as("nothing kept: the ranking as before")
+            .isEqualTo(ToolAffordanceRanker.rank(LEVELS, null, CANDIDATES, SEED, 8, RELEVANCE::get));
+    }
 }

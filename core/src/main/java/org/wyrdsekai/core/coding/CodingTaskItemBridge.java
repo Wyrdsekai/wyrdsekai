@@ -140,6 +140,14 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 artifact.taskId());
             return;
         }
+        if (artifact instanceof SourceArtifact page && proseOnly(page)) {
+            // A synthesis, a summary, a reflection: the backend wrote a page and no program. The
+            // page is kept for her notebook (ItemContractRepair.proseOf); a "codex" object for a
+            // markdown file is a thing in the room nobody can use.
+            log.info("CodingTaskItemBridge: task {} wrote a page and no program — kept for her notebook, nothing placed",
+                page.taskId());
+            return;
+        }
         var primary = toRoomObject(artifact);
         if (primary != null) {
             var outcome = stampRegistry(primary, artifact, zb.roomId());
@@ -448,6 +456,58 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         }
         ItemContractRepair.noteRefused(String.valueOf(src.taskId()), problems.getFirst());
         return new RegistrationOutcome(false, problems);
+    }
+
+    /**
+     * True when the task wrote prose (markdown or text) and no script, recording the page for her
+     * notebook. In two weeks on the household node the workshop was asked for essays, syntheses
+     * and research write-ups; each became a file in the task's scratch folder that nothing read,
+     * and she asked the workshop to read its own file back to her (2026-10-21).
+     */
+    static boolean proseOnly(SourceArtifact s) {
+        if (s == null || s.workspacePath() == null || s.workspacePath().isBlank()) return false;
+        Path root;
+        try {
+            root = Path.of(s.workspacePath());
+            if (!Files.isDirectory(root)) return false;
+        } catch (Exception e) {
+            return false;
+        }
+        for (var c : candidateScripts(root, s.files())) if (Files.isRegularFile(c)) return false;
+        try (var walk = Files.walk(root, 3)) {
+            var pages = walk.filter(Files::isRegularFile)
+                .filter(f -> {
+                    var n = f.getFileName().toString().toLowerCase(Locale.ROOT);
+                    return (n.endsWith(".md") || n.endsWith(".markdown") || n.endsWith(".txt")) && !n.startsWith(".");
+                })
+                .sorted().toList();
+            if (pages.isEmpty()) return false;
+            var sb = new StringBuilder();
+            String title = null;
+            for (var f : pages) {
+                var text = Files.readString(f).strip();
+                if (text.isEmpty()) continue;
+                if (title == null) title = titleOf(f, text);
+                if (sb.length() > 0) sb.append("\n\n");
+                sb.append(text);
+                if (sb.length() > ItemContractRepair.PROSE_MAX_CHARS) break;
+            }
+            if (sb.isEmpty()) return false;
+            ItemContractRepair.noteProse(String.valueOf(s.taskId()), title, sb.toString());
+            return true;
+        } catch (Exception e) {
+            log.debug("CodingTaskItemBridge: could not read the pages of task {}: {}", s.taskId(), e.toString());
+            return false;
+        }
+    }
+
+    /** The page's first heading, or its file name in words. */
+    private static String titleOf(Path f, String text) {
+        for (var line : text.split("\n")) {
+            var t = line.strip();
+            if (t.startsWith("#")) return t.replaceFirst("^#+\\s*", "").strip();
+        }
+        return f.getFileName().toString().replaceFirst("\\.[^.]+$", "").replace('_', ' ').replace('-', ' ');
     }
 
     /** Is there anything here to put in a room? A source artifact with no files is not. */

@@ -106,6 +106,11 @@ public final class HerWord {
             List.of("craft_from_template")),
         new Rule(Pattern.compile("\\b(?:go|head|walk|wander|return|explore|visit|step|move)\\b"),
             List.of("go_to_room")),
+        // A page of her notebook comes before the journal and the quill: "I'll write an entry in my project
+        // notebook" and "I'll add a note to the practice notebook" are project_note (household node, 2026-10-26).
+        new Rule(Pattern.compile("\\b(?:write|add|record|put|jot|log|make|leave)\\b[^.]*\\b(?:project[ _]?notes?|notebook|project notebook|"
+                + "an entry|the entry|one entry|a note in|a page in)\\b"),
+            List.of("project_note")),
         new Rule(Pattern.compile("\\b(?:write|journal|jot|note (?:it|this|that) down|put (?:it|this|that) into words)\\b"),
             List.of("write_journal", "quill", "write_text", "note")),
         new Rule(Pattern.compile("\\bremember\\b"),

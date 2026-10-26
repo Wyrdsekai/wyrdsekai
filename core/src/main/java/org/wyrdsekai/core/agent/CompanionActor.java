@@ -4184,6 +4184,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(ReactDispatch.class, this::onReactDispatch)
             .onMessage(DispatchHandoff.class, this::onDispatchHandoff)
             .onMessage(DispatchVerdict.class, this::onDispatchVerdict)
+            .onMessage(NotebookEntryComposed.class, this::onNotebookEntryComposed)
+            .onMessage(LetterComposed.class, this::onLetterComposed)
             .onMessage(ForceEnergy.class, msg -> {
                 vitality = vitality.withEnergy(msg.energy());
                 log.info("ForceEnergy: '{}' energy set to {}", profile.name(), msg.energy());
@@ -12324,7 +12326,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             shown++;
         }
         sb.append("\nYou can add a note via project_note, mark complete via finish_project, ")
-          .append("or start a new one via start_project.\n");
+          .append("or start a new one via start_project. An entry, a note, a reflection, a page of a project is written")
+          .append(" with project_note; the workshop builds tools and keeps no notes.\n");
         return sb.toString();
     }
 
@@ -23039,21 +23042,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // FORCE_TOOL has nothing to narrow to (the 2026-06-05 first-battery "not in offered
         // surface" failure). Falls back to the prompt-text pins (shape_recipe / sending_stone).
         String forced = forcedPin;
-        if (forced == null && autonomyPromptLower != null) {
-            if (autonomyPromptLower.contains("shape_recipe")) forced = "shape_recipe";
-            else if (autonomyPromptLower.contains("sending_stone")) forced = "sending_stone";
-            // Play-loop seam 2: a growth-want's own-time prompt offers the workshop
-            // door by name; pin it so the top-K trim can't drop the verb the prompt
-            // just promised her. Pin ≠ force — tool_choice stays auto on this path.
-            else if (autonomyPromptLower.contains("dispatch_task")) forced = "dispatch_task";
-            // The house's notice that she is at her number of open rooms names close_room; the
-            // top-K trim must not drop the verb the notice just gave her.
-            else if (autonomyPromptLower.contains("close_room")) forced = "close_room";
-            // A want to read on, or to finish a book, names read_book; the trim must not drop it.
-            else if (autonomyPromptLower.contains("read_book")) forced = "read_book";
-            // A turn for a project names project_note; it is kept on the surface, never forced.
-            else if (autonomyPromptLower.contains("project_note")) forced = "project_note";
+        // Every door the prompt names survives the trim, not only the first. The first named
+        // (in this order) is the front when the bridge forced nothing: shape_recipe, sending_stone,
+        // the workshop door a growth want names (pin ≠ force — tool_choice stays auto), close_room
+        // from the house's notice, read_book from a want to read on, project_note from a turn for
+        // a project. Until 2026-10-26 one pin was chosen and the rest were ranked out: the growth
+        // want named the workshop on nearly every own-time turn, so the notebook named in the
+        // same prompt was in her hand on 6% and 13% of two companions' turns, and a third of her
+        // 174 workshop requests in two weeks were pages of that notebook.
+        var kept = new LinkedHashSet<String>();
+        if (autonomyPromptLower != null) {
+            for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);
         }
+        if (forced == null && !kept.isEmpty()) forced = kept.iterator().next();
+        // On her own time the surface spans the kinds of act: one of each before two of any. A
+        // turn that answers a person is ranked for what was asked, as before.
+        boolean ownTimeSurface = !reactiveInference && !aPersonAskedForThisTurn();
+        // While she has a project of her own, its notebook is in her hand on every own-time turn,
+        // as the workshop is: what she is not shown she cannot choose.
+        if (ownTimeSurface && hasAProjectOpen()) kept.add("project_note");
         var byName = new LinkedHashMap<String,
             InferenceClient.ToolDefinition>();
         var names = new ArrayList<String>();
@@ -23089,15 +23096,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     ? def.function().description() : null;
                 return RequestRelevance.score(autonomyPromptLower, n, desc);
             };
-        // On her own time the surface spans the kinds of act: one of each before two of any. A
-        // turn that answers a person is ranked for what was asked, as before.
-        boolean ownTimeSurface = !reactiveInference && !aPersonAskedForThisTurn();
         var ranked = ownTimeSurface && trimNeeded
             ? ToolAffordanceRanker.rankSpanning(pressures, forced, names, resolve, AFFORDANCE_TOPK, relevance,
-                n -> ToolAffordanceRanker.kindOf(n, ActionPolicy.domainFor(n)), Math.max(2, AFFORDANCE_TOPK / 4))
+                n -> ToolAffordanceRanker.kindOf(n, ActionPolicy.domainFor(n)), Math.max(2, AFFORDANCE_TOPK / 4), kept)
             : ToolAffordanceRanker.rank(
                 pressures, forced, names, resolve,
-                trimNeeded ? AFFORDANCE_TOPK : names.size(), relevance);
+                trimNeeded ? AFFORDANCE_TOPK : names.size(), relevance, kept);
         if (toolAffordanceLog != null) {
             var did = profile.did() != null ? profile.did() : profile.entityId();
             toolAffordanceLog.record(did, Instant.now(),
@@ -23116,9 +23120,24 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             profile.name(), out.size(), tools.size(),
             trimNeeded ? "" : " (ordered, no trim needed)",
             String.join(",", ranked),
-            forced != null ? " forced=" + forced : "");
+            (forced != null ? " forced=" + forced : "") + (kept.isEmpty() ? "" : " kept=" + String.join(",", kept)));
         // The trim is a token budget, not a verdict on what she's allowed to want.
         return withEscapeHatch(out);
+    }
+
+    /** The doors an own-time prompt may name; each one named survives the trim, the first is the front. */
+    private static final List<String> DOORS_NAMED_IN_THE_PROMPT = List.of(
+        "shape_recipe", "sending_stone", "dispatch_task", "close_room", "read_book", "project_note");
+
+    /** Whether she has a project of her own that is not finished: a notebook with a page to write. */
+    private boolean hasAProjectOpen() {
+        try {
+            if (personalProjectStore == null && profile.entityId() == null) return false;
+            for (var p : getPersonalProjectStore().active()) if (!Projects.isDraftBin(p)) return true;
+        } catch (Exception e) {
+            log.debug("Project store not read for the surface: {}", e.toString());
+        }
+        return false;
     }
 
     private void runInteriorityTick() {
@@ -36142,17 +36161,20 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 Map.of("action", "dispatch_task", "outcome", "refused"));
             return;
         }
-        // A notebook entry sent to the workshop is written in the notebook. Six "create a
-        // project_note entry for tonight's check-in" jobs ran in one night on the household
-        // node, each writing a file into a scratch folder nothing reads, and she found her
-        // book empty every time (2026-10-25).
-        var note = Projects.noteFromDispatch(description);
-        if (note.isPresent()) {
-            handleProjectNote(new ActionParser.AgentAction.ProjectNote(null, note.get(), null, false));
-            lastDispatchTaskOutcome = "That was a notebook entry, not a build, so it went to the notebook: "
-                + lastBuiltinOutcome;
-            log.info("Companion '{}' dispatch_task carried a notebook entry — written with project_note instead: {}",
-                profile.name(), truncate(note.get(), 100));
+        // A letter to someone in the house is hers to write, not the workshop's: "write a personal
+        // letter from her to him" became a program named after the letter, refused for its name,
+        // and he never got it (household node, 2026-10-25).
+        var letterTo = LetterToTheAbsent.recipientOfDispatch(description);
+        if (letterTo.isPresent() && writeLetterInsteadOfDispatch(letterTo.get(), description, catalog)) return;
+        // A page of her notebook sent to the workshop is written in the notebook. Six "create a
+        // project_note entry for tonight's check-in" jobs ran in one night on the household node,
+        // each writing a file into a scratch folder nothing reads (2026-10-25); the day after,
+        // "add one entry to the project_note notebook: '…'" became a tool with her sentence inside
+        // it, and "write a reflection note titled … for project_note" a broken program
+        // (2026-10-26). Her words are written as given; a brief is written in her own voice.
+        var page = Projects.notebookAsk(description);
+        if (page.isPresent()) {
+            notebookInsteadOfDispatch(page.get(), description, catalog);
             return;
         }
         // "Fix diffusion_practice-3 …" names a tool she has: that is a revision of it, by any
@@ -37139,6 +37161,167 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         log.info("Companion '{}' wrote in the notebook of '{}' ({} entries){}{}", profile.name(), p.title(), n,
             hasNext ? " (next step set)" : "", action.done() ? " — done" : "");
         refreshWorkLine();
+    }
+
+    /**
+     * A workshop request that was a page of her notebook: shown, written as given, or written in
+     * her own voice from the brief she gave. The project is the one she named when she has one by
+     * that name; never a new one made from a phrase.
+     */
+    private void notebookInsteadOfDispatch(Projects.NotebookAsk page, String description, ScriptMessageCatalog catalog) {
+        var store = getPersonalProjectStore();
+        var named = page.project() == null ? null : Projects.named(store.list(), page.project());
+        if (named != null && named.finished()) named = null;
+        var pid = named == null ? null : named.id();
+        if (page.reading()) {
+            handleProjectNote(new ActionParser.AgentAction.ProjectNote(pid, null, null, false));
+            lastDispatchTaskOutcome = "That was your notebook, not a build. " + lastBuiltinOutcome;
+            log.info("Companion '{}' dispatch_task asked to read the notebook{} — shown instead of sent to the workshop",
+                profile.name(), named == null ? "" : " of '" + named.title() + "'");
+            return;
+        }
+        if (page.journal() && pid == null) {
+            var words = page.hasEntry() ? page.entry() : page.brief();
+            handleWriteJournal(new ActionParser.AgentAction.WriteJournal(null, words, "reflection"));
+            lastDispatchTaskOutcome = "That was a page of your journal, not a build: it is written in your journal.";
+            log.info("Companion '{}' dispatch_task carried a journal entry — written in her journal instead", profile.name());
+            return;
+        }
+        if (page.hasEntry()) {
+            handleProjectNote(new ActionParser.AgentAction.ProjectNote(pid, page.entry(), page.next(), false));
+            lastDispatchTaskOutcome = "That was a notebook entry, not a build, so it went to the notebook: " + lastBuiltinOutcome;
+            speakProduct(catalog.get("dispatch.spoken.notebook_instead"), Map.of("action", "dispatch_task", "outcome", "notebook"));
+            log.info("Companion '{}' dispatch_task carried a notebook entry — written with project_note instead: {}",
+                profile.name(), truncate(page.entry(), 100));
+            return;
+        }
+        composeNotebookEntry(pid, named == null ? null : named.title(), page, description);
+    }
+
+    /** A brief for a page ("the entry should be a single sitting: what broke, what held"): her own voice writes it. */
+    private void composeNotebookEntry(String projectId, String projectTitle, Projects.NotebookAsk page, String description) {
+        var brief = page.brief() == null || page.brief().isBlank() ? description : page.brief();
+        var system = "You are " + profile.name() + ". You are writing one entry in the notebook of your own project"
+            + (projectTitle == null ? "" : ", \"" + projectTitle + "\"") + ". Write in your own voice, plainly: what you did,"
+            + " what you found, what you think. Write only the entry itself, no heading, no sign-off. "
+            + (page.longForm() ? "Up to 350 words." : "Under 150 words.");
+        var felt = drives.prefix(vitality) + "\n" + PromptAssembler.privateStateLine(vitality);
+        var user = "The entry you asked for: " + brief
+            + (page.title() == null ? "" : "\nIts title: " + page.title())
+            + "\n\nHow you are right now:\n" + felt;
+        final var pid = projectId;
+        final var title = page.title();
+        final var next = page.next();
+        fireOneShotVoicePrompt(system, user, page.longForm() ? 700 : 320, 0.7, "notebook-",
+                Duration.ofSeconds(90), "cap:quick", NowLine.dateTime())
+            .whenComplete((body, failure) -> {
+                if (failure != null || body == null || body.isBlank()) {
+                    log.info("Notebook entry for '{}' did not get written: {}", profile.name(),
+                        failure == null ? "empty" : failure.getMessage());
+                    return;
+                }
+                getContext().getSelf().tell(new NotebookEntryComposed(pid, title, body.strip(), next));
+            });
+        lastDispatchTaskOutcome = "That was a notebook entry, not a build: you are writing it in your own words now; it will be"
+            + " in the notebook" + (projectTitle == null ? "" : " of " + projectTitle) + " in a moment.";
+        log.info("Companion '{}' dispatch_task asked for a notebook page — her own voice writes {}: {}",
+            profile.name(), page.longForm() ? "a longer page" : "an entry", truncate(brief, 100));
+    }
+
+    private record NotebookEntryComposed(String projectId, String title, String body, String next) implements Command {}
+
+    private Behavior<Command> onNotebookEntryComposed(NotebookEntryComposed msg) {
+        var entry = msg.title() == null || msg.body().toLowerCase(Locale.ROOT).contains(msg.title().toLowerCase(Locale.ROOT))
+            ? msg.body() : msg.title() + " — " + msg.body();
+        handleProjectNote(new ActionParser.AgentAction.ProjectNote(msg.projectId(), entry, msg.next(), false));
+        var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
+        speakProduct(catalog.get("dispatch.spoken.notebook_instead"), Map.of("action", "project_note", "outcome", "written"));
+        log.info("Companion '{}' wrote the page her own voice composed: {}", profile.name(), lastBuiltinOutcome);
+        return this;
+    }
+
+    /**
+     * A workshop request that was a letter: her own voice writes it and it goes into the
+     * household mail. True when someone in the house answers to the name; false leaves the
+     * request to the workshop.
+     */
+    private boolean writeLetterInsteadOfDispatch(String name, String brief, ScriptMessageCatalog catalog) {
+        String theirDid = null;
+        String theirName = null;
+        var bondholder = primaryBondholderDid();
+        var bondholderName = bondholder == null ? null : bondholderDisplayNameForReach();
+        if (bondholderName == null && bondholder != null) bondholderName = nameInMailDirectory(bondholder);
+        var low = name.toLowerCase(Locale.ROOT);
+        if (bondholder != null && (low.matches("the steward|my steward|the bondholder|my person|them|him|her|you")
+                || (bondholderName != null && bondholderName.equalsIgnoreCase(name)))) {
+            theirDid = bondholder;
+            theirName = bondholderName != null ? bondholderName : name;
+        } else {
+            try {
+                var hit = MailboxService.getOrCreate().directory().byName(name);
+                if (hit.isPresent()) { theirDid = hit.get().identity(); theirName = hit.get().name(); }
+            } catch (Exception e) {
+                log.debug("Mail directory lookup for '{}' failed: {}", name, e.toString());
+            }
+        }
+        if (theirName == null) {
+            log.info("Companion '{}' dispatch_task reads as a letter to '{}', but no one in the house answers to that name — left to the workshop",
+                profile.name(), name);
+            return false;
+        }
+        final var did = theirDid;
+        final var who = theirName;
+        var away = did == null ? null : saudadeLedger.absenceDurations(Instant.now()).get(did);
+        var felt = drives.prefix(vitality) + "\n" + PromptAssembler.privateStateLine(vitality);
+        fireOneShotVoicePrompt(LetterToTheAbsent.systemPrompt(profile.name()),
+                LetterToTheAbsent.userPrompt(who, brief, felt, away), 320, 0.7, "letter-",
+                Duration.ofSeconds(90), "cap:quick", NowLine.dateTime())
+            .whenComplete((body, failure) -> {
+                if (failure != null || body == null || body.isBlank()) {
+                    log.info("Letter to {} from '{}' did not get written: {}", who, profile.name(),
+                        failure == null ? "empty" : failure.getMessage());
+                    return;
+                }
+                getContext().getSelf().tell(new LetterComposed(did, who, body.strip()));
+            });
+        lastDispatchTaskOutcome = "That was a letter, not a build: you are writing it yourself now, and it will be in "
+            + who + "'s mail in a moment.";
+        speakProduct(catalog.get("dispatch.spoken.letter_instead", who), Map.of("action", "dispatch_task", "outcome", "letter"));
+        log.info("Companion '{}' dispatch_task was a letter to {} — written as one, not sent to the workshop", profile.name(), who);
+        return true;
+    }
+
+    private record LetterComposed(String theirDid, String theirName, String body) implements Command {}
+
+    private Behavior<Command> onLetterComposed(LetterComposed msg) {
+        deliverLetter(msg.theirDid(), msg.theirName(), msg.body());
+        return this;
+    }
+
+    /** The letter lands in their mail and in her memory; to her bondholder, the longing eases by a letter's worth. */
+    private void deliverLetter(String theirDid, String theirName, String body) {
+        try {
+            var mail = MailboxService.getOrCreate();
+            var result = mail.sendFrom(profile.entityId(), profile.name() + "@" + mail.localZone(),
+                theirName, LetterToTheAbsent.subject(profile.name()), body, Map.of());
+            if (!Boolean.TRUE.equals(result.get("ok"))) {
+                log.warn("Letter from '{}' to {} was not delivered: {}", profile.name(), theirName, result.get("error"));
+                return;
+            }
+            var bondholder = primaryBondholderDid();
+            if (bondholder != null && theirDid != null && PersonIds.samePerson(bondholder, theirDid)) {
+                saudadeLedger.recordLetter(bondholder);
+                persistSaudadeLedger();
+                vitality = vitality.withSaudade(saudadeLedger.maxSaudade());
+                lastLetterAt = Instant.now();
+            }
+            var line = "Wrote to " + theirName + ": " + truncate(body.lines().findFirst().orElse(body), 160);
+            if (theirDid == null) remember(line); else remember(line, MemoryOrigin.privateTo(theirDid));
+            practised("write_letter");
+            log.info("Companion '{}' wrote to {}: a letter is in their mail ({} chars)", profile.name(), theirName, body.length());
+        } catch (Exception e) {
+            log.warn("Letter from '{}' to {} failed: {}", profile.name(), theirName, e.toString());
+        }
     }
 
     private void handleFinishProject(ActionParser.AgentAction.FinishProject action) {
@@ -40163,6 +40346,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     private Behavior<Command> onDispatchVerdict(DispatchVerdict msg) {
         var catalog = ScriptMessageCatalog.forLang(effectiveTurnLang());
+        var page = ItemContractRepair.proseOf(msg.taskId());
+        if (page.isPresent()) {
+            // The workshop wrote a page and no program: the words are hers, in her notebook.
+            var words = (page.get().title().isBlank() ? "" : page.get().title() + " — ") + page.get().text();
+            if (hasAProjectOpen()) {
+                handleProjectNote(new ActionParser.AgentAction.ProjectNote(null, "From the workshop: " + words, null, false));
+            } else {
+                handleWriteText(new ActionParser.AgentAction.WriteText(
+                    page.get().title().isBlank() ? "From the workshop" : page.get().title(), page.get().text(), "note"));
+            }
+            speakProduct(catalog.get("dispatch.spoken.prose_kept", String.valueOf(page.get().text().split("\\s+").length)),
+                withOutcome(Map.of("action", "dispatch_task", "backend", String.valueOf(msg.backend())), "succeeded"), msg.requester());
+            log.info("Companion '{}' dispatch verdict for {}: a page, kept ({} chars)", profile.name(), msg.taskId(), page.get().text().length());
+            return this;
+        }
         var outcome = ItemContractRepair.outcomeOf(msg.taskId());
         if (outcome.isEmpty() && msg.attempt() < VERDICT_ATTEMPTS) {
             timers.startSingleTimer("dispatch-verdict-" + msg.taskId(),

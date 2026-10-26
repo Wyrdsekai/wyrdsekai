@@ -77,6 +77,8 @@ public final class Vault {
     static final int MIN_CHUNK = 1024 * 1024;
     static final int MAX_CHUNK = 8 * 1024 * 1024;
     static final long CUT_MASK = (1L << 22) - 1;          // one cut per 4 MiB of input on average
+    /** A database's piece: a whole number of pages for every SQLite page size up to 64 KiB. */
+    static final int DB_PIECE = 64 * 1024;
     private static final long[] GEAR = gear();
 
     private static long[] gear() {
@@ -126,7 +128,7 @@ public final class Vault {
     private static volatile Vault instance;
     public static Vault get() { return instance; }
     public static void install(Vault v) { instance = v; }
-    public static void resetForTests() { instance = null; }
+    public static void resetForTests() { instance = null; keepRefillsForTests = false; }
 
     private final Path dataDir;
     private final Path vaultDir;
@@ -317,8 +319,12 @@ public final class Vault {
      */
     static final List<String> BEING_TREES = List.of("coding-workspaces", "beings");
 
+    /** Tests only: copy the refills too, to make a copy from before the rule. */
+    static volatile boolean keepRefillsForTests = false;
+
     /** What a being's tools refill on their own: fetched again, never copied. */
     static boolean beingCache(String rel) {
+        if (keepRefillsForTests) return false;
         if (!rel.startsWith("beings/")) return false;
         var parts = rel.split("/");
         for (var part : parts) if (part.equals("node_modules") || part.equals("__pycache__")) return true;
@@ -394,7 +400,7 @@ public final class Vault {
             seenTop.add(KEY_FILE);   // the one file that must never ride inside the store
             seenTop.add(SEALED_MARK);
 
-            // Databases come from a consistent copy: VACUUM INTO captures the WAL. The record
+            // Databases come from a consistent copy: a page copy that captures the WAL. The record
             // must be there; a smaller database that is missing is skipped like any other file.
             var orchestrator = new BackupOrchestrator(scratch);
             var previous = previousEntries();
@@ -513,25 +519,50 @@ public final class Vault {
     private Entry store(String rel, InputStream in, long mtime) throws IOException {
         var chunks = new ArrayList<String>();
         long size = 0;
+        if (isDatabase(rel)) {
+            // A database copy keeps every unchanged page at its place (BackupOrchestrator's page
+            // copy), so pieces cut at fixed page-aligned offsets are the same pieces as last time
+            // except where a page changed. Content-defined pieces of 1-8 MB were each touched by a
+            // few scattered page changes: a copy of a database with 8 MB changed still wrote
+            // 200-560 MB (household node, 2026-10-26).
+            var piece = new byte[DB_PIECE];
+            int n;
+            while ((n = readFully(in, piece, 0)) > 0) {
+                size += n;
+                chunks.add(putChunk(piece, n));
+                if (n < piece.length) break;
+            }
+            return new Entry(rel, size, mtime, List.copyOf(chunks));
+        }
         var buf = new byte[MAX_CHUNK];
         int filled = readFully(in, buf, 0);
         while (filled > 0) {
             int n = cutPoint(buf, filled);
             size += n;
-            var sha = sha256(buf, n);
-            var dest = chunkPath(sha);
-            if (!Files.exists(dest)) {
-                Files.createDirectories(dest.getParent());
-                var tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
-                Files.write(tmp, cipher.seal(buf, 0, n));
-                Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            }
-            chunks.add(sha);
+            chunks.add(putChunk(buf, n));
             System.arraycopy(buf, n, buf, 0, filled - n);
             filled -= n;
             filled += readFully(in, buf, filled);
         }
         return new Entry(rel, size, mtime, List.copyOf(chunks));
+    }
+
+    /** One piece into the store, named by its content; a piece already there costs a hash, never a write. */
+    private String putChunk(byte[] b, int n) throws IOException {
+        var sha = sha256(b, n);
+        var dest = chunkPath(sha);
+        if (!Files.exists(dest)) {
+            Files.createDirectories(dest.getParent());
+            var tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
+            Files.write(tmp, cipher.seal(b, 0, n));
+            Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        }
+        return sha;
+    }
+
+    /** The databases the vault copies page for page: cut at fixed, page-aligned offsets. */
+    static boolean isDatabase(String rel) {
+        return rel != null && rel.endsWith(".db") && !rel.contains("/");
     }
 
     /**
@@ -695,6 +726,44 @@ public final class Vault {
         tmp = dearFile.resolveSibling(dearFile.getFileName() + ".tmp");
         Files.write(tmp, cipher.seal(String.join("\n", dear).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         Files.move(tmp, dearFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        // The chunks that belong only to what her tools refill (a copy from before the rule holds
+        // them): what new copies skip, old copies let go (2026-10-26).
+        var skip = new java.util.TreeSet<String>();
+        var kept = new HashSet<String>();
+        if (m.files() != null) {
+            for (var e : m.files()) {
+                if (e == null || e.chunks() == null) continue;
+                if (isRefill(e.path())) skip.addAll(e.chunks()); else kept.addAll(e.chunks());
+            }
+        }
+        skip.removeAll(kept);
+        if (keepRefillsForTests) return;   // a copy from before the rule has no such sidecar; the backfill gives it one
+        var skipFile = skipFile(m.id());
+        tmp = skipFile.resolveSibling(skipFile.getFileName() + ".tmp");
+        Files.write(tmp, cipher.seal(String.join("\n", skip).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        Files.move(tmp, skipFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /** A path a copy may hold that today's copies skip: refilled by her tools, never hers. */
+    static boolean isRefill(String rel) {
+        return rel != null && rel.startsWith("beings/") && beingCache(rel);
+    }
+    private Path skipFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".skip"); }
+    private Path leanFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".lean"); }
+    /** A copy that let go of what its tools refill. */
+    public boolean isLean(String id) { return id != null && Files.isRegularFile(leanFile(id)); }
+    private void markLean(String id) {
+        try { Files.writeString(leanFile(id), Instant.now().toString()); }
+        catch (IOException e) { log.debug("vault: lean mark for {} not written: {}", id, e.getMessage()); }
+    }
+    /** The refill chunks of a copy, from its sidecar; empty (not known) for a copy the backfill has not reached. */
+    private Optional<Set<String>> skipChunksOf(String id) throws IOException {
+        var side = skipFile(id);
+        if (!Files.isRegularFile(side)) return Optional.empty();
+        var text = new String(open(Files.readAllBytes(side), side), java.nio.charset.StandardCharsets.UTF_8);
+        var out = new HashSet<String>();
+        for (var line : text.split("\n")) if (!line.isBlank()) out.add(line.strip());
+        return Optional.of(out);
     }
     private Path headFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".head.json"); }
     private Path chunksFile(String id) { return vaultDir.resolve("manifests").resolve(id + ".chunks"); }
@@ -729,7 +798,7 @@ public final class Vault {
             for (var f : s.filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".head.json")).sorted().toList()) {
                 if (done >= max) break;
                 var id = idOf(f);
-                if (Files.isRegularFile(dearFile(id))) continue;
+                if (Files.isRegularFile(dearFile(id)) && Files.isRegularFile(skipFile(id))) continue;
                 try { writeSidecars(readManifest(f)); done++; }
                 catch (IOException e) { log.debug("vault: dear sidecar for {} not written: {}", id, e.getMessage()); }
             }
@@ -907,7 +976,13 @@ public final class Vault {
         var failed = new ArrayList<String>();
         boolean thin = isThin(m.id());
         boolean saidThin = false;
+        boolean saidRefill = false;
         for (var e : m.files()) {
+            if (isRefill(e.path())) {
+                // Today's copies do not hold these; an older copy's are let go. Her tools make them again.
+                if (!saidRefill) { log.info("vault: copy {}: what her tools refill (environments, caches) is not restored; they make it again", m.id()); saidRefill = true; }
+                continue;
+            }
             if (thin && isDear(e.path())) {
                 // This copy gave its index up to make room; the record is whole and the index is
                 // rebuilt on the first start after a restore.
@@ -1088,12 +1163,20 @@ public final class Vault {
         backfillDearSidecars(3);   // older copies learn which of their chunks are the index, a few per pass
         int removed = 0;
         int thinned = 0;
+        int leaned = 0;
         var referenced = new HashSet<String>();
         for (var m : all) {
             if (keep.contains(m.id())) {
                 // A kept copy's chunk names, from its sidecar; never its file list.
                 try {
                     var names = chunkNamesOf(m.id());
+                    // What her tools refill is let go of in every copy, whole or thin: 7 GB of the
+                    // coding helper's environments sat in the copies from before the rule (2026-10-26).
+                    var skip = skipChunksOf(m.id());
+                    if (skip.isPresent() && !skip.get().isEmpty()) {
+                        names.removeAll(skip.get());
+                        if (!isLean(m.id())) { markLean(m.id()); leaned++; }
+                    }
                     if (!indexKept.contains(m.id())) {
                         var dear = dearChunksOf(m.id());
                         if (dear.isPresent()) {
@@ -1133,9 +1216,10 @@ public final class Vault {
                 log.warn("vault: chunk sweep failed: {}", e.getMessage());
             }
         }
-        if (removed > 0 || thinned > 0) {
-            log.info("Vault: pruned {} manifest(s); {} kept{}{}", removed, keep.size(),
+        if (removed > 0 || thinned > 0 || leaned > 0) {
+            log.info("Vault: pruned {} manifest(s); {} kept{}{}{}", removed, keep.size(),
                 thinned > 0 ? ", " + thinned + " older kept copies now hold the record only" : "",
+                leaned > 0 ? ", " + leaned + " older copies let go of what their tools refill" : "",
                 indexOnlyInNewest ? " (under the floor: the index stays in the newest copy alone)" : "");
         }
         noteSize();

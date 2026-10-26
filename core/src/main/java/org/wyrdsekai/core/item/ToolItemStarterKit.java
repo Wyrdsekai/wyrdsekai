@@ -90,6 +90,13 @@ public final class ToolItemStarterKit {
         Map.entry("dispatch_task", ItemEmbodimentSpec.emits(
             List.of("body_language"),
             "{actor} hands the task off to the Workshop — a brief focus, the work order taking shape.")),
+        // Her notebook is a body act too: a line written, a page turned.
+        Map.entry("project_note", ItemEmbodimentSpec.emits(
+            List.of("body_language"),
+            "{actor} writes a few lines in a small notebook and leaves it open at the page.")),
+        Map.entry("finish_project", ItemEmbodimentSpec.emits(
+            List.of("body_language"),
+            "{actor} closes a notebook and sets it to one side, finished.")),
         // ─── Inherent + utility: silent (no in-world body presence) ───
         Map.entry("task_ledger", ItemEmbodimentSpec.silent(
             "abstract plan-state mutation, no in-world body")),
@@ -755,6 +762,31 @@ public final class ToolItemStarterKit {
                         "Leave this out unless the person named a directory on this machine — the "
                             + "task then gets its own scratch directory. A path you invent is refused.",
                         false, null))),
+
+            // Her notebook. Until 2026-10-26 project_note had no entry here, so it was a candidate
+            // only when a want forced it: the workshop verb above was on nearly every own-time
+            // menu and the notebook on one in ten, and a third of two companions' 174 workshop
+            // requests in two weeks were pages of the notebook (household node). Surfaced
+            // inherently, like dispatch_task; the ranker and the kept set decide the rest.
+            ToolItem.builtin("project_note", "Notebook",
+                "KEEP THE NOTEBOOK OF A PROJECT OF YOURS. \"content\" says what you did or found; \"next\" says the "
+                    + "next step, in your own words, shown to you when you come back; \"done\": true finishes it. "
+                    + "\"project_id\" names which project (its name is enough) or begins one by that name; leave it "
+                    + "out for the one you are working on. With nothing given it shows the notebook's last pages. "
+                    + "An entry, a note, a reflection, a page of a project is written here, never sent to the workshop.",
+                "project_note",
+                List.of(
+                    new ToolParam("content", "string", "What you did or found, in your own words", false, null),
+                    new ToolParam("next", "string", "The next step, shown to you when you come back", false, null),
+                    new ToolParam("project_id", "string", "Which project, by name; leave out for the one you are working on", false, null),
+                    new ToolParam("done", "boolean", "true finishes the project", false, null))),
+
+            ToolItem.builtin("finish_project", "Finish a Project",
+                "Finish, pause or drop a project of yours, by its name; its notebook is kept.",
+                "finish_project",
+                List.of(
+                    new ToolParam("project_id", "string", "Which project, by name", true, null),
+                    new ToolParam("status", "string", "complete, paused or dropped (complete when left out)", false, null))),
 
             ToolItem.builtin("introspect", "Introspect",
                 "Examine your own drives, capacity, commitments, and internal state. "

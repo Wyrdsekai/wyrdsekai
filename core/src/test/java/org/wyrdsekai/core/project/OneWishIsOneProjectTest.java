@@ -85,13 +85,13 @@ class OneWishIsOneProjectTest {
         assertThat(entry).isPresent();
         assertThat(entry.get()).startsWith("tonight's check-in").contains("Saturday 24 October 2026, 21:31 EDT").endsWith("clean slate for next steps.");
         assertThat(Projects.noteFromDispatch("Write a notebook entry about what the sources did not answer"))
-            .contains("what the sources did not answer");
+            .as("a brief, for her own voice to write").hasValueSatisfying(v -> assertThat(v).contains("what the sources did not answer"));
         assertThat(Projects.noteFromDispatch("Read the project_note's current state: open its notebook, show me what entries exist"))
             .as("reading is not writing").isEmpty();
         assertThat(Projects.noteFromDispatch("Create a note-taking tool that stores entries with world.notes.add"))
             .as("a tool is a build").isEmpty();
         assertThat(Projects.noteFromDispatch("Write a single-page note on cross-attention in diffusion models (UNet-based)"))
-            .as("a written page is the workshop's; the notebook takes an entry, not an essay — but the word is 'note on', not 'note entry'")
-            .isEmpty();
+            .as("a page is hers to write too: the one the workshop wrote went to a folder she then asked it to read back (2026-10-25)")
+            .isPresent();
     }
 }

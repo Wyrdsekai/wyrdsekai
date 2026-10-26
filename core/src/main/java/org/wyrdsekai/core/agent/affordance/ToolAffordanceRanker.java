@@ -1,6 +1,7 @@
 package org.wyrdsekai.core.agent.affordance;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -72,6 +73,24 @@ public final class ToolAffordanceRanker {
     public static List<String> rank(Map<String, Double> needPressures, String forcedFront,
             List<String> candidates, Function<String, ToolAffordance> resolve, int topK,
             Function<String, Double> relevance) {
+        return rank(needPressures, forcedFront, candidates, resolve, topK, relevance, List.of());
+    }
+
+    /**
+     * As above, plus names the trim may not drop: they stay, in their ranked order, right after
+     * the forced front, and the lowest-ranked others make room.
+     *
+     * <p>One pinned name was never enough. Her own-time prompt names the workshop door on nearly
+     * every turn (a growth want's verb), and the one pin went to it; the notebook, named in the
+     * same prompt, was ranked out. On the household node the notebook was in her hand on 6% and
+     * 13% of two companions' turns while the workshop was in it on nearly all, and 174 workshop
+     * requests in two weeks included a third of her notebook pages (2026-10-26).
+     *
+     * @param keep names that survive the trim when they are among the candidates; may be empty
+     */
+    public static List<String> rank(Map<String, Double> needPressures, String forcedFront,
+            List<String> candidates, Function<String, ToolAffordance> resolve, int topK,
+            Function<String, Double> relevance, Collection<String> keep) {
         if (candidates == null || candidates.isEmpty()) return List.of();
         var pressures = needPressures == null ? Map.<String, Double>of() : needPressures;
 
@@ -91,9 +110,22 @@ public final class ToolAffordanceRanker {
         // The OODA already chose this verb upstream — don't let the model re-litigate
         // it against the rest of the menu; pin it first.
         if (forcedFront != null && ranked.remove(forcedFront)) ranked.add(0, forcedFront);
+        var kept = keptAmong(ranked, keep, forcedFront);
+        if (!kept.isEmpty()) {
+            ranked.removeAll(kept);
+            ranked.addAll(forcedFront != null && !ranked.isEmpty() && ranked.getFirst().equals(forcedFront) ? 1 : 0, kept);
+        }
 
         if (topK > 0 && ranked.size() > topK) return new ArrayList<>(ranked.subList(0, topK));
         return ranked;
+    }
+
+    /** The kept names, in ranked order, that are candidates and not the forced front. */
+    private static List<String> keptAmong(List<String> ranked, Collection<String> keep, String forcedFront) {
+        if (keep == null || keep.isEmpty()) return List.of();
+        var out = new ArrayList<String>();
+        for (var n : ranked) if (keep.contains(n) && !n.equals(forcedFront) && !out.contains(n)) out.add(n);
+        return out;
     }
 
     /** The need with the highest current pressure (for the instrument's "dominant need"). */
@@ -147,12 +179,20 @@ public final class ToolAffordanceRanker {
     public static List<String> rankSpanning(Map<String, Double> needPressures, String forcedFront,
             List<String> candidates, Function<String, ToolAffordance> resolve, int topK,
             Function<String, Double> relevance, Function<String, String> kindOf, int share) {
+        return rankSpanning(needPressures, forcedFront, candidates, resolve, topK, relevance, kindOf, share, List.of());
+    }
+
+    /** As above, plus names the trim may not drop (see {@link #rank(Map, String, List, Function, int, Function, Collection)}). */
+    public static List<String> rankSpanning(Map<String, Double> needPressures, String forcedFront,
+            List<String> candidates, Function<String, ToolAffordance> resolve, int topK,
+            Function<String, Double> relevance, Function<String, String> kindOf, int share, Collection<String> keep) {
         var ranked = rank(needPressures, forcedFront, candidates, resolve, 0, relevance);
         if (topK <= 0 || ranked.size() <= topK) return ranked;
         var out = new ArrayList<String>();
         var perKind = new HashMap<String, Integer>();
         java.util.function.Consumer<String> take = n -> { out.add(n); perKind.merge(kindOf.apply(n), 1, Integer::sum); };
         if (forcedFront != null && ranked.contains(forcedFront)) take.accept(forcedFront);
+        for (var n : keptAmong(ranked, keep, forcedFront)) if (out.size() < topK) take.accept(n);
         // One of each kind, in the order her pull and the request rank them.
         for (var n : ranked) {
             if (out.size() >= topK) break;

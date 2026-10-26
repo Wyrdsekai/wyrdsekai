@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -136,5 +137,16 @@ class HerOwnWordIsKeptTest {
         assertThat(src).doesNotContain("You said it because the bondholder asked");
         assertThat(src).contains("triggerAutonomousInference(prompt, msg.tool())");
         assertThat(src).contains("var requestId = \"want-propose-\" + UUID.randomUUID() + InferenceRouter.OWN_TIME_TAG;");
+    }
+
+    @Test
+    void a_page_of_her_notebook_is_project_note_before_the_journal_or_the_workshop() {
+        var offered = new HashSet<>(OFFERED);
+        offered.add("project_note");
+        assertThat(HerWord.named("I'll write an entry in my project notebook about tonight.", offered).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("I'll add a note to the practice notebook before I rest.", offered).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("Let me record one entry in the project note now.", offered).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("I'll write a small tool that counts the breaths.", offered).tool()).as("a tool is the workshop's").isEqualTo("dispatch_task");
+        assertThat(HerWord.named("I'll write in my journal about the afternoon.", offered).tool()).as("her journal stays hers").isEqualTo("write_journal");
     }
 }

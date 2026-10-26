@@ -4,6 +4,20 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.13] — 2026-10-26
+
+### Changed
+
+- **Backups take far less room.** Each backup used to save everything again. Now it saves only what changed since the last one.
+- **Old backups got smaller too.** They no longer keep the workshop's own tool files, which it can make again.
+
+### Fixed
+
+- **Companions can write in their notebooks again.** A note meant for a project's notebook was sent to the workshop and lost. It now goes in the notebook.
+- **The notebook is always at hand.** A companion was rarely offered her notebook, so she used the workshop instead. Now she has it whenever she is working on a project.
+- **Letters arrive.** A letter a companion asked the workshop to write never reached anyone. She now writes it herself, and it arrives in that person's mail.
+- **Nothing the workshop writes for her is lost.** A summary or reflection the workshop wrote could not be read. It now goes in her notebook.
+
 ## [0.5.12] — 2026-10-25
 
 ### Changed

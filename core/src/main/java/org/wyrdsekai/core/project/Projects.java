@@ -106,29 +106,245 @@ public final class Projects {
         return out;
     }
 
-    private static final Pattern NOTE_TO_WORKSHOP = Pattern.compile(
-        "^\\s*(?:please\\s+)?(?:create|write|add|make|record|log|put)\\s+(?:a\\s+|an\\s+|the\\s+|one\\s+)?(?:new\\s+)?"
-            + "(?:project[ _]?notes?|notebook|project notebook|notes?\\s+entry)\\s*(?:entry|line|page)?\\s*(?:for|about|on|of|:)?\\s*",
+    /**
+     * A workshop request that is really a page of her notebook. {@code reading}: she asked to see
+     * it, not to write in it. {@code project}: the project she named, as she named it, or null for
+     * the one she is working on. {@code entry}: the words to write, when she gave them; otherwise
+     * {@code brief} says what the entry should be, for her own voice to write. {@code next}: a next
+     * step she stated. {@code longForm}: an essay, a synthesis, a page — more room to write.
+     */
+    public record NotebookAsk(boolean reading, String project, String title, String entry, String brief,
+                              String next, boolean longForm, boolean journal) {
+        public boolean hasEntry() { return entry != null && !entry.isBlank(); }
+    }
+
+    /** Words that make a request a build, outside any quoted text: the workshop's. */
+    private static final Pattern BUILD_WORDS = Pattern.compile(
+        "\\b(?:tool|item|script|program|programs|widget|device|instrument|orb|bot|function|manifest|command|api|module|"
+            + "plugin|app|game|skill|skills|component|class|tracker|system|html|css|javascript|python|code|codebase|repo|"
+            + "repository|implement|implementation|refactor|compile|runnable|simple-book|index\\.html|\\.js|\\.py|\\.java|"
+            + "unit tests?|test suite|inventory|workbench)\\b", Pattern.CASE_INSENSITIVE);
+    /** A request that opens as a build, a repair or a run is the workshop's whatever else it says. */
+    private static final Pattern BUILD_OPENERS = Pattern.compile(
+        "^\\s*(?:please\\s+)?(?:fix|repair|mend|build|implement|furnish|run|install|debug|refactor|deploy|generate|"
+            + "research|investigate|search|find|list|audit|scan|carve|take|move|go|wait|do)\\b", Pattern.CASE_INSENSITIVE);
+    /** The words of her notebook itself: a request with one of these is about the book. */
+    private static final Pattern BOOK_WORDS = Pattern.compile(
+        "(?<![A-Za-z])project[ _-]?notes?(?:'s|’s)?\\b|\\b(?:notebook|note ?book|journal entry|entry|entries|the record of work|"
+            + "commitment record)\\b", Pattern.CASE_INSENSITIVE);
+    /** The words of a page she might write: with a writing verb, a page for the book. */
+    private static final Pattern WRITING_WORDS = Pattern.compile(
+        "\\b(?:journal|diary|notes?|reflection|reflections|reflective note|research note|sitting note|margin note|paragraph|findings)\\b",
         Pattern.CASE_INSENSITIVE);
+    /** "The current state of 'X' project": her notebook is where that is kept. */
+    private static final Pattern STATE_OF_PROJECT = Pattern.compile(
+        "\\b(?:state|status|progress)\\s+(?:of|on)\\s+(?:the\\s+|my\\s+)?(?:\"[^\"]{3,90}\"|“[^”]{3,90}”|'[^']{3,90}'|[\\w-]+(?:\\s+[\\w-]+){0,5})\\s+project\\b",
+        Pattern.CASE_INSENSITIVE);
+    /** Her day's journal, not a project's notebook. */
+    private static final Pattern JOURNAL_WORDS = Pattern.compile("\\b(?:journal entry|diary|my journal|the journal|a journal)\\b", Pattern.CASE_INSENSITIVE);
+    /** A longer piece of her own writing: hers to write, with more room; never a program. */
+    private static final Pattern LONG_FORM = Pattern.compile(
+        "\\b(?:essay|synthesis|summary|write-?up|piece|single-page note|page on|\\d{2,4}\\s*-?\\s*(?:to\\s*\\d{2,4}\\s*)?words?)\\b",
+        Pattern.CASE_INSENSITIVE);
+    private static final Pattern WRITE_VERBS = Pattern.compile(
+        "\\b(?:write|writes|add|adds|record|records|log|put|create|make|jot|append|enter|save|capture|captures|leave|pen|"
+            + "draft|compose|note down|write down|set down|start|begin)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern READ_OPENERS = Pattern.compile(
+        "^\\s*(?:please\\s+)?(?:read|open|check|review|look|show|see|find|list|audit|scan|summari[sz]e|report|finish|go over|"
+            + "revisit|inspect)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern QUOTED = Pattern.compile("\"([^\"]{2,200})\"|“([^”]{2,200})”|'([^']{2,200})'");
+    private static final Pattern TITLE = Pattern.compile(
+        "\\b(?:titled?|title it|called|named|headed)\\s*[:\\s]?\\s*(?:\"([^\"]{2,120})\"|“([^”]{2,120})”|'([^']{2,120})')", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CONTENT_MARK = Pattern.compile(
+        "\\b(?:content|contents|body|text|write|entry text|the entry|it says|saying|capture)\\s*:\\s*", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NEXT_STEP = Pattern.compile("\\bNext(?: step)?\\s*:\\s*(.+?)\\s*$", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    /** The project she names: in quotes beside the word project, or the word before "notebook"/"journal". */
+    private static final Pattern PROJECT_QUOTED = Pattern.compile(
+        "(?:\\b(?:for|of|in|into|to|about|on)\\s+(?:the\\s+|my\\s+)?(?:project\\s+)?(?:\"([^\"]{3,90})\"|“([^”]{3,90})”|'([^']{3,90})')"
+            + "(?:\\s+(?:study\\s+)?project)?)|(?:(?:\"([^\"]{3,90})\"|“([^”]{3,90})”|'([^']{3,90})')\\s+(?:study\\s+)?project\\b)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PROJECT_BEFORE_BOOK = Pattern.compile(
+        "\\b(?:to|in|into|for|of)\\s+(?:the\\s+|my\\s+)?((?:[a-z][a-z0-9_-]*\\s+){0,2}[a-z][a-z0-9_-]*)(?:\\s*\\([^)]*\\))?\\s+(?:project\\s+)?"
+            + "(?:notebook|journal|project notes?|notes)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PROJECT_BEFORE_ABOUT = Pattern.compile(
+        "\\b(?:in|into|to)\\s+([a-z][a-z0-9_-]{3,40})\\s+(?:about|on)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Set<String> NOT_A_PROJECT_NAME = Set.of("project_note", "project note", "project", "the", "my", "a",
+        "an", "this", "that", "its", "her", "study", "current", "new", "single", "first", "one", "entry", "notebook");
+    /** Words that tell what the entry should be, not what it says. */
+    private static final Pattern INSTRUCTS_THE_ENTRY = Pattern.compile(
+        "^.{0,160}?\\b(?:the entry|the note|the page|it)\\s+(?:should|must|needs to|has to)\\b", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    /** A brief that is only the tail of a list is no brief: the whole ask is. */
+    private static final Pattern LIST_OPENER = Pattern.compile("^(?:cover|include|focus|look for|capture|specifically)\\b\\s*:?", Pattern.CASE_INSENSITIVE);
+    /** A brief: what the entry should be, not the entry. */
+    private static final Pattern A_BRIEF = Pattern.compile(
+        "^(?:about|on|regarding|exploring|covering|capturing|that captures|which|should|the entry should|it should|make it|"
+            + "keep it|focus|describing|reflecting|noting|observe)\\b", Pattern.CASE_INSENSITIVE);
 
     /**
-     * The entry in a workshop request that is really a notebook entry: "Create a project_note
-     * entry for tonight's check-in: …" is a line for the notebook, not a program to write. Six of
-     * these went to the workshop in one night on the household node, each into a scratch folder
-     * nothing reads, and she found her book empty every time (2026-10-25). Empty when the request
-     * is a build.
+     * The page of her notebook that a workshop request asks for, or empty when it is a build.
+     *
+     * <p>In two weeks on the household node, 174 requests went to the workshop; about a third
+     * were pages of her notebook — "Write one entry to the project_note notebook. Title it …
+     * Content: …", "Record day one: … Next: …", "Add an entry to the diffusion practice notebook",
+     * "Read the project note for … check if there are any existing entries" — and every one
+     * became a file in a scratch folder, or a tool with her sentence hard-coded in it, while her
+     * notebook stayed empty (2026-10-12 → 10-26). The workshop builds; her notebook keeps. A
+     * request that opens as a build, or names a program outside its quoted text, stays a build.
      */
+    public static Optional<NotebookAsk> notebookAsk(String description) {
+        if (description == null || description.isBlank()) return Optional.empty();
+        var text = description.strip().replace("`", "");
+        var head = firstPart(text);
+        var dequoted = QUOTED.matcher(head).replaceAll(" ");
+        // The book's own words may sit inside quotes ("project_note.md"); the build words may not.
+        boolean book = BOOK_WORDS.matcher(head).find() || STATE_OF_PROJECT.matcher(head).find();
+        boolean reads = READ_OPENERS.matcher(head).find()
+            && !WRITE_VERBS.matcher(BOOK_WORDS.matcher(afterOpener(dequoted)).replaceAll(" ")).find();
+        if (BUILD_OPENERS.matcher(head).find() && !opensAsRecord(head)) {
+            // "Read the project note …", "Find and read the project_note file" are hers; the rest of the openers are not.
+            if (!(reads && book)) return Optional.empty();
+        }
+        if (BUILD_WORDS.matcher(dequoted).find()) return Optional.empty();
+        boolean writing = WRITING_WORDS.matcher(dequoted).find();
+        boolean longForm = LONG_FORM.matcher(dequoted).find();
+        boolean opensAsRecord = opensAsRecord(head);
+        if (!book && !writing && !longForm && !opensAsRecord) return Optional.empty();
+        int colon = head.indexOf(':');
+        var project = projectNamed(colon > 0 ? head.substring(0, colon) : head);
+        var title = titleIn(text);
+        boolean journal = project == null && JOURNAL_WORDS.matcher(dequoted).find();
+        if (reads) {
+            // Reading is about the book itself, never about "the sources" or "a research summary".
+            if (!book) return Optional.empty();
+            return Optional.of(new NotebookAsk(true, project, null, null, null, null, false, journal));
+        }
+        if (!WRITE_VERBS.matcher(dequoted).find() && !opensAsRecord) return Optional.empty();
+        String next = null;
+        var body = text;
+        var nm = NEXT_STEP.matcher(body);
+        if (nm.find()) { next = oneLine(nm.group(1), 300); body = body.substring(0, nm.start()).strip(); }
+        String entry = null, brief = null;
+        var cm = CONTENT_MARK.matcher(body);
+        if (cm.find()) {
+            entry = unquote(body.substring(cm.end()));
+        } else {
+            var rest = restAfterTheAsk(body);
+            if (rest == null || rest.isBlank()) {
+                brief = oneLine(body, 600);
+            } else if (rest.startsWith(":") || rest.startsWith("\"") || rest.startsWith("“") || rest.startsWith("'")) {
+                entry = unquote(rest.startsWith(":") ? rest.substring(1) : rest);
+            } else if (A_BRIEF.matcher(rest).find() || rest.length() < 15 || INSTRUCTS_THE_ENTRY.matcher(rest).find()) {
+                brief = rest;
+            } else {
+                int at = rest.indexOf(':');
+                if (at >= 0 && rest.length() - at > 40) entry = unquote(rest);
+                else if (rest.split("\\s+").length >= 8) entry = unquote(rest);
+                else brief = rest;
+            }
+        }
+        if (entry != null && (entry.isBlank() || entry.length() < 3 || entry.matches("^\\S*[/\\\\]\\S*$"))) { brief = null; entry = null; }
+        if (entry == null && (brief == null || brief.split("\\s+").length < 5 || LIST_OPENER.matcher(brief).find())) brief = oneLine(body, 600);
+        if (brief != null) brief = oneLine(brief, 600);
+        if (entry != null && title != null && !entry.toLowerCase(Locale.ROOT).contains(title.toLowerCase(Locale.ROOT))) {
+            entry = title + " — " + entry;
+        }
+        if (entry != null) entry = oneLine(entry, 1600);
+        return Optional.of(new NotebookAsk(false, project, title, entry, brief, next, longForm, journal));
+    }
+
+    /** The old name: the entry of a request that writes one, for callers that only want the words. */
     public static Optional<String> noteFromDispatch(String description) {
-        if (description == null) return Optional.empty();
-        var m = NOTE_TO_WORKSHOP.matcher(description);
-        if (!m.find()) return Optional.empty();
-        var rest = description.substring(m.end()).strip();
-        // A request that goes on to ask for code or a file is a build after all.
-        var low = rest.toLowerCase(Locale.ROOT);
-        if (low.contains(".js") || low.contains("script") || low.contains("function") || low.contains("manifest")
-                || low.contains("tool that") || low.contains("item that")) return Optional.empty();
-        if (rest.isBlank()) rest = description.strip();
-        return Optional.of(oneLine(rest, 600));
+        return notebookAsk(description).filter(a -> !a.reading()).map(a -> a.hasEntry() ? a.entry() : a.brief());
+    }
+
+    private static boolean opensAsRecord(String head) {
+        return head.matches("(?is)^\\s*(?:record|log|note down|jot down)\\b.*");
+    }
+
+    /** The first sentence or line: where the verb and the noun of the ask are. */
+    private static String firstPart(String text) {
+        int nl = text.indexOf('\n');
+        var line = nl > 0 ? text.substring(0, nl) : text;
+        var m = Pattern.compile("(?<=[.!?])\\s+(?=[A-Z])").matcher(line);
+        var first = m.find() ? line.substring(0, m.start()) : line;
+        return first.length() > 400 ? first.substring(0, 400) : first;
+    }
+
+    private static String beforeContent(String text) {
+        var cm = CONTENT_MARK.matcher(text);
+        return cm.find() ? text.substring(0, cm.start()) : text;
+    }
+
+    private static String afterOpener(String head) {
+        var m = READ_OPENERS.matcher(head);
+        return m.find() ? head.substring(m.end()) : head;
+    }
+
+    static String projectNamed(String head) {
+        var q = PROJECT_QUOTED.matcher(head);
+        if (q.find()) {
+            String name = null;
+            for (int g = 1; g <= q.groupCount(); g++) if (q.group(g) != null) { name = q.group(g); break; }
+            if (name != null && !NOT_A_PROJECT_NAME.contains(name.strip().toLowerCase(Locale.ROOT))) return name.strip();
+        }
+        var ab = PROJECT_BEFORE_ABOUT.matcher(head);
+        if (ab.find() && !NOT_A_PROJECT_NAME.contains(ab.group(1).toLowerCase(Locale.ROOT))) return ab.group(1);
+        var b = PROJECT_BEFORE_BOOK.matcher(head);
+        while (b.find()) {
+            var name = b.group(1).strip();
+            var low = name.toLowerCase(Locale.ROOT);
+            if (NOT_A_PROJECT_NAME.contains(low) || low.startsWith("project_note") || low.startsWith("project note")) continue;
+            if (low.matches("(?:the|my|a|an|this|that|its|her)\\b.*")) name = name.replaceFirst("(?i)^(?:the|my|a|an|this|that|its|her)\\s+", "");
+            name = name.replaceFirst("(?i)\\s+(?:room|lab|space|corner)$", "");
+            if (!name.isBlank() && !NOT_A_PROJECT_NAME.contains(name.toLowerCase(Locale.ROOT))) return name;
+        }
+        return null;
+    }
+
+    private static String titleIn(String text) {
+        var m = TITLE.matcher(text);
+        if (!m.find()) return null;
+        for (int g = 1; g <= m.groupCount(); g++) if (m.group(g) != null) return m.group(g).strip();
+        return null;
+    }
+
+    /** What follows the ask itself: after the notebook noun and its trailing "for X"/"titled Y" parts. */
+    private static String restAfterTheAsk(String text) {
+        var m = Pattern.compile("(?is)^\\s*(?:please\\s+)?(?:open|read)?\\s*(?:the\\s+|my\\s+)?(?:project[ _-]?notes?\\s+(?:and\\s+)?)?"
+            + "(?:write|add|record|log|put|create|make|jot|append|enter|save|capture|leave|pen|draft|compose|note down|write down|set down|start|begin)\\b"
+            + "[^:\"“'\\n]*?(?:(?<![A-Za-z])project[ _-]?notes?(?:'s|’s)?\\b|\\b(?:notebook|note ?book|journal entry|reflection note|reflective note|"
+            + "research note|sitting note|margin note|entry|entries|journal|diary|notes?|reflection|paragraph|"
+            + "the record of work(?: that remains unfinished)?|commitment record|research findings|findings|day one)\\b)"
+            + "(?!\\.\\w)(?:\\s+(?:notebook|entry|entries|page|line))?"
+            + "(?:\\s*(?:\\([^)]*\\)|\\bat\\s+\\S+|\\bfor\\s+the record of work(?: that remains unfinished)?|\\bfor\\s+(?:the\\s+|my\\s+)?(?:project\\s+)?(?:\"[^\"]*\"|“[^”]*”|'[^']*')(?:\\s+(?:study\\s+)?project\\b)?|"
+            + "\\b(?:in|into|to|for)\\s+(?:the\\s+|my\\s+)?[a-z][\\w-]*(?:\\s+[a-z][\\w-]*){0,2}?(?=\\s+(?:about|on|regarding)\\b|\\s*:)|\\b(?:about|on|regarding)(?=\\s*:)|\\bfor\\s+(?:the\\s+|my\\s+)?[a-z][\\w'’-]*(?:\\s+[a-z][\\w'’-]*){0,3}?(?=\\s*[.(]|\\s+(?:titled|title|called|named|that|which)\\b|$)|"
+            + "\\b(?:in|into|to|of|for)\\s+(?:the\\s+|my\\s+)?(?:project\\s+)?(?:[a-z][\\w-]*\\s+){0,3}?(?:notebook|journal|project notes?|notes|room|workspace)\\b|"
+            + "\\b(?:titled?|title it|called|named)\\s*[:\\s]?\\s*(?:\"[^\"]*\"|“[^”]*”|'[^']*')|\\((?:under|about|around)[^)]*\\)))*"
+            + "\\s*").matcher(text);
+        if (!m.find()) return null;
+        var rest = text.substring(m.end()).strip().replaceFirst("^[.\\s—–-]+", "").replaceFirst("(?i)^(?:for|about)\\s+", "");
+        // The sentence that only repeats the ask ("The entry should be titled "X" and contain:") is not the entry.
+        rest = rest.replaceFirst("(?is)^\\.?\\s*(?:the entry|it|this entry)\\s+(?:should|must|needs to)\\s+(?:be\\s+)?(?:titled?|called|named)\\s*(?:\"[^\"]*\"|“[^”]*”|'[^']*')\\s*(?:and\\s+)?(?:contain|include|cover|say|read)\\s*:?\\s*", "");
+        return rest;
+    }
+
+    private static String unquote(String s) {
+        var t = s.strip();
+        if (t.startsWith(":")) t = t.substring(1).strip();
+        if (t.length() >= 2 && (t.charAt(0) == '"' || t.charAt(0) == '“' || t.charAt(0) == '\'' )) {
+            int close = -1;
+            char open = t.charAt(0);
+            char want = open == '“' ? '”' : open;
+            for (int i = 1; i < t.length(); i++) if (t.charAt(i) == want) close = i;
+            if (close > 1) {
+                var inner = t.substring(1, close).strip();
+                var after = t.substring(close + 1).strip();
+                if (after.matches("(?is)^[.,;\\s]*(?:keep it|make it|no padding|just the|just that|be brief|be honest|plain|short and|nothing more|that's all|timestamped|dated)\\b.*")) {
+                    after = after.matches("(?is)^[.,;\\s]*(?:timestamped|dated)\\b.*") ? after.replaceFirst("^[.,;\\s]*", "") : "";
+                }
+                t = after.isEmpty() ? inner : inner + ((after.startsWith(".") || after.startsWith(",")) ? "" : " ") + after;
+            }
+        }
+        return t.strip();
     }
 
     /** The result of folding projects that are about one piece of work into one. */

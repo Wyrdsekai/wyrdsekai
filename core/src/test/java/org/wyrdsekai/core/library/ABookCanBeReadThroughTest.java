@@ -181,7 +181,9 @@ class ABookCanBeReadThroughTest {
         var ca = Files.readString(Files.exists(from) ? from : Path.of(rel));
         assertThat(ca).contains("if (\"read_book\".equals(toolItem.builtinHandler())) {\n                handleReadBook(node);");
         assertThat(ca).contains("allowed.add(\"read_book\");");
-        assertThat(ca).contains("else if (autonomyPromptLower.contains(\"read_book\")) forced = \"read_book\";");
+        // Named in the prompt, read_book survives the trim as a kept door (2026-10-26), not as the one pin.
+        assertThat(ca).contains("\"shape_recipe\", \"sending_stone\", \"dispatch_task\", \"close_room\", \"read_book\", \"project_note\");");
+        assertThat(ca).contains("for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);");
         assertThat(ca).contains("noteInteriorityEnactment(\"read_book\");");
         assertThat(ca).contains("finishWantsNaming(after.title());");
         assertThat(ca).contains("HouseFacts.setStanding(profile.entityId(), \"reading\"");

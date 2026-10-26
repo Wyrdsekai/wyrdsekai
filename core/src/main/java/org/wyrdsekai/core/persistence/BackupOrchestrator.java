@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.*;
+import org.sqlite.SQLiteConnection;
+
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.time.Instant;
@@ -120,29 +122,35 @@ public class BackupOrchestrator {
             var fileName = sourceDb.getFileName().toString();
             var backupFile = backupDir.resolve(fileName + "." + backupId + ".bak");
 
-            boolean used_vacuum = false;
+            String mode = null;
             if (looksLikeSqlite(sourceDb)) {
                 try {
-                    sqliteVacuumInto(sourceDb, backupFile);
-                    used_vacuum = true;
+                    sqliteBackup(sourceDb, backupFile);
+                    mode = "page copy";
                 } catch (Exception e) {
-                    // Fall through to Files.copy. Don't lose the snapshot
-                    // attempt entirely — degraded fidelity is better than
-                    // none, and the warning surfaces the issue for ops.
-                    log.warn("VACUUM INTO failed for {} ({}); falling back "
-                        + "to Files.copy (WAL-unsafe)", sourceDb, e.getMessage());
+                    log.warn("Page copy failed for {} ({}); trying VACUUM INTO", sourceDb, e.getMessage());
+                    try {
+                        sqliteVacuumInto(sourceDb, backupFile);
+                        mode = "VACUUM INTO";
+                    } catch (Exception e2) {
+                        // Fall through to Files.copy. Don't lose the snapshot
+                        // attempt entirely — degraded fidelity is better than
+                        // none, and the warning surfaces the issue for ops.
+                        log.warn("VACUUM INTO failed for {} ({}); falling back "
+                            + "to Files.copy (WAL-unsafe)", sourceDb, e2.getMessage());
+                    }
                 }
             }
-            if (!used_vacuum) {
+            if (mode == null) {
                 Files.copy(sourceDb, backupFile, StandardCopyOption.REPLACE_EXISTING);
+                mode = "file copy";
             }
 
             var manifest = new BackupManifest(backupId, backupFile, timestamp,
                 Files.size(backupFile), sourceDb.toString());
 
             log.info("Backup snapshot created: {} ({} bytes, mode={})",
-                backupFile, manifest.sizeBytes(),
-                used_vacuum ? "VACUUM INTO" : "file copy");
+                backupFile, manifest.sizeBytes(), mode);
 
             // Prune old snapshots
             pruneSnapshots(fileName);
@@ -171,6 +179,32 @@ public class BackupOrchestrator {
                 && header[3] == 'i' && header[4] == 't' && header[5] == 'e';
         } catch (IOException e) {
             return false;
+        }
+    }
+
+    /**
+     * Consistent SQLite snapshot through the online backup API: a page-for-page image of the
+     * database as of one read transaction, WAL contents included, with every unchanged page
+     * byte-identical to the live file's.
+     *
+     * <p>{@code VACUUM INTO} rebuilds the file and renumbers its pages, and the large rows (a
+     * soul manifest is 275 KB) live in overflow pages that carry the next page's number in their
+     * first bytes, so two rebuilt copies of an almost unchanged database share almost nothing.
+     * Measured on the household node over the same two hours of its live database: the rebuilt
+     * copy kept 18.5% of its pages identical (433 MB changed); this copy kept 98.5% (8 MB
+     * changed). Each of the vault's 165 copies had been carrying its own half gigabyte of
+     * database, about 60 GB of the store (2026-10-26).
+     */
+    private static void sqliteBackup(Path sourceDb, Path destFile) throws Exception {
+        Files.deleteIfExists(destFile);
+        var jdbcUrl = "jdbc:sqlite:" + sourceDb.toAbsolutePath();
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            var sqlite = conn.unwrap(SQLiteConnection.class);
+            int rc = sqlite.getDatabase().backup("main", destFile.toAbsolutePath().toString(), null);
+            if (rc != 0) throw new IllegalStateException("sqlite backup returned " + rc);
+        }
+        if (!Files.isRegularFile(destFile) || Files.size(destFile) < 16) {
+            throw new IllegalStateException("the page copy is empty");
         }
     }
 

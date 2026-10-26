@@ -109,7 +109,8 @@ class ARoomNobodyTendsIsClosedUpNotDeletedTest {
         assertThat(ca).contains("close one up first with close_room. The ones nobody has entered");
         assertThat(ca).contains("\", holds something you put there\"");
         // The verb the notice names cannot be trimmed off her menu.
-        assertThat(ca).contains("else if (autonomyPromptLower.contains(\"close_room\")) forced = \"close_room\";");
+        assertThat(ca).contains("\"shape_recipe\", \"sending_stone\", \"dispatch_task\", \"close_room\", \"read_book\", \"project_note\");");
+        assertThat(ca).contains("for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);");
         // And if she does not choose, nothing of hers is closed: the room waits, and she is told so.
         // (The first build closed the quietest for her; the first night, rose had said no and
         // the house closed a four-day-old room she had not picked, 2026-10-03.)

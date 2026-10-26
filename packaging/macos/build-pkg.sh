@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGING_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$PACKAGING_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.12}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.13}"
 DIST_NAME="wyrdsekai-${VERSION}"
 DIST_DIR="$PROJECT_DIR/build/dist/$DIST_NAME"
 PKG_BUILD="$PROJECT_DIR/build/pkg"
@@ -893,6 +893,9 @@ productbuild \
 
 ok "Package: build/pkg/Wyrdsekai-${VERSION}.pkg"
 du -sh "$PKG_FILE"
+# The component package is inside the product package now; the 1.7 GB loose copy is only
+# a second copy of the same bytes (the Mac build box ran out of disk on 2026-10-26).
+rm -f "$COMPONENT_PKG"
 
 # Publish into build/installers/ — the canonical dir the artifacts are scp'd
 # from (second-node 2026-07-07: a fresh build that only landed in build/pkg/ never
@@ -908,7 +911,10 @@ mkdir -p "$PROJECT_DIR/build/installers"
 stage_installer() {
     _src="$1"; _dst="$2"
     mkdir -p "$(dirname "$_dst")"
-    if ! cp -f "$_src" "$_dst"; then
+    # A hard link on the same disk: the staged installer costs no space. The 1.7 GB copy is what
+    # failed on a nearly full Mac build box (2026-10-26). A copy only when the link cannot be made.
+    rm -f "$_dst"
+    if ! ln "$_src" "$_dst" 2>/dev/null && ! cp -f "$_src" "$_dst"; then
         rm -f "$_dst"
         echo "ERROR: failed to copy $(basename "$_src") into $(dirname "$_dst")" >&2
         exit 1

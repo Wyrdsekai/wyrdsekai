@@ -398,8 +398,33 @@ public final class ItemContractRepair {
         if (taskId == null) return Optional.empty();
         return Optional.ofNullable(OUTCOMES.remove(taskId));
     }
+    /**
+     * What a task wrote when it wrote prose and no program: the page the workshop made for her.
+     * A request for a synthesis, a summary, a reflection, a page went to the coding backend,
+     * which wrote a markdown file into the task's scratch folder; the bridge places only
+     * scripts, so the words were lost, and she asked the workshop to read its own file back to
+     * her four times in one evening (household node, 2026-10-21). The bridge records the page
+     * here and her verdict puts it in her notebook.
+     */
+    public record Prose(String title, String text) {}
+    private static final Map<String, Prose> PROSE = new ConcurrentHashMap<>();
+    public static final int PROSE_MAX_CHARS = 6000;
+
+    public static void noteProse(String taskId, String title, String text) {
+        if (taskId == null || text == null || text.isBlank()) return;
+        if (PROSE.size() > 64) PROSE.clear();
+        var t = text.strip();
+        if (t.length() > PROSE_MAX_CHARS) t = t.substring(0, PROSE_MAX_CHARS - 1) + "…";
+        PROSE.put(taskId, new Prose(title == null ? "" : title.strip(), t));
+    }
+    /** The page a task wrote, removing the record; empty when it made a program or nothing. */
+    public static Optional<Prose> proseOf(String taskId) {
+        if (taskId == null) return Optional.empty();
+        return Optional.ofNullable(PROSE.remove(taskId));
+    }
+
     /** Tests: forget every verdict. */
-    public static void resetOutcomesForTests() { OUTCOMES.clear(); UNRESOLVED.clear(); }
+    public static void resetOutcomesForTests() { OUTCOMES.clear(); UNRESOLVED.clear(); PROSE.clear(); }
 
     private static void repairOne(Path script, String taskId, Reprompt reprompt)
             throws Exception {

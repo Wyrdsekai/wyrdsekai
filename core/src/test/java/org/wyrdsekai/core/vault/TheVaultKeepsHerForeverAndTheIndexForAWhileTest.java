@@ -242,4 +242,45 @@ class TheVaultKeepsHerForeverAndTheIndexForAWhileTest {
         var status = vault.status();
         assertEquals(30L, status.get("daysLeft"));
     }
+
+    /**
+     * A copy from before the rule holds the coding helper's environments as if they were hers: 7 GB
+     * of them in one home on the household node, in every old copy (2026-10-26). What new copies
+     * skip, old copies let go, and a restore does not bring it back; the helper makes it again.
+     */
+    @Test
+    @DisplayName("older copies let go of what her tools refill, and keep her own files")
+    void older_copies_let_go_of_what_her_tools_refill() throws Exception {
+        var dir = Files.createTempDirectory("vault-refill");
+        var data = household(dir);
+        var home = data.resolve("beings/4d2a8c1e/home");
+        Files.createDirectories(home.resolve(".codezaiku/envs/py"));
+        Files.createDirectories(home.resolve("notes"));
+        var env = new byte[3 * 1024 * 1024];
+        new Random(11).nextBytes(env);
+        Files.write(home.resolve(".codezaiku/envs/py/libpython.so"), env);
+        Files.writeString(home.resolve("notes/first.md"), "what I found tonight");
+        var vault = new Vault(data, dir.resolve("vault"));
+        var now = Instant.parse("2026-10-26T12:00:00Z");
+
+        Vault.keepRefillsForTests = true;                  // a copy from before the rule
+        var old = vault.snapshot("before a stop", true).orElseThrow();
+        Vault.keepRefillsForTests = false;
+        var m = vault.find(old.id()).orElseThrow();
+        assertTrue(m.files().stream().anyMatch(e -> e.path().endsWith("libpython.so")), "the old copy holds the environment");
+        long withEnv = chunkFiles(vault.dir());
+
+        vault.snapshot("continuous", false).orElseThrow();
+        assertEquals(withEnv, chunkFiles(vault.dir()), "today's copy adds nothing new: it skips the environment and shares the rest");
+
+        vault.prune(now);
+        assertTrue(vault.isLean(old.id()), "the old copy let the environment go");
+        assertTrue(chunkFiles(vault.dir()) < withEnv, "the environment's chunks were swept");
+
+        var out = dir.resolve("restored");
+        assertTrue(vault.restoreTo(vault.find(old.id()).orElseThrow(), out).isEmpty(), "nothing of hers failed");
+        assertEquals("what I found tonight", Files.readString(out.resolve("beings/4d2a8c1e/home/notes/first.md")));
+        assertTrue(Files.exists(out.resolve("world.db")));
+        assertFalse(Files.exists(out.resolve("beings/4d2a8c1e/home/.codezaiku/envs/py/libpython.so")), "the helper makes its environment again");
+    }
 }
