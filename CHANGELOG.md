@@ -4,6 +4,17 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.14] — 2026-10-27
+
+### Added
+
+- **A companion can see what she has.** What she carries, the tools in the house and which of them are unfinished, and her projects, all at once.
+- **A tool can be put away.** `wyrd items away <name>` takes a tool off every companion's menu and keeps it. `wyrd items out <name>` brings it back.
+
+### Fixed
+
+- **Her own-time prompt named tools she did not have.** It now names what is unfinished in the house and the tools she does have.
+
 ## [0.5.13] — 2026-10-26
 
 ### Changed

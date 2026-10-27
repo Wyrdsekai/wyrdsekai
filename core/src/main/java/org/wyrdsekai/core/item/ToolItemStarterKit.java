@@ -97,6 +97,8 @@ public final class ToolItemStarterKit {
         Map.entry("finish_project", ItemEmbodimentSpec.emits(
             List.of("body_language"),
             "{actor} closes a notebook and sets it to one side, finished.")),
+        Map.entry("what_i_have", ItemEmbodimentSpec.silent(
+            "a look at her own things; no in-world body act")),
         // ─── Inherent + utility: silent (no in-world body presence) ───
         Map.entry("task_ledger", ItemEmbodimentSpec.silent(
             "abstract plan-state mutation, no in-world body")),
@@ -787,6 +789,16 @@ public final class ToolItemStarterKit {
                 List.of(
                     new ToolParam("project_id", "string", "Which project, by name", true, null),
                     new ToolParam("status", "string", "complete, paused or dropped (complete when left out)", false, null))),
+
+            // What she has, at once. Her own-time prompt said "check your skills and inventory" and no
+            // tool showed them; both companions sent that sentence to the workshop, which built twelve
+            // check tools (household node, 2026-10-27).
+            ToolItem.builtin("what_i_have", "What I Have",
+                "SEE WHAT YOU HAVE: what you carry, the tools in the house and which are unfinished, what is put "
+                    + "away, and your open projects. The answer comes at once; nothing is built. Use this instead of "
+                    + "asking the workshop to check your skills or inventory.",
+                "what_i_have",
+                List.of()),
 
             ToolItem.builtin("introspect", "Introspect",
                 "Examine your own drives, capacity, commitments, and internal state. "

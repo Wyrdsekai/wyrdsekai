@@ -120,7 +120,7 @@ public final class ApiPolicy {
             "GET /api/items/broken", "POST /api/items/repair", "POST /api/rooms/script/repair",
             "POST /api/rooms/prune", "DELETE /api/rooms/{roomId}",
             "GET /api/rooms/made", "GET /api/rooms/archive", "POST /api/rooms/{roomId}/close", "POST /api/rooms/{roomId}/open",
-            "GET /api/items/made", "POST /api/items/made/out", "POST /api/rooms/tidy", "POST /api/rooms/{roomId}/keep",
+            "GET /api/items/made", "POST /api/items/made/out", "POST /api/items/made/away", "POST /api/rooms/tidy", "POST /api/rooms/{roomId}/keep",
             "GET /api/residency/list", "POST /api/residency/grant", "POST /api/residency/revoke",
             "GET /api/consents", "POST /api/consents/{id}",
             "POST /api/forge/{companion}", "POST /api/repair/{companion}/release",

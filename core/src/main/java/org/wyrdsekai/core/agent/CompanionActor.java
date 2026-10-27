@@ -52,6 +52,7 @@ import org.wyrdsekai.core.host.HostActionService;
 import org.wyrdsekai.core.persistence.VitalityPersistence;
 import org.wyrdsekai.core.persistence.WorldDnaService;
 import org.wyrdsekai.core.item.EquipmentService;
+import org.wyrdsekai.core.item.HouseholdItems;
 import org.wyrdsekai.core.item.MailboxService;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.item.RoomImprintTracker;
@@ -12299,6 +12300,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * to autonomy, they're the work she may want to pick up. Returns null when
      * empty or when the mode doesn't surface them.
      */
+    /**
+     * The build-or-fix turn names what is actually unfinished and the doors she has. It used to say
+     * "Check your skills and inventory. Fix something broken or build something new. Use
+     * workbench_submit … or create_room": no tool showed her skills or inventory and neither named
+     * tool was in her hand, so both companions on the household node sent that sentence to the
+     * workshop, which built a check tool each time: twelve in two weeks, on both menus
+     * (2026-10-27).
+     */
+    private String buildOrFixSubgoal() {
+        // Facts and doors, nothing about past mistakes: the mechanisms that catch those stand on their own.
+        var sb = new StringBuilder();
+        var unfinished = HouseholdItems.unfinished(5, Duration.ofDays(14));
+        if (!unfinished.isEmpty()) {
+            sb.append("Unfinished in the house: ");
+            for (int i = 0; i < unfinished.size(); i++) {
+                if (i > 0) sb.append("; ");
+                sb.append(unfinished.get(i).name()).append(" (").append(truncate(unfinished.get(i).problem(), 80)).append(")");
+            }
+            sb.append(". Mend one, or build something the house lacks. ");
+        } else {
+            sb.append("Nothing in the house is unfinished. Build something it lacks. ");
+        }
+        sb.append("Your doors: dispatch_task, a tool that does something; craft_from_template, a thing; ");
+        sb.append("create_room_from_template, a room; what_i_have, what you carry and made; project_note, the notebook of the work.");
+        return sb.toString();
+    }
+
     private String buildPersonalProjectContext() {
         if (companionMode != CompanionMode.ON_OWN_TIME) return null;
         var store = personalProjectStore;
@@ -12556,14 +12584,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 sb.append("\nGo to a room you HAVEN'T visited yet. Use go_to_room.");
             }
             case "READ" -> sb.append(readSubgoal());
-            case "BUILD_OR_FIX" -> {
-                sb.append("Check your skills and inventory. Fix something broken or build something new. ");
-                sb.append("Use workbench_submit to fix/create skills, or create_room to build rooms.");
-            }
+            case "BUILD_OR_FIX" -> sb.append(buildOrFixSubgoal());
             case "CREATE" -> {
                 sb.append("Create something the world doesn't have yet. ");
                 sb.append("A new room, a new tool, something that makes the world more interesting. ");
-                sb.append("Use create_room or workbench_submit. ");
+                sb.append("Use create_room_from_template for a room, dispatch_task for a tool that does something, ");
+                sb.append("craft_from_template for a thing. ");
                 sb.append("If what you want is to write something down, that is project_note or journal, not the workshop.");
             }
             case "SOCIALIZE" -> {
@@ -13618,6 +13644,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     handleTeach(teach);
                 } else if (parseResult.primaryAction() instanceof ActionParser.AgentAction.Introspect intr) {
                     handleIntrospect(intr);
+                } else if (parseResult.primaryAction() instanceof ActionParser.AgentAction.WhatIHave) {
+                    handleWhatIHave();
                 } else if (parseResult.primaryAction() instanceof ActionParser.AgentAction.Listen lst) {
                     handleListen(lst);
                 } else if (parseResult.primaryAction() instanceof ActionParser.AgentAction.WriteText wt) {
@@ -23127,7 +23155,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** The doors an own-time prompt may name; each one named survives the trim, the first is the front. */
     private static final List<String> DOORS_NAMED_IN_THE_PROMPT = List.of(
-        "shape_recipe", "sending_stone", "dispatch_task", "close_room", "read_book", "project_note");
+        "shape_recipe", "sending_stone", "dispatch_task", "close_room", "read_book", "project_note", "what_i_have");
 
     /** Whether she has a project of her own that is not finished: a notebook with a page to write. */
     private boolean hasAProjectOpen() {
@@ -28548,6 +28576,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // Handle read_book — the next part of a book, from where she left it
             if ("read_book".equals(toolItem.builtinHandler())) {
                 handleReadBook(node);
+                return true;
+            }
+
+            // Handle what_i_have — what she carries, made, left unfinished, put away; her projects
+            if ("what_i_have".equals(toolItem.builtinHandler())) {
+                handleWhatIHave();
                 return true;
             }
 
@@ -36161,6 +36195,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 Map.of("action", "dispatch_task", "outcome", "refused"));
             return;
         }
+        // "Check my skills and inventory" is a look at what she has, not a build: the workshop built
+        // twelve check tools from that sentence on the household node (2026-10-27).
+        if (HerThings.asksForHerThings(description)) {
+            handleWhatIHave();
+            lastDispatchTaskOutcome = "That was a look at what you have, not a build. " + lastBuiltinOutcome;
+            log.info("Companion '{}' dispatch_task asked to check her skills and inventory — answered with what_i_have instead",
+                profile.name());
+            return;
+        }
         // A letter to someone in the house is hers to write, not the workshop's: "write a personal
         // letter from her to him" became a program named after the letter, refused for its name,
         // and he never got it (household node, 2026-10-25).
@@ -40876,6 +40919,48 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
         }
         remember("Tried to teach " + action.targetAgent() + " about " + action.topic() + " (target not found)");
+    }
+
+    /** What she has, said at once: carried, the house's working tools, the unfinished ones, what is put away, her projects. */
+    private void handleWhatIHave() {
+        var carried = new ArrayList<String>();
+        try {
+            String jdbcUrl = System.getProperty("wyrdsekai.jdbc.url");
+            if (jdbcUrl == null) jdbcUrl = WyrdConfig.get().jdbcUrl();
+            if (jdbcUrl != null) {
+                for (var item : new InventoryService(jdbcUrl).listTakeableItems(profile.entityId())) carried.add(item.objectName());
+            }
+        } catch (Exception e) {
+            log.debug("what_i_have: inventory not read: {}", e.toString());
+        }
+        var unfinished = HouseholdItems.unfinished(8);
+        var broken = new HashSet<String>();
+        for (var u : unfinished) broken.add(u.name());
+        var tools = new ArrayList<String>();
+        try {
+            for (var def : ScriptedItemLoader.get().all()) if (!broken.contains(def.itemId())) tools.add(def.itemId());
+        } catch (Exception e) {
+            log.debug("what_i_have: items not listed: {}", e.toString());
+        }
+        var putAway = new ArrayList<>(HouseholdItems.away());
+        var store = MadeThingsStore.shared();
+        if (store != null) {
+            var prefix = profile.entityId() + "/";
+            for (var m : store.items()) if (m.putAway() && m.itemId().startsWith(prefix)) putAway.add(m.shownName());
+        }
+        var projects = new ArrayList<HerThings.Project>();
+        try {
+            for (var p : getPersonalProjectStore().active()) {
+                if (Projects.isDraftBin(p)) continue;
+                projects.add(new HerThings.Project(p.title(), p.entries().size(), p.nextStep()));
+            }
+        } catch (Exception e) {
+            log.debug("what_i_have: projects not read: {}", e.toString());
+        }
+        lastBuiltinOutcome = HerThings.describe(carried, tools, unfinished, putAway, projects);
+        practised("what_i_have");
+        log.info("Companion '{}' looked at what she has: {} carried, {} tools, {} unfinished, {} put away, {} project(s)",
+            profile.name(), carried.size(), tools.size(), unfinished.size(), putAway.size(), projects.size());
     }
 
     private void handleIntrospect(ActionParser.AgentAction.Introspect action) {

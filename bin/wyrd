@@ -12696,6 +12696,22 @@ print("%d made item(s); %d put away. An item unused for %s days is put away (%s 
         find)
             _wyrd_archive_find items "$@"
             ;;
+        away)
+            # Put a household item away: wyrd items away <item>. Its file moves beside the items folder;
+            # every companion's menu loses it within a minute; it is kept, and `wyrd items out` brings it back.
+            local item="${1:-}"
+            [[ -n "$item" && "$item" != --* ]] || { err "Usage: wyrd items away <item>"; return 2; }
+            local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
+            local token; token=$(wyrd_session_token)
+            [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
+            local q resp code
+            q=$(python3 -c 'import sys,urllib.parse; print("item="+urllib.parse.quote(sys.argv[1],safe=""))' "$item")
+            resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/items/made/away?$q") \
+                || { err "The server did not answer at $api — is it running?"; return 1; }
+            code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+            [[ "$code" == "401" ]] && { err "Your session has expired — run: wyrd login"; return 1; }
+            printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
+            ;;
         out)
             # Take a put-away item out again: wyrd items out <item> [--of <companion-id>]
             local item="${1:-}" of="" prev=""
@@ -12713,12 +12729,13 @@ print("%d made item(s); %d put away. An item unused for %s days is put away (%s 
             printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or d); sys.exit(0 if d.get("ok") else 1)'
             ;;
         *)
-            echo "Usage: wyrd items check [--quiet] [dir…] | broken | repair <name>|--all | made | find [words] [--cold] | out <item>"
+            echo "Usage: wyrd items check [--quiet] [dir…] | broken | repair <name>|--all | made | find [words] [--cold] | away <item> | out <item>"
             echo "  broken  household items the contract gate would refuse today, with their problems"
             echo "  repair  repair a placed item through the coding backend; the placed file changes only if the copy comes out whole"
             echo "  check   every item script's world.* calls against the API this build serves (bundled + the household's items by default)"
             echo "  made    the items companions made: who for, how long unused, out or put away"
             echo "  find    search the put-away items by what they were; --cold looks in cold storage"
+            echo "  away    put a household item away: off every companion's menu, kept; wyrd items out brings it back"
             echo "  out     take a put-away item out again, by its name or by what it was: wyrd items out <item> [--of <companion-id>]"
             [[ "$sub" == "help" || "$sub" == "-h" || "$sub" == "--help" ]] || return 1
             ;;

@@ -1,6 +1,7 @@
 package org.wyrdsekai.server.http;
 
 import io.javalin.http.Context;
+import org.wyrdsekai.core.item.HouseholdItems;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.wyrdsekai.core.agent.EntityRegistry;
 import org.wyrdsekai.core.persistence.AuthService;
@@ -54,6 +55,7 @@ public final class RoomAdminRoutes {
         app.get("/api/rooms/made", this::handleMade);
         app.get("/api/items/made", this::handleItemsMade);
         app.post("/api/items/made/out", this::handleItemOut);
+        app.post("/api/items/made/away", this::handleItemAway);
         app.get("/api/rooms/archive", this::handleArchive);
         app.post("/api/rooms/tidy", this::handleTidy);
         app.post("/api/rooms/{roomId}/keep", this::handleKeep);
@@ -134,13 +136,37 @@ public final class RoomAdminRoutes {
      * one of that name, {@code &of=<companion entity id>}. It is back on her menu when she next names
      * it, or after her next sleep.
      */
+    /**
+     * The steward puts a household item away: {@code ?item=<name>}. Its file moves beside the items
+     * folder, the loader drops it on its next look and every companion's menu loses it; it is kept,
+     * and {@code wyrd items out} brings it back. Twelve "check" tools the workshop built from one
+     * sentence sat on both menus with no way off them (household node, 2026-10-27).
+     */
+    private void handleItemAway(Context ctx) {
+        if (requireSteward(ctx) == null) return;
+        var item = ctx.queryParam("item");
+        if (item == null || item.isBlank()) { ctx.status(400).json(new ErrorResponse("item=<name> is required")); return; }
+        var done = HouseholdItems.putAway(item.strip());
+        if (done.isEmpty()) {
+            ctx.status(404).json(Map.of("ok", false, "message", "No household item called '" + item + "'. wyrd items made lists the made ones; "
+                + "put away by name only what is in the items folder."));
+            return;
+        }
+        ctx.json(Map.of("ok", true, "message", done.get()));
+    }
+
     private void handleItemOut(Context ctx) {
         if (requireSteward(ctx) == null) return;
-        var store = org.wyrdsekai.core.persistence.MadeThingsStore.shared();
-        if (store == null) { ctx.status(503).json(new ErrorResponse("item keeping not available")); return; }
         var item = ctx.queryParam("item");
         var of = ctx.queryParam("of");
         if (item == null || item.isBlank()) { ctx.status(400).json(new ErrorResponse("item=<name> is required")); return; }
+        // A household item put away by wyrd items away comes back the same way.
+        if (of == null || of.isBlank()) {
+            var back = HouseholdItems.takeOut(item.strip());
+            if (back.isPresent()) { ctx.json(Map.of("ok", true, "message", back.get())); return; }
+        }
+        var store = org.wyrdsekai.core.persistence.MadeThingsStore.shared();
+        if (store == null) { ctx.status(503).json(new ErrorResponse("item keeping not available")); return; }
         if (of == null || of.isBlank()) {
             var b = org.wyrdsekai.core.room.ArchiveCommands.bringBack(item, "en", false, true);
             if (b.ok()) { ctx.json(Map.of("ok", true, "message", b.message())); return; }

@@ -28,7 +28,7 @@ class HerOwnWordIsKeptTest {
 
     @Test
     void what_she_said_she_would_do_names_the_tool_that_does_it() {
-        assertThat(tool("I'll check the workbench and see what needs fixing or building.")).as("the workshop, not the furniture").isEqualTo("dispatch_task");
+        assertThat(tool("I'll fix what is broken on the workbench and build what is missing.")).as("the workshop, not the furniture").isEqualTo("dispatch_task");
         assertThat(tool("I'll check on the unfinished backup_vault and see if I can get one working.")).isEqualTo("dispatch_task");
         assertThat(tool("I'll close the holding-room — it's been sitting empty longest.")).isEqualTo("close_room");
         assertThat(tool("I'll build the Garden of Small Things — a quiet room for tending.")).isEqualTo("create_room_from_template");
@@ -148,5 +148,20 @@ class HerOwnWordIsKeptTest {
         assertThat(HerWord.named("Let me record one entry in the project note now.", offered).tool()).isEqualTo("project_note");
         assertThat(HerWord.named("I'll write a small tool that counts the breaths.", offered).tool()).as("a tool is the workshop's").isEqualTo("dispatch_task");
         assertThat(HerWord.named("I'll write in my journal about the afternoon.", offered).tool()).as("her journal stays hers").isEqualTo("write_journal");
+    }
+
+    @Test
+    void a_look_at_her_skills_and_inventory_is_answered_not_built() {
+        var offered = new HashSet<>(OFFERED);
+        offered.add("what_i_have");
+        assertThat(HerWord.named("I'll check my current skills and inventory first, then look for something that needs fixing.", offered).tool())
+            .as("the look comes before the fixing").isEqualTo("what_i_have");
+        assertThat(HerWord.named("Let me check on my current skills and inventory, then look at what needs building or fixing.", offered).tool())
+            .isEqualTo("what_i_have");
+        assertThat(HerWord.named("I'll fix the lantern that stopped working.", offered).tool()).isEqualTo("dispatch_task");
+        assertThat(HerWord.named("Let me look at what's actually broken vs what's waiting for capability I don't have yet.", offered).tool())
+            .as("looking at what is broken is a look").isEqualTo("what_i_have");
+        assertThat(HerWord.named("I'll check the workbench and see what needs fixing or building.", offered).tool())
+            .as("seeing what needs fixing is a look; the mending is the next act").isEqualTo("what_i_have");
     }
 }

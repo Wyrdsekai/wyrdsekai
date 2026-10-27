@@ -73,6 +73,7 @@ public record ActionPolicy(
         Map.entry("examine",              AutonomyTier.AMBIENT),
         Map.entry("listen",               AutonomyTier.AMBIENT),
         Map.entry("introspect",           AutonomyTier.AMBIENT),
+        Map.entry("what_i_have",          AutonomyTier.AMBIENT),
         Map.entry("reflect",              AutonomyTier.AMBIENT),
         Map.entry("recall",               AutonomyTier.AMBIENT),
         Map.entry("voluntary_sleep",      AutonomyTier.AMBIENT),
@@ -495,6 +496,7 @@ public record ActionPolicy(
         entry("reflect",              1, 0.2,  true,  true,  "self"),
         entry("teach",                1, 0.2,  false, true,  "knowledge"),
         entry("introspect",           0, 0.0,  true,  true,  "self"),
+        entry("what_i_have",          0, 0.0,  true,  true,  "self"),
 
         // ── Perception ───────────────────────────────────────────────
         entry("listen",               0, 0.0,  true,  true,  "observation"),
@@ -715,6 +717,7 @@ public record ActionPolicy(
             case ActionParser.AgentAction.Reflect _ -> "reflect";
             case ActionParser.AgentAction.Teach _ -> "teach";
             case ActionParser.AgentAction.Introspect _ -> "introspect";
+            case ActionParser.AgentAction.WhatIHave _ -> "what_i_have";
             case ActionParser.AgentAction.Listen _ -> "listen";
             case ActionParser.AgentAction.WriteText _ -> "write_text";
             case ActionParser.AgentAction.SetRoutine _ -> "set_routine";
@@ -791,6 +794,7 @@ public record ActionPolicy(
             case ActionParser.AgentAction.Reflect r -> "reflect on " + r.focus();
             case ActionParser.AgentAction.Teach t -> "teach " + t.targetAgent() + " about " + t.topic();
             case ActionParser.AgentAction.Introspect _ -> "introspect";
+            case ActionParser.AgentAction.WhatIHave _ -> "what_i_have";
             case ActionParser.AgentAction.Listen l -> "listen to " + l.target();
             case ActionParser.AgentAction.WriteText w -> "write: " + w.title();
             case ActionParser.AgentAction.SetRoutine s -> "set routine: " + s.description();

@@ -842,6 +842,10 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         if (name == null || name.isBlank()) return null;                       // not a tool by its manifest
         var target = itemsDir.resolve(name + ".js");
         if (Files.exists(target) || Files.exists(itemsDir.resolve(source.getFileName()))) return null;
+        // Put away by the steward: its old task copies are not adopted back. Three of twelve put-away
+        // check tools were back in the items folder two minutes later (household node, 2026-10-27).
+        var away = itemsDir.resolveSibling("items-away");
+        if (Files.exists(away.resolve(name + ".js")) || Files.exists(away.resolve(source.getFileName()))) return null;
         if (ItemContractRepair.supersededBy(source) != null) return null;      // the corrected sibling is the tool
         var refusals = ItemContractCheck.loaderRefuses(script, source.getFileName().toString());
         if (!fresh && refusals.isEmpty()) return null;                          // the loader would load it: not ours to adopt

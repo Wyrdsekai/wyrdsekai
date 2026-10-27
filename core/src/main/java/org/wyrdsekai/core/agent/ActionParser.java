@@ -969,6 +969,8 @@ public final class ActionParser {
         record Teach(String targetAgent, String topic, String content) implements AgentAction {}
         /** Agent queries own internal state (drives, capacity, commitments). */
         record Introspect(String aspect) implements AgentAction {} // "drives", "capacity", "commitments", "all"
+        /** A look at what she has: carried, made, unfinished, put away, her projects. Never a build. */
+        record WhatIHave() implements AgentAction {}
 
         // ── Perception ───────────────────────────────────────────────
         /** Agent focuses perception on a direction/target (salience modifier). */
@@ -2243,6 +2245,9 @@ public final class ActionParser {
                     String introspectAspect = node.path("aspect").asText("all");
                     primaryAction = new AgentAction.Introspect(introspectAspect);
                 }
+                if ("what_i_have".equals(action) && primaryAction == null) {
+                    primaryAction = new AgentAction.WhatIHave();
+                }
 
                 // ── Perception ───────────────────────────────────────
                 if ("listen".equals(action) && primaryAction == null) {
@@ -2788,7 +2793,7 @@ public final class ActionParser {
         "introspect_attendant_history", "introspect_resilience",
         "introspect_substrate_summary", "introspect_posture",
         "introspect_bondholder_floor", "introspect_relational_floor",
-        "introspect_protection", "write_journal", "read_journal",
+        "introspect_protection", "what_i_have", "write_journal", "read_journal",
         "notify_human", "schedule_skill", "create_watcher", "cancel_watcher",
         "task_ledger",
         "create_room", "take_item", "place_item", "give_item", "broadcast",

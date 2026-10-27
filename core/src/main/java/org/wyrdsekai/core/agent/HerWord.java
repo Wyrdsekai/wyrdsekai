@@ -84,6 +84,15 @@ public final class HerWord {
             List.of("project_note")),
         new Rule(Pattern.compile("\\b(?:read|keep reading|finish reading|next chapter|the book)\\b"),
             List.of(READ_BOOK)),
+        // A look at what she has is answered at once, never built: "I'll check my current skills and inventory first,
+        // then look for something that needs fixing" went to the workshop by the fixing rule below (household node, 2026-10-27).
+        // The workbench is not in this list: "check the workbench and see what needs fixing" is the mending it names.
+        new Rule(Pattern.compile("\\b(?:check|look at|look over|see|review|list|take stock of|go over)\\b[^.]*\\b(?:(?:my |current |available )*"
+                + "(?:skills?|inventory|tools|capabilities|what i have|what i carry|what i can do|my things)|"
+                // Looking at what is broken is a look: "let me look at what's actually broken vs what's waiting" went to
+                // the workshop by the word broken (household node, 2026-10-27). The list of the unfinished is the answer.
+                + "what(?:'s| is)? (?:actually |really |still )?(?:broken|unfinished|missing|waiting|left)|what needs (?:fixing|mending|building|attention))\\b"),
+            List.of("what_i_have")),
         // Mending an unfinished thing is the workshop's: dispatch_task, not the furniture called workbench.
         new Rule(Pattern.compile("\\b(?:fix|fixing|mend|mending|repair|untangle|unfinished|broken|"
                 + "get (?:it|one|them|this|that|the [\\w-]+) working|working again|"

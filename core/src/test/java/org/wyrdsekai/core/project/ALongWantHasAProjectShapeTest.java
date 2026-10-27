@@ -170,7 +170,7 @@ class ALongWantHasAProjectShapeTest {
         // Her own time is offered the project again, with her own next step.
         assertThat(ca).contains("projectCandidate(cands).ifPresent(cands::add);");
         // Named in the prompt it survives the trim; with a project open it is in her hand on every own-time turn (2026-10-26).
-        assertThat(ca).contains("\"shape_recipe\", \"sending_stone\", \"dispatch_task\", \"close_room\", \"read_book\", \"project_note\");");
+        assertThat(ca).contains("\"shape_recipe\", \"sending_stone\", \"dispatch_task\", \"close_room\", \"read_book\", \"project_note\", \"what_i_have\");");
         assertThat(ca).contains("if (ownTimeSurface && hasAProjectOpen()) kept.add(\"project_note\");");
         assertThat(ca).contains("HouseFacts.setStanding(profile.entityId(), \"work\"");
         // Built on the board that existed, not beside it.

@@ -284,7 +284,7 @@ public final class Vault {
         // (a restore onto a new machine is noticed), and her last turns, which the move gate reads.
         "tunnel-key.json", "relay-tls-seen", "hardware-seen.json", "serving-profile.last", "shadow.jsonl");
     static final List<String> SELF_DIRS = List.of(
-        "agents", "classifiers", "souls", "substrate", "items", "recipes", "adapters",
+        "agents", "classifiers", "souls", "substrate", "items", "items-away", "recipes", "adapters",
         "data/story", "data/biography", "data/study", "study", "household",
         "chronicles", "skills", "scripts", "sleepwrite", "training", "library",
         "vault",    // the Vault room's shelf of scrolls, not this store

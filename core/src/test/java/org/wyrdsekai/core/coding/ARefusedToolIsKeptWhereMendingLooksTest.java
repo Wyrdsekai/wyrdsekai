@@ -2,6 +2,7 @@ package org.wyrdsekai.core.coding;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -36,6 +37,7 @@ class ARefusedToolIsKeptWhereMendingLooksTest {
     @DisplayName("refused just now: kept under its manifest's name; a tool already there is never overwritten")
     void keptNow(@TempDir Path tmp) throws Exception {
         var items = tmp.resolve("items");
+        ScriptedItemLoader.get();   // the loader's own folders are fixed when it is first touched: not this test's
         System.setProperty("wyrdsekai.items.dir", items.toString());
         try {
             var ws = Files.createDirectories(tmp.resolve("ws/task-1"));
@@ -93,5 +95,22 @@ class ARefusedToolIsKeptWhereMendingLooksTest {
         assertThat(CodingTaskItemBridge.adoptRefusedTools(root, items)).as("a second scan adopts nothing more").isZero();
         assertThat(CodingTaskItemBridge.adoptRefusedTools(tmp.resolve("missing"), items)).isZero();
         assertThat(CodingTaskItemBridge.adoptRefusedTools(root, null)).isZero();
+    }
+
+    @Test
+    @DisplayName("put away by the steward: its old task copies are not adopted back")
+    void putAwayStaysAway(@TempDir Path tmp) throws Exception {
+        var items = Files.createDirectories(tmp.resolve("items"));
+        var away = Files.createDirectories(tmp.resolve("items-away"));
+        var root = tmp.resolve("coding-workspaces");
+        Files.createDirectories(root.resolve("task-a"));
+        Files.writeString(root.resolve("task-a/skills_check.js"), tool("skills_check", "\"notes.read\""));   // refused, would be adopted
+        Files.writeString(away.resolve("skills_check.js"), tool("skills_check", "\"notes.read\""));          // the steward put it away
+        Files.createDirectories(root.resolve("task-b"));
+        Files.writeString(root.resolve("task-b/room_check.js"), tool("room_check", "\"notes.read\""));       // not put away: adopted
+        assertThat(CodingTaskItemBridge.adoptRefusedTools(root, items)).isEqualTo(1);
+        try (var kept = Files.list(items)) {
+            assertThat(kept.map(f -> f.getFileName().toString()).toList()).containsExactly("room_check.js");
+        }
     }
 }

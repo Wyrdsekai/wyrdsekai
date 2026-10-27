@@ -405,6 +405,7 @@ public final class ActionSchemas {
         Map.entry("introspect", List.of(
             new FieldDef("aspect", false, "string")
         )),
+        Map.entry("what_i_have", List.of()),
 
         // ── Perception ───────────────────────────────────────────────
         Map.entry("listen", List.of(
