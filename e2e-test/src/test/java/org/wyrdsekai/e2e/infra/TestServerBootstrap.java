@@ -155,6 +155,11 @@ public final class TestServerBootstrap implements AutoCloseable {
     /** Access the HomeClient wired into this bootstrap (for cross-zone tests). */
     public HomeClient homeClient() { return homeClientRef; }
 
+    private volatile WyrdWebSocket wsHandlerRef;
+
+    /** The web/CLI socket handler, for tests that set its reconnect hold. */
+    public WyrdWebSocket wsHandler() { return wsHandlerRef; }
+
     /**
      * Access the InferenceRouter actor wired into this bootstrap. Tests that
      * exercise scripted items end-to-end (e.g. the heavy-item OpenCode test)
@@ -394,6 +399,7 @@ public final class TestServerBootstrap implements AutoCloseable {
         // per plan step. 100s was causing WebSocket drops mid-execution.
         var wsHandler = new WyrdWebSocket(system, authService, wardService, inventoryService,
             null /* federationService */, pairingService, true /* allowAnonymous */, 600);
+        this.wsHandlerRef = wsHandler;
         // The session route an answer takes to a person who is not in her room. The product wires
         // it in Main; this harness never did, so a bunshin's report to a visitor she had walked
         // away from reached no one here (the organic dispatch suite, 2026-10-05).

@@ -26,6 +26,12 @@ public class Connection implements WebSocket.Listener, WyrdSession {
 
     private static final Logger log = LoggerFactory.getLogger(Connection.class);
     private static final int MAX_BACKOFF_SECONDS = 30;
+    /**
+     * The server closes a connection that has been quiet for five minutes; a person reading a
+     * quiet room is still here. A ping this often keeps the connection and counts it as in use.
+     */
+    static final long KEEPALIVE_MILLIS = 30_000;
+    private static final String KEEPALIVE = "{\"type\":\"ping\"}";
 
     public enum State { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING }
 
@@ -44,6 +50,15 @@ public class Connection implements WebSocket.Listener, WyrdSession {
     private final CountDownLatch closeLatch = new CountDownLatch(1);
 
     private volatile WebSocket webSocket;
+    /** One send at a time: the keep-alive and a line being sent must not overlap on the socket. */
+    private final Object sendLock = new Object();
+    private volatile ScheduledFuture<?> keepalive;
+    private long keepaliveMillis = KEEPALIVE_MILLIS;
+    /**
+     * This terminal's own name, sent on every connect: a connection that drops comes back to the
+     * same session, so no one sees it leave or arrive, and what was said meanwhile is replayed.
+     */
+    private final String clientKey = UUID.randomUUID().toString();
     private volatile boolean shutdownRequested = false;
     private volatile String token;
 
@@ -73,6 +88,11 @@ public class Connection implements WebSocket.Listener, WyrdSession {
             t.setDaemon(true);
             return t;
         });
+    }
+
+    /** For tests: how often the keep-alive goes out. */
+    void keepaliveEvery(long millis) {
+        this.keepaliveMillis = millis;
     }
 
     public void connect() {
@@ -129,10 +149,25 @@ public class Connection implements WebSocket.Listener, WyrdSession {
             return;
         }
         try {
-            var json = Json.mapper().writeValueAsString(msg);
-            webSocket.sendText(json, true);
+            sendRaw(Json.mapper().writeValueAsString(msg));
         } catch (Exception e) {
             log.error("Failed to send message", e);
+        }
+    }
+
+    private void sendRaw(String json) throws Exception {
+        synchronized (sendLock) {
+            var ws = webSocket;
+            if (ws != null) ws.sendText(json, true).get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private void sendKeepalive() {
+        if (state.get() != State.CONNECTED) return;
+        try {
+            sendRaw(KEEPALIVE);
+        } catch (Exception e) {
+            log.debug("Keep-alive not sent: {}", e.toString());
         }
     }
 
@@ -176,6 +211,10 @@ public class Connection implements WebSocket.Listener, WyrdSession {
         setState(State.CONNECTED);
         reconnectAttempts.set(0);
         connectedLatch.countDown();
+        if (keepalive == null && !scheduler.isShutdown()) {
+            keepalive = scheduler.scheduleAtFixedRate(this::sendKeepalive,
+                keepaliveMillis, keepaliveMillis, TimeUnit.MILLISECONDS);
+        }
 
         // If reconnecting, request replay
         long lastSeq = lastSeenSeq.get();
@@ -209,6 +248,12 @@ public class Connection implements WebSocket.Listener, WyrdSession {
     public CompletionStage<Void> onClose(WebSocket webSocket, int statusCode, String reason) {
         log.info("Disconnected: {} {}", statusCode, reason);
         closeLatch.countDown();
+        if (statusCode == 4005) {
+            // Its session was taken up by a newer connection with this terminal's name.
+            shutdownRequested = true;
+            setState(State.DISCONNECTED);
+            return CompletableFuture.completedFuture(null);
+        }
         if (!shutdownRequested) {
             scheduleReconnect();
         }
@@ -226,9 +271,9 @@ public class Connection implements WebSocket.Listener, WyrdSession {
     // --- Internal ---
 
     private URI buildUri() {
-        var uri = (secure ? "wss://" : "ws://") + host + ":" + port + "/ws";
+        var uri = (secure ? "wss://" : "ws://") + host + ":" + port + "/ws?client=" + clientKey;
         if (token != null && !token.isBlank()) {
-            uri += "?token=" + token;
+            uri += "&token=" + token;
         }
         return URI.create(uri);
     }
@@ -263,8 +308,9 @@ public class Connection implements WebSocket.Listener, WyrdSession {
     private void handleMessage(String json) {
         try {
             var msg = Json.mapper().readValue(json, S2CMessage.class);
+            // The newest line of this session: a fresh session counts from 1 again.
             long seq = msg.seq();
-            if (seq > lastSeenSeq.get()) {
+            if (seq > 0) {
                 lastSeenSeq.set(seq);
             }
             messageHandler.accept(msg);

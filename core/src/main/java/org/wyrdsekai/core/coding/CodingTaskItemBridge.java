@@ -132,21 +132,24 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         }
 
         var roomObjects = new ArrayList<RoomObject>();
-        if (!placeable(artifact)) {
-            // A run that touched no files made nothing. Placing a "codex" for it — and
-            // handing that to the person who asked — is how an empty object reached the
-            // steward's hands on 2026-08-21 after goose never reached a model.
-            log.info("CodingTaskItemBridge: task {} produced no files — nothing to place",
-                artifact.taskId());
-            return;
-        }
-        if (artifact instanceof SourceArtifact page && proseOnly(page)) {
-            // A synthesis, a summary, a reflection: the backend wrote a page and no program. The
-            // page is kept for her notebook (ItemContractRepair.proseOf); a "codex" object for a
-            // markdown file is a thing in the room nobody can use.
-            log.info("CodingTaskItemBridge: task {} wrote a page and no program — kept for her notebook, nothing placed",
-                page.taskId());
-            return;
+        switch (intake(artifact)) {
+            case PAGE -> {
+                // A synthesis, a summary, a reflection: the backend wrote a page and no program. The
+                // page is kept for her notebook (ItemContractRepair.proseOf); a "codex" object for a
+                // markdown file is a thing in the room nobody can use.
+                log.info("CodingTaskItemBridge: task {} wrote a page and no program — kept for her notebook, nothing placed",
+                    artifact.taskId());
+                return;
+            }
+            case NOTHING -> {
+                // A run that touched no files made nothing. Placing a "codex" for it — and
+                // handing that to the person who asked — is how an empty object reached the
+                // steward's hands on 2026-08-21 after goose never reached a model.
+                log.info("CodingTaskItemBridge: task {} produced no files — nothing to place",
+                    artifact.taskId());
+                return;
+            }
+            case BUILD -> { }
         }
         var primary = toRoomObject(artifact);
         if (primary != null) {
@@ -508,6 +511,20 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             if (t.startsWith("#")) return t.replaceFirst("^#+\\s*", "").strip();
         }
         return f.getFileName().toString().replaceFirst("\\.[^.]+$", "").replace('_', ' ').replace('-', ' ');
+    }
+
+    /** What a finished task made: a page for her notebook, nothing at all, or something to place. */
+    enum Intake { PAGE, NOTHING, BUILD }
+
+    /**
+     * The page comes first. Until 2026-10-31 the "no files" exit ran before the page check, and a
+     * task that wrote only a markdown page never has a script to find, so every page was dropped as
+     * "produced no files": not one was kept in four days on the household node, an unfinished
+     * letter among them.
+     */
+    static Intake intake(CodingArtifact a) {
+        if (a instanceof SourceArtifact page && proseOnly(page)) return Intake.PAGE;
+        return placeable(a) ? Intake.BUILD : Intake.NOTHING;
     }
 
     /** Is there anything here to put in a room? A source artifact with no files is not. */

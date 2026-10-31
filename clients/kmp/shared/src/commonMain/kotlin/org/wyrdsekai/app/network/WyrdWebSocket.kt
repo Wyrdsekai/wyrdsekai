@@ -30,6 +30,14 @@ class WyrdWebSocket(
     private var connectJob: Job? = null
     private var lastSeenSeq: Long = 0
 
+    /**
+     * This app's own name, sent on every connect. A connection that drops comes back to the same
+     * session: no one in the room sees it leave or arrive, and what was said meanwhile is replayed.
+     */
+    private val clientKey: String = buildString {
+        repeat(2) { append(Random.nextLong().toULong().toString(36)) }
+    }
+
     private lateinit var serverUrl: String
     private var token: String? = null
     private var locale: String = "en"
@@ -37,6 +45,11 @@ class WyrdWebSocket(
 
     enum class ConnectionState {
         DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING
+    }
+
+    private companion object {
+        /** The server's close when a newer connection with this app's name took the session up. */
+        const val MOVED_TO_NEWER: Short = 4005
     }
 
     fun connect(serverUrl: String, token: String?, locale: String = "en") {
@@ -80,7 +93,8 @@ class WyrdWebSocket(
             var attempt = 0
             val maxBackoff = 30_000L
 
-            while (isActive) {
+            var movedAway = false
+            while (isActive && !movedAway) {
                 try {
                     val wsUrl = buildWsUrl()
                     client.webSocket(wsUrl) {
@@ -88,8 +102,18 @@ class WyrdWebSocket(
                         _connectionState.value = ConnectionState.CONNECTED
                         attempt = 0
 
-                        // Request replay if reconnecting
-                        if (isReconnect && lastSeenSeq > 0) {
+                        // The server closes a connection with nothing from the client for five
+                        // minutes, and counts only messages (not pings) as use: say so every 30 s.
+                        val keepalive = launch {
+                            while (isActive) {
+                                delay(30_000)
+                                send(Frame.Text("{\"type\":\"ping\"}"))
+                            }
+                        }
+
+                        // Request replay of what was said while away, from the newest line seen
+                        // (a fresh connect starts at 0 and asks for none).
+                        if (lastSeenSeq > 0) {
                             val reconnectMsg = C2SMessage.Reconnect(
                                 id = "reconnect-${Random.nextInt()}",
                                 roomId = "",
@@ -104,7 +128,8 @@ class WyrdWebSocket(
                                 val text = frame.readText()
                                 try {
                                     val msg = parseS2CMessage(text)
-                                    lastSeenSeq = msg.seq
+                                    // The newest line of this session: a fresh session counts from 1 again.
+                                    if (msg.seq > 0) lastSeenSeq = msg.seq
                                     _messages.emit(msg)
                                 } catch (e: Exception) {
                                     // Unknown message type — log and skip (forward compat)
@@ -112,6 +137,10 @@ class WyrdWebSocket(
                                 }
                             }
                         }
+                        keepalive.cancel()
+                        // 4005: a newer connection with this app's name took the session up;
+                        // reconnecting would take it back.
+                        if (closeReason.await()?.code == MOVED_TO_NEWER) movedAway = true
                     }
 
                 } catch (e: CancellationException) {
@@ -120,6 +149,11 @@ class WyrdWebSocket(
                     println("[WyrdWS] Connection error: ${e.message}")
                 }
 
+                if (movedAway) {
+                    session = null
+                    _connectionState.value = ConnectionState.DISCONNECTED
+                    break
+                }
                 // Connection lost — backoff and retry
                 session = null
                 _connectionState.value = ConnectionState.RECONNECTING
@@ -131,7 +165,7 @@ class WyrdWebSocket(
         }
     }
 
-    private fun buildWsUrl(): String {
+    internal fun buildWsUrl(): String {
         var raw = serverUrl.trim().trimEnd('/')
         // Auto-prepend scheme if missing
         if (!raw.startsWith("http://") && !raw.startsWith("https://") &&
@@ -148,6 +182,7 @@ class WyrdWebSocket(
             token?.let { params.add("token=$it") }
             if (locale != "en") params.add("locale=$locale")
             currentRoomId?.let { params.add("room=$it") }
+            params.add("client=$clientKey")
             if (params.isNotEmpty()) {
                 append("?${params.joinToString("&")}")
             }

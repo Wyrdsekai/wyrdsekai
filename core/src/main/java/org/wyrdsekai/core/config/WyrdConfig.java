@@ -1435,6 +1435,20 @@ public final class WyrdConfig {
             "presence.agents_quiet_when_human_present", true);
     }
 
+    /**
+     * How long a person's place is held after their connection drops without their choosing (a
+     * reload, a network blip): back within it, they never left the room and are told what they
+     * missed. 0 turns the hold off.
+     */
+    public int reconnectHoldSeconds() {
+        var v = resolve("WYRDSEKAI_RECONNECT_HOLD_SECONDS", "presence.reconnect_hold_seconds", () -> "30");
+        try {
+            return Math.max(0, Integer.parseInt(v.trim()));
+        } catch (RuntimeException e) {
+            return 30;
+        }
+    }
+
     // ── The library she may ask (LIBRARY_PROTOCOL.md) ────────────────────
 
     /**

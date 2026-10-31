@@ -55,11 +55,8 @@ public final class HerThings {
     public static String describe(List<String> carried, List<String> tools, List<HouseholdItems.Unfinished> unfinished,
                                   List<String> putAway, List<Project> projects) {
         var sb = new StringBuilder();
-        if (carried != null && !carried.isEmpty()) sb.append("You carry: ").append(String.join(", ", carried)).append(". ");
-        if (tools != null && !tools.isEmpty()) {
-            var shown = tools.size() <= 12 ? String.join(", ", tools) : String.join(", ", tools.subList(0, 12)) + " and " + (tools.size() - 12) + " more";
-            sb.append("Tools in the house that work: ").append(shown).append(". ");
-        }
+        if (carried != null && !carried.isEmpty()) sb.append("You carry: ").append(some(carried)).append(". ");
+        if (tools != null && !tools.isEmpty()) sb.append("Tools in the house that work: ").append(some(tools)).append(". ");
         if (unfinished != null && !unfinished.isEmpty()) {
             sb.append("Unfinished: ");
             for (int i = 0; i < unfinished.size(); i++) {
@@ -69,7 +66,7 @@ public final class HerThings {
             }
             sb.append(". Mend one with dispatch_task, naming it and what fails. ");
         }
-        if (putAway != null && !putAway.isEmpty()) sb.append("Put away, kept: ").append(String.join(", ", putAway)).append(". ");
+        if (putAway != null && !putAway.isEmpty()) sb.append("Put away, kept: ").append(some(putAway)).append(". ");
         if (projects != null && !projects.isEmpty()) {
             sb.append("Your projects: ");
             for (int i = 0; i < projects.size(); i++) {
@@ -83,6 +80,14 @@ public final class HerThings {
         }
         if (sb.isEmpty()) return "You carry nothing yet, have made nothing yet, and have no project open. Nothing needs checking.";
         return sb.toString().strip();
+    }
+
+    /** The first few names and how many more: a household carries hundreds, and the answer is read every turn it is used. */
+    static final int SHOWN = 12;
+
+    private static String some(List<String> names) {
+        return names.size() <= SHOWN ? String.join(", ", names)
+            : String.join(", ", names.subList(0, SHOWN)) + " and " + (names.size() - SHOWN) + " more";
     }
 
     private static String shorten(String s, int max) {

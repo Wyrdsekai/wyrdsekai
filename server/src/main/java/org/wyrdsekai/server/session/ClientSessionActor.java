@@ -78,6 +78,12 @@ public class ClientSessionActor extends AbstractBehavior<ClientSessionActor.Sess
     /** Session disconnected. */
     public record Disconnected() implements SessionMessage {}
 
+    /**
+     * A connection took this session up again (a held place, or a person already in the room on
+     * another surface): show the room without entering it, so no one sees an arrival.
+     */
+    public record Resume(List<RoomObject> inventory) implements SessionMessage {}
+
     /** Replay request on reconnect. */
     public record ReplayFrom(long lastSeenSeq) implements SessionMessage {}
 
@@ -149,6 +155,7 @@ public class ClientSessionActor extends AbstractBehavior<ClientSessionActor.Sess
             .onMessage(LookResult.class, this::onLookResult)
             .onMessage(ReplayFrom.class, this::onReplayFrom)
             .onMessage(Disconnected.class, this::onDisconnected)
+            .onMessage(Resume.class, this::onResume)
             .onMessage(SendMessage.class, this::onSendMessage)
             .onMessage(SetLocale.class, this::onSetLocale)
             .onMessage(Report.class, this::onReport)
@@ -218,6 +225,14 @@ public class ClientSessionActor extends AbstractBehavior<ClientSessionActor.Sess
                 send(new S2CMessage.Error(nextSeq(), rejected.code(), rejected.reason(), requestId));
             default -> {}
         }
+        return this;
+    }
+
+    private Behavior<SessionMessage> onResume(Resume msg) {
+        if (currentRoom == null) return this;
+        pendingLookRequestId = "__resume__";
+        pendingLookInventory = msg.inventory();
+        currentRoom.tell(new RoomCommand.LookRoom(sessionEntityId, locale, lookResponseAdapter));
         return this;
     }
 

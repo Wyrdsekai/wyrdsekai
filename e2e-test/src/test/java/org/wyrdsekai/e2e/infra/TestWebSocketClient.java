@@ -32,6 +32,7 @@ public final class TestWebSocketClient implements AutoCloseable {
     private final BlockingQueue<JsonNode> receivedMessages = new LinkedBlockingQueue<>();
     private final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
     private volatile boolean closed = false;
+    private volatile int closeCode = -1;
 
     private TestWebSocketClient(WebSocket webSocket) {
         this.webSocket = webSocket;
@@ -63,9 +64,19 @@ public final class TestWebSocketClient implements AutoCloseable {
 
     /** Connect and start in {@code room} (the server's {@code ?room=} parameter), e.g. the companion's room. */
     public static TestWebSocketClient connect(String baseUrl, String authToken, String locale, String room) throws Exception {
+        return connect(baseUrl, authToken, locale, room, null);
+    }
+
+    /** As above, naming this client ({@code ?client=}) the way a browser tab or a terminal does. */
+    public static TestWebSocketClient connect(String baseUrl, String authToken, String locale, String room,
+                                              String clientKey) throws Exception {
         var wsUrl = baseUrl.replace("http://", "ws://")
                           .replace("https://", "wss://") + "/ws";
         var sep = '?';
+        if (clientKey != null && !clientKey.isBlank()) {
+            wsUrl += sep + "client=" + clientKey;
+            sep = '&';
+        }
         if (authToken != null) {
             wsUrl += sep + "token=" + authToken;
             sep = '&';
@@ -113,6 +124,7 @@ public final class TestWebSocketClient implements AutoCloseable {
                 @Override
                 public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
                     if (testClient != null) {
+                        testClient.closeCode = statusCode;
                         testClient.closed = true;
                         testClient.closeFuture.complete(null);
                     }
@@ -131,6 +143,17 @@ public final class TestWebSocketClient implements AutoCloseable {
             .get(10, TimeUnit.SECONDS);
 
         return holder.get(10, TimeUnit.SECONDS);
+    }
+
+    /** Drops the connection with no goodbye, as a network failure does: the server sees code 1006. */
+    public void drop() {
+        closed = true;
+        webSocket.abort();
+    }
+
+    /** The close code the server sent, when it closed this connection; -1 otherwise. */
+    public int closeCode() {
+        return closeCode;
     }
 
     // --- Send methods ---

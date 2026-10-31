@@ -1,11 +1,14 @@
 package org.wyrdsekai.core.agent.affordance;
 
+import org.wyrdsekai.core.mcp.McpToolIndex;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -154,6 +157,24 @@ public final class ToolAffordanceRanker {
         Map.entry("automation", "working"),
         Map.entry("repair", "tending"), Map.entry("safety", "tending"), Map.entry("self", "tending"),
         Map.entry("analysis", "tending"));
+
+    /**
+     * The calls of the library protocol that read or ask (docs/public/LIBRARY_PROTOCOL.md). The
+     * library's tools come with no domain and were ranked as household items, two seats shared
+     * with every item in the house.
+     */
+    public static final Set<String> LIBRARY_READING_CALLS = Set.of("library_ask", "library_search",
+        "library_get", "library_read", "library_established", "library_explain", "library_research");
+
+    /** As {@link #kindOf(String, String)}; a reading call of the house's library ({@code libraryService}) is reading. */
+    public static String kindOf(String tool, String domain, String libraryService) {
+        if (tool != null && libraryService != null && !libraryService.isBlank()) {
+            for (var call : LIBRARY_READING_CALLS) {
+                if (tool.equals(McpToolIndex.qualifyName(libraryService, call))) return "reading";
+            }
+        }
+        return kindOf(tool, domain);
+    }
 
     /** The kind of act a tool is, from its name or its domain. A household item with no domain is its own kind. */
     public static String kindOf(String tool, String domain) {

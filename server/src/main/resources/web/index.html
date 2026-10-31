@@ -144,6 +144,7 @@ const I18N = {
     retrying: s => `connection lost — retrying in ${s}s`,
     expired: "Session expired — sign in again.",
     logged_out: "Signed out everywhere. Sign in to return.",
+    moved: "This tab's connection moved to another of your tabs. Reload to take it back.",
     net_error: "network error: ", failed: c => `failed (${c})`,
     recovery: k => `Your recovery key. It is shown this once:\n\n${k}\n\nWrite it down and keep it somewhere safe. If the steward password is lost: wyrd recover <recovery-key> <new-password>`,
     exits: "exits: ", here: "here: ", see: "you see: ", carrying: "carrying: ",
@@ -159,6 +160,7 @@ const I18N = {
     retrying: s => `conexión perdida — reintentando en ${s}s`,
     expired: "Sesión caducada — inicia sesión de nuevo.",
     logged_out: "Sesión cerrada en todas partes. Inicia sesión para volver.",
+    moved: "La conexión de esta pestaña pasó a otra de tus pestañas. Recarga para recuperarla.",
     net_error: "error de red: ", failed: c => `falló (${c})`,
     recovery: k => `Tu clave de recuperación. Se muestra solo esta vez:\n\n${k}\n\nAnótala y guárdala en un lugar seguro. Si se pierde la contraseña del administrador: wyrd recover <clave> <nueva-contraseña>`,
     exits: "salidas: ", here: "aquí: ", see: "ves: ", carrying: "llevas: ",
@@ -174,6 +176,7 @@ const I18N = {
     retrying: s => `接続が切れました — ${s}秒後に再試行`,
     expired: "セッションが切れました — 再度サインインしてください。",
     logged_out: "すべての接続からサインアウトしました。戻るにはサインインしてください。",
+    moved: "このタブの接続は別のタブに移りました。取り戻すには再読み込みしてください。",
     net_error: "ネットワークエラー: ", failed: c => `失敗 (${c})`,
     recovery: k => `あなたの復旧キーです。表示はこの一度だけです:\n\n${k}\n\n書き留めて安全な場所に保管してください。スチュワードのパスワードを失ったとき: wyrd recover <復旧キー> <新しいパスワード>`,
     exits: "出口: ", here: "ここにいる: ", see: "見えるもの: ", carrying: "所持品: ",
@@ -208,6 +211,18 @@ let myName = null;            // own display name — used to suppress the self-
 let roomExits = new Set();    // current room's exit names (lowercased) — any of them moves you
 let manualClose = false;
 let pendingLogout = false;   // logout/quitall: clear token + return to auth on close
+// The server closes a connection that has been quiet for five minutes. A person reading a quiet
+// room is still here: a ping every 30 s keeps the connection, and counts it as in use.
+const KEEPALIVE_MS = 30000;
+let keepalive = null;
+// This tab's own name, kept for the tab's life (a reload keeps it; another tab has its own). Sent
+// on every connect, so a connection that drops comes back to the same session: no one sees it
+// leave or arrive, and what was said meanwhile is replayed.
+let clientKey = sessionStorage.getItem("wyrd.client");
+if (!clientKey) {
+  clientKey = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36));
+  sessionStorage.setItem("wyrd.client", clientKey);
+}
 const streams = new Map();   // source -> live element for token_stream
 
 // ---- rendering ----------------------------------------------------------
@@ -314,7 +329,7 @@ function setConn(text, ok) {
 }
 function wsUrl() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&locale=${LOCALE}`;
+  return `${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&locale=${LOCALE}&client=${encodeURIComponent(clientKey)}`;
 }
 function connect() {
   setConn(T.connecting, false);
@@ -322,17 +337,24 @@ function connect() {
   ws.onopen = () => {
     attempts = 0;
     setConn(T.connected, true);
+    clearInterval(keepalive);
+    keepalive = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}');
+    }, KEEPALIVE_MS);
     if (lastSeq > 0) {
       send({ type: "reconnect", id: newId(), roomId: roomId || "nexus", lastSeenSeq: lastSeq });
     }
   };
   ws.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
-    if (typeof m.seq === "number" && m.seq > lastSeq) lastSeq = m.seq;
+    // The newest line of this session: a fresh session counts from 1 again.
+    if (typeof m.seq === "number" && m.seq > 0) lastSeq = m.seq;
     render(m);
   };
   ws.onclose = ev => {
     setConn(T.disconnected, false);
+    clearInterval(keepalive);
+    keepalive = null;
     if (pendingLogout) {
       // logout/quitall ended the whole presence: the token is dead. Clear it,
       // stop any reconnect, and drop back to the auth screen.
@@ -343,6 +365,10 @@ function connect() {
       return;
     }
     if (manualClose) return;
+    if (ev.code === 4005) {  // another tab of this browser took this connection up
+      line("sys", T.moved);
+      return;
+    }
     if (ev.code === 4001 || ev.code === 4002) {  // bad/expired token
       sessionStorage.removeItem("wyrd.token");
       token = null;

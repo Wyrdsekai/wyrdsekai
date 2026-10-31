@@ -4,6 +4,18 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.15] — 2026-10-31
+
+### Fixed
+
+- **Pages the workshop writes are kept.** A summary, a reflection or a letter the workshop wrote for a companion now goes into her notebook.
+- **The list of what a companion has is short.** It names a dozen things in each group and says how many more there are.
+- **Companions can open the books you share with them.** Whether you shared a book from the sharing page or said yes to her asking, she can now open it and read it through, part by part.
+- **The library's research desk is within a companion's reach.** When your household library has one, a companion can hand it a question the shelves don't answer.
+- **Reading time moves on from what the shelves don't hold.** When a companion has asked the library about the same thing several times in a week, she is told how often and pointed to the research desk.
+- **The browser, the terminal and the desktop app stay connected while you read.** A quiet room no longer drops you and brings you back.
+- **A dropped connection keeps your place.** If your connection drops and you are back within half a minute, no one in the room sees you leave or arrive, and you see what was said while you were gone.
+
 ## [0.5.14] — 2026-10-27
 
 ### Added

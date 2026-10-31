@@ -41,6 +41,8 @@ import org.wyrdsekai.core.library.FindingsLedger;
 import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.library.LibraryPatron;
 import org.wyrdsekai.core.library.LibraryRecall;
+import org.wyrdsekai.core.library.Reading;
+import org.wyrdsekai.core.library.ReadingLedger;
 import org.wyrdsekai.core.coding.CodeZaikuBackend;
 import org.wyrdsekai.core.coding.CodingTaskBroadcast;
 import org.wyrdsekai.core.coding.GooseBackend;
@@ -1027,6 +1029,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     public record TestRequestRecipe(String recipeName,
                                     Map<String, Object> params, String reason)
         implements Command {}
+    /** Test-only: read_book with {@code book} as her call would carry it; the reply is what she is told. */
+    public record TestReadBook(String book, ActorRef<String> replyTo) implements Command {}
     /**
      * Test-only ( EMIT probe): force the generativity
      * drive to a surfaced level with concrete gap signals, bypass the interiority
@@ -4255,6 +4259,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 handleDispatchBunshin(new ActionParser.AgentAction.DispatchBunshin(
                     msg.task(), msg.maxTokens(), msg.maxSteps(),
                     msg.wallClockSeconds(), "test-harness"));
+                return this;
+            })
+            .onMessage(TestReadBook.class, msg -> {
+                var node = M3_MAPPER.createObjectNode();
+                if (msg.book() != null) node.put("book", msg.book());
+                lastBuiltinOutcome = null;
+                handleReadBook(node);
+                msg.replyTo().tell(String.valueOf(lastBuiltinOutcome));
                 return this;
             })
             .onMessage(TestRequestRecipe.class, msg -> {
@@ -12650,19 +12662,105 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 break;
             }
         }
+        String doors = "";
         if (anchor == null && luceneStore != null) {
-            for (var f : FindingsLedger.list(luceneStore, myDid, null, 5)) {
+            var recent = FindingsLedger.list(luceneStore, myDid, null, 40);
+            for (var f : recent.subList(0, Math.min(5, recent.size()))) {
                 if (f.query() == null || !spentReadAnchors.add(f.query())) continue;
                 anchor = "Last time you asked the library: \"" + truncate(f.query(), 160)
                     + "\" and concluded: " + truncate(f.claim(), 240)
                     + " Follow what that left open.";
+                doors = readingDoors(f, recent);
                 break;
             }
         }
         sb.append(anchor != null ? anchor
             : "Pick one thing you are curious about — a subject, an author, a word you keep using.");
+        sb.append(doors);
         sb.append('\n').append(READ_INSTRUCTION);
         return sb.toString();
+    }
+
+    /** Asked this many times in {@link #ASKED_LATELY}, a subject is named as asked often, with the research desk. */
+    static final int ASKED_OFTEN = 3;
+    static final Duration ASKED_LATELY = Duration.ofDays(7);
+
+    /**
+     * The doors a reading turn anchored on {@code on} names besides the card: the book a passage
+     * of it came from, when she may read that book through; and how often she has asked the
+     * library about the same thing lately, with the house library's research desk when it has
+     * one. The card answers with its ten nearest passages whatever the subject, so a subject the
+     * shelves hold little on comes back looking like weak results, not like a gap.
+     */
+    private String readingDoors(FindingsLedger.Finding on, List<FindingsLedger.Finding> recent) {
+        var sb = new StringBuilder();
+        var place = bookOf(on);
+        if (place != null) {
+            // "read_book" alone, or by the book's name, opens it at this part (freshBookFromSearch).
+            lastBookFromSearch = place;
+            lastBookFromSearchAt = Instant.now();
+            var title = ReadingLedger.titleOf(place.book().group());
+            sb.append("\nA passage you read for it came from '").append(title).append("' (part ").append(place.part())
+                .append(" of ").append(place.book().parts()).append("). read_book with book: '").append(title)
+                .append("' opens it there.");
+        }
+        int times = timesAsked(on.query(), recent, Instant.now().minus(ASKED_LATELY));
+        if (times >= ASKED_OFTEN) {
+            sb.append("\nYou have asked the library about this ").append(times).append(" times in the last week.");
+            var desk = researchDesk();
+            if (desk != null) {
+                sb.append(" The research desk, ").append(desk).append(", takes a question and studies it from the")
+                    .append(" shelves and the web; what it finds comes back to the library.");
+            }
+        }
+        return sb.toString();
+    }
+
+    /** The first book a passage of this finding came from that she may read through, and where. */
+    private WyrdLuceneStore.PlaceInBook bookOf(FindingsLedger.Finding f) {
+        if (luceneStore == null || f.sources() == null) return null;
+        for (var src : f.sources()) {
+            var id = src.chunkId();
+            if (id == null || id.isBlank()) continue;
+            var place = luceneStore.placeOf(SearchCollections.STUDY, id)
+                .or(() -> luceneStore.placeOf(SearchCollections.KNOWLEDGE, id)).orElse(null);
+            if (place != null && place.book().parts() >= 2 && mayReadThrough(place.book())) return place;
+        }
+        return null;
+    }
+
+    /**
+     * How many of her findings since {@code since} asked about the same thing as {@code query}:
+     * at least two of the same words, and at least half the words of the shorter question.
+     * Reworded questions on one subject count together.
+     */
+    static int timesAsked(String query, List<FindingsLedger.Finding> recent, Instant since) {
+        var words = Reading.words(query);
+        if (words.size() < 2 || recent == null) return 0;
+        int n = 0;
+        for (var f : recent) {
+            if (f.query() == null || f.recordedAt() == null || f.recordedAt().isBefore(since)) continue;
+            var theirs = Reading.words(f.query());
+            int shared = 0;
+            for (var w : words) if (theirs.contains(w)) shared++;
+            if (shared >= 2 && shared * 2 >= Math.min(words.size(), theirs.size())) n++;
+        }
+        return n;
+    }
+
+    /** The house library's research desk as her menu names it, while the library offers one; null otherwise. */
+    private static String researchDesk() {
+        return researchDeskOf(WyrdConfig.get().libraryPatronService(), McpServerManager.get());
+    }
+
+    static String researchDeskOf(String library, McpServerManager mgr) {
+        if (library == null || library.isBlank() || mgr == null) return null;
+        var desk = McpToolIndex.qualifyName(library, LibraryConsent.RESEARCH);
+        try {
+            return mgr.toolIndex().lookup(desk).isPresent() ? desk : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** Summarize current subgoal from working memory for completed subgoal list. */
@@ -23081,6 +23179,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var kept = new LinkedHashSet<String>();
         if (autonomyPromptLower != null) {
             for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);
+            var desk = researchDesk();
+            if (desk != null && autonomyPromptLower.contains(desk)) kept.add(desk);
         }
         if (forced == null && !kept.isEmpty()) forced = kept.iterator().next();
         // On her own time the surface spans the kinds of act: one of each before two of any. A
@@ -23124,9 +23224,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     ? def.function().description() : null;
                 return RequestRelevance.score(autonomyPromptLower, n, desc);
             };
+        var library = WyrdConfig.get().libraryPatronService();
         var ranked = ownTimeSurface && trimNeeded
             ? ToolAffordanceRanker.rankSpanning(pressures, forced, names, resolve, AFFORDANCE_TOPK, relevance,
-                n -> ToolAffordanceRanker.kindOf(n, ActionPolicy.domainFor(n)), Math.max(2, AFFORDANCE_TOPK / 4), kept)
+                n -> ToolAffordanceRanker.kindOf(n, ActionPolicy.domainFor(n), library), Math.max(2, AFFORDANCE_TOPK / 4), kept)
             : ToolAffordanceRanker.rank(
                 pressures, forced, names, resolve,
                 trimNeeded ? AFFORDANCE_TOPK : names.size(), relevance, kept);
@@ -42522,7 +42623,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var consent = HomeClients.get();
         if (owner == null || consent == null || ref.studyCollection() == null || !owner.equals(ref.ownerDid())) return false;
         try {
-            return new StudyService(luceneStore, consent).hasAccess(owner, profile.entityId(), ref.studyCollection());
+            return new StudyService(luceneStore, consent).hasAccess(owner, herDid(), ref.studyCollection());
         } catch (RuntimeException e) {
             return false;
         }
@@ -42543,7 +42644,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     for (var ref : luceneStore.booksMatching(SearchCollections.STUDY, words, limit * 4)) {
                         if (out.size() >= limit * 2) break;
                         if (!owner.equals(ref.ownerDid())) continue;
-                        if (ref.studyCollection() == null || !svc.hasAccess(owner, profile.entityId(), ref.studyCollection())) continue;
+                        if (ref.studyCollection() == null || !svc.hasAccess(owner, herDid(), ref.studyCollection())) continue;
                         out.add(ref);
                     }
                 }
@@ -42561,7 +42662,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var consent = HomeClients.get();
         if (owner == null || consent == null || b.studyCollection() == null) return false;
         try {
-            return owner.equals(b.ownerDid()) && new StudyService(luceneStore, consent).hasAccess(owner, profile.entityId(), b.studyCollection());
+            return owner.equals(b.ownerDid()) && new StudyService(luceneStore, consent).hasAccess(owner, herDid(), b.studyCollection());
         } catch (RuntimeException e) {
             return false;
         }

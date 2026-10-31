@@ -22,7 +22,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DateApiTest {
 
     private final ItemWorldApiProvider provider = new ItemWorldApiProvider() {
-        // Default impls cover all the date methods.
+        // Default impls cover all the date methods. The house's zone is pinned: a calendar day is 23
+        // or 25 hours across a clock change, so a test on the real clock in the machine's zone failed
+        // on the day before every change (2026-10-31, the eve of the fall-back).
+        @Override public String timezone() { return "UTC"; }
         @Override public List<Map<String, Object>> searchKnowledge(String q, int n) { return List.of(); }
         @Override public Map<String, Object> readKnowledgeChunk(String id) { return null; }
         @Override public List<Map<String, Object>> webSearch(String q, String t, int n) { return List.of(); }
@@ -129,5 +132,30 @@ class DateApiTest {
         } finally {
             executor.close();
         }
+    }
+
+    /** A day is a calendar day in the house's zone: 25 hours on the night the clocks go back, 23 when they go forward. */
+    @Test
+    void a_day_across_a_clock_change_is_a_calendar_day() {
+        var house = new ItemWorldApiProvider() {
+            @Override public String timezone() { return "America/New_York"; }
+            @Override public List<Map<String, Object>> searchKnowledge(String q, int n) { return List.of(); }
+            @Override public Map<String, Object> readKnowledgeChunk(String id) { return null; }
+            @Override public List<Map<String, Object>> webSearch(String q, String t, int n) { return List.of(); }
+            @Override public String webFetch(String url, int max) { return ""; }
+            @Override public List<Map<String, Object>> queryOracle(String t, String a) { return List.of(); }
+            @Override public String llmSummarize(String t, String i) { return ""; }
+            @Override public String llmAnalyze(String t, String p) { return ""; }
+            @Override public void agentSpeak(String t) {}
+            @Override public void agentRemember(String c) {}
+            @Override public void agentTell(String t, String m) {}
+            @Override public List<Map<String, Object>> inventoryList() { return List.of(); }
+            @Override public Map<String, Object> inventoryUse(String id, Map<String, Object> p, int d) { return Map.of(); }
+        };
+        long eveOfFallBack = ZonedDateTime.of(2026, 10, 31, 12, 0, 0, 0, ZoneId.of("America/New_York")).toInstant().toEpochMilli();
+        assertThat(house.dateAdd(eveOfFallBack, 1, "day") - eveOfFallBack).isEqualTo(25 * 3_600_000L);
+        long eveOfSpringForward = ZonedDateTime.of(2027, 3, 13, 12, 0, 0, 0, ZoneId.of("America/New_York")).toInstant().toEpochMilli();
+        assertThat(house.dateAdd(eveOfSpringForward, 1, "day") - eveOfSpringForward).isEqualTo(23 * 3_600_000L);
+        assertThat(house.dateAdd(eveOfFallBack, 24, "hour") - eveOfFallBack).as("hours are hours").isEqualTo(24 * 3_600_000L);
     }
 }

@@ -45,6 +45,11 @@ export class WyrdWebSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private shouldReconnect = false;
+  /**
+   * This app's own name, sent on every connect. A connection that drops comes back to the same
+   * session: no one in the room sees it leave or arrive, and what was said meanwhile is replayed.
+   */
+  private readonly clientKey = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 
   private messageHandlers: MessageHandler[] = [];
   private stateHandlers: StateHandler[] = [];
@@ -123,6 +128,7 @@ export class WyrdWebSocket {
     if (this.token) params.push(`token=${this.token}`);
     if (this.locale !== 'en') params.push(`locale=${this.locale}`);
     if (this.currentRoomId) params.push(`room=${this.currentRoomId}`);
+    params.push(`client=${this.clientKey}`);
     if (params.length > 0) url += `?${params.join('&')}`;
 
     const ws: SessionSocket = url.startsWith('wss://') && nativeRelaySocketAvailable() && isPinnedHome(url)
@@ -149,16 +155,23 @@ export class WyrdWebSocket {
     ws.onmessage = (event) => {
       const msg = parseS2CMessage(event.data as string);
       if (msg) {
-        this.lastSeenSeq = msg.seq;
+        // The newest line of this session: a fresh session counts from 1 again.
+        if (msg.seq > 0) this.lastSeenSeq = msg.seq;
         for (const handler of this.messageHandlers) {
           handler(msg);
         }
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev?: unknown) => {
       this.ws = null;
       this.stopPing();
+      // 4005: a newer connection with this app's name took the session up; reconnecting would take it back.
+      if ((ev as { code?: number } | undefined)?.code === 4005) {
+        this.shouldReconnect = false;
+        this.setState('disconnected');
+        return;
+      }
       if (this.shouldReconnect) {
         this.scheduleReconnect();
       } else {

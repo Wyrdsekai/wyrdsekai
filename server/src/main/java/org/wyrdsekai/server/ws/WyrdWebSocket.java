@@ -96,6 +96,7 @@ import org.wyrdsekai.scripting.api.ItemCapabilitySet;
 import org.wyrdsekai.scripting.sandbox.ItemScriptExecutor;
 import org.wyrdsekai.server.session.ClientConnection;
 import org.wyrdsekai.server.session.ClientConnectionRegistry;
+import org.wyrdsekai.server.session.HeldPlaces;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -233,6 +234,52 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
      * (the network socket lives here, not in the ClientSessionActor).
      */
     private final Map<String, WsContext> wsContexts = new ConcurrentHashMap<>();
+    /** Where each session's lines go (see {@link Wire}). */
+    private final Map<String, Wire> wires = new ConcurrentHashMap<>();
+    /** Places held after a drop the person did not choose (see {@link HeldPlaces}). */
+    private final HeldPlaces heldPlaces = new HeldPlaces(
+        Duration.ofSeconds(WyrdConfig.get().reconnectHoldSeconds()),
+        this::later);
+    /** Holding a place, taking one up, and a socket's close are decided one at a time. */
+    private final Object places = new Object();
+
+    /**
+     * The socket a session's lines go to. A session outlives a socket that drops while its place
+     * is held, and the connection that takes it up becomes its socket; while held, its lines go
+     * nowhere and the session keeps them for the replay. A tab or a terminal names itself
+     * ({@code ?client=}), so it takes up its own session and no other; a client that names none
+     * is known only by its kind (its User-Agent).
+     */
+    private static final class Wire implements Consumer<String> {
+        private volatile WsContext socket;
+        private final String clientKey;
+        private final String clientKind;
+
+        Wire(WsContext socket, String clientKey, String clientKind) {
+            this.socket = socket;
+            this.clientKey = clientKey == null || clientKey.isBlank() ? null : clientKey;
+            this.clientKind = clientKind;
+        }
+
+        void to(WsContext socket) { this.socket = socket; }
+
+        WsContext socket() { return socket; }
+
+        @Override
+        public void accept(String json) {
+            var s = socket;
+            if (s != null) s.send(json);
+        }
+    }
+
+    private void later(Duration delay, Runnable task) {
+        system.scheduler().scheduleOnce(delay, task, system.executionContext());
+    }
+
+    /** For tests: how long a dropped person's place is held. */
+    public void setReconnectHold(Duration hold) {
+        heldPlaces.setHold(hold);
+    }
     /** Zone topology for map commands — set post-construction from FoundationRoomLoader seeds. */
     private volatile ZoneTopology zoneTopology;
     /** Between actor for cross-node presence replication (nullable — absent in single-node mode). */
@@ -460,6 +507,11 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             // Close this web/CLI channel — used by logout/quitall from another
             // surface, and by sessions-kill. The room departure is handled by
             // the normal onClose cleanup (suppressed if other surfaces remain).
+            // A held place ends at once: logout and sessions-kill mean now.
+            if (heldPlaces.endNow(sessionId)) {
+                leave(sessionId, 4000, reason != null ? reason : "logout");
+                return;
+            }
             var ctx = wsContexts.get(sessionId);
             if (ctx != null) {
                 try { ctx.closeSession(4000, reason != null ? reason : "logout"); }
@@ -1025,8 +1077,22 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
                 }
             }
 
+            // A tab or terminal back while its session lingers (held after a drop, or still open
+            // because the server has not yet seen the old socket fail) takes that session up: it
+            // never left the room, so nothing is announced, and its reconnect replays what it missed.
+            var clientKey = ctx.queryParam("client");
+            var clientKind = ctx.header("User-Agent");
+            if (userId != null && playerId != null
+                    && takeUpSession(ctx, playerId, clientKey, clientKind, token, localeParam)) {
+                return;
+            }
+            // Someone already in this room through another surface of theirs does not arrive again.
+            boolean alreadyHere = alreadyIn(playerId, startRoom);
+
+            var wire = new Wire(ctx, clientKey, clientKind);
+            wires.put(sessionId, wire);
             var sessionRef = system.<ClientSessionActor.SessionMessage>systemActorOf(
-                ClientSessionActor.create(sessionId, ctx::send),
+                ClientSessionActor.create(sessionId, wire),
                 "session-" + sessionId.substring(0, 8),
                 Props.empty());
             sessions.put(sessionId, sessionRef);
@@ -1057,7 +1123,7 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             if (keptNotices != null && playerId != null) keptNotices.flushBuffered(playerId);
 
             // On-login flush: notify EVERY companion (multi-companion households).
-            if (entityRegistry != null && playerId != null && !playerId.startsWith("anon-")) {
+            if (entityRegistry != null && playerId != null && !playerId.startsWith("anon-") && !alreadyHere) {
                 for (var entityId : entityRegistry.allEntities()) {
                     if (entityRegistry.isAgent(entityId)) {
                         var companionRef = ZoneGuardian.getCompanionRef(null, entityId);
@@ -1108,9 +1174,14 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
             // Subscribe + Enter + Look routed through session actor for guaranteed ordering.
             // Pekko single-sender guarantee ensures Subscribe processes before EnterRoom,
             // so onEnter script narrate events reach the client.
-            sessionRef.tell(new ClientSessionActor.JoinRoomAndEnter(
-                startRoomRef, playerId, playerName, "player", "nowhere",
-                initialLocale, "init", loadInventory(playerId)));
+            if (alreadyHere) {
+                sessionRef.tell(new ClientSessionActor.JoinRoom(startRoomRef, playerId));
+                sessionRef.tell(new ClientSessionActor.Resume(loadInventory(playerId)));
+            } else {
+                sessionRef.tell(new ClientSessionActor.JoinRoomAndEnter(
+                    startRoomRef, playerId, playerName, "player", "nowhere",
+                    initialLocale, "init", loadInventory(playerId)));
+            }
 
             // record a HOME_ENTERED audit when the login landing
             // point is the player's own Study. This is what makes "my home tracked
@@ -1177,84 +1248,188 @@ public class WyrdWebSocket implements Consumer<WsConfig>, CommandRouter {
 
         ws.onClose(ctx -> {
             var sessionId = (String) ctx.attribute("sessionId");
-
-            // Close any active remote zone session before local cleanup
-            endRemoteSession(sessionId);
-
-            var sessionRef = sessions.remove(sessionId);
-            var currentRoomId = sessionCurrentRoom.remove(sessionId);
-            var playerId = sessionPlayerIds.remove(sessionId);
-            var playerDisplayName = sessionPlayerNames.remove(sessionId);
-            sessionUserIds.remove(sessionId);
-            sessionTokens.remove(sessionId);
-            sessionTouchedAt.remove(sessionId);
-            wsContexts.remove(sessionId);
-            if (playerId != null) {
-                // Drop only THIS session's sink; keep the account's other surfaces.
-                var sinks = zoneSinks.get(playerId);
-                if (sinks != null) {
-                    sinks.remove(sessionId);
-                    if (sinks.isEmpty()) zoneSinks.remove(playerId);
+            synchronized (places) {
+                var wire = sessionId == null ? null : wires.get(sessionId);
+                if (wire != null && wire.socket() != null && !wire.socket().sessionId().equals(ctx.sessionId())) {
+                    // A socket its session has moved off: a newer connection took the session up.
+                    log.info("WebSocket {} closed after its session moved to a newer connection (code={})",
+                        sessionId, ctx.status());
+                    return;
                 }
+                if (holdPlace(sessionId, ctx.status())) return;
             }
-            sessionLocales.remove(sessionId);
-            sessionRateLimiters.remove(sessionId);
-
-            // Suppress the room departure + entity removal while the same account
-            // is still present through another surface (e.g. the CLI/WS closing
-            // while an SSH session is still up). Without this the other surface
-            // sees "X heads disconnect." even though X is still here. The registry
-            // unregister for this session happens further below, so this session
-            // is still present — exclude it by sessionId.
-            boolean stillPresent = connectionRegistry != null
-                && connectionRegistry.hasOtherLiveSession(playerId, sessionId);
-
-            // Leave current room
-            if (currentRoomId != null && playerId != null && !stillPresent) {
-                var leaveName = playerDisplayName != null ? playerDisplayName : "player";
-                Rooms.<RoomResponse>ask(roomRef(currentRoomId),
-                    ref -> new RoomCommand.LeaveRoom(playerId, leaveName, "disconnect", ref),
-                    ASK_TIMEOUT
-                ).thenAccept(resp -> {});
-            }
-
-            // Unregister player from EntityRegistry — keep the entity if another
-            // session still holds this player present.
-            var entityRegistry = EntityRegistry.get();
-            if (entityRegistry != null && playerId != null && !stillPresent) {
-                entityRegistry.remove(playerId);
-            }
-
-            // Publish offline to Between — but only when this was the last live
-            // session. Otherwise a cross-zone observer sees the account flicker
-            // offline when one of its local surfaces drops while another is up.
-            if (playerId != null && !stillPresent) {
-                publishOffline(playerId);
-            }
-            // Wave 5: Disconnect from unified session
-            var ss = sessionService;
-            var uid = sessionUserIds.get(sessionId);
-            if (ss != null && uid != null) {
-                ss.deviceDisconnect(uid, sessionId);
-            }
-
-            if (sessionRef != null) {
-                sessionRef.tell(new ClientSessionActor.Disconnected());
-            }
-
-            // Unregister from transport-agnostic registry
-            if (connectionRegistry != null) {
-                connectionRegistry.unregister(sessionId);
-            }
-
-            log.info("WebSocket disconnected: {} (code={}, reason={})",
-                sessionId, ctx.status(), ctx.reason());
+            leave(sessionId, ctx.status(), ctx.reason());
         });
 
         ws.onError(ctx -> {
             var sessionId = (String) ctx.attribute("sessionId");
             log.error("WebSocket error for {}", sessionId, ctx.error());
         });
+    }
+
+    /**
+     * On a drop the person did not choose, a signed-in person's place is held (see
+     * {@link HeldPlaces}): they stay in the room, nothing is announced, and their session keeps
+     * what is said to them. If no connection takes it up in time, they leave as on any close.
+     */
+    private boolean holdPlace(String sessionId, int closeCode) {
+        if (sessionId == null || heldPlaces.hold().isZero() || !HeldPlaces.mayHold(closeCode)) return false;
+        if (heldPlaces.isHeld(sessionId)) return true;
+        var playerId = sessionPlayerIds.get(sessionId);
+        var wire = wires.get(sessionId);
+        if (playerId == null || wire == null || !sessionUserIds.containsKey(sessionId)) return false;
+        var remote = remoteZoneSessions.get(sessionId);
+        if (remote != null && remote.isActive()) return false;
+        wire.to(null);
+        wsContexts.remove(sessionId);
+        heldPlaces.hold(sessionId, playerId, wire.clientKind,
+            () -> leave(sessionId, closeCode, "not back within " + heldPlaces.hold().toSeconds() + " s"));
+        log.info("WebSocket dropped: {} as {} (code={}); their place is held for {} s",
+            sessionId, playerId, closeCode, heldPlaces.hold().toSeconds());
+        return true;
+    }
+
+    /**
+     * A returning tab or terminal takes up its own lingering session: the one it names, held or
+     * still open on a socket that failed unseen; or, naming none, the newest place held for the same
+     * person on the same kind of client. The room is shown again; nothing is announced.
+     */
+    private boolean takeUpSession(WsContext ctx, String playerId, String clientKey, String clientKind,
+                                  String token, String localeParam) {
+        String id = null;
+        WsContext stale = null;
+        synchronized (places) {
+            if (clientKey != null && !clientKey.isBlank()) {
+                for (var e : wires.entrySet()) {
+                    if (clientKey.equals(e.getValue().clientKey) && playerId.equals(sessionPlayerIds.get(e.getKey()))) {
+                        id = e.getKey();
+                        break;
+                    }
+                }
+                if (id != null && heldPlaces.takeUp(id).isEmpty()) stale = wires.get(id).socket();
+            } else {
+                id = heldPlaces.takeUpFor(playerId, clientKind).map(HeldPlaces.Place::sessionId).orElse(null);
+            }
+            if (id == null) return false;
+            var sessionRef = sessions.get(id);
+            var wire = wires.get(id);
+            if (sessionRef == null || wire == null) return false;
+            ctx.attribute("sessionId", id);
+            wire.to(ctx);
+            wsContexts.put(id, ctx);
+            if (token != null) sessionTokens.put(id, token);
+            var locale = localeParam != null ? localeParam : sessionLocales.getOrDefault(id, "en");
+            sessionLocales.put(id, locale);
+            sessionRef.tell(new ClientSessionActor.SetLocale(locale));
+            sessionRef.tell(new ClientSessionActor.Resume(loadInventory(playerId)));
+            if (connectionRegistry != null) connectionRegistry.touch(id);
+        }
+        if (stale != null) {
+            try { stale.closeSession(4005, "This connection moved to your newer one"); } catch (RuntimeException ignored) {}
+        }
+        log.info("WebSocket {} taken up again by {} ({}); no departure, no arrival",
+            id, playerId, stale != null ? "its old socket was still open" : "its place was held");
+        return true;
+    }
+
+    /**
+     * Whether this person is present through a session other than this one: another socket here
+     * (a held place counts), or another surface the registry knows (SSH, telnet).
+     */
+    private boolean presentElsewhere(String playerId, String exceptSessionId) {
+        if (playerId == null) return false;
+        for (var e : sessionPlayerIds.entrySet()) {
+            if (!e.getKey().equals(exceptSessionId) && playerId.equals(e.getValue())) return true;
+        }
+        return connectionRegistry != null && connectionRegistry.hasOtherLiveSession(playerId, exceptSessionId);
+    }
+
+    /** Whether this person is already in {@code roomId} through a session they have open. */
+    private boolean alreadyIn(String playerId, String roomId) {
+        if (playerId == null || roomId == null) return false;
+        for (var e : sessionPlayerIds.entrySet()) {
+            if (playerId.equals(e.getValue()) && roomId.equals(sessionCurrentRoom.get(e.getKey()))) return true;
+        }
+        var present = EntityRegistry.get();
+        return connectionRegistry != null && connectionRegistry.liveSessionCount(playerId) > 0
+            && present != null && present.roomOf(playerId).map(roomId::equals).orElse(false);
+    }
+
+    /** The person leaves through this session: the room, the registries, the session itself. */
+    private void leave(String sessionId, int closeCode, String closeReason) {
+        wires.remove(sessionId);
+        heldPlaces.endNow(sessionId);
+
+        // Close any active remote zone session before local cleanup
+        endRemoteSession(sessionId);
+
+        var sessionRef = sessions.remove(sessionId);
+        var currentRoomId = sessionCurrentRoom.remove(sessionId);
+        var playerId = sessionPlayerIds.remove(sessionId);
+        var playerDisplayName = sessionPlayerNames.remove(sessionId);
+        sessionUserIds.remove(sessionId);
+        sessionTokens.remove(sessionId);
+        sessionTouchedAt.remove(sessionId);
+        wsContexts.remove(sessionId);
+        if (playerId != null) {
+            // Drop only THIS session's sink; keep the account's other surfaces.
+            var sinks = zoneSinks.get(playerId);
+            if (sinks != null) {
+                sinks.remove(sessionId);
+                if (sinks.isEmpty()) zoneSinks.remove(playerId);
+            }
+        }
+        sessionLocales.remove(sessionId);
+        sessionRateLimiters.remove(sessionId);
+
+        // Suppress the room departure + entity removal while the same account
+        // is still present through another surface (e.g. the CLI/WS closing
+        // while an SSH session is still up). Without this the other surface
+        // sees "X heads disconnect." even though X is still here. The registry
+        // unregister for this session happens further below, so this session
+        // is still present — exclude it by sessionId.
+        boolean stillPresent = presentElsewhere(playerId, sessionId);
+
+        // Leave current room
+        if (currentRoomId != null && playerId != null && !stillPresent) {
+            var leaveName = playerDisplayName != null ? playerDisplayName : "player";
+            Rooms.<RoomResponse>ask(roomRef(currentRoomId),
+                ref -> new RoomCommand.LeaveRoom(playerId, leaveName, "disconnect", ref),
+                ASK_TIMEOUT
+            ).thenAccept(resp -> {});
+        }
+
+        // Unregister player from EntityRegistry — keep the entity if another
+        // session still holds this player present.
+        var entityRegistry = EntityRegistry.get();
+        if (entityRegistry != null && playerId != null && !stillPresent) {
+            entityRegistry.remove(playerId);
+        }
+
+        // Publish offline to Between — but only when this was the last live
+        // session. Otherwise a cross-zone observer sees the account flicker
+        // offline when one of its local surfaces drops while another is up.
+        if (playerId != null && !stillPresent) {
+            publishOffline(playerId);
+        }
+        // Wave 5: Disconnect from unified session
+        var ss = sessionService;
+        var uid = sessionUserIds.get(sessionId);
+        if (ss != null && uid != null) {
+            ss.deviceDisconnect(uid, sessionId);
+        }
+
+        if (sessionRef != null) {
+            sessionRef.tell(new ClientSessionActor.Disconnected());
+        }
+
+        // Unregister from transport-agnostic registry
+        if (connectionRegistry != null) {
+            connectionRegistry.unregister(sessionId);
+        }
+
+        log.info("WebSocket disconnected: {} (code={}, reason={})",
+            sessionId, closeCode, closeReason);
     }
 
     private void handleC2S(String sessionId, C2SMessage msg) {

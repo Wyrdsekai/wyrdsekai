@@ -122,6 +122,33 @@ public final class HomeStore {
         }
     }
 
+    /**
+     * The other id a companion of this node goes by: her entity id for her DID, her DID for her
+     * entity id. A grant to her may name either (the sharing page grants by her DID; her own
+     * request files under her entity id), and a check may come with either. Empty for anyone who
+     * is not a companion here, and for a companion whose record is archived.
+     */
+    public List<String> sameCompanionAs(String id) {
+        if (id == null || id.isBlank()) return List.of();
+        var sql = "SELECT did, entity_id FROM companions WHERE archived = 0 AND (did = ? OR entity_id = ?)";
+        var out = new ArrayList<String>();
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var st = conn.prepareStatement(sql)) {
+            st.setString(1, id);
+            st.setString(2, id);
+            try (var rs = st.executeQuery()) {
+                while (rs.next()) {
+                    for (var other : new String[] {rs.getString(1), rs.getString(2)}) {
+                        if (other != null && !other.isBlank() && !other.equals(id) && !out.contains(other)) out.add(other);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            log.debug("sameCompanionAs({}) not read: {}", id, e.getMessage());
+        }
+        return out;
+    }
+
     /** Revoke a grant by id. Writes {@code revoked_at}. */
     public void revokeGrant(String id, Instant when) {
         var sql = "UPDATE grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL";

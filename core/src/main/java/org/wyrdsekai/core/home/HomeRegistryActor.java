@@ -548,6 +548,10 @@ public final class HomeRegistryActor extends AbstractBehavior<HomeRegistryActor.
         // Also check public grants — a grant with subject="public" covers any subject.
         if (!Grant.PUBLIC_SUBJECT.equals(msg.subject())) {
             candidates = new ArrayList<>(candidates);
+            // A companion's grant counts under either of her ids, her DID or her entity id.
+            for (var other : store.sameCompanionAs(msg.subject())) {
+                candidates.addAll(store.findActiveGrants(other, uri, msg.capability()));
+            }
             candidates.addAll(store.findActiveGrants(Grant.PUBLIC_SUBJECT, uri, msg.capability()));
         }
         Grant winner = null;
@@ -712,7 +716,9 @@ public final class HomeRegistryActor extends AbstractBehavior<HomeRegistryActor.
     }
 
     private Behavior<Command> onEnumerateHeld(EnumerateHeld msg) {
-        msg.replyTo().tell(new GrantList(store.grantsBySubject(msg.subjectDid())));
+        var held = new ArrayList<>(store.grantsBySubject(msg.subjectDid()));
+        for (var other : store.sameCompanionAs(msg.subjectDid())) held.addAll(store.grantsBySubject(other));
+        msg.replyTo().tell(new GrantList(held));
         return this;
     }
 

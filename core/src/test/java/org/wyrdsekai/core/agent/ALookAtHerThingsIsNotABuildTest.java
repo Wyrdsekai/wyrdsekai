@@ -3,6 +3,7 @@ package org.wyrdsekai.core.agent;
 import org.junit.jupiter.api.Test;
 import org.wyrdsekai.core.item.HouseholdItems;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,5 +61,16 @@ class ALookAtHerThingsIsNotABuildTest {
             .isEqualTo("You carry nothing yet, have made nothing yet, and have no project open. Nothing needs checking.");
         assertThat(HerThings.describe(List.of(), List.of(), List.of(), List.of(), List.of(new HerThings.Project("x", 1, null))))
             .isEqualTo("Your projects: x (1 entry).");
+    }
+
+    @Test
+    void a_long_list_is_cut_to_a_few_names_and_how_many_more() {
+        var many = new ArrayList<String>();
+        for (int i = 0; i < 151; i++) many.add("thing_" + i);
+        var text = HerThings.describe(many, List.of(), List.of(), many.subList(0, 137), List.of());
+        assertThat(text).contains("You carry: thing_0, thing_1").contains("thing_11 and 139 more.")
+            .contains("Put away, kept: thing_0").contains("and 125 more.")
+            .doesNotContain("thing_150").doesNotContain("thing_12,");
+        assertThat(text.length()).as("a few lines, not a ledger").isLessThan(600);
     }
 }
