@@ -1319,6 +1319,7 @@
   "archive.reopen.none": "「{0}」という名前の閉じた部屋やしまった道具はありません。一覧は: archive",
   "archive.reopen.failed": "{0} は今は開けられませんでした。",
   "item.read_book.descriptor": "{actor}は栞のページで本を開き、読み進める。",
+  "item.browse_shelves.descriptor": "{actor}は書棚に沿って歩き、背表紙を読んでいく。",
   "bond.posture.usage": "bond posture <コンパニオン> — あなたがいない間、コンパニオンがどこまで手を伸ばせるか。  bond posture <コンパニオン> <generous|bounded|minimal|suspended> — 変更します。",
   "bond.posture.is": "{0} のポスチャーは {1} です。",
   "bond.posture.set": "{0} のポスチャーを {1} にしました。",

@@ -703,6 +703,10 @@ public class InferenceRouter extends AbstractBehavior<InferenceRouter.Command> {
         ownTimeHeldUntil = null;
         ownTimeHoldReason = null;
     }
+    /** Release the hold only if it is still the one held for {@code reason}: another's hold stands. */
+    public static void releaseOwnTimeHeldFor(String reason) {
+        if (reason != null && reason.equals(ownTimeHoldReason)) releaseOwnTime();
+    }
     public static boolean isOwnTimeHeld() {
         var p = ownTimeHeldUntil;
         return p != null && p.isAfter(Instant.now());

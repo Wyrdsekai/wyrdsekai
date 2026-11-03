@@ -251,6 +251,7 @@ public record ActionPolicy(
         // do on her own time, and on the steward's feed like the making.
         Map.entry("close_room",           AutonomyTier.VISIBLE),
         Map.entry("read_book",            AutonomyTier.AMBIENT),
+        Map.entry("browse_shelves",       AutonomyTier.AMBIENT),
 
         // ── FORBIDDEN — irrevocable / identity-altering ──────────────────
         Map.entry("create_zone",          AutonomyTier.FORBIDDEN),
@@ -474,6 +475,7 @@ public record ActionPolicy(
         entry("craft_from_template",  0, 0.3,  false, false, "creation"),
         entry("create_room_from_template", 1, 0.5, false, false, "creation"),   // VISIBLE: a template room is hers to make
         entry("close_room",           1, 0.2,  false, false, "creation"),
+        entry("browse_shelves",       0, 0.0,  true,  true,  "search"),     // AMBIENT: looking at the shelves is always hers
         entry("read_book",            0, 0.0,  true,  true,  "search"),     // AMBIENT: reading is always hers   // VISIBLE: her own room, kept, opens again
         entry("create_zone",          3, 0.8,  false, false, "creation"),
         entry("add_script",           3, 0.7,  false, false, "code"),

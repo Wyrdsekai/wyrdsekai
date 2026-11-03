@@ -21,8 +21,9 @@ class ToolItemStarterKitTest {
     void standard_kit_has_6_items() {
         // 2026-05-09: list_templates added — 5 scripted + 6 builtin = 11.
         // 2026-10-02: close_room added — she could make a room and never let one go. 5 + 7 = 12.
-        assertEquals(13, ToolItemStarterKit.standard().size(),
-            "Standard kit: 5 scripted + 8 builtin = 13");
+        // 2026-11-02: browse_shelves added — she could open a book only by its name or a search. 5 + 9 = 14.
+        assertEquals(14, ToolItemStarterKit.standard().size(),
+            "Standard kit: 5 scripted + 9 builtin = 14");
     }
 
     @Test
@@ -46,7 +47,7 @@ class ToolItemStarterKitTest {
     void total_tool_count_is_29() {
         var total = ToolItemStarterKit.inherentActions().size()
                   + ToolItemStarterKit.standard().size();
-        assertEquals(34, total, "21 inherent + 13 starter = 34 tools for Ollama");
+        assertEquals(35, total, "21 inherent + 14 starter = 35 tools for Ollama");
     }
 
     @Test

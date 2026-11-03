@@ -301,6 +301,7 @@ import org.wyrdsekai.core.bootstrap.CoreServices;
 import org.wyrdsekai.core.config.ConfigValidator;
 import org.wyrdsekai.core.config.RelayLegConfig;
 import org.wyrdsekai.core.config.WyrdConfig;
+import org.wyrdsekai.core.library.LibraryAsks;
 import org.wyrdsekai.core.crypto.ZoneSecrets;
 import org.wyrdsekai.core.event.EventBusPluginLoader;
 import org.wyrdsekai.core.event.InProcessEventBus;
@@ -370,6 +371,7 @@ import org.wyrdsekai.core.substrate.DeepSleepTrainer;
 import org.wyrdsekai.core.substrate.training.PeerTrainingTransport;
 import org.wyrdsekai.core.substrate.training.TrainingPeerService;
 import org.wyrdsekai.core.update.ActivityGauge;
+import org.wyrdsekai.core.update.QuietMoment;
 import org.wyrdsekai.core.update.ReleaseCheck;
 import org.wyrdsekai.core.update.SelfUpdate;
 import org.wyrdsekai.core.update.UpdateChannelPoller;
@@ -1239,6 +1241,8 @@ public class Main {
         org.wyrdsekai.core.persistence.MadeThingsStore.install(madeThings);
         // Where each companion is in each book: the bookmark that lets a book be read through.
         org.wyrdsekai.core.library.ReadingLedger.install(new org.wyrdsekai.core.library.ReadingLedger(jdbcUrl));
+        // What each companion has asked the library, and what the research desk has answered.
+        LibraryAsks.install(new LibraryAsks(jdbcUrl));
         // Their projects (the Hearth's project board), for a person's `projects` command: each
         // companion's name and the key her board is kept under.
         org.wyrdsekai.core.project.ProjectCommands.installCompanions(() -> {
@@ -5386,7 +5390,10 @@ public class Main {
                     updateConfig.stabilityDelay(), Instant.now());
             };
             var selfUpdate = new SelfUpdate(updateRoot, SystemPaths.dataDir(),
-                () -> ActivityGauge.idleFor(Duration.ofMinutes(10)) && !SleepWeightWrite.inFlight(),
+                // A quiet moment is made: no person has spoken for ten minutes and nothing that must not be
+                // broken runs; her own time is held and the turns in flight finish (QuietMoment).
+                () -> !SleepWeightWrite.inFlight()
+                    && QuietMoment.reach(Duration.ofMinutes(10), Duration.ofSeconds(60), Duration.ofMinutes(5)),
                 from -> UpdateLauncher.launch(updateRoot, SystemPaths.dataDir(), from),
                 household);
             var selfUpdateScheduler = Executors.newSingleThreadScheduledExecutor(r -> {

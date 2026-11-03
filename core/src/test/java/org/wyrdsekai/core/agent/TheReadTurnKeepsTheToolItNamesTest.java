@@ -49,10 +49,12 @@ class TheReadTurnKeepsTheToolItNamesTest {
     @Test
     void the_read_subgoal_asks_with_that_sentence() throws Exception {
         var read = body(src(), "private String readSubgoal() {");
-        assertThat(read).contains("sb.append('\\n').append(READ_INSTRUCTION);");
+        assertThat(read).as("the card is named by every READ turn: first, or after the door her situation leads with")
+            .contains("sb.append('\\n').append(READ_TOOL.equals(readTurnPin) ? READ_INSTRUCTION : \"Or u\" + READ_INSTRUCTION.substring(1));");
         assertThat(read)
             .as("one copy of the sentence, or the detector and the prompt drift apart")
             .doesNotContain("Use library_card with a query");
+        assertThat(CompanionActor.READ_HEADING).isEqualTo("## Current Subgoal: READ\n");
     }
 
     @Test
@@ -76,11 +78,11 @@ class TheReadTurnKeepsTheToolItNamesTest {
     @Test
     void the_energy_filter_keeps_the_named_tool_and_says_so() throws Exception {
         var scoped = body(src(), "private List<InferenceClient.ToolDefinition> buildScopedTools() {");
-        assertThat(scoped).contains("} else if (readToolNamedThisTurn && READ_TOOL.equals(actionName)) {");
+        assertThat(scoped).contains("} else if (readToolNamedThisTurn && (READ_TOOL.equals(actionName) || readTurnPin.equals(actionName))) {");
         assertThat(scoped)
             .as("a silent keep is invisible in the journal next time this breaks")
             .contains("kept: this turn's READ prompt names it");
-        assertThat(scoped.indexOf("readToolNamedThisTurn && READ_TOOL"))
+        assertThat(scoped.indexOf("readToolNamedThisTurn && (READ_TOOL"))
             .as("the keep must come before the cull")
             .isLessThan(scoped.indexOf("filteredCount++;"));
         assertThat(scoped)
@@ -121,7 +123,7 @@ class TheReadTurnKeepsTheToolItNamesTest {
         var s = src();
         assertThat(body(s,
             "private boolean triggerAutonomousInference(String autonomyPrompt, String forcedTool, boolean planAdvance) {"))
-            .contains("forcedTool != null ? forcedTool : readToolNamedThisTurn ? READ_TOOL : null);");
+            .contains("forcedTool != null ? forcedTool : readToolNamedThisTurn ? readTurnPin : null);");
         assertThat(body(s, "private List<InferenceClient.ToolDefinition> surfaceByAffordance("))
             .as("a pin read from the flag in here reached the tool-result follow-up and pulled a re-query")
             .doesNotContain("readToolNamedThisTurn");
@@ -129,7 +131,7 @@ class TheReadTurnKeepsTheToolItNamesTest {
 
     @Test
     void the_cost_line_does_not_call_it_too_costly_on_that_turn() throws Exception {
-        assertThat(src()).contains("if (readToolNamedThisTurn) costlyActions.remove(READ_TOOL);");
+        assertThat(src()).contains("if (readToolNamedThisTurn) { costlyActions.remove(READ_TOOL); costlyActions.remove(readTurnPin); }");
     }
 
     // ── The refusal names the true cause ──────────────────────────────────

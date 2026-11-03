@@ -28,6 +28,25 @@ class HerNamedWantIsAnsweredByHerWordsTest {
     }
 
     @Test
+    void aBookToChooseIsTheShelves() {
+        assertThat(WantActBridge.decideByHerWords("pick a book I haven't read", CURIOUS, ALONE).verb()).isEqualTo("browse_shelves");
+        assertThat(WantActBridge.decideByHerWords("find something new to read", CURIOUS, ALONE).verb()).isEqualTo("browse_shelves");
+        assertThat(WantActBridge.modeFor("browse_shelves")).isEqualTo(WantActBridge.Mode.DIRECT);
+        assertThat(WantActBridge.decideByHerWords("keep reading the book", CURIOUS, ALONE).verb()).isEqualTo("read_book");
+    }
+
+    @Test
+    void herOwnWordsAreARecallNotASearch() {
+        // "read the library on what I said I'd learn" went to the shelves six times in a day; what she said is in her record.
+        var hers = WantActBridge.decideByHerWords("read the library on what I said I'd learn", CURIOUS, ALONE);
+        assertThat(hers.verb()).isEqualTo("recall");
+        assertThat(WantActBridge.modeFor("recall")).as("a recall needs no second thought: the words are the query").isEqualTo(WantActBridge.Mode.DIRECT);
+        assertThat(WantActBridge.decideByHerWords("keep my promise to rose about the quiet hour", CURIOUS, ALONE).verb()).isEqualTo("recall");
+        assertThat(WantActBridge.decideByHerWords("look something up about tide pools in the library", CURIOUS, ALONE).verb())
+            .as("a search is still a search").isEqualTo("library_search");
+    }
+
+    @Test
     void wordsThatNameAnActAreAnsweredWithIt() {
         assertThat(WantActBridge.decideByHerWords("look something up about tide pools in the library", CURIOUS, ALONE).verb())
             .isEqualTo("library_search");

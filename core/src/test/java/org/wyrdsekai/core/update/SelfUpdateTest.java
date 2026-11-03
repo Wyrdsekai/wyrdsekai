@@ -6,6 +6,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.HashMap;
@@ -30,6 +32,35 @@ class SelfUpdateTest {
         assertFalse(SelfUpdate.inWindow("23:00-01:00", LocalTime.of(12, 0)));
         assertTrue(SelfUpdate.inWindow("00:00-00:00", LocalTime.of(12, 0)), "an empty span means any time");
         assertTrue(SelfUpdate.inWindow("whenever", LocalTime.of(12, 0)), "unreadable means any time, never never");
+    }
+
+    @Test
+    void an_auto_node_looks_inside_its_window_whatever_hour_it_started() {
+        Map<String, String> env = new HashMap<>();
+        env.put("WYRDSEKAI_UPDATE_WINDOW", "03:00-05:00");
+        ReleaseCheck.env = env::get;
+        assertTrue(SelfUpdate.windowLookDue("auto", LocalTime.of(3, 15)));
+        assertTrue(SelfUpdate.windowLookDue("auto", LocalTime.of(4, 59)));
+        assertFalse(SelfUpdate.windowLookDue("auto", LocalTime.of(5, 32)), "outside the window");
+        assertFalse(SelfUpdate.windowLookDue("check", LocalTime.of(3, 15)), "check mode never installs");
+        assertTrue(SelfUpdate.WINDOW_STEP.compareTo(Duration.ofMinutes(30)) <= 0, "several looks fit in any window");
+    }
+
+    @Test
+    void a_check_refreshes_what_the_siblings_latest_releases_are(@TempDir Path root, @TempDir Path data) throws Exception {
+        Files.writeString(root.resolve("VERSION"), "0.3.0");
+        Files.writeString(data.resolve("latest-researchzosho.txt"), "0.5.5");
+        Files.setLastModifiedTime(data.resolve("latest-researchzosho.txt"),
+            FileTime.from(Instant.now().minus(Duration.ofDays(21))));
+        Map<String, String> env = new HashMap<>();
+        env.put("WYRDSEKAI_UPDATE", "check");
+        ReleaseCheck.env = env::get;
+        ReleaseCheck.latestSource = repo -> Optional.of(repo.endsWith("researchzosho") ? "0.6.8" : repo.endsWith("codezaiku") ? "0.3.18" : "0.3.0");
+
+        new SelfUpdate(root, data, () -> true, () -> true).tick();
+
+        assertEquals("0.6.8", Files.readString(data.resolve("latest-researchzosho.txt")).strip(), "a three-week-old note is refreshed");
+        assertEquals("0.3.18", Files.readString(data.resolve("latest-codezaiku.txt")).strip());
     }
 
     @Test

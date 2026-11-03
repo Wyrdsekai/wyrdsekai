@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ReleaseCheckTest {
@@ -94,5 +95,16 @@ class ReleaseCheckTest {
         var st2 = ReleaseCheck.status(root, root);
         assertTrue(st2.updateAvailable()); assertEquals("0.3.1", st2.latest()); assertEquals("0.3.0", st2.installed());
         assertEquals("0.3.1", st2.toMap().get("latest"));
+    }
+
+    @Test
+    void a_setting_is_read_from_the_config_file_as_the_household_set_it_now(@TempDir Path dir) throws Exception {
+        var conf = dir.resolve("wyrdsekai.conf");
+        Files.writeString(conf, "# node settings\nWYRDSEKAI_UPDATE=check\nexport WYRDSEKAI_UPDATE_WINDOW=\"02:00-04:00\"\nWYRDSEKAI_UPDATE=auto\n");
+
+        assertThat(ReleaseCheck.settingIn(conf, "WYRDSEKAI_UPDATE")).as("the last line wins").isEqualTo("auto");
+        assertThat(ReleaseCheck.settingIn(conf, "WYRDSEKAI_UPDATE_WINDOW")).isEqualTo("02:00-04:00");
+        assertThat(ReleaseCheck.settingIn(conf, "WYRDSEKAI_UPDATE_PIN")).isNull();
+        assertThat(ReleaseCheck.settingIn(dir.resolve("none.conf"), "WYRDSEKAI_UPDATE")).isNull();
     }
 }

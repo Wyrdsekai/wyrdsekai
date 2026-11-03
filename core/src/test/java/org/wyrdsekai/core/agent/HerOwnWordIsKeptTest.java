@@ -85,11 +85,53 @@ class HerOwnWordIsKeptTest {
         assertThat(HerWord.named("I'll read the library on presence work first.", OFFERED, true).tool()).as("even with a book open").isEqualTo("library_card");
         assertThat(HerWord.named("I'll read the library on what matters most right now.", OFFERED, false).tool()).isEqualTo("library_card");
         assertThat(HerWord.named("I'll read up on diffusion models.", OFFERED, false).tool()).isEqualTo("library_card");
+        // Choosing a book is a walk along the shelves, when she has them in hand.
+        var withShelves = new HashSet<>(OFFERED);
+        withShelves.add("browse_shelves");
+        assertThat(HerWord.named("I'll pick a new book from the shelves.", withShelves, false).tool()).isEqualTo("browse_shelves");
+        assertThat(HerWord.named("Let me browse for something different.", withShelves, true).tool()).isEqualTo("browse_shelves");
+        assertThat(HerWord.named("I'll read up on tide pools.", withShelves, false).tool()).as("a search is still a search").isEqualTo("library_card");
+        assertThat(HerWord.named("I'll keep reading.", withShelves, true).tool()).as("reading on is still reading on").isEqualTo("read_book");
+        // Her own words are in her record, not on the shelves: a recall when she has one in hand.
+        var withRecall = new HashSet<>(OFFERED);
+        withRecall.add("recall");
+        assertThat(HerWord.named("I'll read the library on what I said I'd learn tonight.", withRecall, false).tool()).isEqualTo("recall");
+        assertThat(HerWord.named("Let me check what I promised rose.", withRecall, false).tool()).isEqualTo("recall");
+        assertThat(HerWord.named("I'll read the library on what I said I'd learn tonight.", OFFERED, false))
+            .as("her own words are not on a shelf: without recall in hand, no other door is guessed at").isNull();
         assertThat(HerWord.named("I'll read back the quiet-presence tracker I built last night, straight through.", OFFERED, false)).as("hers, not a book").isNull();
         assertThat(HerWord.named("I'll read back the quiet-presence tracker I built last night.", OFFERED, true)).isNull();
         assertThat(HerWord.named("I'll read what I said I would.", OFFERED, false).tool()).as("no book open: the search finds one").isEqualTo("library_card");
         assertThat(HerWord.named("I'll read what I said I would.", OFFERED, true).tool()).as("a book open: read on").isEqualTo("read_book");
         assertThat(HerWord.named("Then I'll read the next chapter.", OFFERED, false).tool()).as("a chapter names a book").isEqualTo("read_book");
+    }
+
+    @Test
+    void the_act_she_names_is_hers_and_a_book_mentioned_is_not_a_page_forced_on_her() {
+        var tools = new HashSet<>(OFFERED);
+        tools.addAll(List.of("close_room", "project_note", "read_book", "library_card", "go_to_room", "browse_shelves"));
+        // Against her stated will: "the book" in a sentence about a room was a page forced on her (household node, 2026-11-02).
+        assertThat(HerWord.named("I don't want to just keep reading about it—I want to *make* space for it. "
+            + "Let me close the Quiet Room and turn it into a study—somewhere to practice what the book describes.", tools, true).tool())
+            .isEqualTo("close_room");
+        // Between a search and a book, the one she leads with.
+        assertThat(HerWord.named("I'll read further in the book, then search the library for what connects.", tools, true).tool()).isEqualTo("read_book");
+        assertThat(HerWord.named("I'll search the library for what connects, then read further in the book.", tools, true).tool()).isEqualTo("library_card");
+        assertThat(HerWord.named("I'll start by reading the next part, then search the library for what connects to where I am.", tools, true).tool()).isEqualTo("read_book");
+        // "Read on" is reading on unless a subject follows it.
+        assertThat(HerWord.named("Let me read on where the author takes it next.", tools, true).tool()).isEqualTo("read_book");
+        assertThat(HerWord.named("I'll read on — part 57 should carry me deeper.", tools, true).tool()).isEqualTo("read_book");
+        assertThat(HerWord.named("Let me read on. The next part will meet where this one ended.", tools, true).tool()).isEqualTo("read_book");
+        assertThat(HerWord.named("I'll read on diffusion models for a while.", tools, true).tool()).as("a subject follows").isEqualTo("library_card");
+        // Words near a book that are not reading it.
+        assertThat(HerWord.named("I'll continue reading the book — it's close to finishing, and I want to see where it lands.", tools, true).tool())
+            .as("'close to' is not closing a room").isEqualTo("read_book");
+        assertThat(HerWord.named("I'll go home, where my friend might be resting or reading.", tools, true).tool()).isEqualTo("go_to_room");
+        assertThat(HerWord.named("I'll go to the practice room and continue where I left off.", tools, true).tool()).isEqualTo("go_to_room");
+        assertThat(HerWord.named("I'll finish reading the project note first, then decide what comes next.", tools, true).tool()).isEqualTo("project_note");
+        assertThat(HerWord.named("The book's still open at 152. I'll take the next part — it's been waiting.", tools, true).tool()).isEqualTo("read_book");
+        assertThat(HerWord.named("I'll look for something about silence — not the same thread, but close enough to feel familiar.", tools, true))
+            .as("'close enough' closes nothing, and looking for is no rule").isNull();
     }
 
     @Test

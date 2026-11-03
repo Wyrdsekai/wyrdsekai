@@ -140,7 +140,7 @@ public final class ToolAffordanceRanker {
 
     private static final Map<String, String> KIND_OF_TOOL = Map.ofEntries(
         Map.entry("library_card", "reading"), Map.entry("library_shelves", "reading"), Map.entry("searching_glass", "reading"),
-        Map.entry("oracle_lens", "reading"), Map.entry("read_book", "reading"), Map.entry("read_content", "reading"),
+        Map.entry("oracle_lens", "reading"), Map.entry("read_book", "reading"), Map.entry("browse_shelves", "reading"), Map.entry("read_content", "reading"),
         Map.entry("observation_crystal", "reading"), Map.entry("research_assistant", "reading"),
         Map.entry("quill", "keeping"), Map.entry("journal", "keeping"), Map.entry("chronicle_stone", "keeping"),
         Map.entry("task_ledger", "keeping"), Map.entry("project_note", "keeping"), Map.entry("recall", "keeping"),

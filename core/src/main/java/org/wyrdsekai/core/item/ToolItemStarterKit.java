@@ -74,6 +74,9 @@ public final class ToolItemStarterKit {
         Map.entry("read_book", ItemEmbodimentSpec.emits(
             List.of("body_language"),
             "{actor} opens a book to the marked page and reads on.")),
+        Map.entry("browse_shelves", ItemEmbodimentSpec.emits(
+            List.of("body_language"),
+            "{actor} walks along the shelves, reading the spines.")),
         Map.entry("create_zone", ItemEmbodimentSpec.emits(
             List.of("ambient_shift"),
             "{actor} composes a new zone — themed light and air pooling as rooms and inhabitants settle.")),
@@ -279,6 +282,7 @@ public final class ToolItemStarterKit {
             createRoomFromTemplate(),  // builtin: create rooms from standard room library
             closeRoom(),                // builtin: close up a room she made on her own (kept, opens again)
             readBook(),                 // builtin: the next part of a book, from where she left it
+            browseShelves(),            // builtin: the books on the shelves she may read, to pick from
             createZone(),               // builtin: generate a themed zone with rooms + agents
             listTemplates()             // builtin: list available item + room templates (introspection)
         ));
@@ -638,6 +642,22 @@ public final class ToolItemStarterKit {
      * neither land nor miss (household node, 2026-10-03). This is how a book is read from start to
      * finish, and how the next one is found.
      */
+    /**
+     * The shelves, to pick a book from. A book opened only when a search hit it or she knew its name;
+     * she could not walk along the shelves and choose.
+     */
+    public static ToolItem browseShelves() {
+        return ToolItem.builtin(
+            "browse_shelves", "Browse the Shelves",
+            "WALK ALONG THE SHELVES and see what books there are to read through. With nothing named it shows books "
+                + "on what you have been asking about and a few picked at random; with \"words\" (a subject or an author) "
+                + "it shows the books whose names hold them. read_book with a book's name opens it.",
+            "browse_shelves",
+            List.of(
+                new ToolParam("words", "string", "A subject or an author to look for; leave out to browse", false, null)
+            ));
+    }
+
     public static ToolItem readBook() {
         return ToolItem.builtin(
             "read_book", "Read a Book",

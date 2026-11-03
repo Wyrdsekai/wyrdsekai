@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.regex.Pattern;
+import java.util.random.RandomGenerator;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Query;
 
@@ -3106,6 +3107,83 @@ public class WyrdLuceneStore implements Closeable {
             }
         } catch (IOException | RuntimeException e) {
             log.warn("Could not list books on {} for {}: {}", collection, words, e.toString());
+        }
+        return out;
+    }
+
+    /**
+     * The books on a shelf whose names hold any one of the words, at most {@code limit}, in one walk
+     * of the names (the household's Study of some seventy thousand books walks in well under a
+     * second). Only books of two parts or more: a book is read through.
+     */
+    public List<BookRef> booksWithAnyWord(String collection, List<String> words, int limit) {
+        var out = new ArrayList<BookRef>();
+        if (collection == null || words == null || words.isEmpty() || limit <= 0) return out;
+        var low = words.stream().map(w -> w.toLowerCase(Locale.ROOT)).toList();
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                var terms = MultiTerms.getTerms(searcher.getIndexReader(), FIELD_DOC_GROUP);
+                if (terms == null) return out;
+                var it = terms.iterator();
+                BytesRef term;
+                while ((term = it.next()) != null && out.size() < limit) {
+                    var name = term.utf8ToString();
+                    var n = name.toLowerCase(Locale.ROOT);
+                    boolean any = false;
+                    for (var w : low) if (n.contains(w)) { any = true; break; }
+                    if (!any) continue;
+                    var ref = bookRef(searcher, collection, name);
+                    if (ref != null && ref.parts() >= 2) out.add(ref);
+                }
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not list books on {} for any of {}: {}", collection, words, e.toString());
+        }
+        return out;
+    }
+
+    /**
+     * Up to {@code limit} books picked at random from a shelf, each of two parts or more, in one
+     * walk of the names. {@code rnd} makes the pick repeatable in a test.
+     */
+    public List<BookRef> booksAtRandom(String collection, int limit, RandomGenerator rnd) {
+        var out = new ArrayList<BookRef>();
+        if (collection == null || limit <= 0 || rnd == null) return out;
+        int pool = limit * 4;
+        var picked = new ArrayList<String>(pool);
+        try {
+            var sm = getSearcherManager(collection);
+            var searcher = sm.acquire();
+            try {
+                var terms = MultiTerms.getTerms(searcher.getIndexReader(), FIELD_DOC_GROUP);
+                if (terms == null) return out;
+                var it = terms.iterator();
+                BytesRef term;
+                long seen = 0;
+                while ((term = it.next()) != null) {
+                    seen++;
+                    if (picked.size() < pool) {
+                        picked.add(term.utf8ToString());
+                    } else {
+                        long j = rnd.nextLong(seen);
+                        if (j < pool) picked.set((int) j, term.utf8ToString());
+                    }
+                }
+                Collections.shuffle(picked, new Random(rnd.nextLong()));
+                for (var name : picked) {
+                    if (out.size() >= limit) break;
+                    var ref = bookRef(searcher, collection, name);
+                    if (ref != null && ref.parts() >= 2) out.add(ref);
+                }
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not pick books on {}: {}", collection, e.toString());
         }
         return out;
     }

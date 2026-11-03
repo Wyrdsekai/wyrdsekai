@@ -47,8 +47,50 @@ public final class ReleaseCheck {
 
     private ReleaseCheck() {}
 
-    /** Where the environment is read from; replaceable in tests. */
-    static volatile Function<String, String> env = System::getenv;
+    /** Where the settings are read from; replaceable in tests. */
+    static volatile Function<String, String> env = ReleaseCheck::setting;
+
+    /**
+     * An update setting as the household set it now: the node's config file first (where
+     * {@code wyrd update auto on} and {@code wyrd config set} write), then the process's own
+     * environment. The service reads that file once, as it starts: read only from the environment,
+     * "auto on" said it was on and the running node went on only checking until its next restart.
+     */
+    static String setting(String key) {
+        var fromFile = settingIn(configFile(), key);
+        return fromFile != null ? fromFile : System.getenv(key);
+    }
+
+    /** The node's config file: {@code WYRDSEKAI_CONFIG_FILE}, else /etc/wyrdsekai/wyrdsekai.conf, else the data folder's. */
+    static Path configFile() {
+        var named = System.getenv("WYRDSEKAI_CONFIG_FILE");
+        if (named != null && !named.isBlank()) return Path.of(named.trim());
+        var etc = Path.of("/etc/wyrdsekai/wyrdsekai.conf");
+        if (Files.isRegularFile(etc)) return etc;
+        var data = System.getenv("WYRDSEKAI_DATA_DIR");
+        return data == null || data.isBlank() ? etc : Path.of(data.trim()).resolve("wyrdsekai.conf");
+    }
+
+    /** The last {@code KEY=value} line for {@code key} in {@code file}, quotes taken off; null when none. */
+    static String settingIn(Path file, String key) {
+        if (file == null || key == null || !Files.isRegularFile(file)) return null;
+        try {
+            String found = null;
+            for (var line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                var t = line.strip();
+                if (t.startsWith("export ")) t = t.substring(7).strip();
+                if (!t.startsWith(key + "=")) continue;
+                var v = t.substring(key.length() + 1).strip();
+                if (v.length() >= 2 && (v.startsWith("\"") && v.endsWith("\"") || v.startsWith("'") && v.endsWith("'"))) {
+                    v = v.substring(1, v.length() - 1);
+                }
+                found = v;
+            }
+            return found;
+        } catch (IOException e) {
+            return null;
+        }
+    }
     /** Where the latest release is read from; replaceable in tests (GitHub otherwise). */
     static volatile Function<String, Optional<String>> latestSource = ReleaseCheck::latest;
 

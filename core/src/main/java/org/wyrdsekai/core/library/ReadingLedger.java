@@ -56,6 +56,58 @@ public final class ReadingLedger {
         }
     }
 
+    /** Migration 25: what she took from each part she read, in her words. Safe to run again. */
+    public static void ensureNotes(Connection conn) throws SQLException {
+        try (var st = conn.createStatement()) {
+            st.execute("CREATE TABLE IF NOT EXISTS reading_notes ("
+                + "agent_did TEXT NOT NULL, book TEXT NOT NULL, part INTEGER NOT NULL, note TEXT NOT NULL, "
+                + "written_at BIGINT NOT NULL)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_reading_notes_book ON reading_notes(agent_did, book, written_at)");
+        }
+    }
+
+    /** What she took from a part of a book, in her own words. */
+    public record Note(String book, int part, String text, long writtenAt) {}
+
+    /** She said what she took from this part: kept with the book. */
+    public void note(String agentDid, String book, int part, String text) {
+        if (agentDid == null || book == null || text == null || text.isBlank()) return;
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var ps = conn.prepareStatement("INSERT INTO reading_notes (agent_did, book, part, note, written_at) VALUES (?, ?, ?, ?, ?)")) {
+            ps.setString(1, agentDid);
+            ps.setString(2, book);
+            ps.setInt(3, part);
+            ps.setString(4, text.strip());
+            ps.setLong(5, System.currentTimeMillis());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.warn("reading ledger: could not keep a note on part {} of {}: {}", part, book, e.getMessage());
+        }
+    }
+
+    /** Her notes on a book, the earliest first. */
+    public List<Note> notes(String agentDid, String book) {
+        var out = new ArrayList<Note>();
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var ps = conn.prepareStatement("SELECT book, part, note, written_at FROM reading_notes WHERE agent_did = ? AND book = ? "
+                 + "ORDER BY written_at, part")) {
+            ps.setString(1, agentDid);
+            ps.setString(2, book);
+            try (var rs = ps.executeQuery()) {
+                while (rs.next()) out.add(new Note(rs.getString(1), rs.getInt(2), rs.getString(3), rs.getLong(4)));
+            }
+        } catch (SQLException e) {
+            log.debug("reading ledger: notes not read: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /** Her latest note on a book, if she has one. */
+    public Optional<Note> lastNote(String agentDid, String book) {
+        var all = notes(agentDid, book);
+        return all.isEmpty() ? Optional.empty() : Optional.of(all.getLast());
+    }
+
     /** "The New Eve - Robert Lewis.epub" → "The New Eve - Robert Lewis". */
     public static String titleOf(String book) {
         if (book == null) return "";

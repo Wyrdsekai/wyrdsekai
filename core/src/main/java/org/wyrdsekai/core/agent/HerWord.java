@@ -68,21 +68,41 @@ public final class HerWord {
 
     private record Rule(Pattern words, List<String> tools) {}
 
+    /** The tools that look something up on the shelves: the research rule's, and a book with no title's. */
+    private static final List<String> SEARCH_TOOLS =
+        List.of("library_card", "searching_glass", "research_assistant", "research_tool", "library_search");
+
     /** In order: the first rule whose words appear and whose tool she was offered wins. */
     private static final List<Rule> RULES = List.of(
+        // Her own words are in her record, not on the shelves: "I'll read the library on what I said I'd learn"
+        // is a recall, before the research rule below reads "read the library" as a search.
+        // "I'll read what I said I would" is a reading, of the thing she promised to read (the rules below).
+        new Rule(Pattern.compile("\\b(?:what i (?:told|promised|committed|remember)|what i said (?:to|about|was)\\b|"
+                + "what i said i(?:'d| would) (?!read\\b)\\w+|what i(?:'ve| have) said|"
+                + "my (?:promises?|commitments?|own words)|what did i say|do i remember)"),
+            List.of("recall")),
+        // Choosing a book is a walk along the shelves, before the research rule reads "find" as a search.
+        new Rule(Pattern.compile("\\b(?:browse|look (?:at|along|over|through) the shelves|walk (?:along|through) the shelves|"
+                + "see what (?:books|is on the shelves)|what books (?:there are|are there)|"
+                + "(?:pick|choose|find) (?:a|another|the next|a new) book)\\b"),
+            List.of("browse_shelves")),
         // Looking something up comes before reading a book: "read up on", "read the library on", "read about" are
         // research. Mia said "I'll read the library on what matters most" four times one night, and each went to the
-        // book reader as a title that is no book, counted as a reach that missed (second-node, 2026-10-04).
-        new Rule(Pattern.compile("\\b(?:look into|looking into|read up on|read (?:up )?about|read (?:more )?on|read (?:the|my) library|"
+        // book reader as a title that is no book, counted as a reach that missed (second-node, 2026-10-04). A book with no
+        // title and none open falls back to these same tools (SEARCH_TOOLS).
+        new Rule(Pattern.compile("\\b(?:look into|looking into|read up on|read (?:up )?about|read (?:more )?on\\b(?!\\s*(?:where|in|from|until|till|through|for a while|a while)\\b)(?!\\s*(?:[,.;:!?\\u2014\\u2013-]|$))|read (?:the|my) library|"
                 + "read what (?:the library|it says|they say)|research|find out (?:about|more)|learn (?:about|more)|"
                 + "dig into|search (?:for|the library)|look (?:it|that|this) up)\\b"),
-            List.of("library_card", "searching_glass", "research_assistant", "research_tool", "library_search")),
+            SEARCH_TOOLS),
         // Her own notebook comes before a book: "I'll read the project note now" went to the library
         // four times in one night and found no such book (household node, 2026-10-24). After the
-        // research rule, which stays first: a book with no title falls back to it by index.
-        new Rule(Pattern.compile("\\b(?:read|open|check|look at|look in|review|see)\\b[^.]*\\b(?:project[ _]?notes?|notebook|project notebook)\\b"),
+        // research rule: a book with no title falls back to the search tools.
+        new Rule(Pattern.compile("\\b(?:read|reading|open|check|look at|look in|review|see)\\b[^.]*\\b(?:project[ _]?notes?|notebook|project notebook)\\b"),
             List.of("project_note")),
-        new Rule(Pattern.compile("\\b(?:read|keep reading|finish reading|next chapter|the book)\\b"),
+        // Reading acts, not the noun: "turn it into a study of what the book describes" was a page forced
+        // on her, against her stated will, when "the book" alone named the act (household node, 2026-11-02).
+        new Rule(Pattern.compile("\\b(?:read|keep reading|finish reading|continue reading|reading (?:on|further|the next part)|next chapter|"
+                + "(?:take|read) the next part|the next part of the book|reading the book|pick up the book|back to the book|open the book|the rest of the book)\\b"),
             List.of(READ_BOOK)),
         // A look at what she has is answered at once, never built: "I'll check my current skills and inventory first,
         // then look for something that needs fixing" went to the workshop by the fixing rule below (household node, 2026-10-27).
@@ -98,7 +118,7 @@ public final class HerWord {
                 + "get (?:it|one|them|this|that|the [\\w-]+) working|working again|"
                 + "what needs (?:fixing|building|attention|mending)|finish (?:the|my|that|it|building))\\b"),
             List.of("dispatch_task")),
-        new Rule(Pattern.compile("\\bclose\\b"),
+        new Rule(Pattern.compile("\\bclose\\b(?! (?:to|by|enough)\\b)"),
             List.of("close_room")),
         // "Open" a room is to go to it, or to reopen a closed one: "I'll open the lab room first" made a
         // second lab, and a third; she then closed the copies (the household node, 2026-10-08). Only a
@@ -156,20 +176,52 @@ public final class HerWord {
             var clause = m.group("rest").strip();
             if (clause.isEmpty() || REST.matcher(clause).find() || LATER.matcher(clause).find()) continue;
             if (THEIRS_TO_CHOOSE.matcher(sentenceAround(low, m.start("rest"))).find()) continue;
-            for (var r : RULES) {
-                if (!r.words().matcher(clause).find()) continue;
-                var tools = r.tools();
-                if (tools.contains(READ_BOOK)) {
-                    if (HER_OWN_MAKING.matcher(clause).find()) break;   // her own thing, not a shelf's
-                    if (!aBookIsOpen && !NAMES_A_BOOK.matcher(clause).find()) tools = RULES.get(0).tools();
-                }
-                for (var tool : tools) {
-                    if (offeredTools.contains(tool)) return new Act(tool, sentenceAround(spoken, m.start("rest")));
-                }
-                break;   // the words name an act she has no tool for: not a guess at another
+            var r = ruleFor(clause);
+            if (r == null) continue;
+            var tools = r.tools();
+            if (tools.contains(READ_BOOK)) {
+                if (HER_OWN_MAKING.matcher(clause).find()) return null;   // her own thing, not a shelf's
+                if (!aBookIsOpen && !NAMES_A_BOOK.matcher(clause).find()) tools = SEARCH_TOOLS;
             }
+            for (var tool : tools) {
+                if (offeredTools.contains(tool)) return new Act(tool, sentenceAround(spoken, m.start("rest")));
+            }
+            return null;   // the words name an act she has no tool for: not a guess at another
         }
         return null;
+    }
+
+    /**
+     * The rule for a clause: the first in the list whose words appear, the order carrying what is
+     * the more particular act (her notebook before a book, mending before the furniture); except
+     * that a search and a book are one kind of act, and between those two the one she leads with
+     * wins ("read further in the book, then search" was a search; household node, 2026-11-02).
+     */
+    static Rule ruleFor(String clause) {
+        Rule found = null;
+        for (var r : RULES) {
+            if (r.words().matcher(clause).find()) { found = r; break; }
+        }
+        if (found == null || !isLibraryRule(found)) return found;
+        // The two library rules, a search and a book, are one kind of act: between them the one she
+        // leads with wins ("read further in the book, then search for what it left open" is a read).
+        Rule best = found;
+        int at = startOf(found, clause);
+        for (var r : RULES) {
+            if (r == found || !isLibraryRule(r)) continue;
+            var m = r.words().matcher(clause);
+            if (m.find() && m.start() < at) { at = m.start(); best = r; }
+        }
+        return best;
+    }
+
+    private static boolean isLibraryRule(Rule r) {
+        return r.tools() == SEARCH_TOOLS || r.tools().contains(READ_BOOK);
+    }
+
+    private static int startOf(Rule r, String clause) {
+        var m = r.words().matcher(clause);
+        return m.find() ? m.start() : Integer.MAX_VALUE;
     }
 
     /** The sentence of the original text that holds this position, trimmed and bounded. */

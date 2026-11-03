@@ -1320,6 +1320,7 @@
   "archive.reopen.none": "Nothing closed up or put away is called \"{0}\". See the list with: archive",
   "archive.reopen.failed": "{0} would not open just now.",
   "item.read_book.descriptor": "{actor} opens a book to the marked page and reads on.",
+  "item.browse_shelves.descriptor": "{actor} walks along the shelves, reading the spines.",
   "bond.posture.usage": "bond posture <companion> — how far your companion may reach while you are away.  bond posture <companion> <generous|bounded|minimal|suspended> — set it.",
   "bond.posture.is": "{0}''s posture is {1}.",
   "bond.posture.set": "{0}''s posture is now {1}.",

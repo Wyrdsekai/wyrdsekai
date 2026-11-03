@@ -21,6 +21,21 @@ public final class ActivityGauge {
     /** A backup, a sleep write, an index rebuild: work that should not be interrupted by an update either. */
     private static final AtomicInteger MAINTENANCE = new AtomicInteger();
     private static volatile long lastBusyMillis = System.currentTimeMillis();
+    /** When a person last said something to a companion: an update is not swapped in under a conversation. */
+    private static volatile long lastPersonMillis = 0L;
+
+    /** A person said something to a companion. */
+    public static void personSpoke() { lastPersonMillis = System.currentTimeMillis(); }
+
+    /** No person has said anything to a companion for {@code quiet}. */
+    public static boolean personQuietFor(Duration quiet) {
+        return System.currentTimeMillis() - lastPersonMillis >= quiet.toMillis();
+    }
+
+    /** Nothing that must not be broken is running: no sleep, no coding task, no backup or rebuild. */
+    public static boolean nothingUnbroken() {
+        return SLEEPING.get() == 0 && CODING.get() == 0 && MAINTENANCE.get() == 0;
+    }
 
     public static void inferenceStarted() { INFERENCE.incrementAndGet(); lastBusyMillis = System.currentTimeMillis(); }
     public static void inferenceFinished() { INFERENCE.updateAndGet(n -> Math.max(0, n - 1)); lastBusyMillis = System.currentTimeMillis(); }
@@ -52,5 +67,5 @@ public final class ActivityGauge {
     public static Instant lastBusy() { return Instant.ofEpochMilli(lastBusyMillis); }
 
     /** Tests only. */
-    static void reset() { INFERENCE.set(0); CODING.set(0); MAINTENANCE.set(0); SLEEPING.set(0); lastBusyMillis = 0L; }
+    static void reset() { INFERENCE.set(0); CODING.set(0); MAINTENANCE.set(0); SLEEPING.set(0); lastBusyMillis = 0L; lastPersonMillis = 0L; }
 }

@@ -40,6 +40,7 @@ import org.wyrdsekai.core.forge.SleepWeightWrite;
 import org.wyrdsekai.core.library.FindingsLedger;
 import org.wyrdsekai.core.library.LibraryConsent;
 import org.wyrdsekai.core.library.LibraryPatron;
+import org.wyrdsekai.core.library.LibraryAsks;
 import org.wyrdsekai.core.library.LibraryRecall;
 import org.wyrdsekai.core.library.Reading;
 import org.wyrdsekai.core.library.ReadingLedger;
@@ -1031,6 +1032,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         implements Command {}
     /** Test-only: read_book with {@code book} as her call would carry it; the reply is what she is told. */
     public record TestReadBook(String book, ActorRef<String> replyTo) implements Command {}
+    /** Test-only: the text of her next READ turn, as {@link #readSubgoal()} writes it. */
+    public record TestReadTurn(ActorRef<String> replyTo) implements Command {}
+    /** Test-only: browse_shelves with {@code words} as her call would carry them; the reply is what she is shown. */
+    public record TestBrowseShelves(String words, ActorRef<String> replyTo) implements Command {}
+    /** Test hook: a scripted tool's answer arrives, as one does from its virtual thread. */
+    public record TestScriptedToolResult(String toolId, Map<String, Object> payload) implements Command {}
     /**
      * Test-only ( EMIT probe): force the generativity
      * drive to a surfaced level with concrete gap signals, bypass the interiority
@@ -2696,11 +2703,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final Duration BOOK_FROM_SEARCH_FRESH = Duration.ofMinutes(45);
     /** The tools offered on her last own-time turn, before any narrowing: what her words are read against. */
     private Set<String> lastOwnTimeOffered = Set.of();
-    /** When a turn keeping her word was started: its own words never start another. */
-    private Instant herWordTurnStartedAt;
+    /**
+     * The own-time turn in flight is one keeping her word: its own words never start another. Set
+     * as that turn starts and cleared as any other own-time turn starts. Until 2026-11-01 it was a
+     * three-minute window cleared by the next words, so the first words of the next own-time turn
+     * were dropped: she read a part, then said on a new turn she would keep reading, and did not.
+     */
+    private boolean herWordTurnInFlight;
+    /** The tool the turn in flight was to keep her word with, while {@link #herWordTurnInFlight}. */
+    private String herWordToolInFlight;
+    private String startingHerWordTool;
+    /** Set just before a kept-word turn is started, so triggerAutonomousInference knows it for one. */
+    private boolean startingHerWordTurn;
+    /**
+     * The part she reads on the own-time turn in flight, when that turn is the one that hands her
+     * the page: what she says on it is what she took from it. Set as that turn starts, cleared as any
+     * other starts (the same rule as {@link #herWordTurnInFlight}).
+     */
+    private ReadingLedger.Bookmark readingTurnFor;
+    /** The part a reading turn about to start is for, so triggerAutonomousInference knows it for one. */
+    private ReadingLedger.Bookmark startingReadingTurnFor;
     /** When each tool was last forced on her word: the same tool is not forced twice within the spacing. */
     private final Map<String, Instant> herWordKeptAt = new HashMap<>();
-    private static final Duration HER_WORD_TURN_WINDOW = Duration.ofMinutes(3);
     /** Below this she is too tired for a turn to act in; the autonomy check stops at the same line. */
     private static final double OWN_TIME_ACT_MIN_ENERGY = 0.2;
     private static final Duration HER_WORD_SPACING = Duration.ofMinutes(30);
@@ -3245,6 +3269,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Awake memory consolidation — lighter than sleep Forge, runs periodically
         timers.startTimerWithFixedDelay(CONSOLIDATION_TIMER_KEY, new ConsolidationTick(),
             CONSOLIDATION_INTERVAL);
+
+        // Whether the research desk has answered a question of hers
+        timers.startTimerWithFixedDelay(DESK_TIMER_KEY, new DeskCheck(), DESK_CHECK_EVERY);
 
         // Repair-mode release check. Cheap: returns immediately unless she is actually
         // in a repair mode, which is the rare case. Frequent enough that a 90-minute
@@ -4113,6 +4140,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(FollowAttempt.class, this::onFollowAttempt)
             .onMessage(CrossZoneInvite.class, this::onCrossZoneInvite)
             .onMessage(ConsolidationTick.class, this::onConsolidationTick)
+            .onMessage(DeskCheck.class, msg -> { checkDeskAnswers(); return this; })
+            .onMessage(ReadWhatSheOpened.class, this::onReadWhatSheOpened)
+            .onMessage(ShelvesShown.class, this::onShelvesShown)
+            .onMessage(DeskAnswered.class, this::onDeskAnswered)
             .onMessage(RepairModeCheck.class, this::onRepairModeCheck)
             .onMessage(RefreshRoomState.class, this::onRefreshRoomState)
             .onMessage(RoomCreationResult.class, this::onRoomCreationResult)
@@ -4259,6 +4290,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 handleDispatchBunshin(new ActionParser.AgentAction.DispatchBunshin(
                     msg.task(), msg.maxTokens(), msg.maxSteps(),
                     msg.wallClockSeconds(), "test-harness"));
+                return this;
+            })
+            .onMessage(TestScriptedToolResult.class, msg -> {
+                getContext().getSelf().tell(new ScriptedToolResult(ToolResultEnvelope.normalize(msg.toolId(), msg.payload()), resetGeneration));
+                return this;
+            })
+            .onMessage(TestBrowseShelves.class, msg -> {
+                var node = M3_MAPPER.createObjectNode();
+                if (msg.words() != null) node.put("words", msg.words());
+                lastBuiltinOutcome = null;
+                handleBrowseShelves(node);
+                msg.replyTo().tell(String.valueOf(lastBuiltinOutcome));
+                return this;
+            })
+            .onMessage(TestReadTurn.class, msg -> {
+                msg.replyTo().tell(readSubgoal());
                 return this;
             })
             .onMessage(TestReadBook.class, msg -> {
@@ -4629,6 +4676,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 if (isHumanTrigger(said)) {
                     lastHeardUtteranceAt = Instant.now();
                     lastPersonSpokeToMeAt = Instant.now();
+                    ActivityGauge.personSpoke();   // the self-updater waits for a quiet house
                     if (!isSleeping) askTheModelWhetherThisIsATask(said.text());
                 }
 
@@ -9328,6 +9376,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 pendingTrigger != null, personsToolInFlight());
             return false;
         }
+        // Which turn this is: one keeping her word, or any other. Only the first's words are not read again.
+        herWordTurnInFlight = startingHerWordTurn;
+        herWordToolInFlight = startingHerWordTurn ? startingHerWordTool : null;
+        // And whether it hands her a page she opened: what she says on it is kept with the book.
+        readingTurnFor = startingReadingTurnFor;
         boolean planStep = planAdvance && activePlan != null && activePlan.isActive()
             && activePlan.currentGoal() != null;
         planStepTurn = planStep && personsPlanActive();
@@ -9469,7 +9522,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Pin, not force: tool_choice stays auto. Passed here rather than read inside the ranker, so
         // no later surface (a tool-result follow-up, a person's turn) inherits the pin.
         allTools = surfaceByAffordance(allTools, apLower,
-            forcedTool != null ? forcedTool : readToolNamedThisTurn ? READ_TOOL : null);
+            forcedTool != null ? forcedTool : readToolNamedThisTurn ? readTurnPin : null);
         // What her words on this turn are read against, if she speaks instead of acting (HerWord).
         {
             var offered = new java.util.HashSet<String>();
@@ -12505,9 +12558,16 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private final Set<String> spentReadAnchors = new HashSet<>();
     /** The tool a READ turn tells her to read with. */
     static final String READ_TOOL = "library_card";
-    /** How a READ turn asks her to read. It names {@link #READ_TOOL}, so that turn's surface must carry it. */
+    /** How a READ turn asks her to search: the door every READ turn names, so that turn's surface must carry it. */
     static final String READ_INSTRUCTION = "Use " + READ_TOOL + " with a query in your own words. "
         + "Then write one note with quill (kind: note): what you found, and the question you want to ask next.";
+    /** The heading every READ turn's prompt starts with. */
+    static final String READ_HEADING = "## Current Subgoal: READ\n";
+    /**
+     * The door this READ turn leads with, set by {@link #readSubgoal()}: the book she has open or the
+     * desk's answer when there is one, else the card. Pinned to the front of that turn's surface.
+     */
+    private String readTurnPin = READ_TOOL;
     /**
      * True from the start of an own-time turn whose prompt is a READ turn's until the next turn
      * starts: the next own-time prompt sets it again, and {@link #runIdentityInference} clears it for
@@ -12524,9 +12584,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      */
     private String forcedVerbForSurface;
 
-    /** Whether an own-time prompt is a READ turn's: it carries {@link #READ_INSTRUCTION} whole. */
+    /** Whether an own-time prompt is a READ turn's: it carries {@link #READ_HEADING}. */
     static boolean isReadTurnPrompt(String prompt) {
-        return prompt != null && prompt.contains(READ_INSTRUCTION);
+        return prompt != null && prompt.contains(READ_HEADING);
     }
     /** Starts from the clock, not from zero: a server restart used to put every companion back on
      *  the first subgoal, so the later ones (reading among them) came round rarely. */
@@ -12623,7 +12683,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             case "REFLECT" -> {
                 sb.append("Reflect on what you've learned and done. ");
                 sb.append("Write a note about something you discovered or realized. ");
-                sb.append("Check your commitments — have you followed through?");
+                sb.append("Check your commitments — have you followed through? recall finds what you said and were told.");
                 if (vitality.energy() < 0.4) {
                     sb.append("\nYour energy is low (")
                         .append(String.format("%.0f%%", vitality.energy() * 100))
@@ -12643,12 +12703,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * never a book: over one measured week (2026-09-11 → 18) she moved between rooms 344
      * times, made 24 rooms, and opened the library zero times. Reading needs something to be
      * about, so the turn is pointed at a real thing, in this order: something her person
-     * said to her lately, then what her last reading left open, then her own choice.
+     * said to her lately, then what her last reading left open, then her own choice. Then her
+     * situation, as facts with their doors: the book she has open, the desk's answer waiting,
+     * a subject the shelves have come back thin on. The card is the door that is always there.
      * A library read records a finding on its own; the note is hers to keep.
      */
     private String readSubgoal() {
         var sb = new StringBuilder("Read something in the library. ");
-        String myDid = profile.did() != null ? profile.did() : profile.entityId();
+        String myDid = herDid();
+        readTurnPin = READ_TOOL;
         String anchor = null;
         String bondholderDid = primaryBondholderDid();
         if (bondholderDid != null && conversationTurnStore != null) {
@@ -12662,58 +12725,63 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 break;
             }
         }
-        String doors = "";
+        var doors = new StringBuilder();
         if (anchor == null && luceneStore != null) {
-            var recent = FindingsLedger.list(luceneStore, myDid, null, 40);
-            for (var f : recent.subList(0, Math.min(5, recent.size()))) {
-                if (f.query() == null || !spentReadAnchors.add(f.query())) continue;
+            for (var f : FindingsLedger.list(luceneStore, myDid, null, 5)) {
+                // A finding filed without its question has nothing to follow.
+                if (f.query() == null || f.query().isBlank() || !spentReadAnchors.add(f.query())) continue;
                 anchor = "Last time you asked the library: \"" + truncate(f.query(), 160)
                     + "\" and concluded: " + truncate(f.claim(), 240)
                     + " Follow what that left open.";
-                doors = readingDoors(f, recent);
+                var place = bookOf(f);
+                if (place != null) doors.append(bookDoor(place));
                 break;
             }
         }
         sb.append(anchor != null ? anchor
             : "Pick one thing you are curious about — a subject, an author, a word you keep using.");
+        var open = openBook(myDid);
+        if (open != null) {
+            doors.append("\nYou are reading '").append(open.title()).append("': at part ").append(open.part())
+                .append(" of ").append(open.total()).append(". read_book reads the next part.");
+            var ledger = ReadingLedger.shared();
+            var note = ledger == null ? null : ledger.lastNote(myDid, open.book()).orElse(null);
+            if (note != null) {
+                doors.append(" After part ").append(note.part()).append(" you took from it: \"")
+                    .append(truncate(note.text(), 200)).append("\"");
+            }
+            readTurnPin = "read_book";
+        }
+        doors.append(housematesReading(myDid, open));
+        if (open == null) doors.append("\nbrowse_shelves shows the books on the shelves you may read.");
+        doors.append(deskAnswerDoor(myDid));
+        doors.append(askedOftenDoor(myDid));
         sb.append(doors);
-        sb.append('\n').append(READ_INSTRUCTION);
+        sb.append('\n').append(READ_TOOL.equals(readTurnPin) ? READ_INSTRUCTION : "Or u" + READ_INSTRUCTION.substring(1));
+        // Her own record is a third place to read: what she said and was told is there, not on a shelf.
+        sb.append("\nrecall finds what you said and were told.");
         return sb.toString();
     }
 
-    /** Asked this many times in {@link #ASKED_LATELY}, a subject is named as asked often, with the research desk. */
-    static final int ASKED_OFTEN = 3;
-    static final Duration ASKED_LATELY = Duration.ofDays(7);
+    /** The book she has open, if any. */
+    private ReadingLedger.Bookmark openBook(String did) {
+        var ledger = ReadingLedger.shared();
+        if (ledger == null) return null;
+        try {
+            return ledger.current(did).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
 
-    /**
-     * The doors a reading turn anchored on {@code on} names besides the card: the book a passage
-     * of it came from, when she may read that book through; and how often she has asked the
-     * library about the same thing lately, with the house library's research desk when it has
-     * one. The card answers with its ten nearest passages whatever the subject, so a subject the
-     * shelves hold little on comes back looking like weak results, not like a gap.
-     */
-    private String readingDoors(FindingsLedger.Finding on, List<FindingsLedger.Finding> recent) {
-        var sb = new StringBuilder();
-        var place = bookOf(on);
-        if (place != null) {
-            // "read_book" alone, or by the book's name, opens it at this part (freshBookFromSearch).
-            lastBookFromSearch = place;
-            lastBookFromSearchAt = Instant.now();
-            var title = ReadingLedger.titleOf(place.book().group());
-            sb.append("\nA passage you read for it came from '").append(title).append("' (part ").append(place.part())
-                .append(" of ").append(place.book().parts()).append("). read_book with book: '").append(title)
-                .append("' opens it there.");
-        }
-        int times = timesAsked(on.query(), recent, Instant.now().minus(ASKED_LATELY));
-        if (times >= ASKED_OFTEN) {
-            sb.append("\nYou have asked the library about this ").append(times).append(" times in the last week.");
-            var desk = researchDesk();
-            if (desk != null) {
-                sb.append(" The research desk, ").append(desk).append(", takes a question and studies it from the")
-                    .append(" shelves and the web; what it finds comes back to the library.");
-            }
-        }
-        return sb.toString();
+    /** The door a book a passage came from opens: read_book, at the part the passage was. */
+    private String bookDoor(WyrdLuceneStore.PlaceInBook place) {
+        // "read_book" alone, or by the book's name, opens it at this part (freshBookFromSearch).
+        lastBookFromSearch = place;
+        lastBookFromSearchAt = Instant.now();
+        var title = ReadingLedger.titleOf(place.book().group());
+        return "\nA passage you read for it came from '" + title + "' (part " + place.part() + " of "
+            + place.book().parts() + "). read_book with book: '" + title + "' opens it there.";
     }
 
     /** The first book a passage of this finding came from that she may read through, and where. */
@@ -12729,23 +12797,52 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return null;
     }
 
+    /** The desk's answer to a question of hers she has not opened yet, as a fact and its door; leads the turn. */
+    private String deskAnswerDoor(String did) {
+        var asks = LibraryAsks.shared();
+        var library = WyrdConfig.get().libraryPatronService();
+        if (asks == null || library.isEmpty()) return "";
+        var waiting = asks.deskUnopened(did);
+        if (waiting.isEmpty()) return "";
+        var a = waiting.getFirst();
+        var opener = McpToolIndex.qualifyName(library, "library_get");
+        readTurnPin = opener;
+        return "\nThe research desk answered your question \"" + truncate(a.question(), 120) + "\""
+            + (a.title() == null || a.title().isBlank() ? "" : ": '" + truncate(a.title(), 100) + "'")
+            + ". " + opener + " with id: '" + a.entryId() + "' opens it."
+            + (waiting.size() > 1 ? " " + (waiting.size() - 1) + " more of its answers wait." : "");
+    }
+
+    /** Asked this many times in {@link #ASKED_LATELY}, a subject is named with how often, and with the desk when the shelves held little. */
+    static final int ASKED_OFTEN = 3;
+    static final Duration ASKED_LATELY = Duration.ofDays(7);
+
     /**
-     * How many of her findings since {@code since} asked about the same thing as {@code query}:
-     * at least two of the same words, and at least half the words of the shorter question.
-     * Reworded questions on one subject count together.
+     * How often she has asked the shelves about what she asked last, and how often they held
+     * nothing; the research desk when they held little. The card answers with its nearest
+     * passages whatever the subject, so a subject the shelves hold little on comes back looking
+     * like weak results, not like a gap.
      */
-    static int timesAsked(String query, List<FindingsLedger.Finding> recent, Instant since) {
-        var words = Reading.words(query);
-        if (words.size() < 2 || recent == null) return 0;
-        int n = 0;
-        for (var f : recent) {
-            if (f.query() == null || f.recordedAt() == null || f.recordedAt().isBefore(since)) continue;
-            var theirs = Reading.words(f.query());
-            int shared = 0;
-            for (var w : words) if (theirs.contains(w)) shared++;
-            if (shared >= 2 && shared * 2 >= Math.min(words.size(), theirs.size())) n++;
+    private String askedOftenDoor(String did) {
+        var asks = LibraryAsks.shared();
+        if (asks == null) return "";
+        var recent = asks.since(did, Instant.now().minus(ASKED_LATELY));
+        if (recent.isEmpty()) return "";
+        var latest = recent.getFirst();
+        var same = LibraryAsks.about(latest.query(), recent);
+        int times = same.size();
+        if (times < ASKED_OFTEN) return "";
+        int thin = LibraryAsks.thin(same);
+        var sb = new StringBuilder("\nYou have asked the library about \"").append(truncate(latest.query(), 100))
+            .append("\" ").append(times).append(" times in the last week");
+        sb.append(thin == 0 ? "." : thin == times ? "; the shelves held nothing on it."
+            : "; " + thin + " of those found nothing on the shelves.");
+        var desk = researchDesk();
+        if (desk != null && thin * 2 >= times) {
+            sb.append(" The research desk, ").append(desk).append(", takes a question and studies it from the")
+                .append(" shelves and the web; what it finds comes back to you here.");
         }
-        return n;
+        return sb.toString();
     }
 
     /** The house library's research desk as her menu names it, while the library offers one; null otherwise. */
@@ -12761,6 +12858,496 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /** The search tools whose asking is kept: the shelves, not her own memory. */
+    private static final Set<String> SHELF_SEARCH_TOOLS = Set.of("library_card", "library_search", "searching_glass", "oracle_lens");
+
+    /** The record of asking: what she asked the shelves and whether they held anything. */
+    private void noteLibraryAsk(String toolName, Map<String, Object> result, String findings) {
+        var asks = LibraryAsks.shared();
+        if (asks == null || toolName == null || !SHELF_SEARCH_TOOLS.contains(toolName)) return;
+        var q = result.get("query") instanceof String str ? str : "";
+        if (q.isBlank()) return;
+        int n = result.get("sources") instanceof List<?> l ? l.size() : 0;
+        asks.record(herDid(), q, n > 0 && !looksLikeAbsenceFinding(findings), n);
+    }
+
+    /** The tool's answer with the question its call carried, when the answer does not say it. */
+    static Map<String, Object> withTheQuestion(Map<String, Object> result, Map<String, Object> params) {
+        if (result == null || params == null || result.containsKey("query")) return result;
+        if (!(params.get("query") instanceof String q) || q.isBlank()) return result;
+        var out = new LinkedHashMap<>(result);
+        out.put("query", q);
+        return out;
+    }
+
+    // ── What she reads stays with her ──────────────────────────────────────────────────────────
+
+    /** Hands her the page she just opened, on her next own-time turn ({@code attempt} counts the waits). */
+    private record ReadWhatSheOpened(ReadingLedger.Bookmark part, String page, int attempt) implements Command {}
+    private static final String READING_TIMER_KEY = "reading-turn";
+    static final Duration READING_TURN_DELAY = Duration.ofSeconds(3);
+    private static final Duration READING_TURN_RETRY = Duration.ofSeconds(15);
+    private static final int READING_TURN_TRIES = 12;
+
+    /** The question her reading turn asks; what she says to it is what she took. */
+    static final String WHAT_SHE_TAKES = "What do you take from it? Say it in your own words: what it said, "
+        + "and what it leaves you with. What you say is kept with the book.";
+
+    /** The prompt of the turn that hands her a page. */
+    static String readingTurnPrompt(String page) {
+        return "## Reading\n\nThis is the part you just opened:\n\n" + page + "\n\n" + WHAT_SHE_TAKES;
+    }
+
+    private Behavior<Command> onReadWhatSheOpened(ReadWhatSheOpened msg) {
+        if (isSleeping) return this;
+        if (aTurnIsInFlight()) {
+            if (msg.attempt() + 1 < READING_TURN_TRIES) {
+                timers.startSingleTimer(READING_TIMER_KEY,
+                    new ReadWhatSheOpened(msg.part(), msg.page(), msg.attempt() + 1), READING_TURN_RETRY);
+            } else {
+                log.info("'{}' read part {} of '{}' with no turn free to read it in; it stays on the shelf where she left it",
+                    profile.name(), msg.part().part(), msg.part().title());
+            }
+            return this;
+        }
+        startingReadingTurnFor = msg.part();
+        try {
+            if (triggerAutonomousInference(readingTurnPrompt(msg.page()))) {
+                log.info("'{}' is reading part {} of {} of '{}'", profile.name(), msg.part().part(), msg.part().total(),
+                    msg.part().title());
+            }
+        } finally {
+            startingReadingTurnFor = null;
+        }
+        return this;
+    }
+
+    /** Her words on the turn that handed her a page: kept with the book, and as her memory of reading it. */
+    private void keepWhatSheTook(ReadingLedger.Bookmark part, String prose, String raw) {
+        readingTurnFor = null;
+        var words = wordsSheTook(prose, raw);
+        if (words == null) {
+            log.info("'{}' read part {} of '{}' and said nothing about it", profile.name(), part.part(), part.title());
+            return;
+        }
+        var ledger = ReadingLedger.shared();
+        if (ledger != null) ledger.note(herDid(), part.book(), part.part(), words);
+        remember("Read part " + part.part() + " of " + part.total() + " of " + part.title() + ". What I took from it: "
+            + truncate(words, 600));
+        // And a finding of hers, with the book and part as its source: her next search of the
+        // subject reads her own findings first, and the sleep's review keeps what holds.
+        if (luceneStore != null) {
+            try {
+                var sr = luceneStore.partOf(part.collection(), part.book(), part.part());
+                var source = part.title() + " (part " + part.part() + "/" + part.total() + ")"
+                    + (sr != null && sr.id() != null && !sr.id().isBlank() ? " (" + sr.id() + ")" : "");
+                FindingsLedger.recordDraft(luceneStore, herDid(), "", words, List.of(source),
+                    "companion:" + profile.name(), FindingsLedger.ClaimType.SYNTHESIS);
+            } catch (RuntimeException e) {
+                log.debug("reading note not filed as a finding for '{}': {}", profile.name(), e.toString());
+            }
+        }
+        log.info("'{}' kept what she took from part {} of '{}' ({} chars)", profile.name(), part.part(), part.title(), words.length());
+        refreshReadingLine();
+    }
+
+    private static final Pattern CONTENT_FIELD = Pattern.compile("\"(?:content|text|note|entry)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+
+    /** What she said, or, when she wrote it down instead of saying it, what she wrote. Null when neither. */
+    static String wordsSheTook(String prose, String raw) {
+        if (prose != null && !prose.isBlank()) return prose.strip();
+        if (raw == null) return null;
+        var m = CONTENT_FIELD.matcher(raw);
+        if (!m.find()) return null;
+        var w = m.group(1).replace("\\n", "\n").replace("\\\"", "\"").strip();
+        return w.isBlank() ? null : w;
+    }
+
+    // ── Choosing a book: the shelves ───────────────────────────────────────────────────────────
+
+    /**
+     * What the shelves answered, handed to her on her next own-time turn: {@code pick} when it is
+     * books to choose from; {@code attempt} counts the waits.
+     */
+    private record ShelvesShown(String view, boolean pick, int attempt) implements Command {}
+    private static final String SHELVES_TIMER_KEY = "shelves-turn";
+    /** The same answer from the shelves is not handed back twice inside this: she asked again and heard it. */
+    static final Duration SAME_SHELVES_ANSWER_QUIET = Duration.ofMinutes(30);
+    private String lastShelvesHandedBack;
+    private Instant lastShelvesHandedBackAt;
+    /** How many books a shelf view shows in each of its parts. */
+    static final int SHELF_SHOWN = 6;
+
+    /** The prompt of the turn that hands her the shelves. */
+    static String shelvesTurnPrompt(String view) {
+        return "## The shelves\n\n" + view + "\n\nIf one of them calls to you, read_book with book: '<its name>' opens it.";
+    }
+
+    /** The prompt of the turn that hands her what the shelves answered when it is not books to choose from. */
+    static String shelvesAnswerPrompt(String answer) {
+        return "## The shelves\n\nWhat the shelves answered you just now:\n\n" + answer;
+    }
+
+    /**
+     * On her own time nothing reads a built-in's answer, so what the shelves answered her is handed
+     * to her on her next turn. Asked for a book by its author's name, read_book found six that fit
+     * and said so; nothing read it, she never chose one, and the turn ended in silence (household
+     * node, 2026-11-02). The same answer is not handed back twice in a row inside
+     * {@link #SAME_SHELVES_ANSWER_QUIET}, so asking the same again does not turn into a loop.
+     */
+    private void handBackTheShelves(String answer, boolean pick) {
+        if (answer == null || answer.isBlank() || reactMessages != null || answersAPerson()) return;
+        var now = Instant.now();
+        if (answer.equals(lastShelvesHandedBack) && lastShelvesHandedBackAt != null
+                && Duration.between(lastShelvesHandedBackAt, now).compareTo(SAME_SHELVES_ANSWER_QUIET) < 0) {
+            log.info("'{}' had the same answer from the shelves a moment ago; it is not handed to her twice", profile.name());
+            return;
+        }
+        lastShelvesHandedBack = answer;
+        lastShelvesHandedBackAt = now;
+        timers.startSingleTimer(SHELVES_TIMER_KEY, new ShelvesShown(answer, pick, 0), READING_TURN_DELAY);
+    }
+
+    /**
+     * The books on the shelves she may read, to pick one: with {@code words}, those whose names
+     * hold them (her person's Study, then the household's reference packs); with none, books on
+     * what she has been asking about and a few picked at random from her person's Study.
+     */
+    private void handleBrowseShelves(JsonNode node) {
+        var asked = node == null ? null
+            : node.hasNonNull("words") ? node.get("words").asText()
+            : node.hasNonNull("subject") ? node.get("subject").asText()
+            : node.hasNonNull("query") ? node.get("query").asText() : null;
+        if (luceneStore == null) {
+            lastBuiltinOutcome = "Not done: the shelves cannot be read on this node.";
+            return;
+        }
+        var did = herDid();
+        var ledger = ReadingLedger.shared();
+        var hers = ledger == null ? List.<ReadingLedger.Bookmark>of() : ledger.all(did);
+        var readBy = readBy(did);
+        var granted = new HashMap<String, Boolean>();
+        Predicate<WyrdLuceneStore.BookRef> mayRead = ref ->
+            !SearchCollections.STUDY.equals(ref.collection())
+                || granted.computeIfAbsent(ref.ownerDid() + "/" + ref.studyCollection(), k -> mayReadThrough(ref));
+        var sb = new StringBuilder();
+        try {
+            if (asked != null && !asked.isBlank()) {
+                var words = Reading.words(asked);
+                var books = new ArrayList<WyrdLuceneStore.BookRef>();
+                if (!words.isEmpty()) {
+                    for (var r : luceneStore.booksMatching(SearchCollections.STUDY, words, SHELF_SHOWN * 6)) {
+                        if (books.size() >= SHELF_SHOWN * 2) break;
+                        if (r.parts() >= 2 && mayRead.test(r)) books.add(r);
+                    }
+                }
+                var packs = new ArrayList<WyrdLuceneStore.BookRef>();
+                if (!words.isEmpty()) {
+                    for (var r : luceneStore.booksMatching(SearchCollections.KNOWLEDGE, words, SHELF_SHOWN * 2)) {
+                        if (packs.size() >= SHELF_SHOWN / 2) break;
+                        if (r.parts() >= 2) packs.add(r);
+                    }
+                }
+                if (books.isEmpty() && packs.isEmpty()) {
+                    lastBuiltinOutcome = "No book on the shelves you may read has '" + asked.strip() + "' in its name. "
+                        + "library_card finds passages by what they say; browse_shelves with nothing named shows what is there.";
+                    noteAct("browse_shelves", "looked for books named '" + asked.strip() + "' and found none");
+                    handBackTheShelves(lastBuiltinOutcome, false);
+                    return;
+                }
+                if (!books.isEmpty()) sb.append("Books whose names hold '").append(asked.strip()).append("':").append(shelfLines(books, hers, readBy));
+                if (!packs.isEmpty()) sb.append(books.isEmpty() ? "" : "\n").append("In the household's reference packs:").append(shelfLines(packs, hers, readBy));
+            } else {
+                var near = new ArrayList<WyrdLuceneStore.BookRef>();
+                var interest = interestWords(did);
+                if (!interest.isEmpty()) {
+                    for (var r : luceneStore.booksWithAnyWord(SearchCollections.STUDY, interest, SHELF_SHOWN * 5)) {
+                        if (near.size() >= SHELF_SHOWN) break;
+                        if (mayRead.test(r) && !finished(hers, r)) near.add(r);
+                    }
+                }
+                var chance = new ArrayList<WyrdLuceneStore.BookRef>();
+                for (var r : luceneStore.booksAtRandom(SearchCollections.STUDY, SHELF_SHOWN * 2, ThreadLocalRandom.current())) {
+                    if (chance.size() >= SHELF_SHOWN) break;
+                    if (mayRead.test(r) && !finished(hers, r) && near.stream().noneMatch(n -> n.group().equals(r.group()))) chance.add(r);
+                }
+                if (near.isEmpty() && chance.isEmpty()) {
+                    lastBuiltinOutcome = "The shelves you may read hold no books to read through. A person can put books in "
+                        + "their Study and let you read them.";
+                    noteAct("browse_shelves", "found no books on the shelves she may read");
+                    handBackTheShelves(lastBuiltinOutcome, false);
+                    return;
+                }
+                if (!near.isEmpty()) sb.append("On what you have been asking about:").append(shelfLines(near, hers, readBy));
+                if (!chance.isEmpty()) sb.append(near.isEmpty() ? "" : "\n").append("Picked at random from the shelves:").append(shelfLines(chance, hers, readBy));
+            }
+        } catch (RuntimeException e) {
+            log.warn("browse_shelves failed for '{}': {}", profile.name(), e.toString());
+            lastBuiltinOutcome = "Not done: the shelves could not be read just now.";
+            return;
+        }
+        sb.append("\nread_book with book: '<its name>' opens one. browse_shelves with words: '<a subject or an author>' looks for others.");
+        lastBuiltinOutcome = sb.toString();
+        noteAct("browse_shelves", asked == null || asked.isBlank() ? "looked along the shelves" : "looked for books named '" + asked.strip() + "'");
+        log.info("Companion '{}' browsed the shelves{}", profile.name(), asked == null || asked.isBlank() ? "" : " for '" + asked.strip() + "'");
+        handBackTheShelves(lastBuiltinOutcome, true);
+    }
+
+    private Behavior<Command> onShelvesShown(ShelvesShown msg) {
+        if (isSleeping) return this;
+        if (aTurnIsInFlight()) {
+            if (msg.attempt() + 1 < READING_TURN_TRIES) {
+                timers.startSingleTimer(SHELVES_TIMER_KEY, new ShelvesShown(msg.view(), msg.pick(), msg.attempt() + 1), READING_TURN_RETRY);
+            } else {
+                log.info("'{}' had no turn free to hear what the shelves answered", profile.name());
+            }
+            return this;
+        }
+        if (triggerAutonomousInference(msg.pick() ? shelvesTurnPrompt(msg.view()) : shelvesAnswerPrompt(msg.view()))) {
+            log.info("'{}' is handed what the shelves answered{}", profile.name(), msg.pick() ? ": books to choose from" : "");
+        }
+        return this;
+    }
+
+    /** Whether she has read this book through. */
+    private static boolean finished(List<ReadingLedger.Bookmark> hers, WyrdLuceneStore.BookRef r) {
+        for (var b : hers) if (b.book().equals(r.group()) && b.finished()) return true;
+        return false;
+    }
+
+    /** The words of what she has lately asked the library and set out to learn: what "near" means on the shelves. */
+    private List<String> interestWords(String did) {
+        var out = new ArrayList<String>();
+        var asks = LibraryAsks.shared();
+        if (asks != null) {
+            for (var a : asks.since(did, Instant.now().minus(ASKED_LATELY))) {
+                for (var w : Reading.words(a.query())) {
+                    if (w.length() >= 5 && !out.contains(w) && out.size() < 8) out.add(w);
+                }
+            }
+        }
+        for (var w : wordsOfHerSubjects()) if (w.length() >= 5 && !out.contains(w) && out.size() < 10) out.add(w);
+        return out;
+    }
+
+    /** One line per book: its name and parts, how far she is in it, who of her housemates is reading it. */
+    static String shelfLines(List<WyrdLuceneStore.BookRef> books, List<ReadingLedger.Bookmark> hers, Map<String, String> readBy) {
+        var sb = new StringBuilder();
+        for (var r : books) {
+            sb.append("\n  '").append(ReadingLedger.titleOf(r.group())).append("' — ").append(r.parts()).append(" parts");
+            for (var b : hers) {
+                if (!b.book().equals(r.group())) continue;
+                sb.append(b.finished() ? " — you have read it" : " — you are at part " + b.part());
+            }
+            var who = readBy == null ? null : readBy.get(r.group());
+            if (who != null) sb.append(" — ").append(who).append(" is reading it");
+        }
+        return sb.toString();
+    }
+
+    /** A housemate's book open on the shelf: who, and where they are in it. */
+    record HousemateBook(String name, ReadingLedger.Bookmark book) {}
+
+    /** The books her housemates have open, by name: the companions of this house, she left out. */
+    private List<HousemateBook> housematesBooks(String myDid) {
+        var out = new ArrayList<HousemateBook>();
+        var ledger = ReadingLedger.shared();
+        var jdbc = System.getProperty("wyrdsekai.jdbc.url", System.getenv("WYRDSEKAI_JDBC_URL"));
+        if (ledger == null || jdbc == null || jdbc.isBlank()) return out;
+        try {
+            for (var row : new CompanionRegistry(jdbc).all()) {
+                if (row.archived() || row.did() == null || row.did().equals(myDid)
+                        || profile.entityId().equals(row.entityId())) continue;
+                var name = row.name() == null || row.name().isBlank() ? row.entityId() : row.name();
+                ledger.current(row.did()).ifPresent(b -> out.add(new HousemateBook(name, b)));
+            }
+        } catch (RuntimeException e) {
+            log.debug("housemates' books not read for '{}': {}", profile.name(), e.toString());
+        }
+        return out;
+    }
+
+    /** Whether she may read a book a housemate has open: a pack always; a Study book while her own grant stands. */
+    private boolean mayReadTheirs(ReadingLedger.Bookmark b) {
+        return mayReadThrough(new WyrdLuceneStore.BookRef(b.book(), b.collection(), b.ownerDid(), b.studyCollection(), b.total()));
+    }
+
+    /** The READ turn's lines about what her housemates are reading, with the door to the same book. */
+    private String housematesReading(String myDid, ReadingLedger.Bookmark hers) {
+        var sb = new StringBuilder();
+        for (var h : housematesBooks(myDid)) {
+            var b = h.book();
+            sb.append("\n").append(h.name()).append(" is reading '").append(b.title()).append("': at part ")
+                .append(b.part()).append(" of ").append(b.total()).append(".");
+            if (hers != null && hers.book().equals(b.book())) {
+                sb.append(" You are both in it.");
+            } else if (hers == null && mayReadTheirs(b)) {
+                sb.append(" read_book with book: '").append(b.title()).append("' opens it from the start.");
+            }
+        }
+        return sb.toString();
+    }
+
+    /** What the shelf offers when a book ends: her housemates' open books first, then the books named by her subjects. */
+    private List<WyrdLuceneStore.BookRef> nextBooks(String did) {
+        var out = new ArrayList<WyrdLuceneStore.BookRef>();
+        for (var h : housematesBooks(did)) {
+            var b = h.book();
+            if (mayReadTheirs(b)) out.add(new WyrdLuceneStore.BookRef(b.book(), b.collection(), b.ownerDid(), b.studyCollection(), b.total()));
+        }
+        for (var r : booksSheMayRead(wordsOfHerSubjects(), 6)) {
+            if (out.stream().noneMatch(o -> o.group().equals(r.group()))) out.add(r);
+        }
+        return out;
+    }
+
+    /** Who of her housemates is reading each book, by the book's name on the shelf. */
+    private Map<String, String> readBy(String did) {
+        var out = new HashMap<String, String>();
+        for (var h : housematesBooks(did)) out.merge(h.book().book(), h.name(), (a, b) -> a + " and " + b);
+        return out;
+    }
+
+    /** Her notes on a book, a few of them, as lines. */
+    static String takenFrom(List<ReadingLedger.Note> notes, int most) {
+        var sb = new StringBuilder();
+        var shown = notes.size() <= most ? notes : notes.subList(notes.size() - most, notes.size());
+        for (var n : shown) sb.append("\n  after part ").append(n.part()).append(": ").append(truncateStatic(n.text(), 200));
+        if (notes.size() > most) sb.append("\n  and ").append(notes.size() - most).append(" earlier");
+        return sb.toString();
+    }
+
+    private static String truncateStatic(String s, int max) {
+        if (s == null) return "";
+        var t = s.strip().replaceAll("\\s+", " ");
+        return t.length() <= max ? t : t.substring(0, max - 1).strip() + "…";
+    }
+
+    // ── The research desk: a question handed to it comes back to her ───────────────────────────
+
+    /** Every so often: whether the desk has answered a question of hers. */
+    private record DeskCheck() implements Command {}
+    /** The desk answered a question of hers ({@code entryId} the answer's entry), or gave up on it. */
+    public record DeskAnswered(String jobId, String entryId, String title, boolean failed) implements Command {}
+    private static final String DESK_TIMER_KEY = "desk-answers";
+    static final Duration DESK_CHECK_EVERY = Duration.ofMinutes(10);
+
+    /** The tool's answer with what its call carried: the desk's question, or the entry an opener was asked for. */
+    static Map<String, Object> withTheAsk(Map<String, Object> payload, String tool, Map<String, Object> args) {
+        if (payload == null || args == null || tool == null) return payload;
+        Object carried = switch (tool) {
+            case LibraryConsent.RESEARCH -> args.get("question");
+            case "library_get" -> args.get("id");
+            case "library_read" -> args.get("locator");
+            default -> null;
+        };
+        if (!(carried instanceof String str) || str.isBlank()) return payload;
+        var out = new LinkedHashMap<>(payload);
+        out.put(LibraryConsent.RESEARCH.equals(tool) ? "asked" : "entry", str);
+        return out;
+    }
+
+    /** The record of asking the desk: a question handed to it, or one of its answers opened. */
+    private void noteDeskAsk(String toolName, Map<String, Object> result, String reply) {
+        var asks = LibraryAsks.shared();
+        var library = WyrdConfig.get().libraryPatronService();
+        if (asks == null || toolName == null || library.isEmpty()) return;
+        if (toolName.equals(McpToolIndex.qualifyName(library, LibraryConsent.RESEARCH))) {
+            var jobId = jobIdIn(reply);
+            if (jobId != null) {
+                asks.deskAsked(herDid(), result.get("asked") instanceof String q ? q : "", jobId);
+                log.info("'{}' handed the research desk a question (job {})", profile.name(), jobId);
+            }
+        } else if (result.get("entry") instanceof String entry
+                && (toolName.equals(McpToolIndex.qualifyName(library, "library_get"))
+                    || toolName.equals(McpToolIndex.qualifyName(library, "library_read")))) {
+            asks.deskAnswerOpened(herDid(), entry);
+            refreshDeskLine();
+        }
+    }
+
+    private static final Pattern JOB_ID = Pattern.compile("\"job_id\"\\s*:\\s*\"?([A-Za-z0-9_.:-]+)\"?");
+
+    /** The job id in the desk's reply, which may carry a notice before its JSON. */
+    static String jobIdIn(String reply) {
+        if (reply == null) return null;
+        var m = JOB_ID.matcher(reply);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** Asks the library about each of her unanswered desk questions, off the actor thread. */
+    private void checkDeskAnswers() {
+        var asks = LibraryAsks.shared();
+        var library = WyrdConfig.get().libraryPatronService();
+        var mgr = McpServerManager.get();
+        if (asks == null || library.isEmpty() || mgr == null) return;
+        refreshDeskLine();
+        var pending = asks.deskPending(herDid());
+        if (pending.isEmpty()) return;
+        var self = getContext().getSelf();
+        var caller = herDid();
+        var asker = LibraryConsent.Asker.ownTimeOf(profile.entityId());
+        var qualified = McpToolIndex.qualifyName(library, "library_job");
+        Thread.ofVirtual().name("desk-check-" + profile.entityId()).start(() -> {
+            for (var ask : pending) {
+                var payload = callMcpTool(mgr, qualified, "library_job", Map.of("job_id", ask.jobId()), caller, asker);
+                var answer = deskAnswerOf(ask.jobId(), payload.get(MCP_REPLY) instanceof String t ? t : null);
+                if (answer != null) self.tell(answer);
+            }
+        });
+    }
+
+    /** What the library said about a job: an answer once it is done or failed; null while it runs or when unreadable. */
+    static DeskAnswered deskAnswerOf(String jobId, String jobJson) {
+        if (jobJson == null || jobJson.isBlank()) return null;
+        try {
+            var node = Json.mapper().readTree(jobJson.substring(Math.max(0, jobJson.indexOf('{'))));
+            var j = node.path("job").isObject() ? node.path("job") : node;
+            var state = j.path("state").asText("");
+            if ("failed".equals(state)) return new DeskAnswered(jobId, null, null, true);
+            if (!"done".equals(state)) return null;
+            var entry = j.path("investigation").asText("");
+            if (entry.isBlank()) entry = j.path("result").path("id").asText("");
+            var title = j.path("result").path("title").asText("");
+            if (title.isBlank()) title = j.path("title").asText("");
+            return new DeskAnswered(jobId, entry.isBlank() ? null : entry, title.isBlank() ? null : title, false);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Behavior<Command> onDeskAnswered(DeskAnswered msg) {
+        var asks = LibraryAsks.shared();
+        if (asks == null) return this;
+        var ask = asks.deskAsk(msg.jobId()).orElse(null);
+        if (ask == null || ask.answered()) return this;
+        if (msg.failed() || msg.entryId() == null) {
+            asks.deskGaveUp(msg.jobId());
+            remember("The research desk could not answer \"" + truncate(ask.question(), 120) + "\".");
+            log.info("The research desk gave up on '{}' for '{}' (job {})", truncate(ask.question(), 80), profile.name(), msg.jobId());
+            return this;
+        }
+        asks.deskAnswered(msg.jobId(), msg.entryId(), msg.title());
+        remember("The research desk answered \"" + truncate(ask.question(), 120) + "\""
+            + (msg.title() == null ? "" : ": '" + truncate(msg.title(), 100) + "'") + ".");
+        log.info("The research desk answered '{}' for '{}': {} ({})", truncate(ask.question(), 80), profile.name(),
+            msg.entryId(), msg.title());
+        refreshDeskLine();
+        return this;
+    }
+
+    /** Her standing line about the desk's answers waiting for her, or none. */
+    private void refreshDeskLine() {
+        var asks = LibraryAsks.shared();
+        var library = WyrdConfig.get().libraryPatronService();
+        if (asks == null) return;
+        var waiting = library.isEmpty() ? List.<LibraryAsks.DeskAsk>of() : asks.deskUnopened(herDid());
+        HouseFacts.setStanding(profile.entityId(), "desk", waiting.isEmpty() ? null
+            : "The research desk has answered " + (waiting.size() == 1 ? "a question of yours" : waiting.size() + " questions of yours")
+                + ": \"" + truncate(waiting.getFirst().question(), 100) + "\". " + McpToolIndex.qualifyName(library, "library_get")
+                + " with id: '" + waiting.getFirst().entryId() + "' opens it.");
     }
 
     /** Summarize current subgoal from working memory for completed subgoal list. */
@@ -13411,7 +13998,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         // already spoken eagerly (verbatim repeat). Handle both.
                         var cleanedProse = stripInternalMarkers(prose);
                         boolean allPlumbing = cleanedProse == null || cleanedProse.isBlank();
-                        if (!allPlumbing && isDupOfEagerToolFindings(cleanedProse)) {
+                        if (herWordTurnInFlight && describesTheTool(cleanedProse, herWordToolInFlight)) {
+                            // The turn that was to keep her word answered with words about the tool
+                            // ("read_book reads the next part of the book I have open. No arguments
+                            // needed"), and the room heard the machinery (household node, 2026-11-03).
+                            log.info("Her word's turn for '{}' came back as words about {}; not said", profile.name(), herWordToolInFlight);
+                        } else if (!allPlumbing && isDupOfEagerToolFindings(cleanedProse)) {
                             log.info("Dup-digest guard: judgment turn parroted the eagerly-"
                                 + "spoken tool findings — suppressed for '{}'", profile.name());
                         } else if (allPlumbing && reactMessages == null
@@ -13448,9 +14040,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     }
                 }
 
+                // Her word was to read, and the turn that was to keep it came back as words with no
+                // call: with a book open the next part needs nothing filled in, so it is read.
+                if (ownTimeWordsOnly && herWordTurnInFlight && HerWord.READ_BOOK.equals(herWordToolInFlight) && aBookIsOpen()) {
+                    log.info("'{}' said she would read and the turn came back as words; the next part is read", profile.name());
+                    handleReadBook(M3_MAPPER.createObjectNode());
+                }
                 // Her own word, kept: an own-time turn that ended in "I'll …" and no act gets one turn
                 // to do what she said, with the tool that does it (HerWord, 2026-10-03).
                 if (ownTimeWordsOnly) noticeHerWord(prose);
+                // What she took from a page she read: the words of the turn that handed it to her.
+                if (readingTurnFor != null && !reactiveInference) keepWhatSheTook(readingTurnFor, prose, content);
 
                 // Log action to activity trail + working memory
                 if (parseResult.primaryAction() != null) {
@@ -14117,13 +14717,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (lastReactTriggerAt == null) return lastReactTrigger;   // pre-dates the stamp
         if (Duration.between(lastReactTriggerAt, Instant.now())
                 .compareTo(TRIGGER_FRESHNESS) > 0) {
-            log.debug("Dropping a {}s-old trigger rather than treating it as the live request",
-                Duration.between(lastReactTriggerAt, Instant.now())
-                    .toSeconds());
+            // Said once, as the trigger ages out. Asked once or twice a second, the getter wrote
+            // the line each time: two of every three lines in the household node's log, and her
+            // day unreadable under them (2026-11-02).
+            if (lastReactTrigger != lastDroppedTrigger) {
+                lastDroppedTrigger = lastReactTrigger;
+                log.debug("Dropping a {}s-old trigger rather than treating it as the live request",
+                    Duration.between(lastReactTriggerAt, Instant.now())
+                        .toSeconds());
+            }
             return null;
         }
         return lastReactTrigger;
     }
+
+    /** The trigger whose ageing out has been logged, so it is logged once. */
+    private WorldEvent.Said lastDroppedTrigger;
 
     /**
      * The trigger that STARTED the current ReAct loop — the request the loop is serving.
@@ -14264,6 +14873,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             || f.contains("source material does not contain")
             || f.contains("do not contain any information")
             || f.contains("does not contain any information")
+            || f.contains("do not cover") || f.contains("does not cover")
+            || f.contains("do not address") || f.contains("does not address")
+            || f.contains("do not discuss") || f.contains("does not discuss")
+            || f.contains("do not mention") || f.contains("does not mention")
+            || f.contains("not covered by the sources") || f.contains("nothing on this subject")
             || f.startsWith("no results found")
             || f.contains("i cannot answer this question because");
     }
@@ -21924,7 +22538,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var costlyActions = skillCosts.tooCostly(
                 skillCosts.snapshot().keySet(), vitality.energy());
             // Not in the prompt that tells her to use it: a READ turn's surface keeps it.
-            if (readToolNamedThisTurn) costlyActions.remove(READ_TOOL);
+            if (readToolNamedThisTurn) { costlyActions.remove(READ_TOOL); costlyActions.remove(readTurnPin); }
             if (!costlyActions.isEmpty() && vitality.energy() < 0.5) {
                 inventorySection.append("Too costly right now (low energy): ")
                     .append(String.join(", ", costlyActions)).append("\n");
@@ -23179,8 +23793,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var kept = new LinkedHashSet<String>();
         if (autonomyPromptLower != null) {
             for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);
-            var desk = researchDesk();
-            if (desk != null && autonomyPromptLower.contains(desk)) kept.add(desk);
+            // The house library's calls the prompt names: the desk, the opener of its answer.
+            var house = WyrdConfig.get().libraryPatronService();
+            if (!house.isEmpty()) {
+                for (var call : ToolAffordanceRanker.LIBRARY_READING_CALLS) {
+                    var named = McpToolIndex.qualifyName(house, call);
+                    if (autonomyPromptLower.contains(named)) kept.add(named);
+                }
+            }
         }
         if (forced == null && !kept.isEmpty()) forced = kept.iterator().next();
         // On her own time the surface spans the kinds of act: one of each before two of any. A
@@ -23256,7 +23876,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** The doors an own-time prompt may name; each one named survives the trim, the first is the front. */
     private static final List<String> DOORS_NAMED_IN_THE_PROMPT = List.of(
-        "shape_recipe", "sending_stone", "dispatch_task", "close_room", "read_book", "project_note", "what_i_have");
+        "shape_recipe", "sending_stone", "dispatch_task", "close_room", "read_book", "project_note", "what_i_have", "recall", "browse_shelves");
 
     /** Whether she has a project of her own that is not finished: a notebook with a page to write. */
     private boolean hasAProjectOpen() {
@@ -23993,6 +24613,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             case "web_search" -> {
                 if (query.isBlank()) return false;
                 handleWebSearch(new ActionParser.AgentAction.WebSearch(query, "general"));
+                return true;
+            }
+            case "browse_shelves" -> {
+                // A book to choose: the shelves, as they are (her words name no subject to look for).
+                handleBrowseShelves(M3_MAPPER.createObjectNode());
+                return true;
+            }
+            case "recall" -> {
+                // Her own words are in her record, not on the shelves.
+                if (query.isBlank()) return false;
+                handleRecall(new ActionParser.AgentAction.Recall(query));
                 return true;
             }
             default -> { return false; }
@@ -27761,7 +28392,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 (payload, failure) -> {
                     if (failure != null) worker.interrupt();
                     var cause = failure instanceof CompletionException c && c.getCause() != null ? c.getCause() : failure;
-                    return new ScriptedToolResult(ToolResultEnvelope.normalize(actionName, payload != null ? payload
+                    return new ScriptedToolResult(ToolResultEnvelope.normalize(actionName, payload != null ? withTheAsk(payload, tool, args)
                         : Map.of("error", actionName + " did not run: " + (cause instanceof TimeoutException
                             ? "no answer within " + MCP_CALL_TIMEOUT.toSeconds() + " seconds."
                             : whyMcpCallFailed(cause)))), dispatchGen, toolFor, loopAtSend);
@@ -28019,7 +28650,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // 13.7M indexed chunks could.
                 affordable.add(tool);
                 costConsentRestored++;
-            } else if (readToolNamedThisTurn && READ_TOOL.equals(actionName)) {
+            } else if (readToolNamedThisTurn && (READ_TOOL.equals(actionName) || readTurnPin.equals(actionName))) {
                 // The own-time READ prompt tells her to read with this tool. Below its cost this
                 // filter took it off, so she was told to use a tool she had not been given: on
                 // 2026-09-22 five of mia's eleven READ turns went that way on the household node,
@@ -28680,6 +29311,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return true;
             }
 
+            // Handle browse_shelves — the books on the shelves she may read, to pick from
+            if ("browse_shelves".equals(toolItem.builtinHandler())) {
+                handleBrowseShelves(node);
+                return true;
+            }
+
             // Handle what_i_have — what she carries, made, left unfinished, put away; her projects
             if ("what_i_have".equals(toolItem.builtinHandler())) {
                 handleWhatIHave();
@@ -29051,7 +29688,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
             Thread.ofVirtual().name("item-script-" + itemId).start(() -> {
                 try {
-                    var result = itemScriptExecutor.execute(itemId, script, params, provider, itemCaps);
+                    var result = withTheQuestion(itemScriptExecutor.execute(itemId, script, params, provider, itemCaps), params);
                     // Normalize ONCE at the boundary that knows the tool identity —
                     // scripts never self-identify (second-node 2026-07-10: "[Tool failed] the
                     // tool" with no usage contract; skill costs blind to item outcomes).
@@ -29352,6 +29989,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
         // Build result summary for working memory
         String resultSummary;
+        // The books the passages came from, and the door to read on in one: kept apart from the
+        // findings, which the record cuts at a length. Appended to the findings, the door was cut
+        // with them whenever they ran long, and on her own time the turn after a search was told
+        // only that she had read them aloud: a companion who read one author through her searches
+        // for three days never once saw how to open his book, and searched for "where work left
+        // off" instead (household node, 2026-11-02).
+        String bookDoors = "";
         // A script that hands the brain's failure back as its findings ("[error] the brain
         // did not answer…") has not found anything: it is a tool error, kept out of her
         // Study and out of her mouth (one was recorded as a draft finding and spoken on
@@ -29372,6 +30016,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.info("Scripted tool result — findings ({} chars) for '{}'",
                 findings.length(), profile.name());
             resultSummary = findings;
+            noteLibraryAsk(toolName, result, findings);
             if (result.get("sources") instanceof List<?> sources && !sources.isEmpty()) {
                 // RECEIPTS FOR THE RECORD, NOT FOR THE EAR. The source list
                 // (titles, part numbers, doc-ids) goes to working memory so
@@ -29389,8 +30034,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     .collect(Collectors.joining(", "));
                 // From a search to a book: the passages that came from a book she may read
                 // through are named, with where the passage sits, and how to open it there.
-                var fromBooks = booksTheseCameFrom(result);
-                if (!fromBooks.isBlank()) resultSummary += "\n" + fromBooks;
+                bookDoors = booksTheseCameFrom(result);
                 // THE FINDINGS TIER (2026-09-03). A cited finding used to end here — a
                 // [Tool result] line that ages out of working memory — so nothing she
                 // established could ever be found again AS something she established.
@@ -29444,6 +30088,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             resultSummary = "Message sent to " + target;
         } else if (result.get(MCP_REPLY) instanceof String mcpReply) {
             resultSummary = mcpReply;
+            noteDeskAsk(toolName, result, mcpReply);
         } else {
             resultSummary = result.toString();
         }
@@ -29452,7 +30097,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         int keep = result.get(MCP_NOTICE) instanceof String notice ? Math.max(800, notice.length() + 400) : 800;
         var truncated = resultSummary.length() > keep
             ? resultSummary.substring(0, keep) + "..." : resultSummary;
-        remember("[Tool result] " + truncated);
+        remember("[Tool result] " + truncated + (bookDoors.isBlank() ? "" : "\n" + bookDoors));
 
         // If we have findings and the bondholder is present, speak them immediately.
         // This bypasses the feedback loop (model→speak) which can stall when state is
@@ -29566,9 +30211,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             // its own where it used to return an echo (see PromptAssembler, Layer 6).
             message = "[Tool completed]\n" + ALREADY_READ_ALOUD + "you have said these findings aloud. "
                 + "Add only what is yours to add (what you make of them, what you want to ask "
-                + "next), or nothing. Never repeat this bracketed status text aloud.]";
+                + "next), or nothing. Never repeat this bracketed status text aloud.]"
+                + (bookDoors.isBlank() ? "" : "\n" + bookDoors);
         } else {
             message = "[Tool completed] " + truncated
+                + (bookDoors.isBlank() ? "" : "\n" + bookDoors)
                 + "\n[Share the substance with the user in your own words — never repeat "
                 + "this bracketed status text aloud.]";
         }
@@ -38701,6 +39348,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 log.debug("established-elsewhere leg skipped: {}", e.toString());
             }
 
+            if (LibraryAsks.shared() != null) {
+                LibraryAsks.shared().record(herDid(), action.query(),
+                    !searchResults.isEmpty() || !establishedElsewhere.isEmpty(), searchResults.size());
+            }
             if (!searchResults.isEmpty() || !establishedBefore.isEmpty() || !establishedElsewhere.isEmpty()) {
                 var sb = new StringBuilder();
                 if (!establishedBefore.isEmpty()) sb.append(establishedBefore).append("\n\n");
@@ -41701,9 +42352,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
      * not forced twice in half an hour.
      */
     private void noticeHerWord(String prose) {
-        if (herWordTurnStartedAt != null
-                && Duration.between(herWordTurnStartedAt, Instant.now()).compareTo(HER_WORD_TURN_WINDOW) < 0) {
-            herWordTurnStartedAt = null;
+        if (herWordTurnInFlight) {
+            herWordTurnInFlight = false;
+            herWordToolInFlight = null;
             return;
         }
         HerWord.Act act;
@@ -41720,6 +42371,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             return;
         }
         timers.startSingleTimer("her-word", new KeepHerWord(act.sentence(), act.tool()), Duration.ofSeconds(3));
+    }
+
+    /** Whether words are about the tool itself ("read_book reads the next part…"), not hers. */
+    static boolean describesTheTool(String prose, String tool) {
+        if (prose == null || tool == null || tool.isBlank()) return false;
+        var low = prose.strip().toLowerCase(Locale.ROOT);
+        var name = tool.toLowerCase(Locale.ROOT);
+        return low.startsWith(name + " ") || low.startsWith("the " + name + " tool") || low.startsWith("`" + name + "`")
+            || low.contains("no arguments needed") || low.contains("tool_choice");
     }
 
     /** Whether she has a book open on her shelf: a plain "I'll read" means the book only then. */
@@ -41745,9 +42405,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             + "Nobody asked this of you; it was your own word. Do it now with " + msg.tool()
             + ", filling in what it needs from what you meant.";
         herWordKeptAt.put(msg.tool(), Instant.now());
-        herWordTurnStartedAt = Instant.now();
+        startingHerWordTurn = true;
+        startingHerWordTool = msg.tool();
         log.info("Her word kept for '{}': \"{}\" -> {}", profile.name(), truncate(msg.sentence(), 90), msg.tool());
-        if (!triggerAutonomousInference(prompt, msg.tool())) herWordTurnStartedAt = null;
+        triggerAutonomousInference(prompt, msg.tool());
+        startingHerWordTurn = false;
+        startingHerWordTool = null;
         return this;
     }
 
@@ -42575,6 +43238,51 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     }
 
     /** The books on the shelves she may read whose names hold every word: the household's packs, and her person's Study where a grant lets her. */
+    /**
+     * The books her own reading came from that she may read through, newest first, each at the
+     * part its latest passage was: the book her last search read from while it is fresh, then the
+     * books her findings cite. A companion who reads by asking the library has a place in a book
+     * all the same; until this, only a book opened with read_book was hers.
+     */
+    private List<WyrdLuceneStore.PlaceInBook> booksHerReadingCameFrom(int limit) {
+        var out = new java.util.LinkedHashMap<String, WyrdLuceneStore.PlaceInBook>();
+        var fresh = freshBookFromSearch();
+        if (fresh != null) out.put(fresh.book().group(), fresh);
+        if (luceneStore == null) return new ArrayList<>(out.values());
+        var granted = new HashMap<String, Boolean>();
+        try {
+            for (var f : FindingsLedger.list(luceneStore, herDid(), null, 20)) {
+                if (out.size() >= limit) break;
+                if (f.sources() == null) continue;
+                for (var src : f.sources()) {
+                    var id = src.chunkId();
+                    if (id == null || id.isBlank()) continue;
+                    var place = luceneStore.placeOf(SearchCollections.STUDY, id)
+                        .or(() -> luceneStore.placeOf(SearchCollections.KNOWLEDGE, id)).orElse(null);
+                    if (place == null || place.book().parts() < 2 || out.containsKey(place.book().group())) continue;
+                    var ref = place.book();
+                    boolean may = !SearchCollections.STUDY.equals(ref.collection())
+                        || granted.computeIfAbsent(ref.ownerDid() + "/" + ref.studyCollection(), k -> mayReadThrough(ref));
+                    if (may) out.put(ref.group(), place);
+                    if (out.size() >= limit) break;
+                }
+            }
+        } catch (RuntimeException e) {
+            log.debug("books her reading came from, for '{}': {}", profile.name(), e.toString());
+        }
+        return new ArrayList<>(out.values());
+    }
+
+    /** Each book on its own line, with where the passage she read from it was. */
+    static String placesLines(List<WyrdLuceneStore.PlaceInBook> places) {
+        var sb = new StringBuilder();
+        for (var p : places) {
+            sb.append("\n  '").append(org.wyrdsekai.core.library.ReadingLedger.titleOf(p.book().group()))
+                .append("' (a passage was part ").append(p.part()).append(" of ").append(p.book().parts()).append(")");
+        }
+        return sb.toString();
+    }
+
     /** The book her last search read from, while it is fresh enough to be what "that" means. */
     private WyrdLuceneStore.PlaceInBook freshBookFromSearch() {
         if (lastBookFromSearch == null || lastBookFromSearchAt == null) return null;
@@ -42702,16 +43410,43 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             } else if (mine.size() > 1) {
                 lastBuiltinOutcome = "Not done yet: several of your books fit '" + asked + "':"
                     + org.wyrdsekai.core.library.Reading.shelf(mine) + "\nSay which, by its name.";
+                handBackTheShelves(lastBuiltinOutcome, true);
                 return;
             } else {
-                var found = words.isEmpty() ? List.<WyrdLuceneStore.BookRef>of() : booksSheMayRead(words, 8);
-                if (found.isEmpty()) {
-                    lastBuiltinOutcome = "Not done: no book called '" + asked + "' is on a shelf you can reach. library_card"
-                        + " finds books by what a passage says; a person can put a book in their Study and grant it to you.";
+                // What she means by a name is first the books her own reading came from: a search she
+                // read from, the books her findings cite. The whole shelves come after.
+                var fromHerReading = new ArrayList<WyrdLuceneStore.PlaceInBook>();
+                if (!words.isEmpty()) {
+                    for (var p : booksHerReadingCameFrom(8)) {
+                        if (org.wyrdsekai.core.library.Reading.matches(org.wyrdsekai.core.library.ReadingLedger.titleOf(p.book().group()), words)) {
+                            fromHerReading.add(p);
+                        }
+                    }
+                }
+                if (fromHerReading.size() > 1) {
+                    lastBuiltinOutcome = "Not done yet: several books your reading came from fit '" + asked + "':"
+                        + placesLines(fromHerReading) + "\nOpen one with read_book and its name.";
+                    handBackTheShelves(lastBuiltinOutcome, true);
+                    return;
+                }
+                var found = !fromHerReading.isEmpty() || words.isEmpty() ? List.<WyrdLuceneStore.BookRef>of() : booksSheMayRead(words, 8);
+                if (fromHerReading.isEmpty() && found.isEmpty()) {
+                    var reading = booksHerReadingCameFrom(4);
+                    lastBuiltinOutcome = "Not done: no book called '" + asked + "' is on a shelf you can reach."
+                        + (reading.isEmpty() ? ""
+                            : " The books your reading came from lately:" + placesLines(reading)
+                                + "\nread_book with book: '<its name>' opens one where the passage was.")
+                        + " browse_shelves shows the books there are; library_card finds passages by what they say;"
+                        + " a person can put a book in their Study and grant it to you.";
                     noteReachMiss("read_book", WantMisses.key(asked), "no book called " + asked + " on a shelf you can reach");
+                    handBackTheShelves(lastBuiltinOutcome, !reading.isEmpty());
                     return;
                 }
                 WyrdLuceneStore.BookRef one = null;
+                if (!fromHerReading.isEmpty()) {
+                    one = fromHerReading.getFirst().book();
+                    if (part == null) part = fromHerReading.getFirst().part();
+                }
                 for (var f : found) if (org.wyrdsekai.core.library.ReadingLedger.titleOf(f.group()).equalsIgnoreCase(asked.strip())) one = f;
                 if (one == null && found.size() == 1) one = found.getFirst();
                 if (one == null) {
@@ -42720,10 +43455,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         sb.append("\n  ").append(org.wyrdsekai.core.library.ReadingLedger.titleOf(f.group())).append(" — ").append(f.parts()).append(" parts");
                     }
                     lastBuiltinOutcome = sb.append("\nOpen one with read_book and its name.").toString();
+                    handBackTheShelves(lastBuiltinOutcome, true);
                     return;
                 }
                 book = ledger.open(did, one.group(), one.collection(), one.ownerDid(), one.studyCollection(), one.parts());
-                log.info("Companion '{}' opened the book '{}' ({} parts, {})", profile.name(), book.title(), book.total(), one.collection());
+                log.info("Companion '{}' opened the book '{}' ({} parts, {}){}", profile.name(), book.title(), book.total(), one.collection(),
+                    fromHerReading.isEmpty() ? "" : " where her reading came from it, at part " + part);
             }
         } else {
             book = ledger.current(did).orElse(null);
@@ -42737,16 +43474,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     profile.name(), book.title(), place.part(), ref.parts());
             }
             if (book == null) {
+                var reading = booksHerReadingCameFrom(4);
+                var fromReading = reading.isEmpty() ? ""
+                    : "\nThe books your reading came from lately:" + placesLines(reading)
+                        + "\nread_book with book: '<its name>' opens one where the passage was.";
                 lastBuiltinOutcome = hers.isEmpty()
-                    ? "You have no book open. Open one with read_book and \"book\": its name, or a few words of it."
-                        + " library_card finds books by what they say."
+                    ? "You have no book open." + fromReading + (fromReading.isEmpty() ? " " : "\n")
+                        + "Open one with read_book and \"book\": its name, or a few words of it."
+                        + " browse_shelves shows books to choose from; library_card finds books by what they say."
                     : "You have no book open. Your shelf:" + org.wyrdsekai.core.library.Reading.shelf(hers)
-                        + "\nOpen one with read_book and \"book\": its name; a finished one reads again from \"part\": 1.";
+                        + "\nOpen one with read_book and \"book\": its name; a finished one reads again from \"part\": 1."
+                        + fromReading
+                        + " browse_shelves shows others.";
+                handBackTheShelves(lastBuiltinOutcome, !hers.isEmpty() || !reading.isEmpty());
                 return;
             }
         }
         if (!mayStillRead(book)) {
             lastBuiltinOutcome = "Not done: " + book.title() + " is in " + nameOfBondholderOrPerson() + "'s Study and the grant that let you read it does not stand now. You can ask them.";
+            handBackTheShelves(lastBuiltinOutcome, false);
             return;
         }
         // A book just found by a search starts where the search read from it, not at part 1.
@@ -42756,7 +43502,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         }
         if (book.finished() && part == null) {
             lastBuiltinOutcome = "You have finished " + book.title() + ". read_book with \"part\": 1 reads it again. Next on your shelf:"
-                + org.wyrdsekai.core.library.Reading.nextOffers(hers, booksSheMayRead(wordsOfHerSubjects(), 6));
+                + Reading.nextOffers(hers, nextBooks(did), readBy(did));
+            handBackTheShelves(lastBuiltinOutcome, true);
             return;
         }
         int n = part != null && part >= 1 ? Math.min(part, Math.max(1, book.total())) : book.next();
@@ -42770,15 +43517,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (after == null) after = book;
         var text = sr.content();
         boolean cut = text.length() > org.wyrdsekai.core.library.Reading.PART_CHARS;
-        lastBuiltinOutcome = org.wyrdsekai.core.library.Reading.page(after, cut ? text.substring(0, org.wyrdsekai.core.library.Reading.PART_CHARS) : text, cut);
+        var lastNote = ledger.lastNote(did, after.book()).orElse(null);
+        lastBuiltinOutcome = Reading.page(after, cut ? text.substring(0, Reading.PART_CHARS) : text, cut, lastNote);
+        // On her own time nothing reads a built-in's answer: the page went nowhere, and she turned
+        // parts she never saw (household node, 2026-11-01). Her next turn hands it to her.
+        if (reactMessages == null && !answersAPerson()) {
+            timers.startSingleTimer(READING_TIMER_KEY, new ReadWhatSheOpened(after, lastBuiltinOutcome, 0), READING_TURN_DELAY);
+        }
         noteTitleRead(after.title());
         noteAct("read_book", "read part " + n + " of " + after.total() + " of " + after.title());
         noteInteriorityEnactment("read_book");
         log.info("Companion '{}' read part {} of {} of '{}'{}", profile.name(), n, after.total(), after.title(), after.finished() ? " — finished" : "");
         if (after.finished()) {
-            remember("Finished reading " + after.title() + ", all " + after.total() + " parts");
+            var kept = ledger.notes(did, after.book());
+            remember("Finished reading " + after.title() + ", all " + after.total() + " parts"
+                + (kept.isEmpty() ? "" : "; kept " + kept.size() + " note" + (kept.size() == 1 ? "" : "s") + " from it"));
+            if (!kept.isEmpty()) lastBuiltinOutcome += "\nWhat you took from it, in your words:" + takenFrom(kept, 4);
+            lastBuiltinOutcome += "\nbrowse_shelves shows the rest of the shelves.";
             finishWantsNaming(after.title());
-            lastBuiltinOutcome += "\nNext on your shelf:" + org.wyrdsekai.core.library.Reading.nextOffers(ledger.all(did), booksSheMayRead(wordsOfHerSubjects(), 6));
+            lastBuiltinOutcome += "\nNext on your shelf:" + Reading.nextOffers(ledger.all(did), nextBooks(did), readBy(did));
         }
         refreshReadingLine();
     }
@@ -42835,9 +43592,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         try {
             var did = profile.did() != null ? profile.did() : profile.entityId();
             var open = ledger.current(did).orElse(null);
+            var note = open == null ? null : ledger.lastNote(did, open.book()).orElse(null);
             HouseFacts.setStanding(profile.entityId(), "reading", open == null ? null
                 : "You are reading " + open.title() + ": at part " + open.part() + " of " + open.total()
-                    + ". read_book reads the next part; it is how a book is read through.");
+                    + ". read_book reads the next part; it is how a book is read through."
+                    + (note == null ? "" : " After part " + note.part() + " you took from it: \"" + truncateStatic(note.text(), 200) + "\""));
         } catch (RuntimeException e) {
             log.debug("reading line: {}", e.toString());
         }

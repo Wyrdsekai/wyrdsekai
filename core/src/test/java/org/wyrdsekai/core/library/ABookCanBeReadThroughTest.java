@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -167,7 +168,7 @@ class ABookCanBeReadThroughTest {
         var rel = "core/src/main/java/org/wyrdsekai/core/agent/CompanionActor.java";
         var from = Path.of("..", rel);
         var ca = Files.readString(Files.exists(from) ? from : Path.of(rel));
-        assertThat(ca).contains("var fromBooks = booksTheseCameFrom(result);");
+        assertThat(ca).contains("bookDoors = booksTheseCameFrom(result);");
         assertThat(ca).contains("These passages came from books you can read through:");
         assertThat(ca).contains("if (book == null && freshBookFromSearch() != null) {");
         assertThat(ca).contains("if (part == null && fromSearch != null && fromSearch.book().group().equals(book.book()) && book.part() < 1) {");
@@ -182,7 +183,7 @@ class ABookCanBeReadThroughTest {
         assertThat(ca).contains("if (\"read_book\".equals(toolItem.builtinHandler())) {\n                handleReadBook(node);");
         assertThat(ca).contains("allowed.add(\"read_book\");");
         // Named in the prompt, read_book survives the trim as a kept door (2026-10-26), not as the one pin.
-        assertThat(ca).contains("\"shape_recipe\", \"sending_stone\", \"dispatch_task\", \"close_room\", \"read_book\", \"project_note\", \"what_i_have\");");
+        assertThat(ca).contains("\"shape_recipe\", \"sending_stone\", \"dispatch_task\", \"close_room\", \"read_book\", \"project_note\", \"what_i_have\", \"recall\", \"browse_shelves\");");
         assertThat(ca).contains("for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);");
         assertThat(ca).contains("noteInteriorityEnactment(\"read_book\");");
         assertThat(ca).contains("finishWantsNaming(after.title());");
@@ -193,5 +194,56 @@ class ABookCanBeReadThroughTest {
             ? Path.of("..", "core/src/main/java/org/wyrdsekai/core/item/ToolItemStarterKit.java")
             : Path.of("core/src/main/java/org/wyrdsekai/core/item/ToolItemStarterKit.java"));
         assertThat(kit).contains("readBook(),");
+    }
+
+    @Test
+    void what_she_takes_from_a_part_is_kept_with_the_book_and_opens_the_next() {
+        var mine = ledger.open(HER, BOOK, "study", OWNER, "books", 3);
+        ledger.read(HER, BOOK, 1);
+        ledger.note(HER, BOOK, 1, "It says she is becoming. It leaves me with a question.");
+        ledger.read(HER, BOOK, 2);
+        ledger.note(HER, BOOK, 2, "  The second part answers it, partly.  ");
+        ledger.note(HER, BOOK, 2, " ");
+        ledger.note("did:key:z6MkSomeoneElse", BOOK, 1, "not hers");
+
+        var notes = ledger.notes(HER, BOOK);
+        assertThat(notes).extracting(ReadingLedger.Note::part).containsExactly(1, 2);
+        assertThat(notes.getLast().text()).isEqualTo("The second part answers it, partly.");
+        assertThat(ledger.lastNote(HER, BOOK)).map(ReadingLedger.Note::part).contains(2);
+        assertThat(ledger.lastNote(HER, OTHER)).isEmpty();
+
+        var page = Reading.page(ledger.find(HER, BOOK).orElse(mine), "Part 3 text.", false, ledger.lastNote(HER, BOOK).orElse(null));
+        assertThat(page).startsWith("Last time, after part 2, you took from it: \"The second part answers it, partly.\"\n\n");
+        assertThat(page).contains("Part 3 text.");
+        assertThat(Reading.page(mine, "Part 1 text.", false)).as("nothing kept yet: the page as it was").startsWith(mine.title());
+    }
+
+    @Test
+    void the_shelf_offers_a_housemates_book_with_who_is_reading_it() {
+        var mine = ledger.open(HER, OTHER, "study", OWNER, "books", 2);
+        ledger.read(HER, OTHER, 2);
+        var hers = ledger.all(HER);
+        var eve = store.book(SearchCollections.STUDY, BOOK);
+
+        var offers = Reading.nextOffers(hers, List.of(eve), Map.of(BOOK, "Rook"));
+
+        assertThat(offers).contains("The New Eve - Robert Lewis — 3 parts, not yet begun — Rook is reading it");
+        assertThat(Reading.nextOffers(hers, List.of(eve))).as("no housemate: as before")
+            .contains("The New Eve - Robert Lewis — 3 parts, not yet begun").doesNotContain("is reading it");
+        assertThat(mine).isNotNull();
+    }
+
+    @Test
+    void the_shelf_lists_books_by_any_of_her_words_and_picks_some_at_random() {
+        var any = store.booksWithAnyWord(SearchCollections.STUDY, List.of("diamond", "nothing-like-this"), 10);
+        assertThat(any).extracting(WyrdLuceneStore.BookRef::group).containsExactly(OTHER);
+        assertThat(any.getFirst().parts()).isEqualTo(2);
+        assertThat(store.booksWithAnyWord(SearchCollections.STUDY, List.of("note"), 10))
+            .as("a note is no book: one part").isEmpty();
+
+        var picked = store.booksAtRandom(SearchCollections.STUDY, 5, new Random(7));
+        assertThat(picked).extracting(WyrdLuceneStore.BookRef::group).containsExactlyInAnyOrder(BOOK, OTHER);
+        assertThat(store.booksAtRandom(SearchCollections.STUDY, 1, new Random(7))).hasSize(1);
+        assertThat(store.booksAtRandom(SearchCollections.STUDY, 0, new Random(7))).isEmpty();
     }
 }

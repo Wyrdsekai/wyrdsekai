@@ -4,6 +4,24 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.16] — 2026-11-03
+
+### Added
+
+- **Companions remember what they read.** After each part of a book, a companion says what she took from it. She keeps that and picks up from it next time.
+- **Companions can choose their own books.** A companion can look along the shelves, or for a subject or an author, and open what she likes.
+- **Companions can see what each other is reading.** When one is reading a book, the other is told and can read it too.
+- **Research desk answers come back.** If your library's research desk answers a companion's question, she is told and can read the answer.
+- **Companions know when the library has little on a subject.** If a companion keeps asking and finds little, she is told, and pointed to the research desk.
+
+### Fixed
+
+- **Companions go on with the book they are reading.** They read the next part instead of starting a new search.
+- **A search can lead to the book.** When a search finds something in a book, the companion is told which book and can open it there. She can also ask for a book by its author.
+- **Companions look in their own memory for what they said.** A question about what a companion said or promised no longer goes to the library.
+- **Companions do what they say they will.** If a companion says she will close a room, she closes it, even if the same sentence mentions a book. She also keeps her word when she promises two things in a row.
+- **Automatic updates now install.** With automatic updates on, new releases install at night, when no one is talking to your companions. Turning them on now works right away. If you already had them on, run `wyrd update now` once for this release.
+
 ## [0.5.15] — 2026-10-31
 
 ### Fixed

@@ -6,6 +6,7 @@ import org.wyrdsekai.core.search.WyrdLuceneStore.BookRef;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 
@@ -48,7 +49,16 @@ public final class Reading {
 
     /** The page as she is shown it: the book, where she is, the text, and what to do next. */
     public static String page(Bookmark after, String text, boolean cut) {
+        return page(after, text, cut, null);
+    }
+
+    /** As {@link #page(Bookmark, String, boolean)}, opening with what she took from the book last time, when she kept something. */
+    public static String page(Bookmark after, String text, boolean cut, ReadingLedger.Note last) {
         var sb = new StringBuilder();
+        if (last != null && last.text() != null && !last.text().isBlank()) {
+            sb.append("Last time, after part ").append(last.part()).append(", you took from it: \"")
+              .append(clip(last.text(), 400)).append("\"\n\n");
+        }
         sb.append(after.title()).append(" — part ").append(after.part()).append(" of ").append(after.total()).append(":\n\n");
         sb.append(text == null ? "" : text.strip());
         if (cut) sb.append("\n[…this part was cut at ").append(PART_CHARS).append(" characters]");
@@ -62,6 +72,11 @@ public final class Reading {
         return sb.toString();
     }
 
+    static String clip(String s, int max) {
+        var t = s.strip().replaceAll("\\s+", " ");
+        return t.length() <= max ? t : t.substring(0, max - 1).strip() + "…";
+    }
+
     /** One line per book on her shelf. */
     public static String shelf(List<Bookmark> hers) {
         var sb = new StringBuilder();
@@ -73,6 +88,11 @@ public final class Reading {
 
     /** What the shelf offers next: the ones she began and left, then the ones named here. */
     public static String nextOffers(List<Bookmark> hers, List<BookRef> others) {
+        return nextOffers(hers, others, Map.of());
+    }
+
+    /** As above, each book a housemate is reading marked with who ({@code readBy}: the book's name → who). */
+    public static String nextOffers(List<Bookmark> hers, List<BookRef> others, Map<String, String> readBy) {
         var sb = new StringBuilder();
         int n = 0;
         for (var b : hers) {
@@ -85,6 +105,8 @@ public final class Reading {
             boolean hers2 = hers.stream().anyMatch(b -> b.book().equals(o.group()));
             if (hers2) continue;
             sb.append("\n  ").append(ReadingLedger.titleOf(o.group())).append(" — ").append(o.parts()).append(" parts, not yet begun");
+            var who = readBy == null ? null : readBy.get(o.group());
+            if (who != null) sb.append(" — ").append(who).append(" is reading it");
             n++;
         }
         return sb.toString();

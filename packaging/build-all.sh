@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="${WYRDSEKAI_VERSION:-0.5.15}"
+VERSION="${WYRDSEKAI_VERSION:-0.5.16}"
 
 info()  { echo -e "\033[36m[pack]\033[0m $*"; }
 ok()    { echo -e "\033[32m[pack]\033[0m $*"; }
@@ -87,14 +87,35 @@ if [[ -z "${WYRDSEKAI_SKIP_BAKE:-}" ]]; then
         # server of another project's test run answered on the port during the 0.5.8 release
         # (2026-10-20); an answer on the port is not the server the bake was told to use.
         BAKE_MODEL="${LLAMA_SKILLS_MODEL:-wyrdsekai-3.5-9b-drive-v6-q4km.gguf}"
-        if curl -fsS -m 3 http://127.0.0.1:8200/health >/dev/null 2>&1; then
-            if curl -fsS -m 3 http://127.0.0.1:8200/v1/models 2>/dev/null | grep -qF "${BAKE_MODEL%.gguf}"; then
-                info "Bake server :8200 is up with ${BAKE_MODEL%.gguf}"
-            else
-                err "port 8200 answers but does not serve ${BAKE_MODEL%.gguf} — something else holds the bake's port; stop it or wait, then build again"
-                exit 1
-            fi
+        if curl -fsS -m 3 http://127.0.0.1:8200/health >/dev/null 2>&1 \
+            && curl -fsS -m 3 http://127.0.0.1:8200/v1/models 2>/dev/null | grep -qF "${BAKE_MODEL%.gguf}"; then
+            info "Bake server :8200 is up with ${BAKE_MODEL%.gguf}"
         else
+            # Something else holds the port or the card: another job on this box. It is waited for and
+            # never stopped, and the port is looked at without connecting (a test's stand-in records who
+            # calls it); a build that stopped here threw away the suite it had just passed (2026-11-02,
+            # the port; 2026-11-03, the card, the model unable to load with two other jobs on it).
+            bake_port_held() {
+                if command -v ss >/dev/null 2>&1; then ss -Hltn 'sport = :8200' 2>/dev/null | grep -q .
+                elif command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:8200 -sTCP:LISTEN >/dev/null 2>&1
+                else return 1; fi
+            }
+            bake_card_short() {
+                command -v nvidia-smi >/dev/null 2>&1 || return 1
+                local free
+                free="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1)"
+                [[ -n "$free" && "$free" -lt "${BAKE_CARD_FREE_MIB:-7000}" ]]
+            }
+            bake_port_waited=0
+            while bake_port_held || bake_card_short; do
+                if [[ "$bake_port_waited" -ge "${BAKE_PORT_WAIT:-21600}" ]]; then
+                    err "port 8200 or the card stayed held for ${bake_port_waited} s by other jobs; build again when they are done"
+                    exit 1
+                fi
+                [[ $((bake_port_waited % 600)) -eq 0 ]] && info "Port 8200 or the card is held by another job; waiting for it"
+                sleep 30
+                bake_port_waited=$((bake_port_waited + 30))
+            done
             info "Bake server :8200 is down — starting it for the bake"
             "$PROJECT_DIR/scripts/bake-server.sh" start
             BAKE_SERVER_STARTED_HERE=true

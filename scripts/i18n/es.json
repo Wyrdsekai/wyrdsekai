@@ -1319,6 +1319,7 @@
   "archive.reopen.none": "Nada de lo cerrado o guardado se llama \"{0}\". Mira la lista con: archive",
   "archive.reopen.failed": "{0} no se pudo abrir ahora.",
   "item.read_book.descriptor": "{actor} abre un libro por la página marcada y sigue leyendo.",
+  "item.browse_shelves.descriptor": "{actor} recorre los estantes, leyendo los lomos.",
   "bond.posture.usage": "bond posture <compañero> — hasta dónde puede llegar tu compañero cuando no estás.  bond posture <compañero> <generous|bounded|minimal|suspended> — cámbialo.",
   "bond.posture.is": "La postura de {0} es {1}.",
   "bond.posture.set": "La postura de {0} es ahora {1}.",

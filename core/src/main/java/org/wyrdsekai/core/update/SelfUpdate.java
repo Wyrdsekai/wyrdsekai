@@ -84,17 +84,40 @@ public final class SelfUpdate {
     }
 
     /** Schedule the checks: first after {@code initialDelay}, then every {@code interval}. */
+    /** How often an auto node looks inside its window: the release is remembered a day, so a look costs nothing. */
+    static final Duration WINDOW_STEP = Duration.ofMinutes(15);
+
+    /**
+     * Checks every {@code interval}, and every {@link #WINDOW_STEP} inside the window while the
+     * setting is auto. A check every six hours from boot met a two-hour window only when the boot
+     * hour happened to put one there: started at 17:17, a node checked at 23:32 and 05:32 and never
+     * installed. The setting is read at each check, so "auto on" works without a restart.
+     */
     public void start(ScheduledExecutorService scheduler, Duration initialDelay, Duration interval) {
-        if (ReleaseCheck.mode().equals("off")) { log.info("[self-update] off (WYRDSEKAI_UPDATE=off)"); return; }
-        scheduler.scheduleAtFixedRate(() -> { try { tick(); } catch (Throwable t) { log.warn("[self-update] check failed: {}", t.toString()); } },
+        scheduler.scheduleAtFixedRate(() -> { try { if (!ReleaseCheck.mode().equals("off")) tick(); } catch (Throwable t) { log.warn("[self-update] check failed: {}", t.toString()); } },
             initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(() -> {
+            try { if (windowLookDue(ReleaseCheck.mode(), LocalTime.now(ZoneId.systemDefault()))) tick(); }
+            catch (Throwable t) { log.warn("[self-update] check failed: {}", t.toString()); }
+        }, WINDOW_STEP.toMillis(), WINDOW_STEP.toMillis(), TimeUnit.MILLISECONDS);
         log.info("[self-update] mode {}: checking {} every {}{}", ReleaseCheck.mode(), ReleaseCheck.REPO, interval,
-            ReleaseCheck.mode().equals("auto") ? ", installing inside " + window() + " when idle" : "");
+            ReleaseCheck.mode().equals("auto") ? ", and every " + WINDOW_STEP.toMinutes() + " min inside " + window()
+                + ", installing at a quiet moment" : "");
+    }
+
+    /** Whether a look inside the window is due: the setting is auto and it is the window now. */
+    static boolean windowLookDue(String mode, LocalTime now) {
+        return "auto".equals(mode) && inWindow(now);
     }
 
     /** One check; returns what it decided, for the log and the status route. */
     public synchronized String tick() {
         var github = ReleaseCheck.status(installRoot, dataDir);
+        // The siblings' latest releases, remembered for the status route: refreshed when a day old.
+        if (!github.mode().equals("off") && dataDir != null) {
+            ReleaseCheck.latestCached(ReleaseCheck.CODEZAIKU_REPO, dataDir);
+            ReleaseCheck.latestCached(ReleaseCheck.RESEARCHZOSHO_REPO, dataDir);
+        }
         var s = new LinkedHashMap<String, Object>(state);
         s.put("lastCheck", Instant.now().toString());
         s.put("installed", github.installed());
@@ -121,7 +144,8 @@ public final class SelfUpdate {
         else if (pinned() != null) decision = "pinned to " + pinned();
         else if (attemptedToday(s, status.latest())) decision = "already attempted " + status.latest() + " today";
         else if (!inWindow(LocalTime.now(ZoneId.systemDefault()))) decision = "waiting for the window " + window();
-        else if (!idle.getAsBoolean()) decision = "busy; trying again next check";
+        else if (!idle.getAsBoolean()) decision = "busy (a person spoke, or work that must not be broken is running); trying again in "
+            + WINDOW_STEP.toMinutes() + " min";
         else {
             s.put("lastAttemptVersion", status.latest());
             s.put("lastAttemptAt", Instant.now().toString());

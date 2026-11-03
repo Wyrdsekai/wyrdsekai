@@ -1,7 +1,9 @@
 package org.wyrdsekai.core.persistence;
 
 import org.wyrdsekai.core.body.BodyStore;
+import org.wyrdsekai.core.library.LibraryAsks;
 import org.wyrdsekai.core.library.LibraryResearchLedger;
+import org.wyrdsekai.core.library.ReadingLedger;
 import org.wyrdsekai.core.library.LibraryYesReports;
 import org.wyrdsekai.core.soul.BondNameStore;
 
@@ -136,8 +138,10 @@ public final class SchemaInitializer {
         runMigration(conn, 19, "bond_name_offers", () -> BondNameStore.ensureOffers(conn));
         runMigration(conn, 20, "made_things", () -> MadeThingsStore.ensure(conn));
         runMigration(conn, 21, "made_things_archive", () -> MadeThingsStore.ensureArchive(conn));
-        runMigration(conn, 22, "reading_bookmarks", () -> org.wyrdsekai.core.library.ReadingLedger.ensure(conn));
+        runMigration(conn, 22, "reading_bookmarks", () -> ReadingLedger.ensure(conn));
         runMigration(conn, 23, "recipe_queue_node_version", () -> migrateRecipeQueueNodeVersion(conn));
+        runMigration(conn, 24, "library_asks", () -> LibraryAsks.ensure(conn));
+        runMigration(conn, 25, "reading_notes", () -> ReadingLedger.ensureNotes(conn));
 
         // Retry deferred indexes after migrations
         for (var statement : cleaned.split(";")) {
@@ -162,7 +166,7 @@ public final class SchemaInitializer {
      * {@link DataVersion} so an OLDER binary opening a NEWER data dir can refuse
      * instead of silently mangling tables it doesn't understand. Append-only.
      */
-    public static final int SCHEMA_VERSION = 23;
+    public static final int SCHEMA_VERSION = 25;
 
     @FunctionalInterface
     private interface Migration { void run() throws SQLException; }

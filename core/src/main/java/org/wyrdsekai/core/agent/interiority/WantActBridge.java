@@ -116,14 +116,14 @@ public final class WantActBridge {
         Map.entry("Harmony",      "make_amends"));     // mend the frayed thing
 
     // DIRECT: args derive from the want text (a query) — no inference, bypasses the surface.
-    private static final Set<String> DIRECT_VERBS = Set.of("library_search", "web_search",
+    private static final Set<String> DIRECT_VERBS = Set.of("library_search", "web_search", "recall", "browse_shelves",
         LetterToTheAbsent.VERB);
     // FORCE_TOOL: model supplies content/target — pin into surface + require.
     private static final Set<String> FORCE_VERBS = Set.of(
         "sending_stone", "emote", "examine", "bear_the_wound", "seek_sanctuary",
         "acknowledge_harm", "make_amends", "propose_peer_bond", "flag_protection",
         "save_artifact", "note", "write_journal", "write_text", "tell_agent", "set_goal",
-        "go_to_room", "recall", "read_book");
+        "go_to_room", "read_book");
 
     static Mode modeFor(String verb) {
         if (verb == null) return Mode.DEFER;
@@ -312,9 +312,17 @@ public final class WantActBridge {
     private record Rule(String verb, List<String> keys) {}
 
     private static final List<Rule> RULES = List.of(
+        // Her own words are in her record, not on the shelves: "what I said I'd learn" went to the
+        // library as a search, six times in a day, and the shelves do not hold what she said.
+        new Rule("recall", List.of("what i said i'd", "what i said i would", "what i said to", "what i said about",
+            "what i've said", "what i have said", "what i told", "what i promised", "what i committed",
+            "my promise", "my commitments", "my own words", "what did i say", "do i remember", "what i remember")),
         new Rule("sending_stone", List.of("with you", "toward ", "reach out", "reach for", "reach toward",
             "the other", "each other", "with them", "for them", "both of us", "sit with",
             "be near", "present companion", "someone i care", "connect")),
+        // A book chosen from the shelves: "pick a book", "something new to read".
+        new Rule("browse_shelves", List.of("pick a book", "choose a book", "find a book to read", "a new book",
+            "something to read", "something new to read", "browse the shelves", "the next book")),
         // A book read through, not searched: "finish reading", "keep reading", "the next chapter".
         new Rule("read_book", List.of("finish reading", "keep reading", "continue reading", "read on",
             "next chapter", "next part", "finish the book", "read the book", "read more of", "pick up the book",

@@ -152,6 +152,38 @@ CREATE TABLE IF NOT EXISTS reading_bookmarks (
   PRIMARY KEY (agent_did, book)
 );
 
+-- What she took from each part she read, in her words (0.5.16).
+CREATE TABLE IF NOT EXISTS reading_notes (
+  agent_did   TEXT NOT NULL,
+  book        TEXT NOT NULL,
+  part        INTEGER NOT NULL,
+  note        TEXT NOT NULL,
+  written_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reading_notes_book ON reading_notes(agent_did, book, written_at);
+
+-- What she asked the library's shelves, and whether they held anything (0.5.16).
+CREATE TABLE IF NOT EXISTS library_asks (
+  agent_did  TEXT NOT NULL,
+  query      TEXT NOT NULL,
+  asked_at   BIGINT NOT NULL,
+  found      INTEGER NOT NULL DEFAULT 0,
+  sources    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_library_asks_agent_time ON library_asks(agent_did, asked_at);
+
+-- What she handed the research desk, and the answer once it came back (0.5.16).
+CREATE TABLE IF NOT EXISTS library_desk_asks (
+  job_id       TEXT PRIMARY KEY,
+  agent_did    TEXT NOT NULL,
+  question     TEXT NOT NULL,
+  asked_at     BIGINT NOT NULL,
+  answered_at  BIGINT,
+  entry_id     TEXT,
+  title        TEXT,
+  opened       INTEGER NOT NULL DEFAULT 0
+);
+
 -- Inventory (per-entity carried objects)
 -- script_source / script_id populated when the item is a scripted ToolItem
 -- (e.g., library_card, oracle_lens). Used by cross-zone transit to carry

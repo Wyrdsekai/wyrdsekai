@@ -378,7 +378,7 @@ wyrd researcher update         # ResearchZosho's own updater
 
 `wyrd update now` downloads the installer for your system from the GitHub release. It checks it against the release's `SHA256SUMS` file, then installs it. Your databases are backed up first, and the service restarts. Since 0.5.0 it also asks CodeZaiku and ResearchZosho, if you have them, to update themselves. Each uses its own updater. Add `--no-siblings` to skip that.
 
-With `WYRDSEKAI_UPDATE=auto`, the node installs a newer release by itself at a quiet moment. Nothing must have been happening for ten minutes, and the clock must be inside the update window. Then it restarts. It tries once per version per day. It never updates a development build, and a pin keeps it where it is. Automatic updates leave CodeZaiku and ResearchZosho to their own settings.
+With `WYRDSEKAI_UPDATE=auto`, Wyrdsekai installs a newer release by itself during the update window. It waits until no one has spoken to a companion for ten minutes and nothing that must not be interrupted is running, such as a sleep or a backup. It then pauses your companions for a few minutes, installs the release and restarts. Changing the setting works right away, without a restart. It tries once per version per day. It never updates a development build, and a pin keeps it where it is. Automatic updates leave CodeZaiku and ResearchZosho to their own settings.
 
 On Windows, the installer needs an administrator prompt that a background service cannot show. So automatic mode downloads and checks the `.msi`, and `wyrd update now` finishes the job.
 
