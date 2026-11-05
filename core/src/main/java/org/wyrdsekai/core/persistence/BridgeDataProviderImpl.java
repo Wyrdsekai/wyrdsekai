@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.persistence;
 
+import org.wyrdsekai.core.vault.HouseArchive;
+
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.javadsl.AskPattern;
@@ -950,6 +952,11 @@ public class BridgeDataProviderImpl implements BridgeDataProvider {
     public String formatHealthStatus() {
         if (healthStatusSupplier != null) return healthStatusSupplier.get();
         return "No health data available";
+    }
+
+    @Override
+    public String formatArchive() {
+        return HouseArchive.describe();
     }
 
     @Override

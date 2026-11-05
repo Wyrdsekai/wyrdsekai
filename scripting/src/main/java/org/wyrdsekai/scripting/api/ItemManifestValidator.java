@@ -388,7 +388,7 @@ public final class ItemManifestValidator {
 
         // §4.2 Knowledge
         addAll(m, 1, "library.search", "library.read", "library.list_packs",
-            "journal.search", "journal.recent",
+            "journal.search", "journal.recent", "journal.read",
             "notes.list",
             "pinboard.list",
             "tags.list", "tags.entries");

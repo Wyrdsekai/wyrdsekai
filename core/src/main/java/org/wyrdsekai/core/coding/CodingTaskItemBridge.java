@@ -399,7 +399,8 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 // not exist. Say plainly what the person is about to be handed.
                 log.warn("CodingTaskItemBridge: {} did not register — it will be placed as "
                     + "an inert artifact, NOT a usable tool", p);
-                keepRefusedItem(p);
+                var kept = keepRefusedItem(p);
+                if (kept != null) ItemContractRepair.askedFor(String.valueOf(src.taskId())).ifPresent(a -> ItemContractRepair.keepAsked(kept, a));
             }
             if (def.isPresent()) {
                 var scriptedId = def.get().itemId();
@@ -414,7 +415,8 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 // its RoomObject and inventory row survived (live 2026-08-20). Copy it
                 // where the loader looks, under the DATA root so a package upgrade cannot
                 // take away something she made.
-                keepAcceptedItem(p, scriptedId);
+                var placedAt = keepAcceptedItem(p, scriptedId);
+                if (placedAt != null) ItemContractRepair.askedFor(String.valueOf(src.taskId())).ifPresent(a -> ItemContractRepair.keepAsked(placedAt, a));
                 // Re-stamp the side-registry with the scripted item id so
                 // RoomActor.dispatchCodingItemUse can resolve the placed
                 // codex-XYZ RoomObject back to the registered manifest
@@ -873,10 +875,10 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         return new BrokenItems.Entry(name, target, refusals.isEmpty() ? List.of("refused at registration") : refusals, true);
     }
 
-    private static void keepAcceptedItem(Path source, String scriptedId) {
+    private static Path keepAcceptedItem(Path source, String scriptedId) {
         try {
             var dir = ScriptedItemLoader.householdItemsDir();
-            if (dir == null) return;
+            if (dir == null) return null;
             Files.createDirectories(dir);
             var target = dir.resolve(
                 (scriptedId == null || scriptedId.isBlank()
@@ -896,9 +898,11 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             }
             log.info("CodingTaskItemBridge: kept '{}' at {} — it will still be here after "
                 + "a restart", scriptedId, target);
+            return target;
         } catch (Exception e) {
             log.warn("CodingTaskItemBridge: could not keep '{}' beyond this session: {}",
                 scriptedId, e.toString());
+            return null;
         }
     }
 

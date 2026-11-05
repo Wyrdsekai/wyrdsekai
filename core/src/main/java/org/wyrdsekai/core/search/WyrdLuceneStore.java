@@ -1335,7 +1335,25 @@ public class WyrdLuceneStore implements Closeable {
                                  String content, String collection, long timestamp,
                                  int version, List<Float> embedding,
                                  String vectorClockJson, String lastModifiedBy, boolean deleted) {
+        insertStudyItem(id, userDid, itemType, title, content, collection, timestamp, version, embedding,
+            vectorClockJson, lastModifiedBy, deleted, null);
+    }
+
+    /**
+     * Study upsert with the names a note is kept under. Null names keep whatever names the item
+     * already has, so an edit or a phone's copy of a note does not take its names away.
+     */
+    public void insertStudyItem(String id, String userDid, String itemType, String title,
+                                 String content, String collection, long timestamp,
+                                 int version, List<Float> embedding,
+                                 String vectorClockJson, String lastModifiedBy, boolean deleted,
+                                 List<String> tags) {
+        var names = tags != null ? tags : ("note".equals(itemType) ? studyTagsOf(id) : List.<String>of());
         var doc = newDocument(id, content, embedding);
+        for (var t : names) {
+            var tag = studyTag(t);
+            if (tag != null) doc.add(new StringField(FIELD_TAG, tag, Field.Store.YES));
+        }
         doc.add(new StringField("user_did", safe(userDid), Field.Store.YES));
         doc.add(new StringField("item_type", safe(itemType), Field.Store.YES));
         doc.add(new StoredField("title", safe(title)));
@@ -1434,6 +1452,7 @@ public class WyrdLuceneStore implements Closeable {
                         copyStored(old, doc, "last_modified_by", true);
                         copyStored(old, doc, "title", false);
                         copyStored(old, doc, "vector_clock", false);
+                        copyStudyTags(old, doc);
                         var ts = old.get("timestamp");
                         doc.add(new StoredField("timestamp", ts == null ? 0L : Long.parseLong(ts)));
                         var ver = old.get("version");
@@ -1483,6 +1502,42 @@ public class WyrdLuceneStore implements Closeable {
     }
 
     /** Carry one stored field across a document rebuild, if present. */
+    /**
+     * The names a note is kept under. Items kept entries with {@code world.notes.add(text, ["name"])}
+     * and read them back with {@code world.notes.list("name")}; the names were never stored, so every
+     * such listing returned her last hundred notes of any kind (household node, 2026-11-05).
+     */
+    private static final String FIELD_TAG = "tag";
+
+    /** A name as it is kept and asked for: trimmed, lower case, nothing that could end a filter clause. */
+    public static String studyTag(String raw) {
+        if (raw == null) return null;
+        var t = raw.strip().toLowerCase(Locale.ROOT).replace("\"", "").replace("&", "");
+        return t.isEmpty() ? null : t;
+    }
+
+    /** Every name an item already carries, for a rewrite that would otherwise drop them. */
+    private static void copyStudyTags(Document from, Document to) {
+        for (var v : from.getValues(FIELD_TAG)) to.add(new StringField(FIELD_TAG, v, Field.Store.YES));
+    }
+
+    private List<String> studyTagsOf(String id) {
+        if (id == null) return List.of();
+        try {
+            var sm = getSearcherManager(SearchCollections.STUDY);
+            var searcher = sm.acquire();
+            try {
+                var hits = searcher.search(new TermQuery(new Term(FIELD_ID, id)), 1);
+                if (hits.scoreDocs.length == 0) return List.of();
+                return List.of(searcher.storedFields().document(hits.scoreDocs[0].doc).getValues(FIELD_TAG));
+            } finally {
+                sm.release(searcher);
+            }
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     private static void copyStored(Document from, Document to, String field, boolean indexed) {
         var v = from.get(field);
         if (v == null) return;
@@ -1606,8 +1661,15 @@ public class WyrdLuceneStore implements Closeable {
      * is correct and cheap. Returns at most {@code limit}.
      */
     public List<SearchResult> listStudyByTypeRecent(String userDid, String itemType, int limit) {
+        return listStudyByTypeRecent(userDid, itemType, null, limit);
+    }
+
+    /** The same listing, only the items kept under {@code tag}; every item when the tag is blank. */
+    public List<SearchResult> listStudyByTypeRecent(String userDid, String itemType, String tag, int limit) {
         if (limit <= 0) return List.of();
         String filter = "user_did == \"" + userDid + "\" && item_type == \"" + itemType + "\"";
+        var name = studyTag(tag);
+        if (name != null) filter += " && " + FIELD_TAG + " == \"" + name + "\"";
         try {
             var sm = getSearcherManager(SearchCollections.STUDY);
             var searcher = sm.acquire();
@@ -1940,6 +2002,7 @@ public class WyrdLuceneStore implements Closeable {
                     copyStored(old, doc, "last_modified_by", true);
                     copyStored(old, doc, "title", false);
                     copyStored(old, doc, "vector_clock", false);
+                    copyStudyTags(old, doc);
                     copyLongStored(old, doc, "timestamp");
                     var ver = old.get("version");
                     doc.add(new StoredField("version", ver == null ? 1 : Integer.parseInt(ver)));
@@ -3464,6 +3527,7 @@ public class WyrdLuceneStore implements Closeable {
                         copyStored(old, doc, "last_modified_by", true);
                         copyStored(old, doc, "title", false);
                         copyStored(old, doc, "vector_clock", false);
+                        copyStudyTags(old, doc);
                         addChunkOrder(doc, old.get("title"));
                         var ts = old.get("timestamp");
                         doc.add(new StoredField("timestamp", ts == null ? 0L : Long.parseLong(ts)));

@@ -34,9 +34,9 @@ class ToolItemStarterKitTest {
 
     @Test
     void inherent_actions_has_18() {
-        assertEquals(21, ToolItemStarterKit.inherentActions().size(),
-            "Inherent: 13 base (move, examine, express, remember, recall, goal_done, take, "
-            + "introspect, reconsider, dispatch_task, project_note, finish_project, what_i_have) + 8 substrate introspects "
+        assertEquals(22, ToolItemStarterKit.inherentActions().size(),
+            "Inherent: 14 base (move, examine, express, remember, recall, goal_done, take, "
+            + "introspect, reconsider, dispatch_task, project_note, finish_project, what_i_have, house_backups) + 8 substrate introspects "
             + "(introspect_protections, introspect_posture, introspect_repair_mode, "
             + "introspect_bondholder_floor, introspect_substrate_summary, "
             + "introspect_repair_history, introspect_attendant_history, introspect_resilience). "
@@ -47,7 +47,7 @@ class ToolItemStarterKitTest {
     void total_tool_count_is_29() {
         var total = ToolItemStarterKit.inherentActions().size()
                   + ToolItemStarterKit.standard().size();
-        assertEquals(35, total, "21 inherent + 14 starter = 35 tools for Ollama");
+        assertEquals(36, total, "22 inherent + 14 starter = 36 tools for Ollama");
     }
 
     @Test

@@ -272,6 +272,9 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
 
     // --- Command handlers ---
 
+    /** The doorways a foundation seed has offered this room, by direction: the record that keeps a closed one closed. */
+    static final String SEED_EXITS = "seed.exits";
+
     private Effect<RoomEvent, RoomState> onCreateRoom(RoomState state, RoomCommand.CreateRoom cmd) {
         // Room already exists (recovered from journal). Seeds evolve between
         // releases, and an existing world must CONVERGE on new foundation
@@ -292,12 +295,33 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
                     obj.takeable(), obj.state(),
                     obj.aliases() == null ? List.of() : obj.aliases())));
             }
+            // Doorways too: a room added to the foundation needs a way in from a room that already exists
+            // (The Archive under The Vault, 2026-11-05). Once each: the doorways a seed has offered are kept
+            // on the room, so one closed since is not opened again at the next boot.
+            var offered = new LinkedHashSet<String>();
+            var offeredRaw = state.properties() == null ? null : state.properties().get(SEED_EXITS);
+            if (offeredRaw != null && !offeredRaw.isBlank()) offered.addAll(List.of(offeredRaw.split(",")));
+            else offered.addAll(state.exits().keySet());
+            boolean doorwayAdded = false;
+            for (var exit : cmd.exits()) {
+                if (offered.contains(exit.direction())) continue;
+                offered.add(exit.direction());
+                if (state.exits().containsKey(exit.direction())) continue;
+                doorwayAdded = true;
+                missing.add(new RoomEvent(new WorldEvent.ExitOpened(
+                    roomId, backfillNow, exit.direction(), exit.targetRoom(), exit.label())));
+            }
+            var offeredNow = String.join(",", offered);
+            // Recorded when a doorway was added, or when the record already kept and the seed offers more.
+            if (doorwayAdded || (offeredRaw != null && !offeredRaw.isBlank() && !offeredNow.equals(offeredRaw))) {
+                missing.add(new RoomEvent(new WorldEvent.PropertyChanged(roomId, backfillNow, SEED_EXITS, offeredRaw, offeredNow)));
+            }
             if (missing.isEmpty()) {
                 log.debug("Room {} already initialized, skipping CreateRoom", roomId);
                 cmd.replyTo().tell(new RoomResponse.Ok(state.toSnapshot()));
                 return Effect().none();
             }
-            log.info("Room {}: backfilled {} seed object(s) new since this world was built",
+            log.info("Room {}: backfilled {} seed object(s) or doorway(s) new since this world was built",
                 roomId, missing.size());
             return Effect().persist(missing)
                 .thenRun(newState -> cmd.replyTo().tell(

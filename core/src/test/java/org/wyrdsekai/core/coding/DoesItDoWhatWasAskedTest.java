@@ -239,12 +239,12 @@ class DoesItDoWhatWasAskedTest {
     }
 
     @Test
-    @DisplayName("a fully-uncalled list is left alone — likely an aliasing style, not abandonment")
-    void fullyUncalledIsSuppressed() {
-        // `const w = world;` and similar indirections hide every namespace from
-        // the shallow contains() check at once. Partial abandonment (some
-        // namespaces visibly called, others not) is the reliable signal; total
-        // absence is more likely our parse than their defect.
+    @DisplayName("a call through an alias is a call — `const w = world;` is not abandonment")
+    void aCallThroughAnAliasIsACall() {
+        // `const w = world;` and similar indirections once hid every namespace from
+        // the shallow contains() check at once, so total absence was left alone —
+        // which also let an item that declares a store and calls nothing pass. The
+        // check now sees a call by any name, and total absence is named.
         var script = """
             exports.manifest = { name: "x", capabilities: ["openweather.current"] };
             const w = world;

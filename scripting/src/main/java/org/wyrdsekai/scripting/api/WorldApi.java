@@ -988,6 +988,19 @@ public class WorldApi {
     }
 
     /**
+     * The house's copies of itself: when the newest was made, how many are kept, whether the last one
+     * opened again whole. Only in The Archive.
+     */
+    @HostAccess.Export
+    public String getArchive() {
+        if (!"archive".equals(roomId)) {
+            return "[" + I18n.get("system.error.access_denied.vault") + "]";
+        }
+        if (bridgeData == null) return "This house keeps no copies of itself.";
+        return bridgeData.formatArchive();
+    }
+
+    /**
      * Returns the number of configured inference backends.
      * Available from The Boiler Room and The Bridge.
      */

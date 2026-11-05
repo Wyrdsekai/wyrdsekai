@@ -153,6 +153,50 @@ class HerReadingTurnNamesTheBookAndTheDeskTest {
         assertThat(surface).as("one of each kind first: the desk is the reading kind's").contains(desk);
     }
 
+    /** What the shelves answered on the household node, asked about diffusion language models (2026-11-04). */
+    private static final String SHELVES_ANSWER = "The sources describe autoregressive text generation, where a model "
+        + "predicts the next most likely token, appends it, and repeats [S1][S3]. They show how to implement this with "
+        + "argmax and softmax, and how to stop generation with an EOS token [S1][S3][S7]. They do not cover diffusion "
+        + "language models, discrete token generation via diffusion, or the diffusion process for text.";
+
+    @Test
+    void an_answer_whose_gap_is_the_question_is_the_shelves_not_holding_it() {
+        var asked = "diffusion language models discrete token generation diffusion process";
+        assertThat(CompanionActor.looksLikeAbsenceFinding(SHELVES_ANSWER)).as("it cites what is there: kept as an answer").isFalse();
+        assertThat(CompanionActor.theGapIsWhatWasAsked(SHELVES_ANSWER, asked)).as("but what was asked is the gap").isTrue();
+        assertThat(CompanionActor.shelvesLackWhatWasAsked(Map.of("query", asked), SHELVES_ANSWER)).isTrue();
+        assertThat(CompanionActor.theGapIsWhatWasAsked(
+            "Diffusion models learn to reverse a noising process [S1]. The provided sources do not contain information "
+                + "regarding 2024 and 2025.", "how diffusion models are trained"))
+            .as("a gap beside the question is not the question").isFalse();
+        assertThat(CompanionActor.theGapIsWhatWasAsked("Attention lets a model weigh tokens [S1].", "attention"))
+            .as("no gap named").isFalse();
+        assertThat(CompanionActor.looksLikeAbsenceFinding("They don't cover tide pools at all.")).as("said with a contraction").isTrue();
+    }
+
+    @Test
+    void a_question_with_the_desk_is_not_handed_on_twice() {
+        var asked = List.of(new org.wyrdsekai.core.library.LibraryAsks.DeskAsk("did:x",
+            "diffusion language models how they work", "job-1", 0L, null, null, null, false));
+        assertThat(org.wyrdsekai.core.library.LibraryAsks.sameAs("diffusion language models discrete token generation", asked))
+            .as("the same subject in other words").isPresent();
+        assertThat(org.wyrdsekai.core.library.LibraryAsks.sameAs("moyamoya disease collateral circulation", asked)).isEmpty();
+    }
+
+    @Test
+    void a_look_back_keeps_how_far_she_had_read() throws Exception {
+        var ledger = new ReadingLedger(org.wyrdsekai.core.test.TestDb.createInMemory());
+        ledger.open("did:x", "A Long Book.epub", "study", null, null, 192);
+        ledger.read("did:x", "A Long Book.epub", 166);
+        ledger.note("did:x", "A Long Book.epub", 166, "the quantization trick");
+        var back = ledger.read("did:x", "A Long Book.epub", 9);
+        assertThat(back.part()).as("she went back").isEqualTo(9);
+        assertThat(CompanionActor.furthestRead(ledger, "did:x", back)).as("how far she had read stands").isEqualTo(166);
+        assertThat(CompanionActor.furtherLine(166, 9, 192))
+            .isEqualTo("\nYou had read as far as part 166 of 192. read_book with \"part\": 167 goes on from there.");
+        assertThat(CompanionActor.furtherLine(166, 166, 192)).as("at her furthest, nothing to say").isEmpty();
+    }
+
     @Test
     void the_desk_is_named_only_when_the_library_offers_it() {
         var mgr = new McpServerManager(null);

@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.core.agent.AgentEvent;
+import org.wyrdsekai.core.agent.AgentEventStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.body.BodyMap;
@@ -196,14 +198,19 @@ public final class NightMending {
         if (r.fixed()) {
             try { ScriptedItemLoader.get().register(entry.file()); } catch (RuntimeException ignored) { /* the next load picks it up */ }
         }
+        // "It works now" was said of an item that kept nothing (household node, 2026-10-20): what is
+        // said is what was done, and why not, and it is hers to keep, not a felt line that passes.
+        var said = r.fixed()
+            ? "The workshop mended the " + name + " " + when + "; " + ItemContractRepair.whatTheMendDid(r) + ". The version it replaced is kept."
+            : "The workshop tried to mend the " + name + " " + when + " and could not: " + ItemContractRepair.whyNotMended(r) + ".";
         if (map != null) {
             try {
-                map.mark("item", entry.item(), null, r.fixed()
-                    ? "The workshop mended the " + name + " " + when + "; it works now. The version it replaced is kept."
-                    : "The workshop tried to mend the " + name + " " + when + " and could not; it is as it was.",
-                    r.fixed() ? "fixed" : String.join(" | ", r.after()));
+                map.mark("item", entry.item(), null, said, r.fixed() ? "fixed" : String.join(" | ", r.after()));
             } catch (RuntimeException ignored) { /* the mark is a courtesy */ }
         }
+        try {
+            AgentEventStream.get().publishSystemEvent(AgentEvent.SystemEventType.ITEM_MENDING, "workshop", said);
+        } catch (RuntimeException ignored) { /* no stream in a test */ }
         log.info("[night-mending] {}: {}", entry.item(), r.fixed() ? "mended" : "not mended — " + r.note());
         return r.fixed();
     }

@@ -45,6 +45,7 @@ public final class AmbientRenderer {
         f.put("boiler-room",     AmbientTone.DIM);     // machine-hum belowdecks
         f.put("bridge",          AmbientTone.BRIGHT);  // command deck
         f.put("vault",           AmbientTone.DIM);     // sealed depths
+        f.put("archive",         AmbientTone.DIM);     // the house kept safe
         f.put("counting-house",  AmbientTone.SOFT);    // quiet ledgerwork
         f.put("library",         AmbientTone.SOFT);    // quieted reading
         f.put("ward-room",       AmbientTone.BRIGHT);  // bright officiate

@@ -81,6 +81,11 @@ public final class HerWord {
                 + "what i said i(?:'d| would) (?!read\\b)\\w+|what i(?:'ve| have) said|"
                 + "my (?:promises?|commitments?|own words)|what did i say|do i remember)"),
             List.of("recall")),
+        // The research desk is a door of its own: "I'll ask the research desk" is the desk, before the
+        // research rule reads it as a search of the shelves that just came up short.
+        new Rule(Pattern.compile("\\b(?:research desk|ask the desk|take (?:it|this|that|the question) to the desk|hand (?:it|this|that|the question) to the desk|"
+                + "ask the librarian|the librarian(?:'s)? workers)\\b"),
+            List.of("library_research")),
         // Choosing a book is a walk along the shelves, before the research rule reads "find" as a search.
         new Rule(Pattern.compile("\\b(?:browse|look (?:at|along|over|through) the shelves|walk (?:along|through) the shelves|"
                 + "see what (?:books|is on the shelves)|what books (?:there are|are there)|"
@@ -104,6 +109,11 @@ public final class HerWord {
         new Rule(Pattern.compile("\\b(?:read|keep reading|finish reading|continue reading|reading (?:on|further|the next part)|next chapter|"
                 + "(?:take|read) the next part|the next part of the book|reading the book|pick up the book|back to the book|open the book|the rest of the book)\\b"),
             List.of(READ_BOOK)),
+        // A look at the house's backups is answered at once, from the house's own record: the copies are made by the
+        // house, and a companion who could not see them had the workshop make a toy vault (household node, 2026-11-05).
+        new Rule(Pattern.compile("\\b(?:check|look at|look in on|look over|see|review|take stock of|go over|make sure|find out)\\b[^.]*"
+                + "\\b(?:(?:the )?backups|the (?:house|household)(?:'s)? (?:copies|backups)|copies of the house|the archive|(?:the )?safety net)\\b"),
+            List.of("house_backups")),
         // A look at what she has is answered at once, never built: "I'll check my current skills and inventory first,
         // then look for something that needs fixing" went to the workshop by the fixing rule below (household node, 2026-10-27).
         // The workbench is not in this list: "check the workbench and see what needs fixing" is the mending it names.
@@ -184,7 +194,8 @@ public final class HerWord {
                 if (!aBookIsOpen && !NAMES_A_BOOK.matcher(clause).find()) tools = SEARCH_TOOLS;
             }
             for (var tool : tools) {
-                if (offeredTools.contains(tool)) return new Act(tool, sentenceAround(spoken, m.start("rest")));
+                var offered = offered(offeredTools, tool);
+                if (offered != null) return new Act(offered, sentenceAround(spoken, m.start("rest")));
             }
             return null;   // the words name an act she has no tool for: not a guess at another
         }
@@ -222,6 +233,13 @@ public final class HerWord {
     private static int startOf(Rule r, String clause) {
         var m = r.words().matcher(clause);
         return m.find() ? m.start() : Integer.MAX_VALUE;
+    }
+
+    /** The offered tool that is {@code tool}: by its name, or a house library's call by its qualified name. */
+    private static String offered(Collection<String> offeredTools, String tool) {
+        if (offeredTools.contains(tool)) return tool;
+        for (var o : offeredTools) if (o != null && o.endsWith("__" + tool)) return o;
+        return null;
     }
 
     /** The sentence of the original text that holds this position, trimmed and bounded. */

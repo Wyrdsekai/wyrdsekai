@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.wyrdsekai.common.event.WorldEvent;
 import org.wyrdsekai.common.model.Exit;
 import org.wyrdsekai.common.model.RoomSnapshot;
 import org.wyrdsekai.core.agent.AgentEventStream;
@@ -26,6 +27,7 @@ import org.wyrdsekai.core.home.HomeStore;
 import org.wyrdsekai.core.inference.InferenceRouter;
 import org.wyrdsekai.core.persistence.SchemaInitializer;
 import org.wyrdsekai.core.room.RoomCommand;
+import org.wyrdsekai.core.room.RoomNotification;
 import org.wyrdsekai.core.room.RoomResponse;
 import org.wyrdsekai.core.search.WyrdLuceneStore;
 import org.wyrdsekai.core.soul.Bond;
@@ -35,6 +37,7 @@ import org.wyrdsekai.core.test.TestDb;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -59,6 +62,7 @@ class ABookHerPersonGrantedOpensTest {
     private WyrdLuceneStore store;
     private HomeClient home;
     private ActorRef<CompanionActor.Command> companion;
+    private ActorRef<RoomNotification> hears;
     private TestProbe<InferenceRouter.Command> router;
     private String homeJdbc;
     private static final String ROOK_DID = "did:key:z6MkExampleRook";
@@ -102,7 +106,7 @@ class ABookHerPersonGrantedOpensTest {
         TestProbe<RoomCommand> room = testKit.createTestProbe();
         router = testKit.createTestProbe();
         companion = testKit.spawn(CompanionActor.create(profile, room.ref(), "hearth", router.ref(), null));
-        room.expectMessageClass(RoomCommand.Subscribe.class, Duration.ofSeconds(5));
+        hears = room.expectMessageClass(RoomCommand.Subscribe.class, Duration.ofSeconds(5)).subscriber();
         room.expectMessageClass(RoomCommand.EnterRoom.class, Duration.ofSeconds(5));
         var look = room.expectMessageClass(RoomCommand.LookRoom.class, Duration.ofSeconds(5));
         look.replyTo().tell(new RoomResponse.Ok(new RoomSnapshot(
@@ -389,6 +393,27 @@ class ABookHerPersonGrantedOpensTest {
     }
 
     @Test
+    void a_search_whose_answer_leaves_out_what_was_asked_is_recorded_as_finding_nothing() {
+        var asked = "diffusion language models discrete token generation diffusion process";
+        companion.tell(new CompanionActor.TestScriptedToolResult("library_card", Map.of(
+            "findings", "The sources describe autoregressive text generation [S1]. They do not cover diffusion language "
+                + "models, discrete token generation via diffusion, or the diffusion process for text.",
+            "query", asked,
+            "sources", List.of("The New Eve - Robert Lewis.epub (part 2/3)"),
+            "source_ids", List.of("eve2"))));
+        var deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        List<LibraryAsks.Ask> asks = List.of();
+        while (System.nanoTime() < deadline) {
+            asks = LibraryAsks.shared().since(HER_DID, Instant.now().minus(Duration.ofMinutes(5)));
+            if (!asks.isEmpty()) break;
+            Thread.onSpinWait();
+        }
+        assertThat(asks).hasSize(1);
+        assertThat(asks.getFirst().query()).isEqualTo(asked);
+        assertThat(asks.getFirst().found()).as("passages came back, but not on what she asked").isFalse();
+    }
+
+    @Test
     void the_door_a_search_names_reaches_the_turn_after_it_however_long_the_findings() {
         new StudyService(store, home).grantAccess(OWNER, HER_DID, "books");
         var findings = ("The sources describe a woman becoming who she is meant to be, slowly and against the grain of "
@@ -455,6 +480,24 @@ class ABookHerPersonGrantedOpensTest {
         var page = requestHolding("This is the part you just opened:");
         assertThat(promptOf(page)).as("the next part was read for her").contains("Part 2 of the new eve");
         assertThat(ReadingLedger.shared().all(HER_DID)).extracting(ReadingLedger.Bookmark::part).containsExactly(2);
+    }
+
+    @Test
+    void what_she_tells_a_person_she_will_do_while_answering_them_is_done() {
+        new StudyService(store, home).grantAccess(OWNER, HER_DID, "books");
+        readBook("The New Eve");
+        var first = requestHolding("This is the part you just opened:");
+        first.replyTo().tell(new InferenceRouter.InferOk(first.requestId(), "A woman becoming.", 10, 5));
+
+        hears.tell(new RoomNotification(new WorldEvent.Said("hearth", Instant.now(), "player-sam", "sam", "wren, will you read on?")));
+        var reply = requestHolding("wren, will you read on?");
+        reply.replyTo().tell(new InferenceRouter.InferOk(reply.requestId(), "I'll read the next part now.", 10, 8));
+
+        var kept = requestHolding("A moment ago you told sam:");
+        assertThat(promptOf(kept)).contains("I'll read the next part now.").contains("It was your word to them.");
+        kept.replyTo().tell(new InferenceRouter.InferOk(kept.requestId(), "{\"action\":\"read_book\"}", 10, 8));
+
+        assertThat(promptOf(requestHolding("This is the part you just opened:"))).contains("Part 2 of the new eve");
     }
 
     @Test

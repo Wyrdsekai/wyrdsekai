@@ -109,9 +109,11 @@ class RepeatGuardExemptionTest {
             "src/main/java/org/wyrdsekai/core/agent/CompanionActor.java"));
         var i = src.indexOf("lastHeardUtteranceAt = Instant.now();");
         org.assertj.core.api.Assertions.assertThat(i).isPositive();
-        var before = src.substring(Math.max(0, i - 200), i);
+        var before = src.substring(Math.max(0, i - 500), i);
         org.assertj.core.api.Assertions.assertThat(before)
             .as("the marker is set only inside `if (isHumanTrigger(said))`")
-            .contains("if (isHumanTrigger(said)) {");
+            .contains("if (isHumanTrigger(said)) {")
+            .as("and only for a person's line that is hers: one for her housemate opens no window of hers")
+            .contains("if (personsLineForMe) {");
     }
 }

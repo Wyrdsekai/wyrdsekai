@@ -46,7 +46,10 @@ public sealed interface AgentEvent {
         LIBRARY_PACK_INSTALLED,
         // A letter landed in her mailbox (2026-09-16). Mail to a companion used to sit in a
         // table she never looked at; the notice is how she learns it is there.
-        MAIL_ARRIVED
+        MAIL_ARRIVED,
+        // The workshop's word on one of the house's things after a night's mending: what was done,
+        // or why it could not be. Hers to keep (2026-11-05).
+        ITEM_MENDING
     }
 
     /**

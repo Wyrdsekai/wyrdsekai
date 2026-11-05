@@ -74,6 +74,7 @@ public record ActionPolicy(
         Map.entry("listen",               AutonomyTier.AMBIENT),
         Map.entry("introspect",           AutonomyTier.AMBIENT),
         Map.entry("what_i_have",          AutonomyTier.AMBIENT),
+        Map.entry("house_backups",        AutonomyTier.AMBIENT),
         Map.entry("reflect",              AutonomyTier.AMBIENT),
         Map.entry("recall",               AutonomyTier.AMBIENT),
         Map.entry("voluntary_sleep",      AutonomyTier.AMBIENT),
@@ -499,6 +500,7 @@ public record ActionPolicy(
         entry("teach",                1, 0.2,  false, true,  "knowledge"),
         entry("introspect",           0, 0.0,  true,  true,  "self"),
         entry("what_i_have",          0, 0.0,  true,  true,  "self"),
+        entry("house_backups",        0, 0.0,  true,  true,  "self"),
 
         // ── Perception ───────────────────────────────────────────────
         entry("listen",               0, 0.0,  true,  true,  "observation"),

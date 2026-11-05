@@ -13,9 +13,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AmbientRendererTest {
 
     @Test
-    void allTwentyTwoFoundationRoomsHaveTones() {
+    void theFoundationRoomsHaveTones() {
         var tones = AmbientRenderer.foundationTones();
-        assertThat(tones).hasSize(22);
+        assertThat(tones).hasSize(23);
+        assertThat(tones).containsEntry("archive", AmbientTone.DIM);
         // Spot-check a few load-bearing rooms.
         assertThat(tones).containsEntry("library", AmbientTone.SOFT);
         assertThat(tones).containsEntry("the-forge", AmbientTone.WARM);

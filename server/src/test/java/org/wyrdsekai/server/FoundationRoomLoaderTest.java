@@ -33,9 +33,15 @@ class FoundationRoomLoaderTest {
         // Count is now 30 (2026-07-20: +8 §88 world-interface rooms — scrying-pool,
         // heralds-hall, hearth, scriptorium, observatory, atelier, sky-dock,
         // golem-workshop — seeded off the atrium and wired to the MCP gateway).
+        // 31 (2026-11-05): The Archive, under The Vault, shows the house's backups.
         // Update this guard whenever a new foundation room lands.
         var seeds = FoundationRoomLoader.loadFromClasspath();
-        assertEquals(30, seeds.size());
+        assertEquals(31, seeds.size());
+        var archive = seeds.stream().filter(s -> "archive".equals(s.roomId())).findFirst().orElseThrow();
+        assertEquals("vault", archive.exits().get(0).targetRoom());
+        var vault = seeds.stream().filter(s -> "vault".equals(s.roomId())).findFirst().orElseThrow();
+        assertTrue(vault.exits().stream().anyMatch(e -> "down".equals(e.direction()) && "archive".equals(e.targetRoom())));
+        assertFalse(vault.aliases().contains("archive"), "\"archive\" names The Archive now, not The Vault");
     }
 
     @Test
@@ -90,7 +96,9 @@ class FoundationRoomLoaderTest {
             "the-forge", "oracle", "workshop", "chapel", "sanctuary",
             // §88 world-interface rooms (MCP-backed, seeded off the atrium)
             "scrying-pool", "heralds-hall", "hearth", "scriptorium",
-            "observatory", "atelier", "sky-dock", "golem-workshop");
+            "observatory", "atelier", "sky-dock", "golem-workshop",
+            // the house's backups, seen from inside
+            "archive");
         assertEquals(expected, ids);
     }
 
@@ -145,8 +153,8 @@ class FoundationRoomLoaderTest {
         // sanctuary for held-space).
         // Bump here when foundation-rooms.json changes.
         var seeds = FoundationRoomLoader.load();
-        assertEquals(30, seeds.size(),
-            "JSON config should have 30 foundation rooms (22 + 8 §88 world-interface rooms)");
+        assertEquals(31, seeds.size(),
+            "JSON config should have 31 foundation rooms (22 + 8 §88 world-interface rooms + The Archive)");
     }
 
     @Test

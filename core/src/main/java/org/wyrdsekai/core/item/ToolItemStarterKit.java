@@ -102,6 +102,8 @@ public final class ToolItemStarterKit {
             "{actor} closes a notebook and sets it to one side, finished.")),
         Map.entry("what_i_have", ItemEmbodimentSpec.silent(
             "a look at her own things; no in-world body act")),
+        Map.entry("house_backups", ItemEmbodimentSpec.silent(
+            "a look at the house's copies of itself; no in-world body act")),
         // ─── Inherent + utility: silent (no in-world body presence) ───
         Map.entry("task_ledger", ItemEmbodimentSpec.silent(
             "abstract plan-state mutation, no in-world body")),
@@ -818,6 +820,17 @@ public final class ToolItemStarterKit {
                     + "away, and your open projects. The answer comes at once; nothing is built. Use this instead of "
                     + "asking the workshop to check your skills or inventory.",
                 "what_i_have",
+                List.of()),
+
+            // The house's copies of itself, at once. The house is copied every few minutes and none of it could
+            // be seen from inside; a companion had the workshop make a toy vault she took for the household's
+            // safety net (household node, 2026-11-05). The same record The Archive shows.
+            ToolItem.builtin("house_backups", "The House's Backups",
+                "SEE THE HOUSE'S BACKUPS: the house backs itself up, a snapshot of everything every few minutes kept "
+                    + "in its own vault. This shows when the newest copy was made, how many it keeps, and whether the last "
+                    + "test opened a copy again and found it whole. Nothing has to be built to hold them. The answer comes "
+                    + "at once. The same record is on the wall of The Archive, under The Vault.",
+                "house_backups",
                 List.of()),
 
             ToolItem.builtin("introspect", "Introspect",

@@ -638,6 +638,20 @@ public class ItemWorldApi {
         /** {@code world.journal.recent()} — the last ten; a script that names no count means "the recent ones". */
         @HostAccess.Export
         public List<Map<String, Object>> recent() { if (breath != null) breath.privateRead("journal.recent"); return recent(10); }
+
+        /**
+         * {@code world.journal.read(n)}, {@code read()} and {@code read("words")}: the name a workshop
+         * writes for reading her journal. The house read it under {@code recent} and {@code search}
+         * only, so an item asking for {@code journal.read} was refused (household node, 2026-10-20).
+         */
+        @HostAccess.Export
+        public List<Map<String, Object>> read(int n) { if (breath != null) breath.privateRead("journal.read"); return provider.journalRecent(Math.max(1, Math.min(n, 50))); }
+
+        @HostAccess.Export
+        public List<Map<String, Object>> read() { return read(10); }
+
+        @HostAccess.Export
+        public List<Map<String, Object>> read(String query) { if (breath != null) breath.privateRead("journal.read"); return provider.journalSearch(query, 10); }
     }
 
     // ─── Notes API (§4.2) ────────────────────────────────────────

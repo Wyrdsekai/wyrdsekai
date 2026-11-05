@@ -184,6 +184,67 @@ public class EngagementGate {
     // ── Helper methods ───────────────────────────────────────────────
 
     /** Check if text mentions a name (case-insensitive). */
+    /** Words that speak to everyone in the room. */
+    private static final java.util.regex.Pattern TO_EVERYONE = java.util.regex.Pattern.compile(
+        "(?i)\\b(?:you guys|u guys|you two|you both|both of you|either of you|any of you|all of you|everyone|everybody|"
+            + "y'all|you all|thank you both|thanks both|both"
+            // Leaving is said to the room: "please go about your day, I need to run around".
+            + "|(?:need|have|got) to (?:go|run|head out|leave)|gotta go|git to go|see (?:you|u|ya) (?:later|soon|tomorrow)|see (?:you|u|ya)$"
+            + "|catch (?:you|u) (?:later|soon)|go about your day|good ?bye|bye)\\b");
+
+    /** After a name, words that say the line is about that companion, not to her ("what did rose say"). */
+    private static final java.util.Set<String> ABOUT_HER_AFTER = java.util.Set.of(
+        "say", "says", "said", "think", "thinks", "thought", "wrote", "writes", "is", "was", "has", "had", "did",
+        "does", "told", "tells", "asked", "asks", "wants", "wanted", "likes", "liked", "knows", "knew", "found",
+        "made", "built", "read", "reads", "s");
+    /** Before a name, words that say the line is about that companion ("talk to rose about it"). */
+    private static final java.util.Set<String> ABOUT_HER_BEFORE = java.util.Set.of(
+        "to", "about", "with", "from", "for", "of", "like", "ask", "tell", "than", "as");
+
+    /** Whether a person's line speaks to everyone in the room ("you guys", "both of you"). */
+    public static boolean toEveryone(String text) {
+        return text != null && TO_EVERYONE.matcher(text).find();
+    }
+
+    /**
+     * The companions a person's line is spoken to: those it calls by name where a name calls
+     * someone (near the start, at the end, after a greeting), not where it speaks about her.
+     * "rose what have you learned of late?", "thank you mia", "hi rose, mia" call; "what did rose
+     * say?" and "talk to rose about it" do not. Empty when it calls no one by name.
+     */
+    public static java.util.Set<String> calledByName(String text, java.util.Collection<String> names) {
+        var out = new java.util.LinkedHashSet<String>();
+        if (text == null || names == null) return out;
+        var tokens = text.toLowerCase(java.util.Locale.ROOT).split("[^\\p{L}\\p{N}']+");
+        var words = new java.util.ArrayList<String>();
+        for (var t : tokens) if (!t.isBlank()) words.add(t.replaceAll("^'+|'+$", ""));
+        int n = words.size();
+        var lowerNames = new java.util.HashMap<String, String>();
+        for (var name : names) if (name != null && !name.isBlank()) lowerNames.put(name.toLowerCase(java.util.Locale.ROOT), name);
+        var greeting = java.util.Set.of("hi", "hey", "hello", "morning", "evening", "night", "thanks", "bye", "and", "so",
+            "ok", "okay", "well", "now", "yes", "sure");
+        String previousCalled = null;
+        for (int i = 0; i < n; i++) {
+            var name = lowerNames.get(words.get(i));
+            if (name == null) continue;
+            var before = i > 0 ? words.get(i - 1) : "";
+            var after = i + 1 < n ? words.get(i + 1) : "";
+            boolean first = i == 0;
+            boolean afterAGreeting = greeting.contains(before);
+            // A name opening the line, or after a greeting or another name called, calls her whatever follows.
+            boolean calls = first || afterAGreeting || before.equals(previousCalled);
+            if (!calls) {
+                if (ABOUT_HER_BEFORE.contains(before) || ABOUT_HER_AFTER.contains(after)) continue;
+                calls = i < 4 || i >= n - 3;
+            }
+            if (calls) {
+                out.add(name);
+                previousCalled = words.get(i);
+            }
+        }
+        return out;
+    }
+
     public static boolean mentionsName(String text, String name) {
         if (text == null || name == null) return false;
         var lower = text.toLowerCase();

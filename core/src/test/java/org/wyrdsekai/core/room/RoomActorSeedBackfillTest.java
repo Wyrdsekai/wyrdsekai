@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.wyrdsekai.common.model.Exit;
 import org.wyrdsekai.common.model.RoomObject;
 
 import java.util.List;
@@ -87,5 +88,29 @@ class RoomActorSeedBackfillTest {
             List.of(), List.of(logbook, stone, trinket), ref));
         assertThat(((RoomResponse.Ok) third.reply()).snapshot().objects())
             .hasSameSizeAs(snapshot.objects());
+    }
+
+    /**
+     * A room added to the foundation needs a way in from a room that already exists: The Archive under
+     * The Vault (2026-11-05). The doorway is added once; one closed since is not opened again.
+     */
+    @Test
+    void reseed_adds_a_new_doorway_once_and_a_closed_one_stays_closed() {
+        var east = new Exit("east", "nexus", "An archway opens east to The Nexus");
+        var down = new Exit("down", "archive", "Stone steps lead down to The Archive");
+        kit.<RoomResponse>runCommand(ref -> new RoomCommand.CreateRoom("The Vault", "Stone shelves.", "foundation",
+            List.of(), List.of(east), List.of(), null, ref));
+
+        var second = kit.<RoomResponse>runCommand(ref -> new RoomCommand.CreateRoom("The Vault", "Stone shelves.", "foundation",
+            List.of(), List.of(east, down), List.of(), null, ref));
+        var exits = ((RoomResponse.Ok) second.reply()).snapshot().exits();
+        assertThat(exits).anyMatch(e -> "down".equals(e.direction()) && "archive".equals(e.targetRoom()));
+        assertThat(exits).anyMatch(e -> "east".equals(e.direction()));
+        assertThat(kit.getState().properties()).containsEntry(RoomActor.SEED_EXITS, "east,down");
+
+        kit.<RoomResponse>runCommand(ref -> new RoomCommand.RemoveExit("down", ref));
+        var third = kit.<RoomResponse>runCommand(ref -> new RoomCommand.CreateRoom("The Vault", "Stone shelves.", "foundation",
+            List.of(), List.of(east, down), List.of(), null, ref));
+        assertThat(((RoomResponse.Ok) third.reply()).snapshot().exits()).noneMatch(e -> "down".equals(e.direction()));
     }
 }

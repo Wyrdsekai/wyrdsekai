@@ -172,7 +172,8 @@ Two rules keep a household's items from breaking each other:
   `data/manifest_audit.json`. The contract gate an item passes before it is placed asks the same questions, so a
   mis-wired item enters repair instead of being placed as finished; `wyrd items broken` lists
   household items the gate would refuse today and `wyrd items repair <name>|--all` repairs a
-  copy and replaces the placed file only when the copy comes out whole.
+  copy and replaces the placed file only when the copy comes out whole and has been tried:
+  each command runs, and what it keeps comes back under the name it reads by.
   `wyrd items check [dir…]` runs the same check by hand over the
   bundled items and the household's own (exit 1 on any mis-wired script), so a release or a
   freshly written item can be gated on it.

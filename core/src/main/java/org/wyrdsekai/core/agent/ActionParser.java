@@ -2793,7 +2793,7 @@ public final class ActionParser {
         "introspect_attendant_history", "introspect_resilience",
         "introspect_substrate_summary", "introspect_posture",
         "introspect_bondholder_floor", "introspect_relational_floor",
-        "introspect_protection", "what_i_have", "write_journal", "read_journal",
+        "introspect_protection", "what_i_have", "house_backups", "write_journal", "read_journal",
         "notify_human", "schedule_skill", "create_watcher", "cancel_watcher",
         "task_ledger",
         "create_room", "take_item", "place_item", "give_item", "broadcast",

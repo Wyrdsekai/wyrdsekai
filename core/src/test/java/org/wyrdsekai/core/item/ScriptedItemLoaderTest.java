@@ -268,7 +268,7 @@ class ScriptedItemLoaderTest {
         var entry = loader.wiringAudit().getFirst();
         assertEquals("journal", entry.itemId());
         assertTrue(entry.unresolved().getFirst().contains("world.journal.list does not exist"), entry.unresolved().toString());
-        assertTrue(entry.unresolved().getFirst().contains("has: recent, search, write"), entry.unresolved().toString());
+        assertTrue(entry.unresolved().getFirst().contains("has: read, recent, search, write"), entry.unresolved().toString());
 
         // a working copy arriving later replaces the broken one and clears the audit
         loader.setSearchDirs(List.of(household, bundled));

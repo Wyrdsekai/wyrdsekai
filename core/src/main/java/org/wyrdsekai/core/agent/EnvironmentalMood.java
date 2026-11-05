@@ -85,6 +85,8 @@ public final class EnvironmentalMood {
             // A letter: someone thought of her. A small lift, the same as a pack landing.
             case MAIL_ARRIVED -> current
                 .withMomentum(current.momentum() + 0.02);
+            // The workshop's word on a thing of hers: news to keep, not a lift or a weight.
+            case ITEM_MENDING -> current;
         };
     }
 

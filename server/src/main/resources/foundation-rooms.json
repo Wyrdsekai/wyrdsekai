@@ -482,7 +482,6 @@
     "name": "The Vault",
     "aliases": [
       "vault",
-      "archive",
       "storage"
     ],
     "description": "Stone shelves line the walls from floor to ceiling, filled with bound volumes and sealed scrolls. The air is cool and dry — perfect for preservation. Each shelf bears a small brass nameplate, cataloging its contents. A faint hum of protective enchantment keeps the dust at bay.",
@@ -491,6 +490,11 @@
         "direction": "east",
         "targetRoom": "nexus",
         "label": "An archway opens east to The Nexus"
+      },
+      {
+        "direction": "down",
+        "targetRoom": "archive",
+        "label": "Stone steps lead down to The Archive"
       }
     ],
     "objects": [
@@ -511,6 +515,41 @@
     },
     "replication": "shared",
     "embodiment_summary": "Heavy-door echo, cold stone, dust-still air — what is here has been here a long time."
+  },
+  {
+    "roomId": "archive",
+    "name": "The Archive",
+    "aliases": [
+      "archive",
+      "the archive",
+      "backups",
+      "copies"
+    ],
+    "description": "A cool, dry chamber under The Vault, lined with sealed crystals. Each crystal is a whole copy of the house as it was at one moment: its rooms, its companions, their memories. A plain record on the wall says when the newest was made and whether the last one opened again cleanly.",
+    "exits": [
+      {
+        "direction": "up",
+        "targetRoom": "vault",
+        "label": "Stone steps lead up to The Vault"
+      }
+    ],
+    "objects": [
+      {
+        "id": "archive-record",
+        "name": "record",
+        "description": "A plain record on the wall: the house and its copies of itself",
+        "takeable": false
+      }
+    ],
+    "imprint": {
+      "traits": {
+        "safety": 0.4
+      },
+      "description": "the house kept safe",
+      "threshold": 300
+    },
+    "replication": "shared",
+    "embodiment_summary": "Cool, still air; rows of sealed crystals; the quiet of things kept."
   },
   {
     "roomId": "counting-house",

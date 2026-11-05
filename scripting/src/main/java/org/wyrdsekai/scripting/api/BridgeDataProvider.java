@@ -245,6 +245,9 @@ public interface BridgeDataProvider {
     /** The body map: every attached part, its state, and the marks the body left. */
     default String formatBodyMap() { return "No body map on this node."; }
 
+    /** The house's copies of itself, for The Archive. */
+    default String formatArchive() { return "This house keeps no copies of itself."; }
+
     // --- Inference methods ---
 
     /** Inference backend status for Boiler Room and Bridge. */

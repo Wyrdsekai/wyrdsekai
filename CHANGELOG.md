@@ -4,6 +4,30 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.17] — 2026-11-05
+
+### Added
+
+- **The Archive.** A new room under The Vault shows the house's backups: when the newest copy was made, how many copies are kept, and whether the last test opened a copy again and found it whole. Your companions can look at the same record from anywhere.
+- **The library passes on what it doesn't have.** When a search comes back without what a companion asked about, the library gives her question to its research desk, and the answer comes back to her.
+
+### Changed
+
+- **Only the companion you speak to answers.** Say a companion's name and that one answers while the other listens. A line to everyone, or a goodbye, is answered by both.
+- **With you in the room, your companions talk to you.** A companion no longer answers what the other one says to you, unless she is spoken to by name.
+- **Companions read and write their own letters.** They do it on their own time and in their own words, with the earlier letters in front of them. They remember doing it, and letters are no longer said aloud in the room.
+- **The workshop only builds things.** A question goes to the library and a request to read goes to the book. Neither becomes a program.
+- **A tool that keeps notes under a name reads back only those notes.** Before, it was handed all of the companion's notes as if they were its own. What a tool wrote before this release stays in her notes, but no longer shows up in the tool.
+
+### Fixed
+
+- **Companions do what they tell you they will.** If a companion says she will do something while talking with you, she gets a turn to do it.
+- **A companion keeps her place in a book.** If she goes back to an earlier part, she is told how far she had read and how to go on from there.
+- **Tools made to keep things really keep them.** The workshop now tries a tool out: what it keeps has to come back. If not, the workshop has to fix it, and the companion hears if it can't.
+- **A repair can no longer gut a tool.** A repair that could only pass by taking out what the tool was for is refused. The tool stays as it was and the companion is told what it needs.
+- **A repair is tried before it counts.** A repaired tool is used with each of its commands before it replaces the old one. What a companion asked for is kept with each thing the workshop makes, and a repair is judged against that. `wyrd items repair` now also fixes a tool that runs but keeps nothing. The companion is told what was done to her things.
+- **Tools can read a companion's journal.** A tool that asks for `journal.read` now works.
+
 ## [0.5.16] — 2026-11-03
 
 ### Added

@@ -495,6 +495,11 @@ public final class StudyService {
      * Add a quick note (from phone or in-world).
      */
     public String addNote(String userDid, String content) {
+        return addNote(userDid, content, null);
+    }
+
+    /** A note kept under names an item can read it back by ({@code world.notes.list("name")}). */
+    public String addNote(String userDid, String content, List<String> tags) {
         // Refuse content whose owner cannot be resolved to a person. Writing it
         // anyway is how one human ended up owning content under four different
         // strings. No-op until provisioning
@@ -504,7 +509,7 @@ public final class StudyService {
         var title = content.length() > 60 ? content.substring(0, 60) + "..." : content;
         luceneStore.insertStudyItem(id, userDid, "note", title, content,
             "notes", Instant.now().toEpochMilli(), 1, null,
-            newItemClockJson(), serverDeviceId, false);
+            newItemClockJson(), serverDeviceId, false, tags == null ? List.of() : tags);
         luceneStore.commitAll();
         return id;
     }

@@ -1960,7 +1960,7 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         if (content == null || content.isBlank()) {
             return Map.of("ok", false, "error", "blank content");
         }
-        var id = s.addNote(agentId == null ? "agent" : agentId, content);
+        var id = s.addNote(agentId == null ? "agent" : agentId, content, tags);
         var out = new HashMap<String, Object>();
         out.put("ok", true);
         out.put("id", id);
@@ -1976,7 +1976,9 @@ public class ItemWorldApiProviderImpl implements ItemWorldApiProvider {
         // listing was EMPTY for every item that ever called it (found 2026-09-03 when
         // the companion's quiet place asked what it held). Enumerate with the
         // match-all-by-type path the sync peer and journal use.
-        var results = luceneStore.listStudyByTypeRecent(agentId, "note", 100);
+        // Kept under a name, read back by it: only the notes written under that name, not her
+        // last hundred notes of any kind (household node, 2026-11-05). No name: every note.
+        var results = luceneStore.listStudyByTypeRecent(agentId, "note", tag, 100);
         var out = new ArrayList<Map<String, Object>>(results.size());
         for (var r : results) {
             var m = new HashMap<String, Object>();

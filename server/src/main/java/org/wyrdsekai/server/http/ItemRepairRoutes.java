@@ -5,6 +5,8 @@ import io.javalin.router.JavalinDefaultRoutingApi;
 import io.javalin.http.Context;
 import org.wyrdsekai.core.persistence.AuthService;
 import org.wyrdsekai.core.coding.ItemContractCheck;
+import org.wyrdsekai.core.agent.AgentEvent;
+import org.wyrdsekai.core.agent.AgentEventStream;
 import org.wyrdsekai.core.coding.ItemContractRepair;
 import org.wyrdsekai.core.coding.RoomScriptRepair;
 import org.wyrdsekai.core.room.BrokenRoomScripts;
@@ -135,6 +137,7 @@ public final class ItemRepairRoutes {
         if (r.fixed()) {
             try { ScriptedItemLoader.get().register(file); } catch (RuntimeException ignored) { /* picked up at the next load */ }
         }
+        tellHer(item.endsWith(".js") ? item.substring(0, item.length() - 3) : item, r);
         var out = new LinkedHashMap<String, Object>();
         out.put("item", r.item());
         out.put("fixed", r.fixed());
@@ -142,5 +145,21 @@ public final class ItemRepairRoutes {
         out.put("before", r.before());
         out.put("after", r.after());
         ctx.json(out);
+    }
+
+    /**
+     * The thing is hers: what the workshop did to it at the steward's asking is said to her and
+     * kept, the way the night's mending is. Nothing is said when nothing was tried.
+     */
+    static void tellHer(String item, ItemContractRepair.PlacedRepair r) {
+        if ("nothing to repair".equals(r.note()) || r.note().startsWith("no coding backend")) return;
+        var name = item.replace('_', ' ');
+        var said = r.fixed()
+            ? "At the steward's asking the workshop mended the " + name + "; " + ItemContractRepair.whatTheMendDid(r)
+                + ". The version it replaced is kept."
+            : "At the steward's asking the workshop tried to mend the " + name + " and could not: " + ItemContractRepair.whyNotMended(r) + ".";
+        try {
+            AgentEventStream.get().publishSystemEvent(AgentEvent.SystemEventType.ITEM_MENDING, "workshop", said);
+        } catch (RuntimeException ignored) { /* no stream in a test */ }
     }
 }

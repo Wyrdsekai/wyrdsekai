@@ -164,6 +164,7 @@ public class SalienceScorer {
             case LIBRARY_PACK_INSTALLED -> 0.5;
             // A letter for her: someone wrote. Worth going to read, not an alarm.
             case MAIL_ARRIVED -> 0.6;
+            case ITEM_MENDING -> 0.6;
             case NODE_JOINED -> 0.4;
             case ZONE_SERVICE_REGISTERED -> 0.4;
         };

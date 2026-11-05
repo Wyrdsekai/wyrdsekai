@@ -36,7 +36,7 @@ class ItemApiSurfaceTest {
         assertEquals(1, bad.size(), bad.toString());
         assertEquals("world.journal.list", bad.getFirst().call());
         // "list" → "recent" is a rename, not a typo: no guess, but the fix is in the line — what exists
-        assertTrue(bad.getFirst().reason().contains("world.journal has: recent, search, write"), bad.getFirst().reason());
+        assertTrue(bad.getFirst().reason().contains("world.journal has: read, recent, search, write"), bad.getFirst().reason());
         // a near-miss does get a guess
         var typo = ItemApiSurface.check("function invoke(){ return world.journal.recnt(3); }");
         assertTrue(typo.getFirst().reason().contains("did you mean recent?"), typo.getFirst().reason());

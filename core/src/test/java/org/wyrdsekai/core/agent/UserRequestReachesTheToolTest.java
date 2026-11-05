@@ -50,7 +50,10 @@ class UserRequestReachesTheToolTest {
         var src = Files.readString(ACTOR);
         var start = src.indexOf("private boolean tryDispatchScriptedToolCall");
         assertTrue(start > 0, "dispatcher not found — did it get renamed?");
-        var window = src.substring(start, Math.min(src.length(), start + 8000));
+        // The whole method, not a count of characters: a built-in added to the dispatcher
+        // (house_backups, 2026-11-05) pushed the fallback past an 8,000-character window.
+        var end = src.indexOf("\n    private ", start + 1);
+        var window = src.substring(start, end > start ? end : Math.min(src.length(), start + 12000));
 
         assertTrue(!window.contains("var userRequest = pendingTrigger != null ? pendingTrigger.text() : \"\";"),
             "the scripted-tool dispatcher is reading pendingTrigger ALONE — it is null by the time "

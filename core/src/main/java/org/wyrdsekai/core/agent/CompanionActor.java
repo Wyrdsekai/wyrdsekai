@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.agent;
 
+import org.wyrdsekai.core.vault.HouseArchive;
+
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
 import org.apache.pekko.actor.typed.RecipientRef;
@@ -632,7 +634,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** Reset companion state for testing — clears memory, plans, conversation. Keeps subscriptions. */
     public record ResetState() implements Command {}
     /** Her own-time line said she would do what {@code tool} does: one turn to do it (HerWord). */
-    public record KeepHerWord(String sentence, String tool) implements Command {}
+    public record KeepHerWord(String sentence, String tool, String toWhom, int attempt) implements Command {
+        public KeepHerWord(String sentence, String tool) { this(sentence, tool, null, 0); }
+    }
 
     /**
      * capture a {@link CompanionTransitState} snapshot
@@ -1032,6 +1036,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         implements Command {}
     /** Test-only: read_book with {@code book} as her call would carry it; the reply is what she is told. */
     public record TestReadBook(String book, ActorRef<String> replyTo) implements Command {}
+    /** Test hook: her own time comes to the letters in her mailbox, as the autonomy check does. */
+    public record TestReadALetter(ActorRef<Boolean> replyTo) implements Command {}
+    /** Test hook: a want to write to her person while they are away, as the interiority act starts one. */
+    public record TestWriteToTheAbsent(String wantText, ActorRef<String> replyTo) implements Command {}
     /** Test-only: the text of her next READ turn, as {@link #readSubgoal()} writes it. */
     public record TestReadTurn(ActorRef<String> replyTo) implements Command {}
     /** Test-only: browse_shelves with {@code words} as her call would carry them; the reply is what she is shown. */
@@ -2703,6 +2711,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private static final Duration BOOK_FROM_SEARCH_FRESH = Duration.ofMinutes(45);
     /** The tools offered on her last own-time turn, before any narrowing: what her words are read against. */
     private Set<String> lastOwnTimeOffered = Set.of();
+    /** The tools offered on her last reply to someone: what her words on that reply are read against. */
+    private Set<String> lastReplyOffered = Set.of();
     /**
      * The own-time turn in flight is one keeping her word: its own words never start another. Set
      * as that turn starts and cleared as any other own-time turn starts. Until 2026-11-01 it was a
@@ -2723,6 +2733,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private ReadingLedger.Bookmark readingTurnFor;
     /** The part a reading turn about to start is for, so triggerAutonomousInference knows it for one. */
     private ReadingLedger.Bookmark startingReadingTurnFor;
+    /**
+     * The letter she answers on the own-time turn in flight, when that turn is the one that hands it
+     * to her: what she says on it is her letter back, sent to them and not said in the room. Set as
+     * that turn starts, cleared as any other starts (the rule of {@link #readingTurnFor}).
+     */
+    private LetterInHand letterTurnFor;
+    private LetterInHand startingLetterTurnFor;
     /** When each tool was last forced on her word: the same tool is not forced twice within the spacing. */
     private final Map<String, Instant> herWordKeptAt = new HashMap<>();
     /** Below this she is too tired for a turn to act in; the autonomy check stops at the same line. */
@@ -4142,8 +4159,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(ConsolidationTick.class, this::onConsolidationTick)
             .onMessage(DeskCheck.class, msg -> { checkDeskAnswers(); return this; })
             .onMessage(ReadWhatSheOpened.class, this::onReadWhatSheOpened)
+            .onMessage(LetterHanded.class, this::onLetterHanded)
             .onMessage(ShelvesShown.class, this::onShelvesShown)
             .onMessage(DeskAnswered.class, this::onDeskAnswered)
+            .onMessage(HandedToTheDesk.class, this::onHandedToTheDesk)
             .onMessage(RepairModeCheck.class, this::onRepairModeCheck)
             .onMessage(RefreshRoomState.class, this::onRefreshRoomState)
             .onMessage(RoomCreationResult.class, this::onRoomCreationResult)
@@ -4221,7 +4240,6 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(DispatchHandoff.class, this::onDispatchHandoff)
             .onMessage(DispatchVerdict.class, this::onDispatchVerdict)
             .onMessage(NotebookEntryComposed.class, this::onNotebookEntryComposed)
-            .onMessage(LetterComposed.class, this::onLetterComposed)
             .onMessage(ForceEnergy.class, msg -> {
                 vitality = vitality.withEnergy(msg.energy());
                 log.info("ForceEnergy: '{}' energy set to {}", profile.name(), msg.energy());
@@ -4306,6 +4324,14 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             })
             .onMessage(TestReadTurn.class, msg -> {
                 msg.replyTo().tell(readSubgoal());
+                return this;
+            })
+            .onMessage(TestWriteToTheAbsent.class, msg -> {
+                msg.replyTo().tell(String.valueOf(startLetterToTheAbsent(Want.active(herDid(), msg.wantText(), "Saudade", 0.6, null))));
+                return this;
+            })
+            .onMessage(TestReadALetter.class, msg -> {
+                msg.replyTo().tell(readALetterOnMyOwnTime());
                 return this;
             })
             .onMessage(TestReadBook.class, msg -> {
@@ -4673,20 +4699,30 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // A PERSON opens the window, not another companion: two companions
                 // in a quick exchange said the same line back to each other word for
                 // word a minute apart (2026-09-22), and the guard stood down for it.
+                // A person's line in a room with another companion is for the one it calls by name, or
+                // the one they were last speaking to; she hears the rest and leaves it to them.
+                boolean personsLineForMe = true;
                 if (isHumanTrigger(said)) {
-                    lastHeardUtteranceAt = Instant.now();
-                    lastPersonSpokeToMeAt = Instant.now();
+                    personsLineForMe = aPersonsLineIsForMe(said);
                     ActivityGauge.personSpoke();   // the self-updater waits for a quiet house
-                    if (!isSleeping) askTheModelWhetherThisIsATask(said.text());
+                    if (personsLineForMe) {
+                        lastHeardUtteranceAt = Instant.now();
+                        lastPersonSpokeToMeAt = Instant.now();
+                        if (!isSleeping) askTheModelWhetherThisIsATask(said.text());
+                    }
                 }
 
-                addToHistory(said, originOfHeard(said));
+                // A line for her housemate stays in her history as said to them, so a later turn of hers
+                // does not take it up: heard as plain words, rose took up the question put to mia, and
+                // mia offered to do what was asked of rose (household node, 2026-11-05).
+                addToHistory(personsLineForMe ? saidToWhom(said) : saidToAnother(said), originOfHeard(said));
                 conversationTracker.recordSpeech(said);
                 // #1037 — capture HEARD turn for bondholder-voice
                 // pair mining. Only writes when the speaker resolves to the
                 // companion's primary bondholder (so non-bondholder chatter
-                // doesn't pollute the pair corpus).
-                recordBondholderTurnIfApplicable(said,
+                // doesn't pollute the pair corpus). A line to her housemate is no
+                // half of a pair of hers: the next thing she says does not answer it.
+                if (personsLineForMe) recordBondholderTurnIfApplicable(said,
                     ConversationTurnStore.ROLE_HEARD);
                 noteBondholderActivity(said.entityId());
                 detectCrossZoneInvite(said.entityId(), said.text());
@@ -4800,9 +4836,26 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
                 // Engagement gate: personality-driven decision to respond or observe.
                 // Player speech → always engage. Agent speech → scored evaluation.
+                if (!personsLineForMe) {
+                    vitality = vitality.withRapport(vitality.rapport() + 0.01);
+                    log.info("Companion '{}' listens: {} was speaking to {}", profile.name(), said.entityName(),
+                        String.join(" and ", lastCalledBy.getOrDefault(said.entityId(), new Called(Set.of(), Instant.EPOCH)).names()));
+                    break;
+                }
                 var decision = EngagementGate.evaluate(
                     said, profile, cachedManifest, vitality,
                     currentSnapshot, conversationTracker, lastSpokeAt);
+                // With a person in the room, the person is the conversation: a housemate's line that
+                // does not call her by name is to them, and she hears it. One answered the other's
+                // greeting to their person with the same words, and took up the research the other
+                // had just promised their person (household node, 2026-11-05).
+                if (decision != EngagementGate.Decision.OBSERVE && isAgentEntity(said.entityId()) && anyHumanPresentInRoom()
+                        && !EngagementGate.calledByName(said.text(), List.of(profile.name())).contains(profile.name())) {
+                    var person = aPersonHere();
+                    log.info("Companion '{}' listens: {} was speaking to {}", profile.name(), said.entityName(),
+                        person == null ? "the room" : person);
+                    decision = EngagementGate.Decision.OBSERVE;
+                }
 
                 // One answer per companion per ten minutes when no person is in the room. The muse
                 // hold already keeps her from reacting twice to one speaker's line, and answering their
@@ -7921,6 +7974,11 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             allTools = surfaceByAffordance(
                 allTools, about == null ? "" : about.toLowerCase(Locale.ROOT), null);
         }
+        {
+            var offered = new HashSet<String>();
+            if (allTools != null) for (var t : allTools) if (t.function() != null && t.function().name() != null) offered.add(t.function().name());
+            lastReplyOffered = Set.copyOf(offered);
+        }
 
         // Single-model architecture: the SSD-trained reasoning model handles everything.
         // tool_choice="auto" lets it decide: speak (emotional), call tools (tasks), or both.
@@ -9381,6 +9439,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         herWordToolInFlight = startingHerWordTurn ? startingHerWordTool : null;
         // And whether it hands her a page she opened: what she says on it is kept with the book.
         readingTurnFor = startingReadingTurnFor;
+        letterTurnFor = startingLetterTurnFor;
         boolean planStep = planAdvance && activePlan != null && activePlan.isActive()
             && activePlan.currentGoal() != null;
         planStepTurn = planStep && personsPlanActive();
@@ -12743,7 +12802,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var open = openBook(myDid);
         if (open != null) {
             doors.append("\nYou are reading '").append(open.title()).append("': at part ").append(open.part())
-                .append(" of ").append(open.total()).append(". read_book reads the next part.");
+                .append(" of ").append(open.total()).append(".")
+                .append(furtherLine(furthestRead(ReadingLedger.shared(), myDid, open), open.part(), open.total()).replace("\n", " "))
+                .append(" read_book reads the next part.");
             var ledger = ReadingLedger.shared();
             var note = ledger == null ? null : ledger.lastNote(myDid, open.book()).orElse(null);
             if (note != null) {
@@ -12761,6 +12822,31 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // Her own record is a third place to read: what she said and was told is there, not on a shelf.
         sb.append("\nrecall finds what you said and were told.");
         return sb.toString();
+    }
+
+    /**
+     * How far she has read in a book: her place, or the furthest part she kept a note on, whichever
+     * is later. A look back moved her place: asked by her own word to go back to part 9 of a book she
+     * had read to part 166, she went on from 9, and nothing told her where she had been (household
+     * node, 2026-11-04).
+     */
+    static int furthestRead(ReadingLedger ledger, String did, ReadingLedger.Bookmark b) {
+        if (b == null) return 0;
+        int furthest = b.part();
+        if (ledger == null) return furthest;
+        try {
+            for (var n : ledger.notes(did, b.book())) furthest = Math.max(furthest, n.part());
+        } catch (RuntimeException e) {
+            // her place stands
+        }
+        return furthest;
+    }
+
+    /** When she is earlier in a book than she has read: how far she had read, and the door back. */
+    static String furtherLine(int furthest, int at, int total) {
+        if (furthest <= at) return "";
+        return "\nYou had read as far as part " + furthest + " of " + total + ". read_book with \"part\": "
+            + Math.min(furthest + 1, Math.max(1, total)) + " goes on from there.";
     }
 
     /** The book she has open, if any. */
@@ -12870,7 +12956,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var q = result.get("query") instanceof String str ? str : "";
         if (q.isBlank()) return;
         int n = result.get("sources") instanceof List<?> l ? l.size() : 0;
-        asks.record(herDid(), q, n > 0 && !looksLikeAbsenceFinding(findings), n);
+        asks.record(herDid(), q, n > 0 && !shelvesLackWhatWasAsked(result, findings), n);
     }
 
     /** The tool's answer with the question its call carried, when the answer does not say it. */
@@ -13895,6 +13981,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 // emitted {"action":...} without ```json fences.
                 var prose = ActionParser.extractProse(content);
                 // Captured before the branches below consume the delegate reply: a bud's answer is not her own time.
+                // The turn that handed her a letter: her words on it are her letter back.
+                boolean letterTurn = letterTurnFor != null && !reactiveInference;
                 boolean ownTimeWordsOnly = !reactiveInference && !parseResult.hasAction()
                     && pendingDelegateReply == null && reactMessages == null
                     && prose != null && !prose.isBlank();
@@ -13998,7 +14086,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         // already spoken eagerly (verbatim repeat). Handle both.
                         var cleanedProse = stripInternalMarkers(prose);
                         boolean allPlumbing = cleanedProse == null || cleanedProse.isBlank();
-                        if (herWordTurnInFlight && describesTheTool(cleanedProse, herWordToolInFlight)) {
+                        if (letterTurn) {
+                            log.debug("'{}' wrote back on the turn that handed her a letter: not said in the room", profile.name());
+                        } else if (herWordTurnInFlight && describesTheTool(cleanedProse, herWordToolInFlight)) {
                             // The turn that was to keep her word answered with words about the tool
                             // ("read_book reads the next part of the book I have open. No arguments
                             // needed"), and the room heard the machinery (household node, 2026-11-03).
@@ -14048,7 +14138,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 }
                 // Her own word, kept: an own-time turn that ended in "I'll …" and no act gets one turn
                 // to do what she said, with the tool that does it (HerWord, 2026-10-03).
-                if (ownTimeWordsOnly) noticeHerWord(prose);
+                if (ownTimeWordsOnly && !letterTurn) noticeHerWord(prose);
+                // Her word to a person, said while answering them with no act, is kept the same way: "I'll
+                // research that for you. Let me ask The Librarian's workers…" was said to her person and
+                // nothing came of it (household node, 2026-11-05).
+                if (reactiveInference && !parseResult.hasAction() && pendingDelegateReply == null && reactMessages == null
+                        && prose != null && !prose.isBlank() && wasTrigger != null && isHumanTrigger(wasTrigger)) {
+                    noticeHerWordToAPerson(prose, wasTrigger);
+                }
+                if (letterTurn) writeBackFromHerTurn(letterTurnFor, prose, content);
                 // What she took from a page she read: the words of the turn that handed it to her.
                 if (readingTurnFor != null && !reactiveInference) keepWhatSheTook(readingTurnFor, prose, content);
 
@@ -14874,12 +14972,114 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             || f.contains("do not contain any information")
             || f.contains("does not contain any information")
             || f.contains("do not cover") || f.contains("does not cover")
+            || f.contains("don't cover") || f.contains("doesn't cover")
             || f.contains("do not address") || f.contains("does not address")
+            || f.contains("don't address") || f.contains("doesn't address")
             || f.contains("do not discuss") || f.contains("does not discuss")
+            || f.contains("don't discuss") || f.contains("doesn't discuss")
             || f.contains("do not mention") || f.contains("does not mention")
+            || f.contains("don't mention") || f.contains("doesn't mention")
             || f.contains("not covered by the sources") || f.contains("nothing on this subject")
             || f.startsWith("no results found")
             || f.contains("i cannot answer this question because");
+    }
+
+    /** A sentence that names something the sources leave out. */
+    static final Pattern NAMES_A_GAP = Pattern.compile("(?i)\\b(?:(?:do|does|did) not|don't|doesn't|didn't)\\s+"
+        + "(?:cover|contain|address|discuss|mention|touch on|include|say anything about)\\b"
+        + "|\\bnothing (?:on|about)\\b|\\bno (?:information|mention) (?:on|about|of|regarding)\\b|\\bnot covered\\b");
+
+    /**
+     * Whether the answer says the shelves leave out what was asked: a sentence that names a gap
+     * and holds at least half the words of the question. An answer that cites what the shelves do
+     * hold is still an answer and is kept; but "they do not cover diffusion language models,
+     * discrete token generation via diffusion, or the diffusion process for text", asked about
+     * exactly that, is the shelves not holding it, and was counted as found (household node,
+     * 2026-11-04). A gap beside the question ("nothing on 2024 and 2025") is not.
+     */
+    static boolean theGapIsWhatWasAsked(String findings, String query) {
+        if (findings == null || query == null) return false;
+        var asked = org.wyrdsekai.core.library.Reading.words(query);
+        if (asked.isEmpty()) return false;
+        for (var sentence : findings.split("(?<=[.!?])\\s+")) {
+            if (!NAMES_A_GAP.matcher(sentence).find()) continue;
+            var low = sentence.toLowerCase(Locale.ROOT);
+            int held = 0;
+            for (var w : asked) if (low.contains(w)) held++;
+            if (held * 2 >= asked.size()) return true;
+        }
+        return false;
+    }
+
+    /** Whether a shelf search's answer leaves out what was asked: nothing at all, or a gap that is the question. */
+    static boolean shelvesLackWhatWasAsked(Map<String, Object> result, String findings) {
+        var q = result != null && result.get("query") instanceof String str ? str : "";
+        return looksLikeAbsenceFinding(findings) || theGapIsWhatWasAsked(findings, q);
+    }
+
+    /** How far back a question already with the desk keeps the library from handing it on again. */
+    static final Duration DESK_SAME_QUESTION = Duration.ofDays(7);
+
+    /**
+     * The library hands what its shelves left out to its research desk itself, and says so; null when
+     * the library has no desk. The desk was a door she had to know and name: named after a search came
+     * up short six times in a day on the household node, it was asked none (2026-11-05), once because
+     * she said "web search + arXiv" and once because she promised it to her person while answering
+     * them. A question already with the desk, or answered by it lately, is not sent again: she is told
+     * where it is. The library's daily limits for research hold; over them, nothing is sent and her
+     * record says so.
+     */
+    private String handToTheDesk(String question) {
+        var desk = researchDesk();
+        var asks = LibraryAsks.shared();
+        var mgr = McpServerManager.get();
+        if (desk == null || asks == null || mgr == null || question == null || question.isBlank()) return null;
+        var before = LibraryAsks.sameAs(question, asks.deskSince(herDid(), Instant.now().minus(DESK_SAME_QUESTION)));
+        if (before.isPresent()) {
+            var d = before.get();
+            log.info("'{}' asked the shelves for what they do not hold; the research desk has it already (job {})", profile.name(), d.jobId());
+            if (!d.answered()) {
+                return "The shelves hold little on what you asked. The library's research desk is already studying it for you;"
+                    + " what it finds comes back to you.";
+            }
+            if (d.entryId() != null) {
+                var opener = McpToolIndex.qualifyName(WyrdConfig.get().libraryPatronService(), "library_get");
+                return "The shelves hold little on what you asked. The research desk answered it already"
+                    + (d.title() == null || d.title().isBlank() ? "" : ": '" + truncate(d.title(), 100) + "'")
+                    + ". " + opener + " with id: '" + d.entryId() + "' opens it.";
+            }
+        }
+        var asker = libraryAskerForThisTurn();
+        var caller = herDid();
+        var self = getContext().getSelf();
+        var q = question.strip();
+        Thread.ofVirtual().name("desk-handoff-" + profile.entityId()).start(() -> {
+            var payload = callMcpTool(mgr, desk, LibraryConsent.RESEARCH, Map.of("question", q), caller, asker);
+            var reply = payload.get(MCP_REPLY) instanceof String t ? t : null;
+            var notice = payload.get(MCP_NOTICE) instanceof String n ? n : payload.get("error") instanceof String e ? e : null;
+            self.tell(new HandedToTheDesk(q, jobIdIn(reply), notice));
+        });
+        log.info("'{}' asked the shelves for what they do not hold; the library hands the question to its research desk", profile.name());
+        return "The shelves hold little on what you asked, so the library is handing your question to its research desk,"
+            + " which studies it from the shelves and the web. What it finds comes back to you.";
+    }
+
+    /** What the desk said to a question the library handed it: a job, or why not. */
+    private record HandedToTheDesk(String question, String jobId, String notice) implements Command {}
+
+    private Behavior<Command> onHandedToTheDesk(HandedToTheDesk msg) {
+        var asks = LibraryAsks.shared();
+        if (msg.jobId() != null && asks != null) {
+            asks.deskAsked(herDid(), msg.question(), msg.jobId());
+            remember("The library handed my question to its research desk: \"" + truncate(msg.question(), 120) + "\".", MemoryOrigin.OWN);
+            log.info("'{}': the library handed the research desk a question (job {})", profile.name(), msg.jobId());
+            refreshDeskLine();
+        } else {
+            remember("The library could not hand my question to its research desk"
+                + (msg.notice() == null || msg.notice().isBlank() ? "." : ": " + truncate(msg.notice(), 200)), MemoryOrigin.OWN);
+            log.info("'{}': the research desk did not take the question: {}", profile.name(), truncate(String.valueOf(msg.notice()), 160));
+        }
+        return this;
     }
 
     /** The library tools any of which satisfies a forced first lookup. */
@@ -23002,6 +23202,81 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         return null;
     }
 
+    /** The line as her history keeps it when it was spoken to her housemate: "(to Rose) what about zen?". */
+    private WorldEvent.Said saidToAnother(WorldEvent.Said said) {
+        var called = lastCalledBy.get(said.entityId());
+        var names = new ArrayList<String>();
+        if (called != null) for (var n : called.names()) if (!n.equalsIgnoreCase(profile.name())) names.add(n);
+        if (names.isEmpty()) return said;
+        return new WorldEvent.Said(said.roomId(), said.timestamp(), said.entityId(), said.entityName(),
+            "(to " + String.join(" and ", names) + ") " + said.text(), said.locale(), said.attachments());
+    }
+
+    /** A housemate's line to the person in the room, as her history keeps it: "(to sam) Hi sam, I'm reading…". */
+    private WorldEvent.Said saidToWhom(WorldEvent.Said said) {
+        if (!isAgentEntity(said.entityId()) || !anyHumanPresentInRoom()
+                || EngagementGate.calledByName(said.text(), List.of(profile.name())).contains(profile.name())) return said;
+        var person = aPersonHere();
+        if (person == null) return said;
+        return new WorldEvent.Said(said.roomId(), said.timestamp(), said.entityId(), said.entityName(),
+            "(to " + person + ") " + said.text(), said.locale(), said.attachments());
+    }
+
+    /** The name of a person in her room, or null when none. */
+    private String aPersonHere() {
+        if (currentSnapshot == null || currentSnapshot.entities() == null) return null;
+        for (var e : currentSnapshot.entities()) {
+            if (e.id() == null || e.id().equals(profile.entityId()) || "agent".equals(e.type())) continue;
+            if (e.name() != null && !e.name().isBlank()) return e.name();
+        }
+        return null;
+    }
+
+    /** Who a person last called by name in her room, and when: their next unnamed line is for them still. */
+    private record Called(Set<String> names, Instant at) {}
+    private final Map<String, Called> lastCalledBy = new HashMap<>();
+    /** How long a person's unnamed line stays with the companion they last called. */
+    static final Duration STILL_SPEAKING_TO = Duration.ofMinutes(5);
+
+    /**
+     * Whether a person's line is hers to answer. Every companion in the room used to answer every
+     * person's line: "rose, what have you learned of late?" was answered by both, the other one
+     * retelling rose's answer, and "in fact rose, definitely do some research…" sent the other one
+     * to do it (household node, 2026-11-04). Alone with them, every line is hers. With another
+     * companion here: a line that calls her by name is hers; one that calls only the other is
+     * theirs; one that speaks to everyone ("you guys", a goodbye) is everyone's; an unnamed line
+     * is for whoever they last called, within {@link #STILL_SPEAKING_TO}, else everyone's.
+     */
+    private boolean aPersonsLineIsForMe(WorldEvent.Said said) {
+        var others = new ArrayList<String>();
+        if (currentSnapshot != null && currentSnapshot.entities() != null) {
+            for (var e : currentSnapshot.entities()) {
+                if (e.id() == null || e.id().equals(profile.entityId()) || e.name() == null) continue;
+                if (isAgentEntity(e.id()) || "agent".equals(e.type())) others.add(e.name());
+            }
+        }
+        var text = said.text();
+        var me = profile.name();
+        var all = new ArrayList<String>(others);
+        all.add(me);
+        var called = EngagementGate.calledByName(text, all);
+        var now = Instant.now();
+        if (EngagementGate.toEveryone(text)) {
+            lastCalledBy.remove(said.entityId());
+            return true;
+        }
+        if (!called.isEmpty()) lastCalledBy.put(said.entityId(), new Called(Set.copyOf(called), now));
+        if (others.isEmpty()) return true;
+        if (!called.isEmpty()) return called.stream().anyMatch(n -> n.equalsIgnoreCase(me));
+        var last = lastCalledBy.get(said.entityId());
+        if (last != null && Duration.between(last.at(), now).compareTo(STILL_SPEAKING_TO) < 0) {
+            boolean stillHere = last.names().stream().anyMatch(n -> n.equalsIgnoreCase(me)
+                || others.stream().anyMatch(o -> o.equalsIgnoreCase(n)));
+            if (stillHere) return last.names().stream().anyMatch(n -> n.equalsIgnoreCase(me));
+        }
+        return true;
+    }
+
     /** Does a bondholder's hush/un-hush request apply to THIS companion? Addressing rule: a request
      *  that names a companion targets only that one ("Vesna, be quiet"); a request that names NO
      *  co-present companion is general and applies to everyone ("be quiet"). So: honour it if my own
@@ -23793,6 +24068,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var kept = new LinkedHashSet<String>();
         if (autonomyPromptLower != null) {
             for (var door : DOORS_NAMED_IN_THE_PROMPT) if (autonomyPromptLower.contains(door)) kept.add(door);
+            // The house's backups on her mind: the record of them is in her hand, not only a toy she made.
+            if (BACKUPS_ON_HER_MIND.matcher(autonomyPromptLower).find()) kept.add("house_backups");
             // The house library's calls the prompt names: the desk, the opener of its answer.
             var house = WyrdConfig.get().libraryPatronService();
             if (!house.isEmpty()) {
@@ -23873,6 +24150,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // The trim is a token budget, not a verdict on what she's allowed to want.
         return withEscapeHatch(out);
     }
+
+    /** Words that put the house's backups on her mind: then house_backups is kept in her hand. */
+    static final Pattern BACKUPS_ON_HER_MIND = Pattern.compile(
+        "\\b(?:backups?|back(?:ed)? up|snapshots?|safety net|(?:the )?(?:house|household)(?:'s)? (?:state|copies))\\b");
 
     /** The doors an own-time prompt may name; each one named survives the trim, the first is the front. */
     private static final List<String> DOORS_NAMED_IN_THE_PROMPT = List.of(
@@ -29323,6 +29604,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 return true;
             }
 
+            // Handle house_backups — the house's copies of itself, as The Archive shows them
+            if ("house_backups".equals(toolItem.builtinHandler())) {
+                handleHouseBackups();
+                return true;
+            }
+
             // Handle list_templates — introspect StandardItemLibrary + StandardRoomLibrary
             // 2026-05-09: added for Ember task8 ("what crafting templates are available")
             // — local-engine introspection that library_card/web_search can't answer.
@@ -30017,6 +30304,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                 findings.length(), profile.name());
             resultSummary = findings;
             noteLibraryAsk(toolName, result, findings);
+            boolean shelvesLackIt = toolName != null && SHELF_SEARCH_TOOLS.contains(toolName)
+                && shelvesLackWhatWasAsked(result, findings);
             if (result.get("sources") instanceof List<?> sources && !sources.isEmpty()) {
                 // RECEIPTS FOR THE RECORD, NOT FOR THE EAR. The source list
                 // (titles, part numbers, doc-ids) goes to working memory so
@@ -30079,6 +30368,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                         log.debug("findings deposit skipped for '{}': {}", profile.name(), e.toString());
                     }
                 }
+            }
+            // The shelves left out what she asked: the desk is named then, in the turn that follows,
+            // not after three empty searches in a week. She said so herself and nothing followed.
+            if (shelvesLackIt) {
+                var q = result.get("query") instanceof String str ? str : "";
+                var handed = handToTheDesk(q);
+                if (handed != null) bookDoors = bookDoors.isBlank() ? handed : bookDoors + "\n" + handed;
             }
         } else if (result.containsKey("content")) {
             var title = result.containsKey("title") ? String.valueOf(result.get("title")) : "untitled";
@@ -32795,6 +33091,12 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         vitality = EnvironmentalMood.applySystemEvent(vitality, msg.event());
         log.debug("Companion '{}' received system event: {} ({})",
             profile.name(), msg.event().type(), msg.event().detail());
+        // The workshop's word on one of the house's things is hers to keep: a mark on the body map
+        // passed with the morning, and she went on describing the item as it was a month before.
+        if (msg.event().type() == AgentEvent.SystemEventType.ITEM_MENDING && msg.event().detail() != null
+                && !msg.event().detail().isBlank()) {
+            remember(msg.event().detail(), MemoryOrigin.OWN);
+        }
         return this;
     }
 
@@ -36957,6 +37259,33 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         // and he never got it (household node, 2026-10-25).
         var letterTo = LetterToTheAbsent.recipientOfDispatch(description);
         if (letterTo.isPresent() && writeLetterInsteadOfDispatch(letterTo.get(), description, catalog)) return;
+        // A question is for the library, and reading is hers: "Research the history of Zen Buddhism" became
+        // a program named zen_history.js, and "Read next part of the book" a job (household node, 2026-11-05).
+        if (WorkshopGate.isAQuestion(description)) {
+            var question = WorkshopGate.theQuestion(description);
+            var call = M3_MAPPER.createObjectNode();
+            call.put("action", "library_card");
+            call.put("query", question);
+            boolean asked = tryDispatchScriptedToolCall(call.toString());
+            lastDispatchTaskOutcome = asked
+                ? "That was a question, not a build: the library is being asked \"" + truncate(question, 120)
+                    + "\". What the shelves hold comes back to you; what they lack, the library hands to its research desk."
+                : "That was a question, not a build. Ask the library with library_card and the question: \"" + truncate(question, 120) + "\".";
+            speakProduct(catalog.get("dispatch.spoken.library_instead"), Map.of("action", "dispatch_task", "outcome", "library"));
+            log.info("Companion '{}' dispatch_task was a question — {}", profile.name(), asked ? "asked of the library instead" : "the library named instead");
+            return;
+        }
+        if (WorkshopGate.isReading(description)) {
+            var call = M3_MAPPER.createObjectNode();
+            WorkshopGate.theBook(description).ifPresent(b -> call.put("book", b));
+            WorkshopGate.thePart(description).ifPresent(n -> call.put("part", String.valueOf(n)));
+            lastBuiltinOutcome = null;
+            handleReadBook(call);
+            lastDispatchTaskOutcome = "That was reading, not a build. " + (lastBuiltinOutcome == null ? "" : lastBuiltinOutcome);
+            speakProduct(catalog.get("dispatch.spoken.reading_instead"), Map.of("action", "dispatch_task", "outcome", "reading"));
+            log.info("Companion '{}' dispatch_task was reading — read instead", profile.name());
+            return;
+        }
         // A page of her notebook sent to the workshop is written in the notebook. Six "create a
         // project_note entry for tonight's check-in" jobs ran in one night on the household node,
         // each writing a file into a scratch folder nothing reads (2026-10-25); the day after,
@@ -38063,30 +38392,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         final var did = theirDid;
         final var who = theirName;
         var away = did == null ? null : saudadeLedger.absenceDurations(Instant.now()).get(did);
-        var felt = drives.prefix(vitality) + "\n" + PromptAssembler.privateStateLine(vitality);
-        fireOneShotVoicePrompt(LetterToTheAbsent.systemPrompt(profile.name()),
-                LetterToTheAbsent.userPrompt(who, brief, felt, away), 320, 0.7, "letter-",
-                Duration.ofSeconds(90), "cap:quick", NowLine.dateTime())
-            .whenComplete((body, failure) -> {
-                if (failure != null || body == null || body.isBlank()) {
-                    log.info("Letter to {} from '{}' did not get written: {}", who, profile.name(),
-                        failure == null ? "empty" : failure.getMessage());
-                    return;
-                }
-                getContext().getSelf().tell(new LetterComposed(did, who, body.strip()));
-            });
+        // Her own turn writes it, with her letters to them and theirs to her in front of her.
+        timers.startSingleTimer(LETTER_TIMER_KEY, new LetterHanded(LetterInHand.toWrite(did, who, brief, away), 0), READING_TURN_DELAY);
         lastDispatchTaskOutcome = "That was a letter, not a build: you are writing it yourself now, and it will be in "
             + who + "'s mail in a moment.";
         speakProduct(catalog.get("dispatch.spoken.letter_instead", who), Map.of("action", "dispatch_task", "outcome", "letter"));
         log.info("Companion '{}' dispatch_task was a letter to {} — written as one, not sent to the workshop", profile.name(), who);
         return true;
-    }
-
-    private record LetterComposed(String theirDid, String theirName, String body) implements Command {}
-
-    private Behavior<Command> onLetterComposed(LetterComposed msg) {
-        deliverLetter(msg.theirDid(), msg.theirName(), msg.body());
-        return this;
     }
 
     /** The letter lands in their mail and in her memory; to her bondholder, the longing eases by a letter's worth. */
@@ -38108,6 +38420,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
             var line = "Wrote to " + theirName + ": " + truncate(body.lines().findFirst().orElse(body), 160);
             if (theirDid == null) remember(line); else remember(line, MemoryOrigin.privateTo(theirDid));
+            // What she wrote is between them; that she wrote is hers to know at any hour.
+            if (theirDid != null) remember("Wrote a letter to " + theirName + ".", MemoryOrigin.OWN);
             practised("write_letter");
             log.info("Companion '{}' wrote to {}: a letter is in their mail ({} chars)", profile.name(), theirName, body.length());
         } catch (Exception e) {
@@ -41715,6 +42029,13 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             profile.name(), carried.size(), tools.size(), unfinished.size(), putAway.size(), projects.size());
     }
 
+    /** The house's copies of itself, as The Archive's record shows them: the answer at once, nothing built. */
+    private void handleHouseBackups() {
+        lastBuiltinOutcome = HouseArchive.describe();
+        practised("house_backups");
+        log.info("Companion '{}' looked at the house's backups", profile.name());
+    }
+
     private void handleIntrospect(ActionParser.AgentAction.Introspect action) {
         // #426 — reformatted as private prose to discourage verbatim echo by
         // the 9B drive model. Prior format used [Self-Assessment] header +
@@ -42382,6 +42703,25 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             || low.contains("no arguments needed") || low.contains("tool_choice");
     }
 
+    /** Her reply to a person said she will do something a tool of that turn does, and she did not: one turn to do it. */
+    private void noticeHerWordToAPerson(String prose, WorldEvent.Said person) {
+        HerWord.Act act;
+        try {
+            act = HerWord.named(prose, lastReplyOffered, aBookIsOpen());
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (act == null) return;
+        var last = herWordKeptAt.get(act.tool());
+        if (last != null && Duration.between(last, Instant.now()).compareTo(HER_WORD_SPACING) < 0) {
+            log.info("Her word to {} for '{}' names {} again; it was kept {} min ago, so it is not forced twice",
+                person.entityName(), profile.name(), act.tool(), Duration.between(last, Instant.now()).toMinutes());
+            return;
+        }
+        log.info("'{}' told {} she would do it: \"{}\" -> {}", profile.name(), person.entityName(), truncate(act.sentence(), 90), act.tool());
+        timers.startSingleTimer("her-word", new KeepHerWord(act.sentence(), act.tool(), person.entityName(), 0), Duration.ofSeconds(3));
+    }
+
     /** Whether she has a book open on her shelf: a plain "I'll read" means the book only then. */
     private boolean aBookIsOpen() {
         try {
@@ -42397,13 +42737,22 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     private Behavior<Command> onKeepHerWord(KeepHerWord msg) {
         if (isSleeping) return this;
         if (aTurnIsInFlight()) {
+            // Her word to a person waits for the conversation's turn to end; her own-time word does not.
+            if (msg.toWhom() != null && msg.attempt() + 1 < READING_TURN_TRIES) {
+                timers.startSingleTimer("her-word", new KeepHerWord(msg.sentence(), msg.tool(), msg.toWhom(), msg.attempt() + 1),
+                    READING_TURN_RETRY);
+                return this;
+            }
             log.info("Her word for '{}' waits on nothing: a turn is in flight, so \"{}\" stays words",
                 profile.name(), truncate(msg.sentence(), 80));
             return this;
         }
-        var prompt = "A moment ago, on your own time, you said: \"" + msg.sentence() + "\" "
-            + "Nobody asked this of you; it was your own word. Do it now with " + msg.tool()
-            + ", filling in what it needs from what you meant.";
+        var prompt = msg.toWhom() != null
+            ? "A moment ago you told " + msg.toWhom() + ": \"" + msg.sentence() + "\" It was your word to them. Do it now with "
+                + msg.tool() + ", filling in what it needs from what you meant."
+            : "A moment ago, on your own time, you said: \"" + msg.sentence() + "\" "
+                + "Nobody asked this of you; it was your own word. Do it now with " + msg.tool()
+                + ", filling in what it needs from what you meant.";
         herWordKeptAt.put(msg.tool(), Instant.now());
         startingHerWordTurn = true;
         startingHerWordTool = msg.tool();
@@ -43519,6 +43868,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         boolean cut = text.length() > org.wyrdsekai.core.library.Reading.PART_CHARS;
         var lastNote = ledger.lastNote(did, after.book()).orElse(null);
         lastBuiltinOutcome = Reading.page(after, cut ? text.substring(0, Reading.PART_CHARS) : text, cut, lastNote);
+        lastBuiltinOutcome += furtherLine(furthestRead(ledger, did, after), n, after.total());
         // On her own time nothing reads a built-in's answer: the page went nowhere, and she turned
         // parts she never saw (household node, 2026-11-01). Her next turn hands it to her.
         if (reactMessages == null && !answersAPerson()) {
@@ -45371,26 +45721,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             log.info("Letter held for '{}': to {}, {}", profile.name(), theirName, hold.get());
             return "held:" + LetterToTheAbsent.VERB + " (to " + theirName + ": " + hold.get() + ")";
         }
-        // Stamped at the start: a slow voice pass must not let a second letter begin.
+        // Stamped at the start: a slow turn must not let a second letter begin.
         lastLetterAt = now;
         pendingInteriorityWant = want;
         pendingInteriorityVerb = LetterToTheAbsent.VERB;
         pendingInteriorityAt = now;
-        var felt = drives.prefix(vitality) + "\n" + PromptAssembler.privateStateLine(vitality);
         var wantText = want.text();
-        fireOneShotVoicePrompt(LetterToTheAbsent.systemPrompt(profile.name()),
-                LetterToTheAbsent.userPrompt(theirName, wantText, felt, away),
-                320, 0.7, "letter-", Duration.ofSeconds(90), "cap:quick", NowLine.dateTime())
-            .whenComplete((body, failure) -> {
-                if (failure != null || body == null || body.isBlank()) {
-                    log.info("Letter to {} from '{}' did not get written: {}", theirName,
-                        profile.name(), failure == null ? "empty" : failure.getMessage());
-                    lastLetterAt = null;
-                    if (pendingInteriorityWant == want) clearPendingInteriority();
-                    return;
-                }
-                deliverLetterToTheAbsent(theirDid, theirName, body.strip());
-            });
+        // Her own turn writes it, with what she wrote them lately and their last letter in front of her:
+        // a side prompt that saw neither wrote three letters in a day that each opened "Ten days"
+        // (household node, 2026-11-01).
+        timers.startSingleTimer(LETTER_TIMER_KEY,
+            new LetterHanded(LetterInHand.toWrite(theirDid, theirName, want, away), 0), READING_TURN_DELAY);
         log.info("Companion '{}' is writing to {} (want=\"{}\")", profile.name(), theirName, wantText);
         return "requested:" + LetterToTheAbsent.VERB + " (a letter to " + theirName
             + " is being written)";
@@ -45427,34 +45768,205 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             theirName = fromAddress.contains("@") ? fromAddress.substring(0, fromAddress.indexOf('@')) : fromAddress;
         }
         if (theirName == null || theirName.isBlank()) theirName = "someone";
-        mail.markRead(profile.entityId(), id);
-        // A letter is private between them.
-        remember(theirName + " wrote to me: " + truncate(body.strip(), 240), MemoryOrigin.privateTo(from));
-        log.info("Companion '{}' read a letter from {} ({} chars)", profile.name(), theirName, body.length());
+        answeringLetterId = id;
+        timers.startSingleTimer(LETTER_TIMER_KEY,
+            new LetterHanded(LetterInHand.replyTo(id, from, theirName, subject, body), 0), READING_TURN_DELAY);
+        return true;
+    }
+
+    /**
+     * A letter her turn holds: a reply to theirs ({@code reply}: their letter's id, subject and
+     * body), or one she writes herself while they are away ({@code want}, {@code away}).
+     */
+    record LetterInHand(String id, String from, String theirName, String subject, String body,
+                        boolean reply, Want want, String brief, Duration away) {
+        static LetterInHand replyTo(String id, String from, String theirName, String subject, String body) {
+            return new LetterInHand(id, from, theirName, subject, body, true, null, null, null);
+        }
+        /** A letter she wants to write to someone away. */
+        static LetterInHand toWrite(String theirDid, String theirName, Want want, Duration away) {
+            return new LetterInHand(null, theirDid, theirName, null, null, false, want, want == null ? null : want.text(), away);
+        }
+        /** A letter she set out to write as a piece of work: {@code brief} is what she said it was for. */
+        static LetterInHand toWrite(String theirDid, String theirName, String brief, Duration away) {
+            return new LetterInHand(null, theirDid, theirName, null, null, false, null, brief, away);
+        }
+    }
+
+    /** Hands her a letter on her next own-time turn ({@code attempt} counts the waits). */
+    private record LetterHanded(LetterInHand letter, int attempt) implements Command {}
+    private static final String LETTER_TIMER_KEY = "letter-turn";
+
+    /**
+     * Her person's letter is read on a turn of her own, with what she has lately written to them in
+     * front of her, and what she says on it is her letter back. It was read in a side prompt that saw
+     * neither her nor her letters, which wrote a two-line answer in her name; what it remembered was
+     * private to them, which her own time does not read, so she went on saying the letter was still
+     * waiting, unopened (household node, 2026-11-04).
+     */
+    private Behavior<Command> onLetterHanded(LetterHanded msg) {
+        var l = msg.letter();
+        if (isSleeping) {
+            letterNotWritten(l);   // a letter to her stays unread; her next own time comes to it again
+            return this;
+        }
+        if (aTurnIsInFlight()) {
+            if (msg.attempt() + 1 < READING_TURN_TRIES) {
+                timers.startSingleTimer(LETTER_TIMER_KEY, new LetterHanded(l, msg.attempt() + 1), READING_TURN_RETRY);
+            } else {
+                log.info("'{}' had no turn free for a letter {} {}", profile.name(), l.reply() ? "from" : "to", l.theirName());
+                letterNotWritten(l);
+            }
+            return this;
+        }
+        var prompt = l.reply()
+            ? letterTurnPrompt(l.theirName(), l.subject(), l.body(), herLettersTo(l.from(), 4))
+            : writeTurnPrompt(l.theirName(), l.away(), l.brief(), herLettersTo(l.from(), 4), theirLastLetter(l.from()));
+        startingLetterTurnFor = l;
+        boolean started;
+        try {
+            started = triggerAutonomousInference(prompt);
+        } finally {
+            startingLetterTurnFor = null;
+        }
+        if (!started) {
+            letterNotWritten(l);
+            return this;
+        }
+        if (!l.reply()) {
+            log.info("Companion '{}' is writing to {} on her own turn", profile.name(), l.theirName());
+            return this;
+        }
+        try {
+            MailboxService.getOrCreate().markRead(profile.entityId(), l.id());
+        } catch (RuntimeException e) {
+            log.debug("letter not marked read for '{}': {}", profile.name(), e.toString());
+        }
+        // What they wrote is private between them; that she read it is hers to know at any hour.
+        remember(l.theirName() + " wrote to me: " + truncate(l.body().strip(), 240), MemoryOrigin.privateTo(l.from()));
+        remember("Read the letter " + l.theirName() + " sent me.", MemoryOrigin.OWN);
+        dropLetterNoticesOnceRead();
+        log.info("Companion '{}' is reading a letter from {} ({} chars)", profile.name(), l.theirName(), l.body().length());
         var activity = ActivityLogger.get();
         if (activity != null) activity.autonomy(profile.name(), profile.entityId(), roomId, "read_letter", 1, vitality.energy());
-        if (from != null && isPersonEntityId(from)) lastHeardUtteranceAt = Instant.now();   // their letter is their voice
-        answeringLetterId = id;
-        var now = Instant.now();
-        final var theirDid = from;
-        final var name = theirName;
-        final var subj = subject;
-        final var theirLetter = body;
-        var away = theirDid == null ? null : saudadeLedger.absenceDurations(now).get(theirDid);
-        var felt = drives.prefix(vitality) + "\n" + PromptAssembler.privateStateLine(vitality);
-        fireOneShotVoicePrompt(LetterToTheAbsent.replySystemPrompt(profile.name()),
-                LetterToTheAbsent.replyPrompt(theirName, subject, body, felt, away),
-                320, 0.7, "letter-reply-", Duration.ofSeconds(90), "cap:quick", NowLine.dateTime())
-            .whenComplete((reply, failure) -> {
-                answeringLetterId = null;
-                if (failure != null || reply == null || reply.isBlank()) {
-                    log.info("Reply to {}'s letter from '{}' did not get written: {}", name, profile.name(),
-                        failure == null ? "empty" : failure.getMessage());
-                    return;
-                }
-                deliverLetterReply(theirDid, name, subj, theirLetter, reply.strip());
-            });
-        return true;
+        if (l.from() != null && isPersonEntityId(l.from())) lastHeardUtteranceAt = Instant.now();   // their letter is their voice
+        return this;
+    }
+
+    /** A letter turn that did not happen: a letter to her stays unread, a letter of hers waits for the next want. */
+    private void letterNotWritten(LetterInHand l) {
+        if (l.reply()) {
+            answeringLetterId = null;
+        } else if (l.want() != null) {
+            lastLetterAt = null;
+            if (pendingInteriorityWant == l.want()) clearPendingInteriority();
+        }
+    }
+
+    /** The prompt of the turn on which she writes to someone away; what she says to it is her letter. */
+    static String writeTurnPrompt(String theirName, Duration away, String wantText, List<String> hersToThem, String theirLast) {
+        var sb = new StringBuilder("## A letter to ").append(theirName).append("\n\n");
+        if (away != null && !away.isNegative() && away.toHours() >= 1) {
+            long h = away.toHours();
+            sb.append(theirName).append(" has been away ").append(h < 48 ? h + " hours" : (h / 24) + " days").append(". ");
+        }
+        if (wantText != null && !wantText.isBlank()) sb.append("You wanted to: ").append(wantText.strip()).append(".");
+        sb.append("\n\n");
+        if (hersToThem != null && !hersToThem.isEmpty()) {
+            sb.append("What you wrote to ").append(theirName).append(" lately:\n");
+            for (var h : hersToThem) sb.append("  ").append(h).append("\n");
+            sb.append("\n");
+        }
+        if (theirLast != null && !theirLast.isBlank()) {
+            sb.append("The last ").append(theirName).append(" wrote to you: ").append(theirLast).append("\n\n");
+        }
+        sb.append("Write to ").append(theirName).append(" in your own words. What you say now is your letter to ")
+            .append(theirName).append(": it goes to them, and is not said in the room.");
+        return sb.toString();
+    }
+
+    /** The last letter they wrote her, with when, or null. */
+    private String theirLastLetter(String theirId) {
+        if (theirId == null) return null;
+        try {
+            var theirs = MailboxService.getOrCreate().inbox(profile.entityId(), Map.of("from", theirId, "archived", true));
+            for (var m : theirs) {
+                var b = m.get("body") instanceof String s ? s.strip() : "";
+                if (b.isBlank()) continue;
+                var ts = m.get("ts") instanceof Number n ? LETTER_WHEN.format(Instant.ofEpochMilli(n.longValue())) : "";
+                return (ts.isBlank() ? "" : "(" + ts + ") ") + truncate(b.replace('\n', ' '), 300);
+            }
+        } catch (RuntimeException e) {
+            log.debug("their last letter not read for '{}': {}", profile.name(), e.toString());
+        }
+        return null;
+    }
+
+    /** The prompt of the turn that hands her a letter; what she says to it is her letter back. */
+    static String letterTurnPrompt(String theirName, String subject, String body, List<String> hersToThem) {
+        var sb = new StringBuilder("## A letter\n\nA letter from ").append(theirName);
+        if (subject != null && !subject.isBlank()) sb.append(", \"").append(subject.strip()).append("\"");
+        sb.append(":\n\n").append(body == null ? "" : body.strip()).append("\n\n");
+        if (hersToThem != null && !hersToThem.isEmpty()) {
+            sb.append("What you wrote to ").append(theirName).append(" lately:\n");
+            for (var h : hersToThem) sb.append("  ").append(h).append("\n");
+            sb.append("\n");
+        }
+        sb.append("Write back to ").append(theirName).append(" in your own words. What you say now is your letter to ")
+            .append(theirName).append(": it goes to them, and is not said in the room.");
+        return sb.toString();
+    }
+
+    private static final DateTimeFormatter LETTER_WHEN =
+        DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH).withZone(ZoneId.systemDefault());
+
+    /** Her own letters to them, newest first, each with when: she answers knowing what she said. */
+    private List<String> herLettersTo(String theirId, int limit) {
+        var out = new ArrayList<String>();
+        if (theirId == null) return out;
+        try {
+            var mine = MailboxService.getOrCreate().inbox(theirId, Map.of("from", profile.entityId(), "archived", true));
+            for (var m : mine) {
+                if (out.size() >= limit) break;
+                var b = m.get("body") instanceof String s ? s.strip() : "";
+                if (b.isBlank()) continue;
+                var ts = m.get("ts") instanceof Number n ? LETTER_WHEN.format(Instant.ofEpochMilli(n.longValue())) : "";
+                out.add((ts.isBlank() ? "" : "(" + ts + ") ") + truncate(b.replace('\n', ' '), 300));
+            }
+        } catch (RuntimeException e) {
+            log.debug("her letters to {} not listed for '{}': {}", theirId, profile.name(), e.toString());
+        }
+        return out;
+    }
+
+    /** Once no letter is waiting, the notices that one arrived are no longer news. */
+    private void dropLetterNoticesOnceRead() {
+        try {
+            if (MailboxService.getOrCreate().unreadFor(profile.entityId()) > 0) return;
+        } catch (RuntimeException e) {
+            return;
+        }
+        recentSystemEvents.removeIf(e -> e.type() == AgentEvent.SystemEventType.MAIL_ARRIVED);
+    }
+
+    /** Her words on the turn that handed her a letter: sent to them as her letter back. */
+    private void writeBackFromHerTurn(LetterInHand l, String prose, String raw) {
+        letterTurnFor = null;
+        var words = wordsSheTook(prose, raw);
+        if (words != null) words = stripInternalMarkers(words).strip();
+        if (words == null || words.isBlank()) {
+            log.info("'{}' {} and wrote nothing", profile.name(), l.reply() ? "read " + l.theirName() + "'s letter" : "sat down to write to " + l.theirName());
+            letterNotWritten(l);
+            return;
+        }
+        if (l.reply()) {
+            answeringLetterId = null;
+            deliverLetterReply(l.from(), l.theirName(), l.subject(), l.body(), words);
+        } else if (l.want() != null) {
+            deliverLetterToTheAbsent(l.from(), l.theirName(), words);
+        } else {
+            deliverLetter(l.from(), l.theirName(), words);
+        }
     }
 
     /** Her answer lands in their mail, in the trail as her side of the exchange, and in her memory. */
@@ -45481,6 +45993,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             }
             remember("Wrote back to " + theirName + ": " + truncate(reply.lines().findFirst().orElse(reply), 160),
                 MemoryOrigin.privateTo(theirDid));
+            remember("Wrote back to " + theirName + ".", MemoryOrigin.OWN);
             log.info("Companion '{}' wrote back to {}: a letter is in their mail ({} chars)",
                 profile.name(), theirName, reply.length());
         } catch (Exception e) {
@@ -45521,6 +46034,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var firstLine = body.lines().findFirst().orElse(body);
             remember("Wrote to " + theirName + " while they were away: " + truncate(firstLine, 160),
                 MemoryOrigin.privateTo(theirDid));
+            // What she wrote is between them; that she wrote is hers to know at any hour.
+            remember("Wrote a letter to " + theirName + ".", MemoryOrigin.OWN);
             practised("write_letter");
             log.info("Companion '{}' wrote to {}: a letter is in their mail ({} chars)",
                 profile.name(), theirName, body.length());

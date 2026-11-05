@@ -135,6 +135,17 @@ class HerOwnWordIsKeptTest {
     }
 
     @Test
+    void asking_the_research_desk_is_the_desk_by_the_name_her_menu_gives_it() {
+        var tools = new HashSet<>(OFFERED);
+        tools.add("mcp__researchzosho__library_research");
+        assertThat(HerWord.named("The shelves don't have it. I'll ask the research desk about diffusion language models.", tools, true).tool())
+            .isEqualTo("mcp__researchzosho__library_research");
+        assertThat(HerWord.named("Let me take the question to the desk.", tools, false).tool()).isEqualTo("mcp__researchzosho__library_research");
+        assertThat(HerWord.named("I'll ask the research desk about it.", OFFERED, false)).as("no desk in hand: no other door guessed at").isNull();
+        assertThat(HerWord.named("I'll look into diffusion language models.", tools, false).tool()).as("a search is still a search").isEqualTo("library_card");
+    }
+
+    @Test
     void her_own_notebook_comes_before_the_library() {
         // Rita, 2026-10-24: "I'll read the project note now" went to the library four times and found no such book.
         var offered = List.of("library_card", "project_note", "read_book", "dispatch_task", "journal");

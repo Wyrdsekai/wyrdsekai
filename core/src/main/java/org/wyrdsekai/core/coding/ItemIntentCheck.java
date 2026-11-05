@@ -66,7 +66,13 @@ public final class ItemIntentCheck {
     private static final List<String> KEEP_WORDS = List.of(
         "notebook", "note book", "history log", "logbook", "log book", "ledger", "diary",
         "journal of", "book for recording", "record what", "records what", "keep track",
-        "keeps track", "keep a record", "keep a log", "project note");
+        "keeps track", "keep a record", "keep a log", "project note",
+        // A vault that keeps nothing: the household node's backup vault held its snapshots in a
+        // list that was gone on the next load, and this list did not know the word (2026-11-05).
+        // Phrases, not bare words: "not as a vault", "closing back up" and "mark it archived" are
+        // in real requests that keep nothing.
+        "backup", "snapshots", "vault for", "vault of", "vault that", "archive of",
+        "keep a copy", "keeps a copy", "save a copy", "saves a copy");
 
     /** How an item reaches the open web. */
     private static final List<String> SCRAPES = List.of(
@@ -119,9 +125,12 @@ public final class ItemIntentCheck {
             if (dot <= 0) continue;                    // tier-1 style, no namespace
             var ns = cap.substring(0, dot);
             if ("llm".equals(ns) || "embed".equals(ns)) continue; // generic compute
-            if (!lower.contains("world." + ns + ".")) abandoned.add(cap);
+            if (!callsInto(lower, ns)) abandoned.add(cap);
         }
-        if (!abandoned.isEmpty() && abandoned.size() < declaredCapabilities(script).size()) {
+        // Every one abandoned counts too: an item that declares [journal.write] and calls nothing
+        // promised a store and keeps fixed sentences (32 of 229 items on the household node). This
+        // once stayed quiet for fear of `const w = world;`; a call through any name now counts.
+        if (!abandoned.isEmpty()) {
             out.add("the manifest declares " + abandoned + " and invoke() never calls "
                 + (abandoned.size() == 1 ? "it" : "them") + ". If the request needs "
                 + (abandoned.size() == 1 ? "that service" : "those services")
@@ -132,6 +141,27 @@ public final class ItemIntentCheck {
                 + "the body actually produces.");
         }
 
+        out.addAll(keepingGaps(request, script));
+
+        if (wantsComposition(asked) && summarisesOnly(lower)) {
+            out.add("the request asks for something WRITTEN (\"" + composeWordIn(asked)
+                + "\"), but this item only calls world.llm.summarize, which condenses "
+                + "text that already exists and cannot invent. Use world.llm.complete "
+                + "with a prompt that asks for the piece to be composed — otherwise the "
+                + "person receives an accurate summary where they asked for a story.");
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * The gaps that mean an item made to keep or to practise keeps nothing, with what to change.
+     * The repair of a placed item asks only these of it, judged against what it was asked for.
+     */
+    public static List<String> keepingGaps(String request, String script) {
+        var out = new ArrayList<String>();
+        if (request == null || script == null || script.isBlank()) return out;
+        var asked = request.toLowerCase(Locale.ROOT);
+        var lower = script.toLowerCase(Locale.ROOT);
         // A practice that forgets is a toy. The preamble's PRACTICE ITEMS block
         // asks for one notes line per attempt so the next challenge can start
         // where the last one ended; a practice-shaped request whose body never
@@ -159,19 +189,12 @@ public final class ItemIntentCheck {
             out.add("the request asks for something that KEEPS entries (\"" + keepWordIn(asked)
                 + "\"), but invoke() never writes to any persistent namespace, so nothing written "
                 + "survives the call and every reading finds it empty. Store each entry with "
-                + "world.notes.add(text, [\"<item name>\"]) and read them back with "
-                + "world.notes.list(\"<item name>\"); declare \"notes.add\" in the manifest "
+                + "world.notes.add(text, [\"<item name>\"]), the text first, as a string "
+                + "(JSON.stringify an object), and read them back with "
+                + "world.notes.list(\"<item name>\"), each with its id and content; declare \"notes.add\" in the manifest "
                 + "capabilities. CHANGE ONLY invoke()'s body and the capabilities array.");
         }
-
-        if (wantsComposition(asked) && summarisesOnly(lower)) {
-            out.add("the request asks for something WRITTEN (\"" + composeWordIn(asked)
-                + "\"), but this item only calls world.llm.summarize, which condenses "
-                + "text that already exists and cannot invent. Use world.llm.complete "
-                + "with a prompt that asks for the piece to be composed — otherwise the "
-                + "person receives an accurate summary where they asked for a story.");
-        }
-        return List.copyOf(out);
+        return out;
     }
 
     /** The capabilities the manifest declares, parsed shallowly from the array
@@ -192,6 +215,17 @@ public final class ItemIntentCheck {
         Pattern.compile("capabilities\\s*:\\s*\\[([^\\]]*)\\]");
     private static final Pattern INNER_STRING =
         Pattern.compile("[\"']([a-z0-9_.*]+)[\"']");
+
+    /**
+     * Whether the body calls into a namespace by any name: {@code world.journal.write(},
+     * {@code w.journal.write(} after {@code const w = world;}, {@code journal.write(} after
+     * destructuring, or {@code world["journal"]}.
+     */
+    static boolean callsInto(String lowerScript, String namespace) {
+        var ns = Pattern.quote(namespace.toLowerCase(Locale.ROOT));
+        return Pattern.compile("(?<![a-z0-9_$])" + ns + "\\s*\\.\\s*[a-z_]+\\s*\\(").matcher(lowerScript).find()
+            || Pattern.compile("\\[\\s*[\"']" + ns + "[\"']\\s*]").matcher(lowerScript).find();
+    }
 
     static boolean scrapes(String lowerScript) {
         return SCRAPES.stream().anyMatch(lowerScript::contains);
@@ -264,6 +298,7 @@ public final class ItemIntentCheck {
             || lowerScript.contains("world.memory.add")
             || lowerScript.contains("world.library.add")
             || lowerScript.contains("world.pinboard.pin")
-            || lowerScript.contains("world.room.set_property");
+            || lowerScript.contains("world.room.set_property")
+            || lowerScript.contains("world.room.setproperty");
     }
 }

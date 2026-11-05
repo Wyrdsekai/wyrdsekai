@@ -1,15 +1,18 @@
 package org.wyrdsekai.core.coding;
 
+import org.wyrdsekai.scripting.api.ItemManifestValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.wyrdsekai.scripting.api.ItemCapabilitySet;
+import org.wyrdsekai.scripting.api.ItemManifest;
 import org.wyrdsekai.scripting.api.ItemManifestParser;
 
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Instant;
@@ -202,6 +205,10 @@ public final class ItemContractRepair {
             String taskId, Instant runStartedAt, Reprompt reprompt, String request) {
         if (reprompt == null) return;
         REQUEST.set(request);
+        if (taskId != null && request != null && !request.isBlank()) {
+            if (ASKED.size() > 256) ASKED.clear();
+            ASKED.put(taskId, request);
+        }
         if (artifacts != null) {
             for (var a : artifacts) {
                 if (!(a instanceof SourceArtifact src)) continue;
@@ -228,6 +235,117 @@ public final class ItemContractRepair {
      * cleared around a single synchronous run on one virtual thread.
      */
     private static final ThreadLocal<String> REQUEST = new ThreadLocal<>();
+
+    /** The words each task was asked with, for the bridge to keep beside the item it places. */
+    private static final Map<String, String> ASKED = new ConcurrentHashMap<>();
+
+    /** What a task was asked for, in the words it was dispatched with; empty when no repair run saw it. */
+    public static Optional<String> askedFor(String taskId) {
+        return taskId == null ? Optional.empty() : Optional.ofNullable(ASKED.get(taskId));
+    }
+
+    /**
+     * Keep what an item was asked for beside it, so a later repair is judged against that and not
+     * only against whether the file is well-formed. The night's mending and the steward's bench
+     * saw the file alone: a vault asked to keep snapshots that kept none passed every look, because
+     * nothing that looked knew what it was for (household node, 2026-11-05).
+     */
+    public static void keepAsked(Path itemFile, String request) {
+        if (itemFile == null || request == null || request.isBlank()) return;
+        try {
+            var dir = itemFile.resolveSibling(".asked");
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve(stem(itemFile) + ".txt"), request.strip() + "\n");
+        } catch (IOException e) {
+            log.debug("[item-contract] could not keep what {} was asked for: {}", itemFile, e.toString());
+        }
+    }
+
+    /**
+     * What a placed item is for: the words it was asked with when they were kept, else its own
+     * manifest's description of itself. Null when neither is there.
+     */
+    static String askedOf(Path itemFile, String script) {
+        try {
+            var kept = itemFile.resolveSibling(".asked").resolve(stem(itemFile) + ".txt");
+            if (Files.isRegularFile(kept)) {
+                var words = Files.readString(kept).strip();
+                if (!words.isEmpty()) return words;
+            }
+        } catch (IOException ignored) {
+            // falls back to the item's own description
+        }
+        try {
+            var m = ItemManifestParser.parse(script);
+            return m == null || m.description() == null || m.description().isBlank() ? null : m.description();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String stem(Path itemFile) {
+        var n = itemFile.getFileName().toString();
+        return n.endsWith(".js") ? n.substring(0, n.length() - 3) : n;
+    }
+
+    /**
+     * What stands between a placed item and its job: what the loader refuses first, then whether
+     * it keeps what it was made to keep, then whether each of its commands runs. A placed item is
+     * replaced only by a copy that has been used; reading the file was how a vault that threw on
+     * its first pack was called mended (household node, 2026-11-05).
+     */
+    static List<String> placedProblems(String script, String fileName, String asked) {
+        var out = new ArrayList<>(ItemContractCheck.problems(script, fileName));
+        if (out.isEmpty()) out.addAll(ItemIntentCheck.keepingGaps(asked, script));
+        if (out.isEmpty()) out.addAll(usesThatFail(script, fileName));
+        return out;
+    }
+
+    private static List<String> usesThatFail(String script, String fileName) {
+        ItemManifest manifest = null;
+        try { manifest = ItemManifestParser.parse(script); } catch (Exception ignored) { /* the form check spoke first */ }
+        var name = manifest != null && manifest.name() != null ? manifest.name() : stem(Path.of(fileName));
+        return ItemInvokeSmoke.failingUses(name, script, manifest);
+    }
+
+    /** A failed use, as she can say it. */
+    private static String plainly(String failedUse) {
+        return failedUse.startsWith("using it, what it keeps") ? "what it keeps does not come back"
+            : "one of its commands fails when it is used";
+    }
+
+    /** What a mend made true, said plainly: the loader takes it again, or what it holds now stays. */
+    public static String whatTheMendDid(PlacedRepair r) {
+        boolean keeping = r.before().stream().anyMatch(ItemContractRepair::isKeepingGap);
+        boolean fails = r.before().stream().anyMatch(p -> p.startsWith("using it"));
+        boolean loads = r.before().stream().anyMatch(p -> !isKeepingGap(p) && !p.startsWith("using it"));
+        var did = new ArrayList<String>();
+        if (loads) did.add("it registers again");
+        if (fails) did.add("each of its commands runs and what it keeps comes back");
+        if (keeping) did.add("what it is given now stays between uses");
+        return did.isEmpty() ? "it registers again" : String.join(", and ", did);
+    }
+
+    /** Why a mend did not take, said once: "it needs witness.receive, which the house does not offer". */
+    public static String whyNotMended(PlacedRepair r) {
+        var note = r.note() == null ? "" : r.note();
+        var notWhole = "could not be made whole";
+        var unchanged = "; the placed item is unchanged";
+        if (note.startsWith(notWhole + ": ")) {
+            var why = note.substring(notWhole.length() + 2);
+            return why.endsWith(unchanged) ? why.substring(0, why.length() - unchanged.length()) : why;
+        }
+        if (note.startsWith(notWhole)) {
+            if (r.after().stream().anyMatch(p -> p.startsWith("using it"))) return "it still fails when it is used";
+            if (r.after().stream().anyMatch(ItemContractRepair::isKeepingGap)) return "it still keeps nothing between uses";
+            return r.after().isEmpty() ? "it is still not whole" : r.after().get(0);
+        }
+        return note;
+    }
+
+    private static boolean isKeepingGap(String problem) {
+        return problem.startsWith("the request asks for");
+    }
 
     /**
      * Files already repaired in this run.
@@ -279,14 +397,15 @@ public final class ItemContractRepair {
         var fileName = itemFile.getFileName().toString();
         try {
             var original = Files.readString(itemFile);
-            var before = ItemContractCheck.problems(original, fileName);
+            var asked = askedOf(itemFile, original);
+            var before = placedProblems(original, fileName, asked);
             if (before.isEmpty()) return new PlacedRepair(fileName, false, before, before, "nothing to repair");
             var stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
             // The mechanical correction first: a slip in a capability's name needs no backend, and a
             // file made whole by it is replaced here, the previous version kept.
             var slip = ItemContractCheck.mendCapabilities(original);
             if (slip.isPresent()) {
-                var afterSlip = ItemContractCheck.problems(slip.get(), fileName);
+                var afterSlip = placedProblems(slip.get(), fileName, asked);
                 if (afterSlip.isEmpty()) {
                     replacePlaced(itemFile, fileName, original, slip.get(), stamp);
                     log.info("[item-contract] placed item {}: a capability the world does not have was corrected to what the "
@@ -306,16 +425,23 @@ public final class ItemContractRepair {
             for (int round = 1; round <= MAX_ROUNDS && !current.isEmpty(); round++) {
                 var source = Files.readString(copy);
                 log.info("[item-contract] placed-item repair round {}/{} for {} — {}", round, MAX_ROUNDS, fileName, current);
-                final var prompt = buildPrompt(fileName, current);
+                final var prompt = asked == null ? buildPrompt(fileName, current)
+                    : buildPrompt(fileName, current) + "\n\nWhat it is for: " + asked;
                 final var done = new boolean[1];
                 withoutEscalation(() -> done[0] = run.rerun(ws.toPath(), prompt));
                 if (!done[0]) break;
-                var after = ItemContractCheck.problems(Files.readString(copy), fileName);
+                var after = placedProblems(Files.readString(copy), fileName, asked);
                 if (after.size() > current.size()) { Files.writeString(copy, source); break; }   // never worse
                 current = after;
             }
             if (!current.isEmpty()) {
                 return new PlacedRepair(fileName, false, before, current, "could not be made whole; the placed item is unchanged");
+            }
+            var taken = purposeTaken(original, Files.readString(copy));
+            if (taken.isPresent()) {
+                log.info("[item-contract] placed item {}: the repair took its purpose out ({}); not mended, the placed item is unchanged",
+                    fileName, taken.get());
+                return new PlacedRepair(fileName, false, before, before, "could not be made whole: " + taken.get() + "; the placed item is unchanged");
             }
             replacePlaced(itemFile, fileName, Files.readString(itemFile), Files.readString(copy), stamp);
             log.info("[item-contract] placed item {} repaired; the previous version is in {}", fileName, itemFile.resolveSibling(".repaired"));
@@ -324,6 +450,63 @@ public final class ItemContractRepair {
             log.warn("[item-contract] placed-item repair of {} failed: {}", fileName, e.toString());
             return new PlacedRepair(fileName, false, List.of(), List.of(), "the repair did not run: " + e.getMessage());
         }
+    }
+
+    /**
+     * What a repair took out of an item to make it pass: a capability it declared, or a call into
+     * the world, that is gone from the repaired file. A check that asks only whether the file is
+     * well-formed is passed soonest by deleting what it refused: told "unknown capability:
+     * bondholder.receive" and "keep capabilities intact", the workshop removed the capability and
+     * the two calls that used it, left two fixed sentences, and the night's mending reported the
+     * item mended (household node, 2026-10-21). Empty when nothing was taken: a capability renamed
+     * to one the world offers is a mend, not a loss.
+     */
+    static Optional<String> purposeTaken(String before, String after) {
+        var lost = new ArrayList<String>();
+        var declaredBefore = declaredCapabilities(before);
+        var declaredAfter = declaredCapabilities(after);
+        var removedCaps = declaredBefore.stream().filter(c -> !declaredAfter.contains(c)).toList();
+        long newCaps = declaredAfter.stream().filter(c -> !declaredBefore.contains(c) && ItemManifestValidator.isKnownCapability(c)).count();
+        // Each capability taken out needs one the house offers put in its place; the rest are lost.
+        for (int k = (int) newCaps; k < removedCaps.size(); k++) {
+            var cap = removedCaps.get(k);
+            lost.add("it needs " + cap + (ItemManifestValidator.isKnownCapability(cap) ? "" : ", which the house does not offer"));
+        }
+        var callsBefore = worldCalls(before);
+        var callsAfter = worldCalls(after);
+        var removedCalls = callsBefore.stream().filter(c -> !callsAfter.contains(c)).toList();
+        long newCalls = callsAfter.stream().filter(c -> !callsBefore.contains(c)).count();
+        for (int k = (int) newCalls; k < removedCalls.size(); k++) {
+            var call = removedCalls.get(k);
+            if (lost.stream().noneMatch(l -> l.contains(call))) lost.add("its call to world." + call + " is gone");
+        }
+        if (lost.isEmpty()) return Optional.empty();
+        return Optional.of(String.join("; ", lost));
+    }
+
+    private static final Pattern DECLARED_CAPS = Pattern.compile("capabilities\\s*:\\s*\\[([^\\]]*)]");
+    private static final Pattern QUOTED_NAME = Pattern.compile("\"([a-zA-Z_][a-zA-Z0-9_.]*)\"");
+    private static final Pattern WORLD_CALL_IN_SCRIPT = Pattern.compile("\\bworld\\.([a-zA-Z_]+)\\.([a-zA-Z_]+)\\s*\\(");
+
+    static List<String> declaredCapabilities(String script) {
+        var out = new ArrayList<String>();
+        if (script == null) return out;
+        var m = DECLARED_CAPS.matcher(script);
+        if (!m.find()) return out;
+        var q = QUOTED_NAME.matcher(m.group(1));
+        while (q.find()) if (!out.contains(q.group(1))) out.add(q.group(1));
+        return out;
+    }
+
+    static List<String> worldCalls(String script) {
+        var out = new ArrayList<String>();
+        if (script == null) return out;
+        var m = WORLD_CALL_IN_SCRIPT.matcher(script);
+        while (m.find()) {
+            var call = m.group(1) + "." + m.group(2);
+            if (!out.contains(call)) out.add(call);
+        }
+        return out;
     }
 
     /** The placed file becomes {@code repaired}; what it was is kept under {@code .repaired/}. */
@@ -476,6 +659,7 @@ public final class ItemContractRepair {
             if (contract.isEmpty()) {
                 problems.addAll(ItemIntentCheck.gaps(
                     REQUEST.get(), source, ItemCapabilitySet.craftedDefault()));
+                problems.addAll(usesThatFail(source, name));
             }
             if (problems.isEmpty()) {
                 if (round > 1) {
@@ -515,6 +699,8 @@ public final class ItemContractRepair {
         // Except the gap that means the tool cannot do its job: asked to keep or to practise
         // and keeping nothing. That one is said, so "finished" is never said of an empty book.
         left.addAll(ItemIntentCheck.unfinished(REQUEST.get(), Files.readString(script)));
+        // And a tool that fails when it is used, or whose keeping does not come back, is not finished either.
+        if (left.isEmpty()) usesThatFail(Files.readString(script), name).stream().map(ItemContractRepair::plainly).distinct().forEach(left::add);
         if (!left.isEmpty()) {
             log.warn("[item-contract] repair exhausted for {} after {} rounds: still {} "
                 + "— shipping it anyway; the bridge decides", name, MAX_ROUNDS, left);
@@ -665,11 +851,21 @@ public final class ItemContractRepair {
           .append("This is ONE file and nothing else: no project, no src/ tree, no tests, no ")
           .append("second language. It is done the moment it parses and invoke() runs. ")
           .append("Fix the listed problems and stop.\n\n")
-          .append("The file ").append(fileName).append(" you just wrote will be REJECTED ")
-          .append("and will not register as an item. ")
+          .append(problems.stream().allMatch(p -> isKeepingGap(p) || p.startsWith("using it"))
+              ? "The file " + fileName + " does not do what it was made for. "
+              : "The file " + fileName + " you just wrote will be REJECTED and will not register as an item. ")
           .append(problems.size() == 1 ? "The exact problem:" : "The exact problems:")
           .append("\n\n");
         for (var p : problems) sb.append("  - ").append(p).append("\n");
+        // A problem that names a capability the world does not have cannot be fixed by deleting it:
+        // the item was made to do that thing. Say the honest ways out, or the backend takes the
+        // shortest one (household node, 2026-10-21).
+        if (problems.stream().anyMatch(p -> p.contains("unknown capability") || p.contains("does not exist on this node"))) {
+            sb.append("\nA capability the world does not have is NOT fixed by removing it or the code that uses it: ")
+              .append("the item was made to do that. If the world offers the same thing under another name, use ")
+              .append("that name in the manifest and in the call. If it does not, leave the file as it is and stop; ")
+              .append("it will be reported as not mendable, which is the truth.\n");
+        }
         sb.append("\nEdit that file IN PLACE to fix all of the above. Keep the same file ")
           .append("name. Do NOT remove, rename or alter any other field of the manifest — ")
           .append("in particular keep `embodiment`, `commands`, `capabilities` and the ")

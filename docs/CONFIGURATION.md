@@ -684,7 +684,7 @@ After each of the companion's sleeps, the workshop repairs broken items on copie
 | `WYRDSEKAI_ITEM_MEND_MINUTES` | `45` | Minutes each night the workshop may spend mending. `0` turns it off. |
 | `WYRDSEKAI_ITEMS_ALLOW_UNDECLARED` | `false` | For the move to enforced manifests only. `true` lets bundled and household items do what their manifest does not declare, as before, and logs a warning for each such call so it can be fixed. Items that companions make and items visitors bring keep their limits. |
 
-A placed item is replaced only when its repaired copy has no problems left. The old version is kept in `items/.repaired/`. Next to it is `state.json`, which records what the companion has been told and how often each file has been tried. After three tries with no change, the file is left for a person. `wyrd items repair <name>` or `wyrd items repair --all` does the same by hand. The mending bench in the Hearth lets the companion ask for it.
+A placed item is replaced only when its repaired copy has no problems left and has been tried: each of its commands has to run, and what it keeps has to come back. The old version is kept in `items/.repaired/`. Next to it is `state.json`, which records what the companion has been told and how often each file has been tried. After three tries with no change, the file is left for a person. `wyrd items repair <name>` or `wyrd items repair --all` does the same by hand. The mending bench in the Hearth lets the companion ask for it.
 
 ### Rooms and items your companions make
 

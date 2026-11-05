@@ -183,6 +183,32 @@ public final class LibraryAsks {
         return deskAsks("agent_did = ? AND answered_at IS NOT NULL AND entry_id IS NOT NULL AND opened = 0 ORDER BY answered_at DESC", agentDid);
     }
 
+    /** Every question she has handed the desk since then, newest first. */
+    public List<DeskAsk> deskSince(String agentDid, Instant since) {
+        var all = deskAsks("agent_did = ? ORDER BY asked_at DESC", agentDid);
+        if (since == null) return all;
+        var out = new ArrayList<DeskAsk>();
+        for (var d : all) if (d.askedAt() >= since.toEpochMilli()) out.add(d);
+        return out;
+    }
+
+    /**
+     * The desk question of hers about the same thing as {@code question} (half its words or more,
+     * either way round), newest first; empty when none. A question is not handed to the desk twice.
+     */
+    public static Optional<DeskAsk> sameAs(String question, List<DeskAsk> asked) {
+        var words = org.wyrdsekai.core.library.Reading.words(question);
+        if (words.isEmpty() || asked == null) return Optional.empty();
+        for (var d : asked) {
+            var theirs = org.wyrdsekai.core.library.Reading.words(d.question());
+            if (theirs.isEmpty()) continue;
+            int shared = 0;
+            for (var w : words) if (theirs.contains(w)) shared++;
+            if (shared * 2 >= Math.min(words.size(), theirs.size())) return Optional.of(d);
+        }
+        return Optional.empty();
+    }
+
     public Optional<DeskAsk> deskAsk(String jobId) {
         var l = deskAsks("job_id = ?", jobId);
         return l.isEmpty() ? Optional.empty() : Optional.of(l.getFirst());
