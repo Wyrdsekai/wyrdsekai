@@ -4,6 +4,19 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.18] — 2026-11-05
+
+### Changed
+
+- **Research has limits.** A research run a companion starts on her own time stops after 20 minutes, and one you ask for after an hour. Each companion starts one run of her own a day. All of these are settings.
+
+### Fixed
+
+- **Answers from the research desk reach your companions.** When the research desk finished a companion's question, she was never told, so its answers never reached her. Now she hears when it is done and can open the answer.
+- **A question the research desk took late is no longer lost.** When the desk was slow to answer, a companion was told it had not taken her question, though it had. Now the household waits longer, finds the run if the desk took it after all, and the answer comes back to her.
+- **A run that was stopped is asked again once.** If a research run is stopped, for example to put it under the new limits, the companion's question is asked again under them instead of being dropped.
+- **A question is not sent to the research desk twice.** If the desk is already studying it, the companion is told so.
+
 ## [0.5.17] — 2026-11-05
 
 ### Added

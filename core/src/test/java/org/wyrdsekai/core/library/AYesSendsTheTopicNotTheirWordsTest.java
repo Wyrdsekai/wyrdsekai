@@ -100,7 +100,7 @@ class AYesSendsTheTopicNotTheirWordsTest {
         // What waits for the yes is the topic and the call's other arguments: none of their words.
         var waiting = LibraryConsent.waitingArgs("did:person:ada");
         assertThat(waiting).containsEntry("question", TOPIC).containsEntry("mode", "broad")
-            .containsEntry("max_minutes", 90).doesNotContainKeys("sub_questions", "allow");
+            .containsEntry("max_minutes", 60).doesNotContainKeys("sub_questions", "allow");   // a person's run is held to the household's 60 minutes (2026-11-05)
         assertThat(waiting.toString()).doesNotContain("Leeds").doesNotContain("painless").doesNotContain("March");
 
         var said = LibraryConsent.researchYes("did:person:ada", "en");

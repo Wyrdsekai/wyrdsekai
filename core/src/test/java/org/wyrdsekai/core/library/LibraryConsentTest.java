@@ -133,7 +133,7 @@ class LibraryConsentTest {
         assertThat(sent).containsEntry("allow", List.of("self-harm"));
         // In the neutral wording (here the general one: no model is wired), never the person's words.
         assertThat(sent).containsEntry("question", NeutralWording.general("en"))
-            .containsEntry("mode", "broad").containsEntry("max_minutes", 90);
+            .containsEntry("mode", "broad").containsEntry("max_minutes", 60);   // a person's run is held to the household's 60 minutes (2026-11-05)
         assertThat(first).contains("will research it").contains(NeutralWording.general("en"))
             .contains("everyone who can read the library");
         assertThat(second).isEqualTo("There is no library question waiting for your yes.");

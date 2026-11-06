@@ -42,6 +42,13 @@ public final class LibraryAsks {
 
     public LibraryAsks(String jdbcUrl) {
         this.jdbcUrl = jdbcUrl;
+        // Tables made by an earlier release gain the columns added since: the migration that made them
+        // ran once (a column added there never reached the household node, 2026-11-05).
+        try (var conn = DriverManager.getConnection(jdbcUrl)) {
+            ensure(conn);
+        } catch (SQLException | RuntimeException e) {
+            log.debug("library asks tables not checked: {}", e.getMessage());
+        }
     }
 
     /** Migration 24: the two tables. Safe to run again. */
@@ -54,6 +61,12 @@ public final class LibraryAsks {
             st.execute("CREATE TABLE IF NOT EXISTS library_desk_asks ("
                 + "job_id TEXT PRIMARY KEY, agent_did TEXT NOT NULL, question TEXT NOT NULL, asked_at BIGINT NOT NULL, "
                 + "answered_at BIGINT, entry_id TEXT, title TEXT, opened INTEGER NOT NULL DEFAULT 0)");
+        }
+        // A question asked again after its run was stopped names the run it replaces (2026-11-05).
+        try (var st = conn.createStatement()) {
+            st.execute("ALTER TABLE library_desk_asks ADD COLUMN asked_again_from TEXT");
+        } catch (SQLException alreadyThere) {
+            // the column is there
         }
     }
 
@@ -155,6 +168,35 @@ public final class LibraryAsks {
         }
     }
 
+    /** The question of a stopped run asked again: the new run is hers, the stopped one closed. */
+    public void deskAskedAgain(String agentDid, String question, String newJobId, String stoppedJobId) {
+        if (agentDid == null || newJobId == null || newJobId.isBlank()) return;
+        deskAsked(agentDid, question, newJobId);
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var ps = conn.prepareStatement("UPDATE library_desk_asks SET asked_again_from = ? WHERE job_id = ?")) {
+            ps.setString(1, stoppedJobId);
+            ps.setString(2, newJobId.strip());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.debug("desk ask not marked as asked again: {}", e.getMessage());
+        }
+        deskGaveUp(stoppedJobId);
+    }
+
+    /** Whether this run is itself a question asked again after a stop: then a second stop ends it. */
+    public boolean deskAskedAgain(String jobId) {
+        if (jobId == null) return false;
+        try (var conn = DriverManager.getConnection(jdbcUrl);
+             var ps = conn.prepareStatement("SELECT asked_again_from FROM library_desk_asks WHERE job_id = ?")) {
+            ps.setString(1, jobId.strip());
+            try (var rs = ps.executeQuery()) {
+                return rs.next() && rs.getString(1) != null;
+            }
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
     /** The desk could not answer (the run failed, or the library forgot it): closed, with no entry. */
     public void deskGaveUp(String jobId) {
         deskAnswered(jobId, null, null);
@@ -223,9 +265,13 @@ public final class LibraryAsks {
             ps.setString(1, arg);
             try (var rs = ps.executeQuery()) {
                 while (rs.next()) {
+                    // Whether the answer time is empty is asked right after reading it: asked after the
+                    // next column, it read asked_at, every question came back answered at 0, and the
+                    // companion dropped every answer the desk check brought (household node, 2026-11-05).
                     long answered = rs.getLong(5);
+                    boolean noAnswer = rs.wasNull();
                     out.add(new DeskAsk(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
-                        rs.wasNull() ? null : answered, rs.getString(6), rs.getString(7), rs.getInt(8) != 0));
+                        noAnswer ? null : answered, rs.getString(6), rs.getString(7), rs.getInt(8) != 0));
                 }
             }
         } catch (SQLException e) {

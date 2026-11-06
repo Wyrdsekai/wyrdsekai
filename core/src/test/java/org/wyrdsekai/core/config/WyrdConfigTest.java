@@ -77,10 +77,14 @@ class WyrdConfigTest {
 
     // --- library research runs a day ---
 
-    @Test void library_research_runs_default_to_five_a_member_and_three_for_her_own_time() {
+    @Test void library_research_runs_default_to_five_a_member_and_one_for_her_own_time() {
         var cfg = WyrdConfig.forProfile(Map.of());
         assertEquals(5, cfg.libraryResearchPerDay());
-        assertEquals(3, cfg.libraryOwnTimeResearchPerDay());
+        assertEquals(1, cfg.libraryOwnTimeResearchPerDay());
+        assertEquals(20, cfg.libraryOwnTimeResearchMinutes());
+        assertEquals(60, cfg.libraryResearchMinutes());
+        assertEquals(40, cfg.libraryOwnTimeResearchTurns());
+        assertEquals(120, cfg.libraryResearchTurns());
     }
 
     @Test void library_research_runs_are_the_stewards_setting() {

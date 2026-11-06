@@ -213,6 +213,12 @@ public final class LibraryConsent {
     static volatile IntSupplier memberPerDay = () -> WyrdConfig.get().libraryResearchPerDay();
     /** Research runs each companion's own time may start per day (WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_PER_DAY). */
     static volatile IntSupplier ownTimePerDay = () -> WyrdConfig.get().libraryOwnTimeResearchPerDay();
+    /** The longest a run may take, by who asked (WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_MINUTES, _RESEARCH_MINUTES). */
+    static volatile IntSupplier ownTimeMinutes = () -> WyrdConfig.get().libraryOwnTimeResearchMinutes();
+    static volatile IntSupplier memberMinutes = () -> WyrdConfig.get().libraryResearchMinutes();
+    /** The most model turns a run may spend, by who asked (WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_TURNS, _RESEARCH_TURNS). */
+    static volatile IntSupplier ownTimeTurns = () -> WyrdConfig.get().libraryOwnTimeResearchTurns();
+    static volatile IntSupplier memberTurns = () -> WyrdConfig.get().libraryResearchTurns();
     /** Research runs the whole household may start per day (WYRDSEKAI_LIBRARY_RESEARCH_HOUSEHOLD_PER_DAY). */
     static volatile IntSupplier householdPerDay = () -> WyrdConfig.get().libraryHouseholdResearchPerDay();
     /** One check-send-count at a time for the household total, across people. */
@@ -256,7 +262,14 @@ public final class LibraryConsent {
         // The person's language (and country, when the household knows it): the library's help for
         // a question on harm to oneself comes in it, that country's services first (ResearchZosho
         // 0.5.1). The household's, not the model's: it replaces any the call carried.
-        if (RESEARCH.equals(tool)) sent.put("locale", libraryLocale(asker));
+        if (RESEARCH.equals(tool)) {
+            sent.put("locale", libraryLocale(asker));
+            // How long the run may hold the household's model, and how many turns: the library sets no
+            // ceiling of its own. A smaller one the call carries is kept.
+            boolean person = asker != null && asker.isPerson();
+            capAt(sent, "max_minutes", person ? memberMinutes.getAsInt() : ownTimeMinutes.getAsInt());
+            capAt(sent, "max_turns", person ? memberTurns.getAsInt() : ownTimeTurns.getAsInt());
+        }
         boolean child = asker != null && asker.isPerson() && isChild(asker.personId());
         if (child) {
             // A report researched after a yes is never a child's to read: an id of one is
@@ -284,6 +297,21 @@ public final class LibraryConsent {
         return checkedAndSent(asker, tool, sent, read);
     }
 
+    /**
+     * A research run the household counted when it was first taken, asked again under the household's
+     * ceilings after it was stopped: not held to the day's limit and not counted a second time.
+     */
+    public static Reply callAgain(Asker asker, Map<String, Object> args, Invoker invoker) throws Exception {
+        AGAIN.set(true);
+        try {
+            return call(asker, RESEARCH, args, invoker);
+        } finally {
+            AGAIN.remove();
+        }
+    }
+
+    private static final ThreadLocal<Boolean> AGAIN = new ThreadLocal<>();
+
     /** {@link #call} for everyone alike: the household's own check, the count, the call. */
     private static Reply checkedAndSent(Asker asker, String tool, Map<String, Object> sent, Invoker invoker)
             throws Exception {
@@ -298,7 +326,7 @@ public final class LibraryConsent {
             if (isChild(asker.personId())) return new Reply(false, null, heldForChild(asker), "held");
             helpNote = helpNote(asker);
         }
-        if (!research) return send(asker, tool, sent, invoker, helpNote);
+        if (!research || Boolean.TRUE.equals(AGAIN.get())) return send(asker, tool, sent, invoker, helpNote);
         var who = countedAs(asker);
         var day = today();
         synchronized (COUNTING.computeIfAbsent(who, k -> new Object())) {
@@ -570,6 +598,21 @@ public final class LibraryConsent {
         var own = LibraryAllowPolicy.parentalControlsOf(asker.personId())
             .map(ParentalControlService.Controls::dailyResearch).orElse(null);
         return own == null ? household : Math.max(0, own);
+    }
+
+    /** A ceiling the household sets: the call's own when it is smaller, else the household's; 0 sets none. */
+    static void capAt(Map<String, Object> sent, String key, int ceiling) {
+        if (ceiling <= 0) return;
+        int asked = sent.get(key) instanceof Number n ? n.intValue() : 0;
+        sent.put(key, asked > 0 ? Math.min(asked, ceiling) : ceiling);
+    }
+
+    /**
+     * A run the library took after the household stopped waiting for its answer, found afterwards:
+     * counted as an accepted run is, so the day's limit holds (household node, 2026-11-05).
+     */
+    public static void countedAfterTheWait(Asker asker) {
+        counted(countedAs(asker), today());
     }
 
     private static String countedAs(Asker asker) {
@@ -1317,6 +1360,10 @@ public final class LibraryConsent {
         memberPerDay = () -> WyrdConfig.get().libraryResearchPerDay();
         ownTimePerDay = () -> WyrdConfig.get().libraryOwnTimeResearchPerDay();
         householdPerDay = () -> WyrdConfig.get().libraryHouseholdResearchPerDay();
+        ownTimeMinutes = () -> WyrdConfig.get().libraryOwnTimeResearchMinutes();
+        memberMinutes = () -> WyrdConfig.get().libraryResearchMinutes();
+        ownTimeTurns = () -> WyrdConfig.get().libraryOwnTimeResearchTurns();
+        memberTurns = () -> WyrdConfig.get().libraryResearchTurns();
         rewording = null;
         householdNames = List::of;
         householdLanguage = () -> WyrdConfig.get().resolve("WYRDSEKAI_LOCALE", null, () -> System.getenv("WYRDSEKAI_LANG"));

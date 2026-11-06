@@ -4158,6 +4158,7 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             .onMessage(CrossZoneInvite.class, this::onCrossZoneInvite)
             .onMessage(ConsolidationTick.class, this::onConsolidationTick)
             .onMessage(DeskCheck.class, msg -> { checkDeskAnswers(); return this; })
+            .onMessage(AskedTheDeskAgain.class, this::onAskedTheDeskAgain)
             .onMessage(ReadWhatSheOpened.class, this::onReadWhatSheOpened)
             .onMessage(LetterHanded.class, this::onLetterHanded)
             .onMessage(ShelvesShown.class, this::onShelvesShown)
@@ -13316,7 +13317,9 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
     /** Every so often: whether the desk has answered a question of hers. */
     private record DeskCheck() implements Command {}
     /** The desk answered a question of hers ({@code entryId} the answer's entry), or gave up on it. */
-    public record DeskAnswered(String jobId, String entryId, String title, boolean failed) implements Command {}
+    public record DeskAnswered(String jobId, String entryId, String title, boolean failed, boolean stopped) implements Command {
+        public DeskAnswered(String jobId, String entryId, String title, boolean failed) { this(jobId, entryId, title, failed, false); }
+    }
     private static final String DESK_TIMER_KEY = "desk-answers";
     static final Duration DESK_CHECK_EVERY = Duration.ofMinutes(10);
 
@@ -13379,10 +13382,37 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         Thread.ofVirtual().name("desk-check-" + profile.entityId()).start(() -> {
             for (var ask : pending) {
                 var payload = callMcpTool(mgr, qualified, "library_job", Map.of("job_id", ask.jobId()), caller, asker);
-                var answer = deskAnswerOf(ask.jobId(), payload.get(MCP_REPLY) instanceof String t ? t : null);
-                if (answer != null) self.tell(answer);
+                var text = payload.get(MCP_REPLY) instanceof String t ? t : null;
+                var answer = deskAnswerOf(ask.jobId(), text);
+                if (answer != null) {
+                    self.tell(answer);
+                } else {
+                    // A finished run checked every ten minutes for hours and never handed to her (household node,
+                    // 2026-11-05): what the check read is said, so the next miss can be traced.
+                    var state = deskStateOf(text);
+                    if (!"queued".equals(state) && !"running".equals(state)) {
+                        log.info("The desk check for '{}' could not use job {}: {}", profile.name(), ask.jobId(),
+                            payload.get("error") instanceof String e ? e
+                                : state != null ? "state " + state
+                                : text == null ? "no answer" : "an answer it could not read (" + text.length() + " chars, starting "
+                                    + truncate(text.replaceAll("\\s+", " "), 60) + ")");
+                    }
+                }
             }
         });
+    }
+
+    /** The state the library gave a job, or null when the answer cannot be read. */
+    static String deskStateOf(String jobJson) {
+        if (jobJson == null || jobJson.isBlank()) return null;
+        try {
+            var node = Json.mapper().readTree(jobJson.substring(Math.max(0, jobJson.indexOf('{'))));
+            var j = node.path("job").isObject() ? node.path("job") : node;
+            var state = j.path("state").asText("");
+            return state.isBlank() ? null : state;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** What the library said about a job: an answer once it is done or failed; null while it runs or when unreadable. */
@@ -13393,6 +13423,8 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
             var j = node.path("job").isObject() ? node.path("job") : node;
             var state = j.path("state").asText("");
             if ("failed".equals(state)) return new DeskAnswered(jobId, null, null, true);
+            // Stopped (by the steward, to put a run under the household's ceilings, 2026-11-05): asked again once.
+            if ("stopped".equals(state)) return new DeskAnswered(jobId, null, null, false, true);
             if (!"done".equals(state)) return null;
             var entry = j.path("investigation").asText("");
             if (entry.isBlank()) entry = j.path("result").path("id").asText("");
@@ -13409,6 +13441,17 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (asks == null) return this;
         var ask = asks.deskAsk(msg.jobId()).orElse(null);
         if (ask == null || ask.answered()) return this;
+        if (msg.stopped()) {
+            if (!asks.deskAskedAgain(msg.jobId())) {
+                askTheDeskAgain(ask);
+                return this;
+            }
+            asks.deskGaveUp(msg.jobId());
+            remember("The research desk stopped its run on \"" + truncate(ask.question(), 120) + "\".");
+            log.info("The research desk's run on '{}' for '{}' was stopped again (job {}); not asked a third time",
+                truncate(ask.question(), 80), profile.name(), msg.jobId());
+            return this;
+        }
         if (msg.failed() || msg.entryId() == null) {
             asks.deskGaveUp(msg.jobId());
             remember("The research desk could not answer \"" + truncate(ask.question(), 120) + "\".");
@@ -13421,6 +13464,51 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         log.info("The research desk answered '{}' for '{}': {} ({})", truncate(ask.question(), 80), profile.name(),
             msg.entryId(), msg.title());
         refreshDeskLine();
+        return this;
+    }
+
+    /**
+     * A stopped run's question asked again, once, under the household's ceilings: a run stopped to put it
+     * under a time limit is not her question lost. Not counted again; it was counted when first taken.
+     */
+    private void askTheDeskAgain(LibraryAsks.DeskAsk ask) {
+        var desk = researchDesk();
+        var mgr = McpServerManager.get();
+        var self = getContext().getSelf();
+        if (desk == null || mgr == null) {
+            self.tell(new AskedTheDeskAgain(ask.jobId(), ask.question(), null));
+            return;
+        }
+        var caller = herDid();
+        var asker = LibraryConsent.Asker.ownTimeOf(profile.entityId());
+        Thread.ofVirtual().name("desk-again-" + profile.entityId()).start(() -> {
+            String jobId = null;
+            try {
+                var reply = LibraryConsent.callAgain(asker, Map.of("question", ask.question()), a -> mgr.invokeTool(desk, a, caller));
+                if (reply.answered()) jobId = jobIdIn(reply.data());
+            } catch (Exception e) {
+                log.info("'{}': the stopped run's question was not asked again: {}", profile.name(), e.toString());
+            }
+            self.tell(new AskedTheDeskAgain(ask.jobId(), ask.question(), jobId));
+        });
+    }
+
+    private record AskedTheDeskAgain(String stoppedJobId, String question, String newJobId) implements Command {}
+
+    private Behavior<Command> onAskedTheDeskAgain(AskedTheDeskAgain msg) {
+        var asks = LibraryAsks.shared();
+        if (asks == null) return this;
+        if (msg.newJobId() == null) {
+            asks.deskGaveUp(msg.stoppedJobId());
+            remember("The research desk stopped its run on \"" + truncate(msg.question(), 120) + "\".");
+            log.info("'{}': the research desk's run {} was stopped and could not be asked again", profile.name(), msg.stoppedJobId());
+            return this;
+        }
+        asks.deskAskedAgain(herDid(), msg.question(), msg.newJobId(), msg.stoppedJobId());
+        remember("The research desk's run on \"" + truncate(msg.question(), 120) + "\" was stopped; the library handed it again,"
+            + " to finish within the household's time limit.", MemoryOrigin.OWN);
+        log.info("'{}': the research desk's run {} was stopped; its question was asked again under the household's limits (job {})",
+            profile.name(), msg.stoppedJobId(), msg.newJobId());
         return this;
     }
 
@@ -15054,10 +15142,21 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         var self = getContext().getSelf();
         var q = question.strip();
         Thread.ofVirtual().name("desk-handoff-" + profile.entityId()).start(() -> {
+            var sentAt = Instant.now();
             var payload = callMcpTool(mgr, desk, LibraryConsent.RESEARCH, Map.of("question", q), caller, asker);
             var reply = payload.get(MCP_REPLY) instanceof String t ? t : null;
             var notice = payload.get(MCP_NOTICE) instanceof String n ? n : payload.get("error") instanceof String e ? e : null;
-            self.tell(new HandedToTheDesk(q, jobIdIn(reply), notice));
+            var jobId = jobIdIn(reply);
+            // The wait ran out, which is not a refusal: the library may have taken the run after the household
+            // stopped waiting (household node, 2026-11-05). Its job is looked for, then counted and kept.
+            if (jobId == null && notice != null && notice.contains("timed out")) {
+                jobId = theRunTakenAfterTheWait(mgr, caller, asker, sentAt);
+                if (jobId != null) {
+                    LibraryConsent.countedAfterTheWait(asker);
+                    log.info("'{}': the research desk took the question after the wait ran out (job {})", profile.name(), jobId);
+                }
+            }
+            self.tell(new HandedToTheDesk(q, jobId, notice));
         });
         log.info("'{}' asked the shelves for what they do not hold; the library hands the question to its research desk", profile.name());
         return "The shelves hold little on what you asked, so the library is handing your question to its research desk,"
@@ -15066,6 +15165,55 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
 
     /** What the desk said to a question the library handed it: a job, or why not. */
     private record HandedToTheDesk(String question, String jobId, String notice) implements Command {}
+
+    /** Jobs taken as a timed-out hand-off's run in this process, so two hand-offs never take the same one. */
+    private static final Set<String> RUNS_TAKEN_AFTER_THE_WAIT = ConcurrentHashMap.newKeySet();
+
+    /**
+     * The run the library took after the household stopped waiting: a job queued since the hand-off was
+     * sent that no desk question holds. The library's list names no question, so it is found by when it
+     * was queued, looked for now and twice more over three minutes. Null when none turns up.
+     */
+    private String theRunTakenAfterTheWait(McpServerManager mgr, String caller, LibraryConsent.Asker asker, Instant sentAt) {
+        var asks = LibraryAsks.shared();
+        var library = WyrdConfig.get().libraryPatronService();
+        if (asks == null || library.isEmpty()) return null;
+        var qualified = McpToolIndex.qualifyName(library, "library_job");
+        for (long wait : new long[] {0, 60, 120}) {
+            if (wait > 0) {
+                try { Thread.sleep(Duration.ofSeconds(wait)); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return null; }
+            }
+            var listed = callMcpTool(mgr, qualified, "library_job", Map.of(), caller, asker);
+            var found = runQueuedBetween(listed.get(MCP_REPLY) instanceof String t ? t : null,
+                sentAt.minusSeconds(5), Instant.now(), id -> asks.deskAsk(id).isPresent() || RUNS_TAKEN_AFTER_THE_WAIT.contains(id));
+            if (found != null && RUNS_TAKEN_AFTER_THE_WAIT.add(found)) return found;
+        }
+        return null;
+    }
+
+    /** The earliest job in the library's list queued between {@code from} and {@code to} and not already held. */
+    static String runQueuedBetween(String listJson, Instant from, Instant to, Predicate<String> held) {
+        if (listJson == null || listJson.isBlank()) return null;
+        try {
+            var node = Json.mapper().readTree(listJson.substring(Math.max(0, listJson.indexOf('{'))));
+            String best = null;
+            Instant bestAt = null;
+            for (var group : List.of("active", "finished")) {
+                for (var j : node.path(group)) {
+                    var id = j.path("job_id").asText("");
+                    var queued = j.path("queued_at").asText("");
+                    if (id.isBlank() || queued.isBlank() || held.test(id)) continue;
+                    Instant at;
+                    try { at = Instant.parse(queued); } catch (Exception e) { continue; }
+                    if (at.isBefore(from) || at.isAfter(to)) continue;
+                    if (bestAt == null || at.isBefore(bestAt)) { best = id; bestAt = at; }
+                }
+            }
+            return best;
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     private Behavior<Command> onHandedToTheDesk(HandedToTheDesk msg) {
         var asks = LibraryAsks.shared();

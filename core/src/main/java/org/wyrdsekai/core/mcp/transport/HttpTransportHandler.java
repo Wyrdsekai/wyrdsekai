@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 // MCP transport over HTTP JSON-RPC.
@@ -22,6 +23,19 @@ public class HttpTransportHandler implements McpTransportHandler {
     private static final Logger log = LoggerFactory.getLogger(HttpTransportHandler.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Calls that answer only once the library has taken the work: a research run's job id came back
+     * after the 30 seconds more than once while the library's model was busy, the household told the
+     * companion it was not taken, and the run went on with no one to hand its answer to (household
+     * node, 2026-11-05).
+     */
+    private static final Duration SLOW_TIMEOUT = Duration.ofSeconds(120);
+    private static final Set<String> SLOW_TO_ANSWER = Set.of("library_research");
+
+    private static boolean slowToAnswer(JsonRpcMessage.Request request) {
+        var tool = McpToolException.toolOf(request);
+        return tool != null && SLOW_TO_ANSWER.contains(tool);
+    }
 
     private final String url;
     private final Map<String, String> headers;
@@ -88,7 +102,7 @@ public class HttpTransportHandler implements McpTransportHandler {
 
         var reqBuilder = HttpRequest.newBuilder()
             .uri(URI.create(url))
-            .timeout(TIMEOUT)
+            .timeout(slowToAnswer(request) ? SLOW_TIMEOUT : TIMEOUT)
             .header("Content-Type", "application/json");
 
         headers.forEach(reqBuilder::header);

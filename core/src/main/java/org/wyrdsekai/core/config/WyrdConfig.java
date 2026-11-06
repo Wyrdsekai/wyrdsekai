@@ -1482,10 +1482,38 @@ public final class WyrdConfig {
         return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_RESEARCH_PER_DAY", "library.research_per_day", 5));
     }
 
-    /** Research runs each companion may hand the library per day on her own time. */
+    /**
+     * Research runs each companion may hand the library per day on her own time. One: a run holds the
+     * household's model for as long as it is let, and two companions' idle curiosity filled the desk
+     * with three runs at once on the household node (2026-11-05).
+     */
     public int libraryOwnTimeResearchPerDay() {
         return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_PER_DAY",
-            "library.own_time_research_per_day", 3));
+            "library.own_time_research_per_day", 1));
+    }
+
+    /**
+     * The longest one research run may take, in minutes, when a companion asked on her own time. The
+     * library's runs have no ceiling of their own: one ran four hours and more on the household node
+     * (2026-11-05). 0 = no ceiling from the household.
+     */
+    public int libraryOwnTimeResearchMinutes() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_MINUTES", "library.own_time_research_minutes", 20));
+    }
+
+    /** The longest one research run may take, in minutes, when a person asked for it. 0 = no ceiling. */
+    public int libraryResearchMinutes() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_RESEARCH_MINUTES", "library.research_minutes", 60));
+    }
+
+    /** The most model turns one research run may spend when a companion asked on her own time. 0 = no ceiling. */
+    public int libraryOwnTimeResearchTurns() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_TURNS", "library.own_time_research_turns", 40));
+    }
+
+    /** The most model turns one research run may spend when a person asked for it. 0 = no ceiling. */
+    public int libraryResearchTurns() {
+        return Math.max(0, resolveInt("WYRDSEKAI_LIBRARY_RESEARCH_TURNS", "library.research_turns", 120));
     }
 
     /**

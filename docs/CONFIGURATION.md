@@ -782,7 +782,11 @@ A question handed to the librarian for the night (`library_research`) is a resea
 | Setting | Default | What it does |
 |---|---|---|
 | `WYRDSEKAI_LIBRARY_RESEARCH_PER_DAY` | `5` | Research runs each household member may start per day. `0` means none. In the settings file: `library.research_per_day`. |
-| `WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_PER_DAY` | `3` | Research runs each companion may start per day on her own time, when no person asked. In the settings file: `library.own_time_research_per_day`. |
+| `WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_PER_DAY` | `1` | Research runs each companion may start per day on her own time, when no person asked. In the settings file: `library.own_time_research_per_day`. |
+| `WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_MINUTES` | `20` | The longest a research run a companion started on her own time may take, in minutes. `0` means no limit. In the settings file: `library.own_time_research_minutes`. |
+| `WYRDSEKAI_LIBRARY_RESEARCH_MINUTES` | `60` | The longest a research run a person asked for may take, in minutes. `0` means no limit. In the settings file: `library.research_minutes`. |
+| `WYRDSEKAI_LIBRARY_OWN_TIME_RESEARCH_TURNS` | `40` | The most times a companion's own research run may ask the model. `0` means no limit. In the settings file: `library.own_time_research_turns`. |
+| `WYRDSEKAI_LIBRARY_RESEARCH_TURNS` | `120` | The most times a research run a person asked for may ask the model. `0` means no limit. In the settings file: `library.research_turns`. |
 | `WYRDSEKAI_LIBRARY_RESEARCH_HOUSEHOLD_PER_DAY` | `10` | Research runs the whole household may start per day, members and companions together. `0` means none. In the settings file: `library.research_household_per_day`. |
 
 A member under parental controls has the household's number too. The steward can set a different number for them on the parental-controls scroll in the Study: `use parental controls scroll set <username> research <n>`. `0` closes the library's research to them, and `default` goes back to the household's number.
