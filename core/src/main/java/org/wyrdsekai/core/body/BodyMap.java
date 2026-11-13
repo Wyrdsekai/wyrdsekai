@@ -7,8 +7,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,6 +43,8 @@ public final class BodyMap {
     private final List<BodyMark> marks = new ArrayList<>();
     private final List<Consumer<BodyMark>> listeners = new ArrayList<>();
     private final Map<String, Instant> lastUsedWritten = new LinkedHashMap<>();
+    /** When each part's watcher last reported on it, alive or not. Held in memory only. */
+    private final Map<String, Instant> lastWatched = new HashMap<>();
 
     public static BodyMap get() { return instance; }
 
@@ -192,6 +196,7 @@ public final class BodyMap {
         var p = parts.get(id);
         if (p == null) return false;
         var now = Instant.now();
+        lastWatched.put(id, now);
         BodyPart next;
         switch (p.state()) {
             case GONE -> { return false; }
@@ -298,6 +303,36 @@ public final class BodyMap {
 
     public synchronized List<BodyPart> numb() {
         return parts.values().stream().filter(p -> p.state() == PartState.NUMB).toList();
+    }
+
+    /**
+     * The brain this node thinks with on this machine, for the watcher outside the JVM: "numb"
+     * while one it uses does not answer, "up" while they all do, null when it uses none here (a far
+     * brain, a borrowed one) or has not reported on one yet. A node that boots after a stop comes
+     * up with its brain stopped, and only something outside it can start it (household node,
+     * 2026-11-11). A brain the node no longer uses keeps its row, numb, and nothing reports on it
+     * any more; it does not count (that node's voice brain had been numb for 51 days).
+     */
+    public synchronized String ownBrainHere(Instant now) {
+        String state = null;
+        for (var p : parts.values()) {
+            var d = p.descriptor();
+            if (d.kind() != BodyKind.BRAIN || d.foreign() || !onThisMachine(d.transport())) continue;
+            var watched = lastWatched.get(p.id());
+            if (watched == null || Duration.between(watched, now).compareTo(d.numbAfter().multipliedBy(2)) > 0) continue;
+            if (p.state() == PartState.NUMB) return "numb";
+            if (p.state() == PartState.ATTACHED) state = "up";
+        }
+        return state;
+    }
+
+    static boolean onThisMachine(String url) {
+        if (url == null) return false;
+        var u = url.strip().toLowerCase(Locale.ROOT);
+        int scheme = u.indexOf("://");
+        if (scheme < 0) return false;
+        var host = u.substring(scheme + 3);
+        return host.startsWith("127.") || host.startsWith("localhost") || host.startsWith("[::1]");
     }
 
     // ── the marks ──

@@ -2405,6 +2405,11 @@ public class Main {
                     SafetyMonitorService.classifierViaRouter(inferenceRouter, system));
                 // The same facility writes the neutral wording a person's `research yes` sends.
                 LibraryConsent.useRewording(NeutralWording.viaRouter(inferenceRouter, system));
+                // The reading of a mended tool against what it is for (PurposeJudge) is NOT wired: measured on
+                // the household node 2026-11-12 it called a working letter tool broken four times with four
+                // different reasons and read the stand-in world's gaps (no rooms, a chest that cannot open)
+                // as the tool's faults. Wired as the gate it would have told her false reasons. It waits until
+                // it is measured to be right: PurposeJudge.use(PurposeJudge.viaRouter(inferenceRouter, system)).
             }
             var safetyAlertRouter = new SafetyAlertRouter();
             SafetyMonitorService.init(safetyTrigger, safetyAlertRouter,

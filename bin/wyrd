@@ -822,6 +822,186 @@ _resolve_oracle_wheel() {
     return 0
 }
 
+# ── A Python environment made on a Python this machine no longer has ─────────────────────────
+# An environment keeps its libraries under lib/python<major.minor> of the Python that made it,
+# and its bin/python follows the system's python3. When the system's Python moves on (Ubuntu
+# 24.04 → 26.04 took 3.12 to 3.14) the environment starts on the new one and finds none of its
+# libraries: the night's write, the classifier's retrain and the oracle each failed on their
+# first import, and every setup step, seeing the environment there, said it was present (a
+# household node, 2026-11-11). Each step that makes an environment now makes it again.
+_venv_stale() {   # <venv> → 0 when the environment there was made on another Python
+    local v="$1" now
+    [[ -e "$v/bin/python" || -L "$v/bin/python" ]] || return 1    # none there: the step makes one
+    now="$("$v/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" || return 0
+    [[ ! -d "$v/lib/python$now" ]]
+}
+# A stale environment goes aside as <venv>.stale so the step makes it again; the old one is let
+# go once the new one is whole (_venv_made_again). 1 when there was nothing stale to set aside.
+_venv_set_aside() {   # <venv>
+    local v="$1"
+    _venv_stale "$v" || return 1
+    rm -rf "$v.stale" 2>/dev/null || true
+    mv "$v" "$v.stale" || return 1
+    log "$(_t pyenv.making_again "$v")"
+}
+# After the step: the new environment belongs to whoever owned the old one (the brainstem runs as
+# root; the environment is the node user's), and the old one is let go. A step that did not make
+# it whole leaves the old one beside it.
+_venv_made_again() {   # <venv>
+    local v="$1" owner
+    [[ -d "$v.stale" ]] || return 0
+    [[ -e "$v/bin/python" ]] && ! _venv_stale "$v" || return 0
+    if [[ $EUID -eq 0 ]]; then
+        owner=$(stat -c %U "$v.stale" 2>/dev/null || stat -f %Su "$v.stale" 2>/dev/null)
+        if [[ -n "$owner" && "$owner" != "root" ]]; then chown -R "$owner" "$v" 2>/dev/null || true; fi
+    fi
+    rm -rf "$v.stale" 2>/dev/null || true
+}
+
+# ── Recipe Python venv bootstrap ( #1089) ──
+# Recipes that retrain classifier heads shell out to
+# scripts/classifier/*.py which need sklearn + onnx + skl2onnx. Build
+# a dedicated venv at $DATA_DIR/.venv-recipes/ so recipe SHELL/BACKEND
+# steps can `python3 scripts/classifier/...` without polluting system
+# site-packages. Skip when WYRDSEKAI_SKIP_VENV=1 (CI / air-gap).
+#
+# Recipe scripts use `#!/usr/bin/env python3` shebang — they pick up
+# the venv when its bin/ is first on PATH. The systemd unit / macOS
+# plist gets the PATH prepend wired separately; for `wyrd setup` and
+# CLI-driven recipe runs we just create the venv (PATH wiring is the
+# daemon-restart step's job, not this one).
+bootstrap_recipes_venv() {
+    [[ "${WYRDSEKAI_SKIP_VENV:-0}" != "1" ]] && command -v python3 >/dev/null 2>&1 || return 0
+    local recipe_venv="$DATA_DIR/.venv-recipes"
+    local marker="$recipe_venv/.wyrd-recipes-installed"
+    _venv_set_aside "$recipe_venv" || true
+    if [[ -f "$marker" ]]; then
+        log "$(_t setup.recipes.venv_already_present)"
+        return 0
+    fi
+    echo ""
+    log "$(_t setup.recipes.creating_venv)"
+    if ! python3 -m venv "$recipe_venv" 2>&1; then
+        warn "$(_t setup.recipes.venv_failed)"
+        return 0
+    fi
+    # Use the venv's own pip; --quiet keeps setup output tractable.
+    "$recipe_venv/bin/pip" install --quiet --upgrade pip 2>&1 || true
+    # ml-dtypes>=0.5 is load-bearing: onnx 1.18+ imports
+    # ml_dtypes.float4_e2m1fn which only exists at 0.5+. The pip
+    # solver under numpy<2 otherwise picks ml-dtypes 0.4.x and
+    # the recipe `train` step ImportErrors. Discovered 2026-05-27
+    # on mac-node.
+    # numpy<2 ships no wheels for Python ≥3.13, so the 1.x pin
+    # forces a doomed sdist build there ("Cannot import
+    # setuptools.build_meta"). 3.13+ gets numpy 2.x — supported
+    # by every dep below; older interpreters keep the proven 1.x
+    # pin (discovered 2026-06-10 on home-server's fresh py3.13 install).
+    local _np_pin='numpy<2'
+    if "$recipe_venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,13) else 1)' 2>/dev/null; then
+        _np_pin='numpy>=2.1'
+    fi
+    # transformers MUST stay <5: the v5 AutoTokenizer/
+    # TokenizersBackend rework tokenizes differently enough that
+    # embeddings land on a different manifold than the bundled
+    # setfit encoder + pretrained heads (trained under 4.x) and
+    # than the Java runtime (tokenizer.json direct). Measured
+    # 2026-07-01 on home-server: identical head + encoder + anchors,
+    # transformers 5.12 → 32/90 overrouting-anchor misses,
+    # 4.57 → 0/90. An unpinned venv silently fails the
+    # retrain-classifier-head regression gate on every fresh
+    # install. (tokenizers itself was 0.22.2 in both — the skew
+    # is in the transformers wrapper, not the tokenizer core.)
+    if "$recipe_venv/bin/pip" install --quiet \
+        "$_np_pin" \
+        'ml-dtypes>=0.5' \
+        'scikit-learn>=1.5' \
+        'onnx>=1.18' \
+        'onnxruntime>=1.20' \
+        'skl2onnx>=1.18' \
+        'transformers>=4.40,<5' 2>&1; then
+        date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
+        log "$(_t setup.recipes.venv_installed)"
+        _venv_made_again "$recipe_venv"
+    else
+        warn "$(_t setup.recipes.venv_failed)"
+    fi
+}
+
+# The night's trainer on the large model (brain_write.py): its own environment, newer libraries
+# than the voice trainer pins. On a CUDA card torch's CUDA build; on an AMD one AMD's ROCm wheels.
+_brain_trainer_venv() {   # <venv> [kind] [gfx]
+    local bvenv="$1" kind="${2:-}" _gfx="${3:-}"
+    [[ -n "$kind" ]] || kind="$(_brain_gpu_kind)"
+    [[ "$kind" == amd && -z "$_gfx" ]] && _gfx="$(_amd_gfx_target)"
+    _venv_set_aside "$bvenv" || true
+    [[ -x "$bvenv/bin/python" ]] && return 0
+    if [[ "$kind" == amd ]]; then log "$(_t brain.setup.trainer_amd "$_gfx" "${WYRDSEKAI_ROCM_WHEELS:-https://stable.repo.amd.com/rocm/whl-next/}")"
+    else log "$(_t brain.setup.trainer_venv "$bvenv")"; fi
+    python3 -m venv "$bvenv" || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+    "$bvenv/bin/pip" install -q --upgrade pip
+    # shellcheck disable=SC2046
+    "$bvenv/bin/pip" install -q $(_brain_trainer_pip_torch "$kind" "$_gfx") \
+        || { [[ "$kind" == amd ]] || "$bvenv/bin/pip" install -q "torch==2.11.0"; } \
+        || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+    # bitsandbytes serves only the bundle's NF4 experts; the write reads the served GGUF
+    # with plain torch. It is installed where its CUDA build runs and left out elsewhere.
+    local _bnb=(); [[ "$kind" == nvidia ]] && _bnb=("bitsandbytes==0.50.0")
+    "$bvenv/bin/pip" install -q "transformers==5.15.0" "peft==0.20.0" "accelerate==1.14.0" \
+        safetensors gguf sentencepiece ${_bnb[@]+"${_bnb[@]}"} \
+        || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
+    # The linear-attention kernels: faster where they build, the model's own path where they don't.
+    "$bvenv/bin/pip" install -q "flash-linear-attention==0.5.2" "fla-core==0.5.2" 2>/dev/null \
+        || log "$(_t brain.setup.trainer_fla_skipped)"
+    _venv_made_again "$bvenv"
+}
+
+# The voice model's night trainer (sleep_write.py): torch + transformers + peft + bitsandbytes + gguf.
+_sleepwrite_venv() {   # <venv>
+    local sw_venv="$1"
+    _venv_set_aside "$sw_venv" || true
+    if [[ -x "$sw_venv/bin/python" ]]; then
+        log "$(_t sleepwrite.setup.venv_present "$sw_venv")"
+        return 0
+    fi
+    log "$(_t sleepwrite.setup.creating_venv "$sw_venv")"
+    python3 -m venv "$sw_venv" || { err "$(_t sleepwrite.setup.venv_failed)"; return 1; }
+    "$sw_venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cu130 \
+        || "$sw_venv/bin/pip" install -q torch
+    "$sw_venv/bin/pip" install -q "transformers==5.8.1" peft bitsandbytes accelerate gguf sentencepiece
+    _venv_made_again "$sw_venv"
+}
+
+# `wyrd setup python`: the node's own Python environments, each made again when it was made on a
+# Python this machine no longer has. The brainstem asks a little after it starts and every hour,
+# so an upgrade of the system under a node heals before her night's write. --check lists and
+# changes nothing, and answers 1 when one needs making again. Environments that are not there
+# are left to the steps that make them.
+do_setup_python() {
+    local check=0; [[ "${1:-}" == "--check" ]] && check=1
+    local sw="${WYRDSEKAI_SLEEP_WRITE_VENV:-}"
+    if [[ -z "$sw" && -f "$CONFIG_FILE" ]]; then
+        sw=$(grep -E '^WYRDSEKAI_SLEEP_WRITE_VENV=' "$CONFIG_FILE" | tail -1 | cut -d= -f2- || true)
+    fi
+    local bw="${WYRDSEKAI_BRAIN_WRITE_VENV:-$DATA_DIR/brainwrite-venv}"
+    local oracle="$DATA_DIR/.venv-oracle" recipes="$DATA_DIR/.venv-recipes"
+    local v stale=0 failed=0
+    for v in "$oracle" "$recipes" "$bw" "${sw:-$DATA_DIR/sleepwrite-venv}"; do
+        _venv_stale "$v" || continue
+        stale=$((stale + 1))
+        echo "$(_t pyenv.stale "$v")"
+        (( check )) && continue
+        if [[ "$v" == "$oracle" ]]; then bootstrap_oracle || true; start_oracle >/dev/null 2>&1 || true
+        elif [[ "$v" == "$recipes" ]]; then bootstrap_recipes_venv || true
+        elif [[ "$v" == "$bw" ]]; then _brain_trainer_venv "$v" || true
+        else _sleepwrite_venv "$v" || true; fi
+        if [[ -e "$v/bin/python" ]] && ! _venv_stale "$v"; then log "$(_t pyenv.made "$v")"
+        else failed=$((failed + 1)); warn "$(_t pyenv.failed "$v")"; fi
+    done
+    if (( stale == 0 )); then echo "$(_t pyenv.none)"; return 0; fi
+    (( check == 0 && failed == 0 ))
+}
+
 # Create $DATA_DIR/.venv-oracle and pip-install the bundled wheel. Base deps
 # (flask/scikit-learn/pandas/numpy/scipy) are light + pure-python-friendly;
 # heavy forecasting extras (torch/chronos) stay opt-in. Idempotent via marker.
@@ -838,6 +1018,7 @@ bootstrap_oracle() {
     fi
     local venv="$DATA_DIR/.venv-oracle"
     local marker="$venv/.wyrd-oracle-installed"
+    _venv_set_aside "$venv" || true
     if [[ -f "$marker" ]]; then
         log "oracle: venv already present"
         return 0
@@ -854,6 +1035,7 @@ bootstrap_oracle() {
                 [[ -n "$owner" && "$owner" != "root" ]] && chown -R "$owner" "$venv" 2>/dev/null || true
             fi
             log "oracle: prediction engine installed"
+            _venv_made_again "$venv"
         else
             warn "oracle: wheel install failed — Oracle stays docker-only"
         fi
@@ -2294,6 +2476,7 @@ do_setup() {
     case "${1:-}" in
         openhands) shift; do_setup_openhands "$@"; return $? ;;
         openclaw)  shift; do_setup_openclaw "$@"; return $? ;;
+        python)    shift; do_setup_python "$@"; return $? ;;
         --help|-h) _setup_help; return 0 ;;
     esac
     if ! _take_setup_lock nowait; then
@@ -3254,73 +3437,8 @@ ENVEOF
         fi
     fi
 
-    # ── Recipe Python venv bootstrap ( #1089) ──
-    # Recipes that retrain classifier heads shell out to
-    # scripts/classifier/*.py which need sklearn + onnx + skl2onnx. Build
-    # a dedicated venv at $DATA_DIR/.venv-recipes/ so recipe SHELL/BACKEND
-    # steps can `python3 scripts/classifier/...` without polluting system
-    # site-packages. Skip when WYRDSEKAI_SKIP_VENV=1 (CI / air-gap).
-    #
-    # Recipe scripts use `#!/usr/bin/env python3` shebang — they pick up
-    # the venv when its bin/ is first on PATH. The systemd unit / macOS
-    # plist gets the PATH prepend wired separately; for `wyrd setup` and
-    # CLI-driven recipe runs we just create the venv (PATH wiring is the
-    # daemon-restart step's job, not this one).
-    if [[ "${WYRDSEKAI_SKIP_VENV:-0}" != "1" ]] \
-        && command -v python3 >/dev/null 2>&1; then
-        local recipe_venv="$DATA_DIR/.venv-recipes"
-        local marker="$recipe_venv/.wyrd-recipes-installed"
-        if [[ -f "$marker" ]]; then
-            log "$(_t setup.recipes.venv_already_present)"
-        else
-            echo ""
-            log "$(_t setup.recipes.creating_venv)"
-            if python3 -m venv "$recipe_venv" 2>&1; then
-                # Use the venv's own pip; --quiet keeps setup output tractable.
-                "$recipe_venv/bin/pip" install --quiet --upgrade pip 2>&1 || true
-                # ml-dtypes>=0.5 is load-bearing: onnx 1.18+ imports
-                # ml_dtypes.float4_e2m1fn which only exists at 0.5+. The pip
-                # solver under numpy<2 otherwise picks ml-dtypes 0.4.x and
-                # the recipe `train` step ImportErrors. Discovered 2026-05-27
-                # on mac-node.
-                # numpy<2 ships no wheels for Python ≥3.13, so the 1.x pin
-                # forces a doomed sdist build there ("Cannot import
-                # setuptools.build_meta"). 3.13+ gets numpy 2.x — supported
-                # by every dep below; older interpreters keep the proven 1.x
-                # pin (discovered 2026-06-10 on home-server's fresh py3.13 install).
-                local _np_pin='numpy<2'
-                if "$recipe_venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,13) else 1)' 2>/dev/null; then
-                    _np_pin='numpy>=2.1'
-                fi
-                # transformers MUST stay <5: the v5 AutoTokenizer/
-                # TokenizersBackend rework tokenizes differently enough that
-                # embeddings land on a different manifold than the bundled
-                # setfit encoder + pretrained heads (trained under 4.x) and
-                # than the Java runtime (tokenizer.json direct). Measured
-                # 2026-07-01 on home-server: identical head + encoder + anchors,
-                # transformers 5.12 → 32/90 overrouting-anchor misses,
-                # 4.57 → 0/90. An unpinned venv silently fails the
-                # retrain-classifier-head regression gate on every fresh
-                # install. (tokenizers itself was 0.22.2 in both — the skew
-                # is in the transformers wrapper, not the tokenizer core.)
-                if "$recipe_venv/bin/pip" install --quiet \
-                    "$_np_pin" \
-                    'ml-dtypes>=0.5' \
-                    'scikit-learn>=1.5' \
-                    'onnx>=1.18' \
-                    'onnxruntime>=1.20' \
-                    'skl2onnx>=1.18' \
-                    'transformers>=4.40,<5' 2>&1; then
-                    date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
-                    log "$(_t setup.recipes.venv_installed)"
-                else
-                    warn "$(_t setup.recipes.venv_failed)"
-                fi
-            else
-                warn "$(_t setup.recipes.venv_failed)"
-            fi
-        fi
-    fi
+    # ── Recipe Python venv bootstrap ( #1089): bootstrap_recipes_venv ──
+    bootstrap_recipes_venv
 
     # ── Oracle prediction-engine bootstrap + start ──
     # Make the Oracle forecasting sidecar available on native installs (not
@@ -3442,6 +3560,9 @@ Targets:
   openclaw         Install the containerized OpenClaw skill gateway
                    ( Option B): image pull, container
                    start on :18789, config flip. Also: wyrd openclaw setup.
+  python           Make again the node's Python environments that were made
+                   on a Python this machine no longer has (after a system
+                   upgrade). --check only lists them.
 
 Flags (full setup only):
   --auto-yes, -y   Apply hardware-driven recommendations non-interactively.
@@ -5297,6 +5418,13 @@ do_doctor() {
         log "$(_t doctor.backups "${_bk_size:-?}" "$_bk_n" "$DATA_DIR/backups")"
     fi
     _doctor_seed_line || _wbump
+    # The node's Python environments: one made on a Python this machine no longer has starts and
+    # finds none of its libraries (the night's write, the classifier's retrain, the oracle).
+    local _pyenv_out
+    if ! _pyenv_out="$(do_setup_python --check 2>/dev/null)"; then
+        while IFS= read -r _l; do [[ -n "$_l" ]] && warn "$_l"; done <<< "$_pyenv_out"
+        warn "$(_t doctor.pyenv_fix)"; _wbump
+    fi
     if [[ "$(uname -s)" == "Linux" ]]; then
         local _sw_used _sw_total; _sw_used="$(free -m 2>/dev/null | awk '/Swap:/{print $3}')"; _sw_total="$(free -m 2>/dev/null | awk '/Swap:/{print $2}')"
         local _peak=""; if is_systemd_managed 2>/dev/null; then _peak="$(systemctl show wyrdsekai -p MemoryPeak --value 2>/dev/null | awk '{ if ($1+0 > 0) printf "%.1f GB", $1/1073741824 }' || true)"; fi
@@ -12697,15 +12825,18 @@ print("%d made item(s); %d put away. An item unused for %s days is put away (%s 
             _wyrd_archive_find items "$@"
             ;;
         away)
-            # Put a household item away: wyrd items away <item>. Its file moves beside the items folder;
-            # every companion's menu loses it within a minute; it is kept, and `wyrd items out` brings it back.
-            local item="${1:-}"
-            [[ -n "$item" && "$item" != --* ]] || { err "Usage: wyrd items away <item>"; return 2; }
+            # Put a household item away: wyrd items away <item> [--why "<words>"]. Its file moves beside the
+            # items folder; every companion's menu loses it within a minute; it is kept, and `wyrd items out`
+            # brings it back. The companions are told, with the reason when one is given; a reason given for
+            # one already away is told too.
+            local item="${1:-}" why=""
+            [[ -n "$item" && "$item" != --* ]] || { err "Usage: wyrd items away <item> [--why \"<words>\"]"; return 2; }
+            [[ "${2:-}" == "--why" ]] && why="${3:-}"
             local api="${WYRDSEKAI_API_URL:-http://localhost:${WYRDSEKAI_PORT:-7070}}"
             local token; token=$(wyrd_session_token)
             [[ -z "$token" ]] && { err "Log in first: wyrd login"; return 1; }
             local q resp code
-            q=$(python3 -c 'import sys,urllib.parse; print("item="+urllib.parse.quote(sys.argv[1],safe=""))' "$item")
+            q=$(python3 -c 'import sys,urllib.parse; print("item="+urllib.parse.quote(sys.argv[1],safe="")+("&why="+urllib.parse.quote(sys.argv[2],safe="") if sys.argv[2] else ""))' "$item" "$why")
             resp=$(curl -s -w '\n%{http_code}' -X POST -H "Authorization: Bearer $token" "$api/api/items/made/away?$q") \
                 || { err "The server did not answer at $api — is it running?"; return 1; }
             code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
@@ -15632,7 +15763,9 @@ EOF
             ;;
         start)
             # The desktop app's and the menu-bar's "start inference" (they called a verb that
-            # did not exist and got this help text back).
+            # did not exist and got this help text back). The brainstem's too, when the node has
+            # run without its brain for a while (a node that booted after `wyrd stop` came up with
+            # its brain stopped, household node 2026-11-11).
             ensure_inference
             ;;
         stop)
@@ -16287,25 +16420,7 @@ PY
                 echo "$(_t brain.setup.trainer_mac "$HOME/.wyrdsekai/mlx-venv" "$DATA_DIR/models/brain-mlx" "$DATA_DIR/models/brain-bundle/hf/config.json")"
             elif [[ "$_with_trainer" == "1" ]]; then
                 local bvenv="${WYRDSEKAI_BRAIN_WRITE_VENV:-$DATA_DIR/brainwrite-venv}"
-                if [[ ! -x "$bvenv/bin/python" ]]; then
-                    if [[ "$kind" == amd ]]; then log "$(_t brain.setup.trainer_amd "$_gfx" "${WYRDSEKAI_ROCM_WHEELS:-https://stable.repo.amd.com/rocm/whl-next/}")"
-                    else log "$(_t brain.setup.trainer_venv "$bvenv")"; fi
-                    python3 -m venv "$bvenv" || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
-                    "$bvenv/bin/pip" install -q --upgrade pip
-                    # shellcheck disable=SC2046
-                    "$bvenv/bin/pip" install -q $(_brain_trainer_pip_torch "$kind" "$_gfx") \
-                        || { [[ "$kind" == amd ]] || "$bvenv/bin/pip" install -q "torch==2.11.0"; } \
-                        || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
-                    # bitsandbytes serves only the bundle's NF4 experts; the write reads the served GGUF
-                    # with plain torch. It is installed where its CUDA build runs and left out elsewhere.
-                    local _bnb=(); [[ "$kind" == nvidia ]] && _bnb=("bitsandbytes==0.50.0")
-                    "$bvenv/bin/pip" install -q "transformers==5.15.0" "peft==0.20.0" "accelerate==1.14.0" \
-                        safetensors gguf sentencepiece ${_bnb[@]+"${_bnb[@]}"} \
-                        || { err "$(_t brain.setup.trainer_venv_failed)"; return 1; }
-                    # The linear-attention kernels: faster where they build, the model's own path where they don't.
-                    "$bvenv/bin/pip" install -q "flash-linear-attention==0.5.2" "fla-core==0.5.2" 2>/dev/null \
-                        || log "$(_t brain.setup.trainer_fla_skipped)"
-                fi
+                _brain_trainer_venv "$bvenv" "$kind" "$_gfx" || return 1
                 if [[ ! -d "$DATA_DIR/sleepwrite/llama.cpp/gguf-py" ]]; then
                     mkdir -p "$DATA_DIR/sleepwrite"
                     git clone -q --depth 1 https://github.com/ggml-org/llama.cpp "$DATA_DIR/sleepwrite/llama.cpp" \
@@ -16795,15 +16910,7 @@ do_sleepwrite() {
             # BASE MODEL (the companion's HF export, ~8GB) is the one piece
             # this cannot fetch — it says so plainly instead of guessing.
             local sw_venv="${venv:-$DATA_DIR/sleepwrite-venv}"
-            if [[ ! -x "$sw_venv/bin/python" ]]; then
-                log "$(_t sleepwrite.setup.creating_venv "$sw_venv")"
-                python3 -m venv "$sw_venv" || { err "$(_t sleepwrite.setup.venv_failed)"; return 1; }
-                "$sw_venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cu130 \
-                    || "$sw_venv/bin/pip" install -q torch
-                "$sw_venv/bin/pip" install -q "transformers==5.8.1" peft bitsandbytes accelerate gguf sentencepiece
-            else
-                log "$(_t sleepwrite.setup.venv_present "$sw_venv")"
-            fi
+            _sleepwrite_venv "$sw_venv" || return 1
             if [[ ! -f "$DATA_DIR/sleepwrite/llama.cpp/convert_lora_to_gguf.py" ]]; then
                 log "$(_t sleepwrite.setup.fetching_converter)"
                 mkdir -p "$DATA_DIR/sleepwrite"

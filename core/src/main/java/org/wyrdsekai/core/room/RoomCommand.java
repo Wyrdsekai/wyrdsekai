@@ -342,7 +342,17 @@ public sealed interface RoomCommand {
     sealed interface ItemBridgeSubAction {
         record Emit(String eventType, Map<String, Object> data) implements ItemBridgeSubAction {}
         record Narrate(String text) implements ItemBridgeSubAction {}
-        record AddObject(String id, String name, String description, boolean takeable) implements ItemBridgeSubAction {}
+        /**
+         * {@code changesTheOneHere}: a new version of a tool the house already keeps (the same file,
+         * revised or mended). The object of that name in the room gives way to it instead of the new
+         * one taking a numbered name beside it: one tool, one object (2026-11-12, five of one letter
+         * tool in a companion's room after her mends).
+         */
+        record AddObject(String id, String name, String description, boolean takeable, boolean changesTheOneHere) implements ItemBridgeSubAction {
+            public AddObject(String id, String name, String description, boolean takeable) {
+                this(id, name, description, takeable, false);
+            }
+        }
         record RemoveObject(String id) implements ItemBridgeSubAction {}
         record SetProperty(String key, String value) implements ItemBridgeSubAction {}
         record UpdateDescription(String text) implements ItemBridgeSubAction {}

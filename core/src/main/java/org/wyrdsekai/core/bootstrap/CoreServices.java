@@ -420,7 +420,8 @@ public final class CoreServices {
                                     new RoomCommand
                                         .ItemBridgeSubAction.AddObject(
                                             obj.id(), obj.name(),
-                                            obj.description(), obj.takeable())));
+                                            obj.description(), obj.takeable(),
+                                            placement.newVersions().contains(obj.id()))));
                         }
                     });
                 stream.subscribe("system:coding-task-item-bridge", bridge);

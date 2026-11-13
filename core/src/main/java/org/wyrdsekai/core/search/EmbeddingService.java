@@ -8,10 +8,13 @@ import org.slf4j.LoggerFactory;
 import java.nio.LongBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -75,6 +78,17 @@ public final class EmbeddingService implements AutoCloseable {
     private java.net.http.HttpClient http;
 
     private static volatile EmbeddingService instance;
+
+    /**
+     * When the embedding server last did not answer, or null. A node that started before its
+     * embedding server tried once and ran without meaning-search until it was restarted: 18
+     * readers ask get(), and nothing asked again (household node, 2026-11-11).
+     */
+    private static volatile Instant serverMissedAt;
+    static volatile Duration serverRetry = Duration.ofMinutes(1);
+    /** Rounds over the replicas before a strict call gives up (the start-up probe); tests shorten it. */
+    static volatile int strictRounds = 6;
+    private static final AtomicBoolean retrying = new AtomicBoolean();
 
     /**
      * Secondary instance bound to the classifier feature encoder (SetFit-tuned),
@@ -148,8 +162,40 @@ public final class EmbeddingService implements AutoCloseable {
     /** Initialize the singleton. Safe to call multiple times (idempotent). */
     public static EmbeddingService init() {
         if (instance != null) return instance;
+        // The embedding server did not answer: it is tried again in the background, never on a
+        // caller's thread (the probe waits half a minute for a server that is down).
+        if (serverMissedAt != null) {
+            retryInBackground();
+            return instance;
+        }
+        return load(false);
+    }
+
+    /**
+     * True while a node that serves its embeddings from a server is waiting for that server to
+     * answer: meaning-search is off for now, not for good.
+     */
+    public static boolean waitingForServer() {
+        return instance == null && serverMissedAt != null;
+    }
+
+    private static void retryInBackground() {
+        var missed = serverMissedAt;
+        if (missed == null || Duration.between(missed, Instant.now()).compareTo(serverRetry) < 0) return;
+        if (!retrying.compareAndSet(false, true)) return;
+        Thread.ofVirtual().name("embedding-server-retry").start(() -> {
+            try {
+                load(true);
+            } finally {
+                retrying.set(false);
+            }
+        });
+    }
+
+    private static EmbeddingService load(boolean retry) {
         synchronized (EmbeddingService.class) {
             if (instance != null) return instance;
+            if (serverMissedAt != null && !retry) return null;   // another caller just found it down
             var svc = new EmbeddingService();
             try {
                 // Resolve the requested model first; fall back to bundled if its
@@ -173,6 +219,10 @@ public final class EmbeddingService implements AutoCloseable {
                             + "', registry says " + svc.dimension + ". Lucene HNSW index requires fixed dimension.");
                     }
                     instance = svc;
+                    if (serverMissedAt != null) {
+                        log.info("The embedding server at {} answers now; meaning-search is back", svc.serverUrl);
+                        serverMissedAt = null;
+                    }
                     log.info("EmbeddingService initialized ({} via {} server(s) {}, {}d)",
                         svc.model.version(), svc.serverUrls.size(), svc.serverUrls, svc.dimension);
                     return instance;
@@ -213,16 +263,33 @@ public final class EmbeddingService implements AutoCloseable {
                 // a failure on an actor dispatcher thread escapes as a fatal Error and
                 // pekko.jvm-exit-on-fatal-error takes down the whole node — a missing
                 // or ABI-mismatched native lib must only disable embeddings, not crash.
-                log.warn("EmbeddingService initialization failed: {}. Embeddings will be unavailable.", e.getMessage());
+                if (svc.serverUrl != null) {
+                    // A server that does not answer yet (a node that started before it) is tried
+                    // again once a minute; the first miss is said, the rest are quiet.
+                    if (serverMissedAt == null) {
+                        log.warn("EmbeddingService initialization failed: {}. Embeddings are unavailable until the "
+                            + "embedding server at {} answers; it is tried again every minute.", e.getMessage(), svc.serverUrl);
+                    } else {
+                        log.debug("The embedding server at {} still does not answer: {}", svc.serverUrl, e.getMessage());
+                    }
+                    serverMissedAt = Instant.now();
+                } else {
+                    log.warn("EmbeddingService initialization failed: {}. Embeddings will be unavailable.", e.getMessage());
+                }
                 return null;
             }
             return instance;
         }
     }
 
-    /** Get the singleton instance, or null if not initialized. */
+    /**
+     * Get the singleton instance, or null if not initialized. While the embedding server is
+     * being waited for, a call also starts the next try in the background (once a minute).
+     */
     public static EmbeddingService get() {
-        return instance;
+        var i = instance;
+        if (i == null && serverMissedAt != null) retryInBackground();
+        return i;
     }
 
     /**
@@ -418,7 +485,7 @@ public final class EmbeddingService implements AutoCloseable {
             // of the servers (every replica down for a few seconds) costs a pause, not the
             // batch (gpu-host, 2026-09-04: two replicas moved at once, the job died).
             int perRound = Math.max(1, serverUrls.size());
-            int rounds = strict ? 6 : 1;
+            int rounds = strict ? strictRounds : 1;
             var tried = new HashSet<String>();   // one attempt per replica per round
             for (int a = 0; a < perRound * rounds && resp == null; a++) {
                 if (a > 0 && a % perRound == 0) {
@@ -883,6 +950,9 @@ public final class EmbeddingService implements AutoCloseable {
         instance = null;
         classifierInstance = null;
         classifierEncoderAttempted = false;
+        serverMissedAt = null;
+        serverRetry = Duration.ofMinutes(1);
+        strictRounds = 6;
     }
 
     private void startRecycleScheduler() {

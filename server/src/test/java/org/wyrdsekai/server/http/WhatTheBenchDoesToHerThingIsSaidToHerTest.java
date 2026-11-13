@@ -42,7 +42,8 @@ class WhatTheBenchDoesToHerThingIsSaidToHerTest {
             List.of("the request asks for something that KEEPS entries (\"snapshots\") …"), List.of(), "repaired"));
         await(1);
         assertThat(heard).singleElement().asString()
-            .isEqualTo("At the steward's asking the workshop mended the backup vault; what it is given now stays between uses. "
+            .isEqualTo("At the steward's asking the workshop mended the backup vault; what it is given now comes back when the workshop tries it; "
+                + "it has not been tried in my hands yet. "
                 + "The version it replaced is kept.");
 
         ItemRepairRoutes.tellHer("witness_stone", new ItemContractRepair.PlacedRepair("witness_stone.js", false,

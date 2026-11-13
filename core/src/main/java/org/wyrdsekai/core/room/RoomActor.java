@@ -2533,6 +2533,20 @@ public class RoomActor extends EventSourcedBehavior<RoomCommand, RoomEvent, Room
             // its existing name as taken renamed it on every update — which broke
             // `use <furnishing> <args>` by shifting where the name ended and the args
             // began (caught by RoomActorFurnishingItemTest before this shipped).
+            // A new version of a tool the house already keeps takes the place of the object of that
+            // name: every object of that name runs the same file, so a numbered copy beside it is
+            // only one more thing to trip over (2026-11-12).
+            var givesWay = !add.changesTheOneHere() || state.objects() == null ? null
+                : state.objects().values().stream()
+                    .filter(o -> o.id() != null && !o.id().equals(add.id()) && add.name() != null && add.name().equals(o.name()))
+                    .findFirst().orElse(null);
+            if (givesWay != null) {
+                log.info("Room {}: a new version of '{}' takes the place of the one here ({})", roomId, add.name(), givesWay.id());
+                var gone = new WorldEvent.ObjectTaken(roomId, now, caller, givesWay.id(), givesWay.id());
+                var placed = new WorldEvent.ObjectAdded(roomId, now, add.id(), add.name(), add.description(), add.takeable());
+                return Effect().persist(List.of(new RoomEvent(gone), new RoomEvent(placed)))
+                    .thenRun(newState -> { notifySubscribers(gone); notifySubscribers(placed); });
+            }
             var taken = state.objects() == null ? List.<String>of()
                 : state.objects().values().stream()
                     .filter(o -> o.id() == null || !o.id().equals(add.id()))

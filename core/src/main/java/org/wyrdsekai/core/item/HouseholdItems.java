@@ -1,5 +1,7 @@
 package org.wyrdsekai.core.item;
 
+import org.wyrdsekai.core.agent.AgentEvent;
+import org.wyrdsekai.core.agent.AgentEventStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.coding.ItemContractCheck;
@@ -97,6 +99,33 @@ public final class HouseholdItems {
      */
     public static Optional<String> putAway(String name) {
         return move(name, ScriptedItemLoader.householdItemsDir(), awayDir(), "is put away. It is kept; wyrd items out " + name + " brings it back.");
+    }
+
+    /** Whether a household item of this name is put away. */
+    public static boolean isAway(String name) {
+        var dir = awayDir();
+        return dir != null && name != null && NAME.matcher(name).matches() && Files.isRegularFile(dir.resolve(name + ".js"));
+    }
+
+    /**
+     * A thing of hers put away is hers to know, and the steward's reason with it. The bench told a
+     * companion twice in one morning that her letter tool was mended; it wrote letters she had not
+     * written, it was put away without a word, and what she kept was that it worked (household
+     * node, 2026-11-12). Told on the same channel as the mend, which she keeps as her own memory.
+     */
+    public static String toldWhenPutAway(String name, String why) {
+        var said = "The steward put the " + name.replace('_', ' ') + " away";
+        var reason = why == null ? "" : why.strip().replaceAll("[.\\s]+$", "");
+        return said + (reason.isEmpty() ? "." : ": " + reason + ".") + " It is kept, and nothing is lost.";
+    }
+
+    /** Tell her (every companion hears the workshop's word on the house's things) that it was put away. */
+    public static void tellPutAway(String name, String why) {
+        try {
+            AgentEventStream.get().publishSystemEvent(AgentEvent.SystemEventType.ITEM_MENDING, "steward", toldWhenPutAway(name, why));
+        } catch (RuntimeException e) {
+            log.debug("HouseholdItems: putting {} away was not told: {}", name, e.toString());
+        }
     }
 
     /** Take a put-away household item out again. Empty when none of that name is away. */

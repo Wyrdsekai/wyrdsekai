@@ -191,8 +191,15 @@ public final class NightMending {
 
     private static boolean mendOne(BrokenItems.Entry entry, BodyMap map, String when) {
         var before = BrokenItems.fileHash(entry.file());
-        var r = ItemContractRepair.repairPlaced(entry.file());
+        var r = entry.usedWith() == null ? ItemContractRepair.repairPlaced(entry.file())
+            : ItemContractRepair.repairPlaced(entry.file(), List.of(entry.usedWith()), String.join("; ", entry.problems()));
         if ("no coding backend is registered to repair with".equals(r.note())) return false;   // nothing was tried; nothing to count
+        if (entry.usedWith() != null && "nothing to repair".equals(r.note())) {
+            // A copy used exactly as she used it does its work: the world refused her, not the tool.
+            BrokenItems.notReproduced(entry);
+            log.info("[night-mending] {}: what failed in her hands does not fail on a copy — let go", entry.item());
+            return false;
+        }
         BrokenItems.attempted(entry, before, r.fixed());
         var name = entry.item().replace('_', ' ');
         if (r.fixed()) {

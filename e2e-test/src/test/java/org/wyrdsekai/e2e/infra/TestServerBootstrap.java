@@ -887,10 +887,7 @@ public final class TestServerBootstrap implements AutoCloseable {
                     compose = Path.of("../docker", "docker-compose.e2e.yml");
                 }
                 if (compose.toFile().exists()) {
-                    var proc = new ProcessBuilder("docker", "compose", "-f",
-                        compose.toAbsolutePath().toString(),
-                        "--profile", profile, "up", "-d", service)
-                        .redirectErrorStream(true).start();
+                    var proc = ContainersWeStarted.up(compose, profile, service);
                     proc.waitFor(60, TimeUnit.SECONDS);
                     // Wait for health (model load can take 30-60s for 4B, up to
                     // 90s for 9B when cold-starting from disk).
@@ -949,9 +946,7 @@ public final class TestServerBootstrap implements AutoCloseable {
                 compose = Path.of("../docker", "docker-compose.e2e.yml");
             }
             if (compose.toFile().exists()) {
-                var proc = new ProcessBuilder("docker", "compose", "-f",
-                    compose.toAbsolutePath().toString(), "up", "-d", "searxng")
-                    .redirectErrorStream(true).start();
+                var proc = ContainersWeStarted.up(compose, null, "searxng");
                 proc.waitFor(30, TimeUnit.SECONDS);
                 // Wait for Searxng to become healthy
                 for (int i = 0; i < 15; i++) {

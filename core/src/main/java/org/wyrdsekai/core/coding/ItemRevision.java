@@ -3,6 +3,7 @@ package org.wyrdsekai.core.coding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wyrdsekai.core.item.ScriptedItemDef;
+import org.wyrdsekai.core.item.BrokenItems;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
 import org.wyrdsekai.core.update.ReleaseManifest;
 
@@ -104,9 +105,14 @@ public final class ItemRevision {
             %s
             ------------------ END %s.js ------------------
             """.formatted(name, name,
-                change == null || change.isBlank()
+                (change == null || change.isBlank()
                     ? "(no change described — ask for clarification in your summary "
-                        + "rather than guessing)" : change.trim(),
+                        + "rather than guessing)" : change.trim())
+                    // Her brief is her guess at what is wrong. Twice in one night a companion asked for
+                    // a letter tool to be mended, the workshop changed what she guessed, and the tool
+                    // failed the next use exactly as before (household node, 2026-11-12).
+                    + BrokenItems.failureOnRecord(name).map(f -> "\n\nWHAT ACTUALLY HAPPENS WHEN SHE USES IT — "
+                        + "mend this first, it is why she asked:\n" + f).orElse(""),
                 name, def.scriptSource(), name));
     }
 

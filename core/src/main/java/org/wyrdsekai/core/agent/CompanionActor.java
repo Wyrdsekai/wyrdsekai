@@ -36,6 +36,7 @@ import org.wyrdsekai.core.coding.ItemContractRepair;
 import org.wyrdsekai.core.project.Projects;
 import org.wyrdsekai.core.coding.ItemRevision;
 import org.wyrdsekai.core.coding.NightMending;
+import org.wyrdsekai.core.coding.WorkshopSweep;
 import org.wyrdsekai.core.forge.GuardQuestions;
 import org.wyrdsekai.core.forge.HouseholdNight;
 import org.wyrdsekai.core.forge.SleepWeightWrite;
@@ -56,6 +57,7 @@ import org.wyrdsekai.core.coding.WorkshopLane;
 import org.wyrdsekai.core.host.HostActionService;
 import org.wyrdsekai.core.persistence.VitalityPersistence;
 import org.wyrdsekai.core.persistence.WorldDnaService;
+import org.wyrdsekai.core.item.BrokenItems;
 import org.wyrdsekai.core.item.EquipmentService;
 import org.wyrdsekai.core.item.HouseholdItems;
 import org.wyrdsekai.core.item.MailboxService;
@@ -12958,6 +12960,15 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         if (q.isBlank()) return;
         int n = result.get("sources") instanceof List<?> l ? l.size() : 0;
         asks.record(herDid(), q, n > 0 && !shelvesLackWhatWasAsked(result, findings), n);
+    }
+
+    /** What she gave a tool, as the tool reads it first: its args, else the words it was asked with. */
+    static String whatSheGaveIt(Map<String, Object> params) {
+        if (params == null) return "";
+        for (var k : List.of("args", "text", "query", "topic", "target")) {
+            if (params.get(k) instanceof String v && !v.isBlank()) return v.length() > 400 ? v.substring(0, 400) : v;
+        }
+        return "";
     }
 
     /** The tool's answer with the question its call carried, when the answer does not say it. */
@@ -27822,8 +27833,10 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
         isSleeping = false;
         ActivityGauge.sleepFinished();
         markSlept(memoryBefore, memoryAfter);
-        // The house is as quiet as it gets right after a sleep: the workshop mends what is broken.
+        // The house is as quiet as it gets right after a sleep: the workshop mends what is broken,
+        // and clears what its finished tasks left behind.
         NightMending.afterSleep();
+        WorkshopSweep.afterSleep();
         if (inDeepSleep) {
             var duration = deepSleepStartedAt != null
                 ? Duration.between(deepSleepStartedAt, Instant.now()).toSeconds()
@@ -30121,20 +30134,28 @@ public class CompanionActor extends AbstractBehavior<CompanionActor.Command> {
                     if (!v.isBlank()) { ownToolReachedFor.put(itemId, v); break; }
                 }
             }
+            // A tool the house made that fails in her hands is kept for the workshop with what she gave
+            // it: the night's mending read only whether a file was well formed, and a letter tool that
+            // failed every use for three weeks was never once taken to it (household node, 2026-11-12).
+            final boolean madeHere = isCraftedItem(toolItem);
+            final String gaveIt = whatSheGaveIt(params);
             Thread.ofVirtual().name("item-script-" + itemId).start(() -> {
                 try {
                     var result = withTheQuestion(itemScriptExecutor.execute(itemId, script, params, provider, itemCaps), params);
                     // Normalize ONCE at the boundary that knows the tool identity —
                     // scripts never self-identify (second-node 2026-07-10: "[Tool failed] the
                     // tool" with no usage contract; skill costs blind to item outcomes).
-                    selfRef.tell(new ScriptedToolResult(
-                        ToolResultEnvelope.normalize(itemId, result), dispatchGen, toolFor, loopAtSend));
+                    var env = ToolResultEnvelope.normalize(itemId, result);
+                    if (madeHere && !env.ok()) BrokenItems.failedInHand(itemId, gaveIt, env.error());
+                    selfRef.tell(new ScriptedToolResult(env, dispatchGen, toolFor, loopAtSend));
                 } catch (RuntimeException e) {
                     // A result always comes back: a script that threw left the loop waiting and
                     // her own time held on the person's tool.
-                    selfRef.tell(new ScriptedToolResult(ToolResultEnvelope.normalize(itemId,
+                    var env = ToolResultEnvelope.normalize(itemId,
                         Map.of("error", "script failed: " + e.getClass().getSimpleName()
-                            + (e.getMessage() != null ? ": " + e.getMessage() : ""))), dispatchGen, toolFor, loopAtSend));
+                            + (e.getMessage() != null ? ": " + e.getMessage() : "")));
+                    if (madeHere) BrokenItems.failedInHand(itemId, gaveIt, env.error());
+                    selfRef.tell(new ScriptedToolResult(env, dispatchGen, toolFor, loopAtSend));
                 } finally {
                     provider.setRoomBridge(null);
                 }

@@ -394,7 +394,12 @@ public class ToolSearchIndex {
             // init() is idempotent, self-initializing, and returns null only if the model genuinely
             // cannot be loaded.
             var svc = EmbeddingService.init();
-            if (svc == null) { embeddingAvailable = false; return null; }
+            if (svc == null) {
+                // A server not answering yet is waited for (keyword search meanwhile); only an
+                // embedder that cannot be had at all turns this index keyword-only for good.
+                if (!EmbeddingService.waitingForServer()) embeddingAvailable = false;
+                return null;
+            }
             var vec = svc.embed(text);
             if (vec == null || vec.isEmpty()) { embeddingAvailable = false; return null; }
             var out = new float[vec.size()];

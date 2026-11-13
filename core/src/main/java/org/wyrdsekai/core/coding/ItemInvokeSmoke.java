@@ -84,6 +84,17 @@ public final class ItemInvokeSmoke {
      * and something shows that id. Empty when all of that holds.
      */
     public static List<String> failingUses(String itemId, String script, ItemManifest manifest) {
+        return failingUses(itemId, script, manifest, List.of());
+    }
+
+    /**
+     * As above, and also each way she used it that failed in her hands, run again exactly as she
+     * gave it. A command used exactly as it is offered has to do its work: an answer that it could
+     * not, while the world answered everything it asked, is a failed use. A letter tool answered
+     * "Could not reach the floor." to every use for three weeks, and its mend that made the throw a
+     * clean "could not" passed this check (household node, 2026-11-12).
+     */
+    public static List<String> failingUses(String itemId, String script, ItemManifest manifest, List<String> herUses) {
         var out = new ArrayList<String>();
         var uses = new ArrayList<String>();
         if (manifest != null && manifest.commands() != null) {
@@ -93,6 +104,10 @@ public final class ItemInvokeSmoke {
             }
         }
         if (uses.isEmpty()) uses.add(firstCommandArgs(manifest));
+        for (var a : herUses == null ? List.<String>of() : herUses) {
+            var used = a == null ? "" : a.trim();
+            if (!uses.contains(used)) uses.add(used);
+        }
         // Commands that take an id go last, when there is something kept to name.
         var plain = uses.stream().filter(a -> !TAKES_AN_ID.matcher(a).find()).toList();
         var byId = uses.stream().filter(a -> TAKES_AN_ID.matcher(a).find()).toList();
@@ -102,12 +117,28 @@ public final class ItemInvokeSmoke {
         try (var executor = new ItemScriptExecutor()) {
             var answers = new StringBuilder();
             for (var args : plain) {
+                store.beginUse();
                 var result = executor.execute(itemId, script, new HashMap<String, Object>(CarriedItemUse.params("did:key:smoke", args)), provider);
                 answers.append(result).append('\n');
                 var r = classify(result);
                 if (r.verdict() == Verdict.REJECT) {
                     out.add("using it with \"" + args + "\" fails: " + r.detail()
                         + " — change the code so this command runs to the end.");
+                } else if (r.verdict() == Verdict.PASS && !Boolean.FALSE.equals(result.get("ok")) && store.deletedByNonId()) {
+                    out.add("using it with \"" + args + "\", it hands world.notes.delete something that is not a note's id "
+                        + "and then answers that it did its work: world.notes.delete takes the id of an entry from "
+                        + "world.notes.list() (each entry has an id and content), and nothing is deleted otherwise.");
+                } else if (r.verdict() == Verdict.PASS && String.valueOf(result).contains("[object Object]")) {
+                    out.add("using it with \"" + args + "\", its answer shows \"[object Object]\": an entry was printed whole. "
+                        + "Print what it holds: each entry from world.notes.list() and world.journal.recent() has an id and content.");
+                } else if (r.verdict() == Verdict.PASS && Boolean.FALSE.equals(result.get("ok"))
+                        && !ASKS_FOR_SOMETHING.matcher(args).find() && !store.worldRefused()) {
+                    out.add("using it with \"" + args + "\", exactly as it is offered, it answers that it could not: "
+                        + saidBack(result) + " — the world answered everything it asked, so this is the tool's own doing. "
+                        + "A command she is offered has to do its work as given: read what the world hands back in the shape "
+                        + "it has (world.journal.recent() and world.notes.list() hand back a list of entries, not {ok, entries}), "
+                        + "and if the command needs something from her, say so in its args as a placeholder "
+                        + "(for example \"<the letter>\") and do the work when it is given.");
                 }
             }
             var nameBack = "; world.notes.add takes the text first and a list of names second: world.notes.add(JSON.stringify(entry), [\""
@@ -140,6 +171,17 @@ public final class ItemInvokeSmoke {
 
     /** A command's own example of an argument that is an id: {@code restore <snapshot-id>}. */
     private static final Pattern TAKES_AN_ID = Pattern.compile("<[^>]*\\bid\\b[^>]*>", Pattern.CASE_INSENSITIVE);
+    /** A command that names what she has to give ({@code <city>}): the trial cannot give it, so its refusal is not counted. */
+    private static final Pattern ASKS_FOR_SOMETHING = Pattern.compile("<[^>]+>");
+
+    /** What a tool said when it answered that it could not, as it said it. */
+    private static String saidBack(Map<String, Object> result) {
+        for (var k : List.of("summary", "message", "error", "reason")) {
+            var v = result.get(k);
+            if (v != null && !String.valueOf(v).isBlank()) return "\"" + String.valueOf(v).strip() + "\"";
+        }
+        return "nothing (ok: false and no words)";
+    }
 
     /** The notes store, as the household's keeps them: under names, read back by name. Everything else is the stub. */
     private static final class RememberingNotes implements InvocationHandler {
@@ -148,7 +190,15 @@ public final class ItemInvokeSmoke {
         final Set<String> read = new LinkedHashSet<>();
         private boolean keptAny;
         private String lastId;
+        /** Whether the world refused anything in this use: then her tool's "could not" may be the world's. */
+        private boolean refused;
 
+        /** Whether notes.delete was handed something that names no kept note in this use. */
+        private boolean deletedByNonId;
+
+        void beginUse() { refused = false; deletedByNonId = false; }
+        boolean worldRefused() { return refused; }
+        boolean deletedByNonId() { return deletedByNonId; }
         String lastId() { return lastId; }
         boolean keptUnderAName() { return keptAny; }
         boolean readByAName() { return !read.isEmpty(); }
@@ -176,6 +226,12 @@ public final class ItemInvokeSmoke {
                     notes.add(0, note);
                     return Map.of("ok", true, "id", lastId);
                 }
+                case "notesDelete" -> {
+                    var id = args[0] == null ? null : String.valueOf(args[0]);
+                    if (id != null && notes.removeIf(n -> id.equals(n.get("id")))) return Map.of("ok", true, "id", id);
+                    deletedByNonId = true;
+                    return Map.of("ok", false, "error", "no note with that id");
+                }
                 case "notesList" -> {
                     var name = WyrdLuceneStore.studyTag((String) args[0]);
                     if (name == null) return List.copyOf(notes);
@@ -184,8 +240,12 @@ public final class ItemInvokeSmoke {
                 }
                 default -> {
                     try {
-                        return method.invoke(StubItemWorldApiProvider.INSTANCE, args);
+                        var answer = method.invoke(StubItemWorldApiProvider.INSTANCE, args);
+                        if (answer instanceof Map<?, ?> m && (Boolean.FALSE.equals(m.get("ok")) || m.containsKey("error"))) refused = true;
+                        if (answer == null && method.getReturnType() != void.class) refused = true;
+                        return answer;
                     } catch (InvocationTargetException e) {
+                        refused = true;
                         throw e.getCause();
                     }
                 }

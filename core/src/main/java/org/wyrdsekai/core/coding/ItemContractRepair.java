@@ -252,6 +252,11 @@ public final class ItemContractRepair {
      */
     public static void keepAsked(Path itemFile, String request) {
         if (itemFile == null || request == null || request.isBlank()) return;
+        // A revision's brief says what to change, not what the thing is for. Kept in place of the
+        // ask, it became "what it is for" in every later mend: a letter tool's mend was told it
+        // existed to wrap e.message, redid that old revision and left the real fault (household
+        // node, 2026-11-12). What it was first asked for stays.
+        if (isRevisionBrief(request)) return;
         try {
             var dir = itemFile.resolveSibling(".asked");
             Files.createDirectories(dir);
@@ -259,6 +264,11 @@ public final class ItemContractRepair {
         } catch (IOException e) {
             log.debug("[item-contract] could not keep what {} was asked for: {}", itemFile, e.toString());
         }
+    }
+
+    /** The workshop's brief for revising an item, which says what to change and not what it is for. */
+    static boolean isRevisionBrief(String words) {
+        return words != null && words.strip().startsWith("REVISE AN EXISTING ITEM");
     }
 
     /**
@@ -270,7 +280,7 @@ public final class ItemContractRepair {
             var kept = itemFile.resolveSibling(".asked").resolve(stem(itemFile) + ".txt");
             if (Files.isRegularFile(kept)) {
                 var words = Files.readString(kept).strip();
-                if (!words.isEmpty()) return words;
+                if (!words.isEmpty() && !isRevisionBrief(words)) return words;   // one kept before keepAsked knew better
             }
         } catch (IOException ignored) {
             // falls back to the item's own description
@@ -295,17 +305,26 @@ public final class ItemContractRepair {
      * its first pack was called mended (household node, 2026-11-05).
      */
     static List<String> placedProblems(String script, String fileName, String asked) {
+        return placedProblems(script, fileName, asked, List.of());
+    }
+
+    /** As above, with the ways she used it that failed in her hands tried again as she gave them. */
+    static List<String> placedProblems(String script, String fileName, String asked, List<String> herUses) {
         var out = new ArrayList<>(ItemContractCheck.problems(script, fileName));
         if (out.isEmpty()) out.addAll(ItemIntentCheck.keepingGaps(asked, script));
-        if (out.isEmpty()) out.addAll(usesThatFail(script, fileName));
+        if (out.isEmpty()) out.addAll(usesThatFail(script, fileName, herUses));
         return out;
     }
 
     private static List<String> usesThatFail(String script, String fileName) {
+        return usesThatFail(script, fileName, List.of());
+    }
+
+    private static List<String> usesThatFail(String script, String fileName, List<String> herUses) {
         ItemManifest manifest = null;
         try { manifest = ItemManifestParser.parse(script); } catch (Exception ignored) { /* the form check spoke first */ }
         var name = manifest != null && manifest.name() != null ? manifest.name() : stem(Path.of(fileName));
-        return ItemInvokeSmoke.failingUses(name, script, manifest);
+        return ItemInvokeSmoke.failingUses(name, script, manifest, herUses);
     }
 
     /** A failed use, as she can say it. */
@@ -314,16 +333,31 @@ public final class ItemContractRepair {
             : "one of its commands fails when it is used";
     }
 
-    /** What a mend made true, said plainly: the loader takes it again, or what it holds now stays. */
+    /** The model's reading of a file against what it is for, with the uses that failed in her hands. */
+    private static Optional<PurposeJudge.Verdict> read(String asked, String script, String fileName, List<String> uses) {
+        if (!PurposeJudge.wired()) return Optional.empty();
+        ItemManifest manifest = null;
+        try { manifest = ItemManifestParser.parse(script); } catch (Exception ignored) { /* the trial spoke first */ }
+        var name = manifest != null && manifest.name() != null ? manifest.name() : stem(Path.of(fileName));
+        return PurposeJudge.judge(asked, name, script, manifest, uses);
+    }
+
+    /** What a mend made true, said plainly: what it does now as read, else the loader takes it again, or what it holds now stays. */
     public static String whatTheMendDid(PlacedRepair r) {
+        if (r.whatItDoes() != null && !r.whatItDoes().isBlank()) return r.whatItDoes().strip().replaceAll("[.\\s]+$", "");
         boolean keeping = r.before().stream().anyMatch(ItemContractRepair::isKeepingGap);
         boolean fails = r.before().stream().anyMatch(p -> p.startsWith("using it"));
         boolean loads = r.before().stream().anyMatch(p -> !isKeepingGap(p) && !p.startsWith("using it"));
+        // Only what was checked. "Each of its commands runs and what it keeps comes back" was told of a
+        // letter tool that wrote its own letter when given no words (household node, 2026-11-12): the
+        // trial ran it in a stand-in world, nobody had used it as she does.
+        boolean inHand = r.before().stream().anyMatch(p -> p.startsWith("when she used it"));
         var did = new ArrayList<String>();
-        if (loads) did.add("it registers again");
-        if (fails) did.add("each of its commands runs and what it keeps comes back");
-        if (keeping) did.add("what it is given now stays between uses");
-        return did.isEmpty() ? "it registers again" : String.join(", and ", did);
+        if (loads && !inHand) did.add("it registers again");
+        if (fails || inHand) did.add("what failed now runs to the end when the workshop tries it");
+        if (keeping) did.add("what it is given now comes back when the workshop tries it");
+        var said = did.isEmpty() ? "it registers again" : String.join(", and ", did);
+        return (fails || inHand || keeping) ? said + "; it has not been tried in my hands yet" : said;
     }
 
     /** Why a mend did not take, said once: "it needs witness.receive, which the house does not offer". */
@@ -380,7 +414,11 @@ public final class ItemContractRepair {
     private static volatile Escalation escalation;
 
     /** What became of one placed item handed to {@link #repairPlaced}. */
-    public record PlacedRepair(String item, boolean fixed, List<String> before, List<String> after, String note) {}
+    public record PlacedRepair(String item, boolean fixed, List<String> before, List<String> after, String note, String whatItDoes) {
+        public PlacedRepair(String item, boolean fixed, List<String> before, List<String> after, String note) {
+            this(item, fixed, before, after, note, null);
+        }
+    }
 
     /**
      * Repair an item that is already placed in the world and is broken: mis-wired, or failing
@@ -394,18 +432,37 @@ public final class ItemContractRepair {
      * three of which failed when she used them, and the only repair path ran at task time.</p>
      */
     public static PlacedRepair repairPlaced(Path itemFile) {
+        return repairPlaced(itemFile, List.of(), null);
+    }
+
+    /**
+     * As above, for a tool that failed in her hands: what she gave it is tried again on every copy,
+     * and what she saw is told to the workshop. A failure that cannot be made to happen again (the
+     * world refused her, not the tool) leaves "nothing to repair".
+     *
+     * @param herUses what she gave it when it failed
+     * @param seen    how it failed in her hands, in the house's words; null when nothing was seen
+     */
+    public static PlacedRepair repairPlaced(Path itemFile, List<String> herUses, String seen) {
         var fileName = itemFile.getFileName().toString();
+        var uses = herUses == null ? List.<String>of() : herUses;
         try {
             var original = Files.readString(itemFile);
             var asked = askedOf(itemFile, original);
-            var before = placedProblems(original, fileName, asked);
+            var before = placedProblems(original, fileName, asked, uses);
+            // Whole by the trial is not whole by what it is for: a letter tool that wrote its own letter
+            // when given no words passed every check (2026-11-12). The reading looks at what it does.
+            if (before.isEmpty()) {
+                var reading = read(asked, original, fileName, uses);
+                if (reading.isPresent() && !reading.get().whole()) before = List.of(PurposeJudge.problem(reading.get()));
+            }
             if (before.isEmpty()) return new PlacedRepair(fileName, false, before, before, "nothing to repair");
             var stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC).format(Instant.now());
             // The mechanical correction first: a slip in a capability's name needs no backend, and a
             // file made whole by it is replaced here, the previous version kept.
             var slip = ItemContractCheck.mendCapabilities(original);
             if (slip.isPresent()) {
-                var afterSlip = placedProblems(slip.get(), fileName, asked);
+                var afterSlip = placedProblems(slip.get(), fileName, asked, uses);
                 if (afterSlip.isEmpty()) {
                     replacePlaced(itemFile, fileName, original, slip.get(), stamp);
                     log.info("[item-contract] placed item {}: a capability the world does not have was corrected to what the "
@@ -422,19 +479,44 @@ public final class ItemContractRepair {
             var copy = ws.toPath().resolve(fileName);
             Files.writeString(copy, original);
             var current = before;
+            PurposeJudge.Verdict reading = null;
+            PurposeJudge.Verdict refused = null;
+            boolean unread = false;
             for (int round = 1; round <= MAX_ROUNDS && !current.isEmpty(); round++) {
                 var source = Files.readString(copy);
                 log.info("[item-contract] placed-item repair round {}/{} for {} — {}", round, MAX_ROUNDS, fileName, current);
-                final var prompt = asked == null ? buildPrompt(fileName, current)
-                    : buildPrompt(fileName, current) + "\n\nWhat it is for: " + asked;
+                final var prompt = buildPrompt(fileName, current)
+                    + (asked == null ? "" : "\n\nWhat it is for: " + asked)
+                    + (seen == null || seen.isBlank() ? "" : "\n\nWhat happened in her hands: " + seen);
                 final var done = new boolean[1];
                 withoutEscalation(() -> done[0] = run.rerun(ws.toPath(), prompt));
                 if (!done[0]) break;
-                var after = placedProblems(Files.readString(copy), fileName, asked);
+                var after = placedProblems(Files.readString(copy), fileName, asked, uses);
                 if (after.size() > current.size()) { Files.writeString(copy, source); break; }   // never worse
                 current = after;
+                if (current.isEmpty() && PurposeJudge.wired()) {
+                    // Whole by the trial: now what it does, read against what it is for, before it may
+                    // take the place of hers. Its reason, when it is not, is the next round's problem.
+                    var v = read(asked, Files.readString(copy), fileName, uses);
+                    if (v.isEmpty()) { unread = true; break; }
+                    if (!v.get().whole()) {
+                        refused = v.get();
+                        current = List.of(PurposeJudge.problem(v.get()));
+                        log.info("[item-contract] placed item {}: runs, but does not do what it is for — {}", fileName, v.get().whyNot());
+                        continue;
+                    }
+                    reading = v.get();
+                }
+            }
+            if (unread) {
+                return new PlacedRepair(fileName, false, before, before,
+                    "could not be made whole: it runs now, but what it does could not be read (the thinking brain did not answer); the placed item is unchanged");
             }
             if (!current.isEmpty()) {
+                if (refused != null && current.size() == 1 && current.get(0).equals(PurposeJudge.problem(refused))) {
+                    var why = refused.whyNot() == null || refused.whyNot().isBlank() ? "it still does not do what it is for" : refused.whyNot().replaceAll("[.\\s]+$", "");
+                    return new PlacedRepair(fileName, false, before, current, "could not be made whole: " + why + "; the placed item is unchanged");
+                }
                 return new PlacedRepair(fileName, false, before, current, "could not be made whole; the placed item is unchanged");
             }
             var taken = purposeTaken(original, Files.readString(copy));
@@ -445,7 +527,8 @@ public final class ItemContractRepair {
             }
             replacePlaced(itemFile, fileName, Files.readString(itemFile), Files.readString(copy), stamp);
             log.info("[item-contract] placed item {} repaired; the previous version is in {}", fileName, itemFile.resolveSibling(".repaired"));
-            return new PlacedRepair(fileName, true, before, List.of(), "repaired; the previous version is kept under .repaired/");
+            return new PlacedRepair(fileName, true, before, List.of(), "repaired; the previous version is kept under .repaired/",
+                reading == null ? null : reading.whatItDoes());
         } catch (Exception e) {
             log.warn("[item-contract] placed-item repair of {} failed: {}", fileName, e.toString());
             return new PlacedRepair(fileName, false, List.of(), List.of(), "the repair did not run: " + e.getMessage());
@@ -872,6 +955,20 @@ public final class ItemContractRepair {
           .append("invoke() function all present and intact, whether or not they are ")
           .append("listed above. Do not create a new file, and do not explain — just make ")
           .append("the edit.");
+        // Keeping every command intact forbade the one change a command that needs her words has
+        // to make: told both, the workshop kept "Write a letter" taking nothing and the letter
+        // tool stayed unmendable (household node, 2026-11-12). Every command stays; what it takes may.
+        if (problems.stream().anyMatch(p -> p.contains("exactly as it is offered"))) {
+            sb.append(" One exception: a command named above as answering that it could not may have its `args` ")
+              .append("changed to say what it needs from her (for example args: \"<the letter>\"), or, when it ")
+              .append("needs nothing from her, do its work with nothing given. Keep every command, its label and ")
+              .append("its place in the list.");
+        }
+        // Allowed to "do its work with nothing given", a mend of a letter tool wrote a letter of its
+        // own ("Dear you, I write this into the space where you are missing…") and saved it as hers
+        // whenever she gave it no words; the trial passed it (household node, 2026-11-12).
+        sb.append("\nNever make up what she would give: a letter, a note, a name, words of hers. ")
+          .append("A command that needs her words says so in its args and uses only what she gives.");
         return sb.toString();
     }
 }

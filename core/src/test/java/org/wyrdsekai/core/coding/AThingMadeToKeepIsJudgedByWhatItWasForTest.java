@@ -132,7 +132,7 @@ class AThingMadeToKeepIsJudgedByWhatItWasForTest {
         assertThat(r.fixed()).as(r.note() + " " + r.after()).isTrue();
         assertThat(prompts.get(0)).contains("what it keeps does not come back").contains("What it is for: " + VAULT_SAYS)
             .contains("does not do what it was made for").doesNotContain("will be REJECTED");
-        assertThat(ItemContractRepair.whatTheMendDid(r)).isEqualTo("each of its commands runs and what it keeps comes back");
+        assertThat(ItemContractRepair.whatTheMendDid(r)).isEqualTo("what failed now runs to the end when the workshop tries it; it has not been tried in my hands yet");
     }
 
     @AfterEach
@@ -214,7 +214,7 @@ class AThingMadeToKeepIsJudgedByWhatItWasForTest {
         assertThat(prompts.get(0)).contains("does not do what it was made for").contains("KEEPS entries (\"snapshots\")")
             .doesNotContain("will be REJECTED");
         assertThat(Files.readString(placed)).isEqualTo(REALLY_KEEPS);
-        assertThat(ItemContractRepair.whatTheMendDid(r)).isEqualTo("what it is given now stays between uses");
+        assertThat(ItemContractRepair.whatTheMendDid(r)).isEqualTo("what it is given now comes back when the workshop tries it; it has not been tried in my hands yet");
         try (var kept = Files.list(items.resolve(".repaired"))) {
             assertThat(kept.toList()).singleElement().satisfies(bak -> assertThat(Files.readString(bak)).isEqualTo(FORGETS));
         }

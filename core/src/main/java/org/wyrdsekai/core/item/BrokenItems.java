@@ -1,5 +1,6 @@
 package org.wyrdsekai.core.item;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The household's items that are placed in the world and do not work, and what she has been
@@ -32,8 +34,15 @@ public final class BrokenItems {
     /** After this many failed attempts on an unchanged file the workshop stops trying it. */
     public static final int MAX_ATTEMPTS = 3;
 
-    /** One broken item. {@code failsOnUse}: it errors when used, not merely misleads. */
-    public record Entry(String item, Path file, List<String> problems, boolean failsOnUse) {}
+    /**
+     * One broken item. {@code failsOnUse}: it errors when used, not merely misleads. {@code usedWith}:
+     * what she gave it when it failed in her hands, or null when the file itself is what is wrong.
+     */
+    public record Entry(String item, Path file, List<String> problems, boolean failsOnUse, String usedWith) {
+        public Entry(String item, Path file, List<String> problems, boolean failsOnUse) {
+            this(item, file, problems, failsOnUse, null);
+        }
+    }
 
     private BrokenItems() {}
 
@@ -46,13 +55,24 @@ public final class BrokenItems {
     public static List<Entry> find(Path itemsDir) {
         var out = new ArrayList<Entry>();
         if (itemsDir == null || !Files.isDirectory(itemsDir)) return out;
+        var state = load(itemsDir);
         try (var files = Files.list(itemsDir)) {
             for (var p : files.filter(f -> f.toString().endsWith(".js")).sorted().toList()) {
                 try {
                     var script = Files.readString(p);
+                    var item = p.getFileName().toString().replaceFirst("\\.js$", "");
                     var problems = ItemContractCheck.problems(script, p.getFileName().toString());
-                    if (problems.isEmpty()) continue;
-                    out.add(new Entry(p.getFileName().toString().replaceFirst("\\.js$", ""), p, problems, ItemWiring.willFailOnUse(script)));
+                    if (problems.isEmpty()) {
+                        // Whole in form, and it failed in her hands as it stands: it is broken too. The
+                        // night's mending only ever read the form, so a tool that loaded and failed every
+                        // use was told "the workshop will try to mend it" and never was (2026-11-12).
+                        var failed = state.path(item).path("failedInUse");
+                        if (!failed.isMissingNode() && hash(script).equals(failed.path("fileHash").asText(""))) {
+                            out.add(new Entry(item, p, List.of(failedUse(failed)), true, failed.path("args").asText("")));
+                        }
+                        continue;
+                    }
+                    out.add(new Entry(item, p, problems, ItemWiring.willFailOnUse(script)));
                 } catch (IOException | RuntimeException e) {
                     log.debug("broken-items: {} unreadable: {}", p, e.toString());
                 }
@@ -68,6 +88,7 @@ public final class BrokenItems {
     public static String plainly(Entry e) {
         var first = e.problems().isEmpty() ? "" : e.problems().get(0);
         var name = e.item().replace('_', ' ');
+        if (e.usedWith() != null) return "The " + name + " failed when I used it.";
         if (first.contains("does not exist on this node")) {
             var call = first.substring(0, first.indexOf(' '));
             return "The " + name + " that was made for me does not work yet: it reaches for a part of the world that is not there (" + call + ").";
@@ -232,13 +253,69 @@ public final class BrokenItems {
         return true;
     }
 
+    /**
+     * A tool made in the house failed in her hands: what she gave it and what it answered are kept
+     * beside the file it failed as, so the night's mending can take it and try exactly that again.
+     * A file changed since (a revision, a mend) is a new tool, and an older failure is not its own.
+     */
+    public static synchronized void failedInHand(String itemName, String args, String error) {
+        try {
+            var itemsDir = dir();
+            if (itemName == null || itemsDir == null) return;
+            var file = itemsDir.resolve(itemName + ".js");
+            if (!Files.isRegularFile(file)) return;                           // not one the house keeps
+            var fileHash = fileHash(file);
+            var state = load(itemsDir);
+            var node = state.with(itemName);
+            var before = node.path("failedInUse");
+            var failed = node.putObject("failedInUse");
+            failed.put("args", args == null ? "" : args);
+            failed.put("error", error == null || error.isBlank() ? "it answered that it failed, with no words" : error);
+            failed.put("at", Instant.now().toString());
+            failed.put("fileHash", fileHash);
+            failed.put("times", fileHash.equals(before.path("fileHash").asText("")) ? before.path("times").asInt(0) + 1 : 1);
+            save(itemsDir, state);
+        } catch (RuntimeException e) {
+            log.debug("broken-items: failure in hand not kept for {}: {}", itemName, e.toString());
+        }
+    }
+
+    /** The failure in her hands could not be made to happen again (the world refused her, not the tool): let it go. */
+    public static synchronized void notReproduced(Entry e) {
+        var itemsDir = e.file().getParent();
+        var state = load(itemsDir);
+        if (state.path(e.item()) instanceof ObjectNode node && node.has("failedInUse")) {
+            node.remove("failedInUse");
+            save(itemsDir, state);
+        }
+    }
+
+    /** A failure in her hands, as the workshop is given it. */
+    static String failedUse(JsonNode failed) {
+        var args = failed.path("args").asText("");
+        return "when she used it" + (args.isBlank() ? "" : " with \"" + args + "\"") + ", it failed: " + failed.path("error").asText("")
+            + (failed.path("times").asInt(1) > 1 ? " (" + failed.path("times").asInt() + " times)" : "");
+    }
+
+    /** What she gave it and how it failed in her hands, for a revision she asks for; empty when nothing is on record. */
+    public static Optional<String> failureOnRecord(String itemName) {
+        var itemsDir = dir();
+        if (itemName == null || itemsDir == null) return Optional.empty();
+        var file = itemsDir.resolve(itemName + ".js");
+        var failed = load(itemsDir).path(itemName).path("failedInUse");
+        if (failed.isMissingNode() || !Files.isRegularFile(file) || !fileHash(file).equals(failed.path("fileHash").asText(""))) {
+            return Optional.empty();
+        }
+        return Optional.of(failedUse(failed));
+    }
+
     /** Record one mending attempt against the file as it was BEFORE the attempt. */
-    public static void attempted(Entry e, String fileHashBefore, boolean fixed) {
+    public static synchronized void attempted(Entry e, String fileHashBefore, boolean fixed) {
         var itemsDir = e.file().getParent();
         var state = load(itemsDir);
         var node = state.with(e.item());
         if (fixed) {
-            node.remove("attempts"); node.remove("fileHash"); node.remove("told");
+            node.remove("attempts"); node.remove("fileHash"); node.remove("told"); node.remove("failedInUse");
         } else {
             var problemsHash = hash(String.join("|", e.problems()));
             boolean same = fileHashBefore.equals(node.path("fileHash").asText(""))

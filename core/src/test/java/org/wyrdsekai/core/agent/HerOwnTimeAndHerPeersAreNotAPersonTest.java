@@ -346,7 +346,7 @@ class HerOwnTimeAndHerPeersAreNotAPersonTest {
             .contains("tellOwedTo = msg.asked();");
         // A scripted tool, a workshop task, a familiar, a bunshin, an outcome voice, a voice-passed tell.
         assertThat(src).contains("final var toolFor = reactMessages == null ? orNoOne(personThisReplyAnswers()) : null;")
-            .contains("ToolResultEnvelope.normalize(itemId, result), dispatchGen, toolFor, loopAtSend));")
+            .contains("selfRef.tell(new ScriptedToolResult(env, dispatchGen, toolFor, loopAtSend));")
             .contains("speakFindings(ReadInHerVoice.of(spoken), forPerson);")
             .contains("new DispatchTaskCompleted(taskDescription, result, failure, taskFor)")
             .contains("speak(narration, null, ActivityLogger.AUTHORED_REPORT, msg.requester());")

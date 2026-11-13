@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -59,7 +60,13 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
     }
 
     /** Where to place a generated set of room objects. */
-    public record RoomItemPlacement(String roomId, List<RoomObject> objects) {}
+    /**
+     * Objects to place in a room. {@code newVersions}: the ids among them that are a new version of a
+     * tool the house already keeps, which take the place of the object of that name in the room.
+     */
+    public record RoomItemPlacement(String roomId, List<RoomObject> objects, Set<String> newVersions) {
+        public RoomItemPlacement(String roomId, List<RoomObject> objects) { this(roomId, objects, Set.of()); }
+    }
 
     /**
      * What registration decided. {@code registered} means the item is usable;
@@ -67,11 +74,14 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
      * input. Both false/empty means there was nothing to judge (no .js, an
      * unreadable workspace): the legacy router path, not a known-broken item.
      */
-    public record RegistrationOutcome(boolean registered, List<String> problems, boolean keptPrevious) {
-        public RegistrationOutcome(boolean registered, List<String> problems) { this(registered, problems, false); }
+    public record RegistrationOutcome(boolean registered, List<String> problems, boolean keptPrevious, boolean newVersion) {
+        public RegistrationOutcome(boolean registered, List<String> problems, boolean keptPrevious) { this(registered, problems, keptPrevious, false); }
+        public RegistrationOutcome(boolean registered, List<String> problems) { this(registered, problems, false, false); }
         static final RegistrationOutcome NOTHING_TO_JUDGE =
             new RegistrationOutcome(false, List.of());
         static RegistrationOutcome ok() { return new RegistrationOutcome(true, List.of()); }
+        /** Usable, and a new version of a tool the house already kept: the file was changed in place. */
+        static RegistrationOutcome changedInPlace() { return new RegistrationOutcome(true, List.of(), false, true); }
         /** The rebuilt file did less than the one in use: nothing new is placed, the old one stays. */
         static RegistrationOutcome keptPrevious(String why) { return new RegistrationOutcome(false, List.of(why), true); }
         boolean knownBroken() { return !registered && !problems.isEmpty() && !keptPrevious; }
@@ -132,6 +142,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         }
 
         var roomObjects = new ArrayList<RoomObject>();
+        var newVersions = new LinkedHashSet<String>();
         switch (intake(artifact)) {
             case PAGE -> {
                 // A synthesis, a summary, a reflection: the backend wrote a page and no program. The
@@ -163,7 +174,10 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
             } else if (outcome != null && outcome.knownBroken()) {
                 primary = markUnfinished(primary, outcome.problems());
             }
-            if (primary != null) roomObjects.add(primary);
+            if (primary != null) {
+                roomObjects.add(primary);
+                if (outcome != null && outcome.newVersion()) newVersions.add(primary.id());
+            }
         }
 
         // Best-effort: pull any sibling artifacts the adapter knows about
@@ -182,7 +196,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
         }
 
         if (roomObjects.isEmpty()) return;
-        roomObjectPlacer.accept(new RoomItemPlacement(zb.roomId(), roomObjects));
+        roomObjectPlacer.accept(new RoomItemPlacement(zb.roomId(), roomObjects, newVersions));
         log.info("Placed {} {} item(s) in room {} (task {})",
             roomObjects.size(), artifact.backend(), zb.roomId(), artifact.taskId());
     }
@@ -415,6 +429,8 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 // its RoomObject and inventory row survived (live 2026-08-20). Copy it
                 // where the loader looks, under the DATA root so a package upgrade cannot
                 // take away something she made.
+                var dirBefore = ScriptedItemLoader.householdItemsDir();
+                boolean keptBefore = dirBefore != null && Files.isRegularFile(dirBefore.resolve(scriptedId + ".js"));
                 var placedAt = keepAcceptedItem(p, scriptedId);
                 if (placedAt != null) ItemContractRepair.askedFor(String.valueOf(src.taskId())).ifPresent(a -> ItemContractRepair.keepAsked(placedAt, a));
                 // Re-stamp the side-registry with the scripted item id so
@@ -436,7 +452,7 @@ public class CodingTaskItemBridge implements Consumer<AgentEvent> {
                 // items-as-tools contract is one file per task — extra
                 // .js files (helpers, tests) shouldn't shadow the
                 // primary item.
-                return RegistrationOutcome.ok();
+                return keptBefore && placedAt != null ? RegistrationOutcome.changedInPlace() : RegistrationOutcome.ok();
             } else {
                 log.debug("CodingTaskItemBridge: {} did not register "
                     + "(no parseable manifest) — `use` will fall through",

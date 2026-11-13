@@ -11,6 +11,7 @@ import org.wyrdsekai.core.coding.ItemContractRepair;
 import org.wyrdsekai.core.coding.RoomScriptRepair;
 import org.wyrdsekai.core.room.BrokenRoomScripts;
 import org.wyrdsekai.common.system.SystemPaths;
+import org.wyrdsekai.core.item.BrokenItems;
 import org.wyrdsekai.core.item.ScriptedItemLoader;
 
 import java.nio.file.Files;
@@ -133,11 +134,19 @@ public final class ItemRepairRoutes {
             ctx.status(404).json(new ErrorResponse("No household item called " + item));
             return;
         }
-        var r = ItemContractRepair.repairPlaced(file);
+        var name = item.endsWith(".js") ? item.substring(0, item.length() - 3) : item;
+        // A tool that failed in her hands is mended against what she gave it, not only its own commands.
+        var inHand = BrokenItems.find(dir).stream().filter(e -> e.item().equals(name) && e.usedWith() != null).findFirst().orElse(null);
+        var before = BrokenItems.fileHash(file);
+        var r = inHand == null ? ItemContractRepair.repairPlaced(file)
+            : ItemContractRepair.repairPlaced(file, List.of(inHand.usedWith()), String.join("; ", inHand.problems()));
         if (r.fixed()) {
             try { ScriptedItemLoader.get().register(file); } catch (RuntimeException ignored) { /* picked up at the next load */ }
+            if (inHand != null) BrokenItems.attempted(inHand, before, true);
+        } else if (inHand != null && "nothing to repair".equals(r.note())) {
+            BrokenItems.notReproduced(inHand);
         }
-        tellHer(item.endsWith(".js") ? item.substring(0, item.length() - 3) : item, r);
+        tellHer(name, r);
         var out = new LinkedHashMap<String, Object>();
         out.put("item", r.item());
         out.put("fixed", r.fixed());

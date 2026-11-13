@@ -53,7 +53,6 @@ public final class AdmissionController {
     private static final float ENTITY_MATCH_THRESHOLD = 0.85f;
 
     private final WyrdLuceneStore luceneStore; // nullable — novelty check skipped if null
-    private final EmbeddingService embeddingService; // nullable
     private final float threshold;
 
     // Known entities extracted from admitted content — survives across evaluations
@@ -71,7 +70,6 @@ public final class AdmissionController {
 
     public AdmissionController(WyrdLuceneStore luceneStore, float threshold) {
         this.luceneStore = luceneStore;
-        this.embeddingService = EmbeddingService.get();
         this.threshold = threshold;
     }
 
@@ -252,7 +250,10 @@ public final class AdmissionController {
         }
 
         try {
-            // Prefer semantic search with embeddings (catches near-duplicates)
+            // Prefer semantic search with embeddings (catches near-duplicates). Asked at each use:
+            // a controller made while the embedding server was still starting held its absence for
+            // the life of the node (household node, 2026-11-11).
+            var embeddingService = EmbeddingService.get();
             if (embeddingService != null) {
                 var embedding = embeddingService.embed(content);
                 if (embedding != null && !embedding.isEmpty() && embedding.getFirst() != 0f) {

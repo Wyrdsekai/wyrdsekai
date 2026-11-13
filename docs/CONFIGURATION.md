@@ -576,13 +576,23 @@ The brainstem is a small watchdog program that runs outside the main server. If 
 
 You can add two optional scripts, `/etc/wyrdsekai/brainstem/doors-close` and `doors-open`. The brainstem runs them when the server stops answering and when it answers again. Use them for firewall changes.
 
+**On Linux**, the brainstem also starts your companions' brain when the server is running without it. `wyrd stop` stops the brain too, and after a restart of the computer only the server comes back. If the brain has been down for 5 minutes while the server runs, the brainstem starts it, the way `wyrd start` does. It leaves the brain alone during the night's learning, while you are running a `wyrd` command that starts, stops or moves it, and while you have paused it with `wyrd inference pause`. If a start does not bring it back, the brainstem waits twice as long before it tries again, up to an hour.
+
+On Linux the brainstem also looks after the node's Python environments, which the night's learning, the classifier and the forecasting engine use. An upgrade of the system that brings a newer Python leaves them unable to find their libraries. A few minutes after the brainstem starts, and every hour after that, it checks them and rebuilds any that need it. It never rebuilds during the night's learning. `wyrd doctor` shows the same check, and `wyrd setup python` rebuilds them at once.
+
 | Setting | Default | What it does |
 |---|---|---|
 | `BRAINSTEM_INTERVAL` | `10` | Seconds between checks. |
 | `BRAINSTEM_MISSES` | `6` | Missed checks in a row before a restart. |
 | `BRAINSTEM_GRACE` | `180` | Seconds to wait after a start before watching. |
+| `BRAINSTEM_BRAIN_WATCH` | `1` | `0` stops the brainstem from starting the brain. |
+| `BRAINSTEM_BRAIN_HOLD` | `300` | Seconds the brain is down before the brainstem starts it. |
+| `BRAINSTEM_BRAIN_HOLD_MAX` | `3600` | The longest wait between tries. |
+| `BRAINSTEM_PYENV_WATCH` | `1` | `0` stops the brainstem from rebuilding Python environments. |
+| `BRAINSTEM_PYENV_FIRST` | `120` | Seconds after the brainstem starts before its first check. |
+| `BRAINSTEM_PYENV_EVERY` | `3600` | Seconds between checks after that. |
 
-These three are read from the brainstem service's own environment, not from the settings file. `wyrd config set` does not reach them.
+These are read from the brainstem service's own environment, not from the settings file. `wyrd config set` does not reach them.
 
 The brainstem writes what it does to `<data>/brainstem/events.jsonl`. `wyrd body` shows these events as marks, and `wyrd status` says whether the brainstem is running.
 
@@ -682,6 +692,7 @@ After each of the companion's sleeps, the workshop repairs broken items on copie
 | Setting | Default | What it does |
 |---|---|---|
 | `WYRDSEKAI_ITEM_MEND_MINUTES` | `45` | Minutes each night the workshop may spend mending. `0` turns it off. |
+| `WYRDSEKAI_WORKSHOP_KEEP_DAYS` | `7` | Days a finished task's folder is kept. After each sleep, folders untouched that long are removed, with the coding helper's environments made for them. What your companions made and kept lives elsewhere and is not touched. `0` keeps them all. |
 | `WYRDSEKAI_ITEMS_ALLOW_UNDECLARED` | `false` | For the move to enforced manifests only. `true` lets bundled and household items do what their manifest does not declare, as before, and logs a warning for each such call so it can be fixed. Items that companions make and items visitors bring keep their limits. |
 
 A placed item is replaced only when its repaired copy has no problems left and has been tried: each of its commands has to run, and what it keeps has to come back. The old version is kept in `items/.repaired/`. Next to it is `state.json`, which records what the companion has been told and how often each file has been tried. After three tries with no change, the file is left for a person. `wyrd items repair <name>` or `wyrd items repair --all` does the same by hand. The mending bench in the Hearth lets the companion ask for it.

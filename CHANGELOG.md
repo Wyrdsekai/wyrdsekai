@@ -4,6 +4,28 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.19] — 2026-11-12
+
+### Added
+
+- **`wyrd setup python`.** Rebuilds the node's Python environments when they were made with a Python the computer no longer has. `wyrd setup python --check` only lists them.
+- **`wyrd items away <tool> --why "<words>"`.** When you put one of your companions' tools away, they are now told, with your reason when you give one.
+
+### Fixed
+
+- **Your companions' brain comes back after a restart of the computer.** If you stopped the node with `wyrd stop` and then restarted the computer, the node came back without its brain, and your companions could not think until someone ran `wyrd start`. Now the brainstem starts the brain when the node has run without it for five minutes.
+- **The night's learning keeps working after a system upgrade.** An upgrade that brings a newer Python, such as Ubuntu 24.04 to 26.04, left the Python environments for the night's learning, the classifier and the forecasting engine unable to find their libraries, and setup still said they were there. Now the node notices and rebuilds them by itself, a few minutes after it starts, and `wyrd doctor` says so.
+- **A tool that fails when your companion uses it gets mended.** Before, the workshop only mended tools that would not load. A tool that loaded and then failed every time she used it was never mended, though she was told it would be. Now what she gave it and how it failed are kept, the workshop mends it while the house is quiet, trying exactly what failed, and she is told what was done.
+- **Your companion is told only what was checked about a mended tool.** She used to be told that every command of a mended tool worked, when the workshop had only tried it in a test world. Now she is told that what failed runs when the workshop tries it, and that it has not been tried in her hands yet. If it fails when she uses it, it goes back to the workshop.
+- **A tool that answers "I couldn't" every time no longer passes as working.** The workshop tries every tool before handing it over. A tool that answered that it could not do its job, while everything it asked of the world answered, used to pass that try. It now counts as failing, so it is fixed before she gets it.
+- **When your companion asks for a tool to be fixed, the workshop sees what actually went wrong.** Her request is her guess at the cause. The workshop now also gets what she gave the tool and what it answered.
+- **A repair never writes your companion's words for her.** A tool mended to work when given nothing could write a letter of its own and keep it as hers. The workshop is now told never to make up what she would give, and a mended tool that shows her saved things garbled, or deletes the wrong thing, does not pass.
+- **A repair is told what a tool is for, not how it was last fixed.** After a tool had been fixed once at her request, later repairs were handed that old request as if it were the tool's purpose, and redid it. Now they are told what the tool was made for.
+- **Fixing a tool no longer leaves copies of it in her room.** Each new version takes the place of the one already there.
+- **Your companion's brain starts with newer versions of its model server.** The model server's makers renamed the setting that keeps the model in memory, and newer versions refuse the old name. On a node that downloaded a newer version, a new install for one, the brain never started and your companions could not think. Now the node asks the model server which name it knows.
+- **The workshop clears what its finished tasks leave behind.** Every task and every repair works in a folder of its own, and these were never cleared: a household had gigabytes of them, most over a month old. Now, after your companion's sleep, folders untouched for a week are removed, along with the coding helper's environments made for them. What your companions made and kept is not touched. `WYRDSEKAI_WORKSHOP_KEEP_DAYS` sets how long they are kept.
+- **Memory search comes back when its server starts late.** If the node started before its embedding server was ready, your companions searched their memories and tools by keywords only until the node was restarted. Now the node tries again every minute and switches back on its own.
+
 ## [0.5.18] — 2026-11-05
 
 ### Changed

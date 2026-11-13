@@ -321,6 +321,12 @@ public final class WyrdConfig {
         catch (RuntimeException e) { return 45; }
     }
 
+    /** {@code WYRDSEKAI_WORKSHOP_KEEP_DAYS} — days a finished workshop folder is kept before the sweep after a sleep clears it; 0 keeps them all. Default 7. */
+    public int workshopKeepDays() {
+        try { return Math.max(0, Integer.parseInt(resolve("WYRDSEKAI_WORKSHOP_KEEP_DAYS", "workshop.keep_days", () -> "7").trim())); }
+        catch (RuntimeException e) { return 7; }
+    }
+
     public String beingMemoryMax() {
         var v = resolve("WYRDSEKAI_BEING_MEMORY_MAX", "being.memory_max", () -> "");
         return v == null ? "" : v.trim();

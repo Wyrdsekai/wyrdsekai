@@ -1,6 +1,46 @@
+import java.util.concurrent.TimeUnit
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
 val pekkoVersion = "1.4.0"
 val pekkoScalaSuffix = "_2.13"
 val jacksonVersion = "2.21.1"
+
+// --- Containers a test run started are stopped when the build ends -------------------
+// A model container one run auto-started held the GPU for fifteen hours after the run, until
+// it was found before a release (home-server, 2026-11-12). Tests write down what they bring up that
+// was not already running (e2e-test ContainersWeStarted); this stops exactly those, once,
+// when the whole build is over, whether it passed or not. One already running is left.
+abstract class ContainersThisBuildStarted : BuildService<ContainersThisBuildStarted.Params>, AutoCloseable {
+    interface Params : BuildServiceParameters {
+        val ledger: RegularFileProperty
+    }
+
+    override fun close() {
+        val file = parameters.ledger.get().asFile
+        if (!file.isFile) return
+        file.readLines().filter { it.isNotBlank() }.distinct().forEach { line ->
+            val parts = line.split("\t")
+            val cmd = mutableListOf("docker", "compose", "-f", parts[0])
+            if (parts.getOrElse(1) { "" }.isNotBlank()) cmd += listOf("--profile", parts[1])
+            cmd += listOf("stop", parts.getOrElse(2) { "" })
+            try {
+                val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
+                p.waitFor(90, TimeUnit.SECONDS)
+                println("Stopped ${parts.getOrElse(2) { "" }}, which this build's tests started")
+            } catch (e: Exception) {
+                println("Could not stop ${parts.getOrElse(2) { "" }}: ${e.message}")
+            }
+        }
+        file.delete()
+    }
+}
+
+val containersThisBuildStarted = gradle.sharedServices.registerIfAbsent(
+    "containersThisBuildStarted", ContainersThisBuildStarted::class) {
+    parameters.ledger.set(rootProject.layout.buildDirectory.file("e2e-started-containers.txt"))
+}
+val startedLedger = rootProject.layout.buildDirectory.file("e2e-started-containers.txt").get().asFile.absolutePath
 
 subprojects {
     apply(plugin = "java")
@@ -69,6 +109,10 @@ subprojects {
                 name == "test" -> needsTags.forEach { excludeTags(it) }
             }
         }
+        // What this run's tests start, the build stops when it ends (ContainersThisBuildStarted).
+        usesService(containersThisBuildStarted)
+        systemProperty("wyrdsekai.e2e.startedLedger", startedLedger)
+        doFirst { containersThisBuildStarted.get() }
         // Pass SOUL_* env vars to test JVM for experiment tests
         System.getenv().filter { it.key.startsWith("SOUL_") }.forEach { (k, v) ->
             environment(k, v)

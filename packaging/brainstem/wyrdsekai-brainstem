@@ -14,6 +14,11 @@
 #      with none installed nothing is closed.
 #   6. Appends every decision to $STATE/events.jsonl. The server reads that file and turns new
 #      events into marks the companion sees on her next turn.
+#   7. When the server says the brain it uses on this machine has been numb for BRAIN_HOLD
+#      seconds while the unit runs, and nothing is moving that brain on purpose, starts it
+#      (`wyrd inference start`): a node that boots after `wyrd stop` comes up without it.
+#   8. A little after it starts, and every hour, makes again any Python environment of the node
+#      that was made on a Python the machine no longer has (`wyrd setup python`).
 #
 # It never acts on an intentional stop: an inactive or deactivating unit is left alone. It
 # needs no Java, no Docker, no network beyond loopback. Restart-on-crash is the supervisor's
@@ -123,6 +128,92 @@ card_share() {
     elif [[ $rc -ne 3 ]]; then
         log "card share: reshape failed (rc=$rc): $(printf '%s' "$out" | tail -1)"
     fi
+}
+
+# ── Her brain follows the node ─────────────────────────────────────────────────────────────
+# `wyrd stop` stops her brain too, a container stopped that way stays stopped through a reboot,
+# and the supervisor starts only the server: a node that rebooted after a stop ran with its brain
+# down until a person noticed (a household node, 2026-11-11). When the server has said for
+# BRAIN_HOLD seconds that the brain it uses on this machine is numb, and nothing is moving that
+# brain on purpose (a night's write, a steward's command, a pause), this starts it the way
+# `wyrd start` does beside a running server. A start it does not come back from waits twice as
+# long before the next. Its return is an event, which reaches her as a mark. Off with
+# BRAINSTEM_BRAIN_WATCH=0.
+BRAIN_WATCH="${BRAINSTEM_BRAIN_WATCH:-1}"
+BRAIN_HOLD="${BRAINSTEM_BRAIN_HOLD:-300}"
+BRAIN_HOLD_MAX="${BRAINSTEM_BRAIN_HOLD_MAX:-3600}"
+
+health_json() {
+    if [[ -n "${BRAINSTEM_FAKE_HEALTH_JSON:-}" ]]; then printf '%s' "$BRAINSTEM_FAKE_HEALTH_JSON"; return; fi
+    curl -s -m 5 "http://127.0.0.1:$PORT/health" 2>/dev/null
+}
+night_write_running() {
+    if [[ -n "${BRAINSTEM_FAKE_NIGHT_WRITE:-}" ]]; then [[ "$BRAINSTEM_FAKE_NIGHT_WRITE" == "1" ]]; return; fi
+    pgrep -f 'sleepwrite/(brain_write|brain_write_mlx|sleep_write)\.py' >/dev/null 2>&1
+}
+steward_moving_brain() {   # a launcher command that starts, stops or moves her brain (not `setup python`)
+    if [[ -n "${BRAINSTEM_FAKE_STEWARD:-}" ]]; then [[ "$BRAINSTEM_FAKE_STEWARD" == "1" ]]; return; fi
+    pgrep -f '(^|/| )wyrd (start|stop|restart|update|brain|sleepwrite|inference)( |$)' >/dev/null 2>&1 \
+        || pgrep -f '(^|/| )wyrd setup( -[^ ]*)*$' >/dev/null 2>&1
+}
+brain_watch() {
+    [[ "$BRAIN_WATCH" == "1" && -n "$WYRD" && "$OS" == "Linux" ]] || return 0
+    [[ "${BRAINSTEM_ONCE:-}" != "1" || -n "${WYRD_BIN:-}" ]] || return 0   # a one-pass run acts only for a test's launcher
+    if [[ "$(unit_state)" != "active" ]]; then write_state brain_numb_since ""; return 0; fi
+    local h now since tries hold i
+    h="$(health_json)"
+    now="$(date +%s)"; since="$(read_state brain_numb_since "")"; tries="$(read_state brain_tries 0)"
+    if ! printf '%s' "$h" | grep -q '"brain":"numb"'; then
+        if [[ "$tries" != "0" && -n "$since" ]] && printf '%s' "$h" | grep -q '"brain":"up"'; then
+            event brain-started "the node had run without it for $(( (now - $(read_state brain_down_since "$since")) / 60 )) min, and it came back when the brainstem started it"
+        fi
+        write_state brain_numb_since ""; write_state brain_down_since ""; write_state brain_tries 0
+        return 0
+    fi
+    printf '%s' "$h" | grep -q '"paused":true' && return 0               # the steward paused her thinking
+    if [[ -z "$since" ]]; then write_state brain_numb_since "$now"; write_state brain_down_since "$now"; return 0; fi
+    hold=$BRAIN_HOLD
+    for ((i = 0; i < tries && hold < BRAIN_HOLD_MAX; i++)); do hold=$((hold * 2)); done
+    (( hold > BRAIN_HOLD_MAX )) && hold=$BRAIN_HOLD_MAX
+    (( now - since >= hold )) || return 0
+    night_write_running && return 0
+    steward_moving_brain && return 0
+    log "her brain has been numb for $(( (now - since) / 60 )) min beside a running server: starting it (try $((tries + 1)))"
+    local out rc=0; out="$(timeout 900 "$WYRD" inference start 2>&1)" || rc=$?
+    [[ $rc -eq 0 ]] || log "starting her brain answered rc=$rc: $(printf '%s' "$out" | tail -1)"
+    write_state brain_tries $((tries + 1)); write_state brain_numb_since "$(date +%s)"
+}
+
+# ── Her Python environments follow the system's Python ─────────────────────────────────────
+# An upgrade of the system leaves the node's Python environments starting on a Python whose
+# libraries they do not have, and the night's write is the first thing to fail (a household node,
+# 2026-11-11). A little after the brainstem starts, and every PYENV_EVERY seconds after, it asks
+# the launcher; a stale environment is made again in the background, never under a night's
+# write. Off with BRAINSTEM_PYENV_WATCH=0.
+PYENV_WATCH="${BRAINSTEM_PYENV_WATCH:-1}"
+PYENV_FIRST="${BRAINSTEM_PYENV_FIRST:-120}"
+PYENV_EVERY="${BRAINSTEM_PYENV_EVERY:-3600}"
+PYENV_LOCK_STALE="${BRAINSTEM_PYENV_LOCK_STALE:-7200}"
+
+python_envs() {
+    # Linux only: under launchd the brainstem is root with root's PATH, whose python3 is not the
+    # one a Mac household's environments were made with (doctor and the setup steps cover a Mac).
+    [[ "$PYENV_WATCH" == "1" && -n "$WYRD" && "$OS" == "Linux" ]] || return 0
+    [[ "${BRAINSTEM_ONCE:-}" != "1" || -n "${WYRD_BIN:-}" ]] || return 0
+    local now next lock; now="$(date +%s)"; next="$(read_state pyenv_next 0)"; lock="$(read_state pyenv_lock "")"
+    (( now >= next )) || return 0
+    if [[ -n "$lock" ]] && (( now - lock < PYENV_LOCK_STALE )); then return 0; fi   # one making-again at a time
+    night_write_running && return 0
+    write_state pyenv_next $((now + PYENV_EVERY))
+    "$WYRD" setup python --check >/dev/null 2>&1 && return 0                    # every environment current
+    write_state pyenv_lock "$now"
+    local job='out="$("$WYRD" setup python 2>&1)"; rc=$?
+        printf "%s rc=%s\n%s\n" "$(date -u +%FT%TZ)" "$rc" "$out" >> "$STATE/python-envs.log"
+        made="$(printf "%s\n" "$out" | grep -c -i -E "made again|hecho de nuevo|作り直しました" || true)"
+        if [[ $rc -eq 0 ]]; then event python-envs-made-again "$made Python environment(s) made on a Python this machine no longer has were made again"
+        else event python-envs-failed "a Python environment made on a Python this machine no longer has could not be made again (see $STATE/python-envs.log)"; fi
+        write_state pyenv_lock ""'
+    if [[ "${BRAINSTEM_ONCE:-}" == "1" ]]; then eval "$job"; else ( eval "$job" ) & fi
 }
 
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
@@ -288,9 +379,14 @@ case "${1:-}" in
 esac
 
 log "brainstem watching $UNIT on :$PORT every ${INTERVAL}s (state $STATE)"
+# The first look at the Python environments comes a little after every start: a start is what
+# follows a reboot, and a reboot is what follows an upgrade of the system.
+[[ "${BRAINSTEM_ONCE:-}" == "1" ]] || write_state pyenv_next $(( $(date +%s) + PYENV_FIRST ))
 while true; do
     pass
     card_share
+    brain_watch
+    python_envs
     [[ "${BRAINSTEM_ONCE:-}" == "1" ]] && exit 0
     sleep "$INTERVAL"
 done

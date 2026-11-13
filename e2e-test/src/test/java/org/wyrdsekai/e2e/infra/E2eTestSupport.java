@@ -193,10 +193,7 @@ public final class E2eTestSupport {
             }
             log.info("Auto-starting {}/{} via docker-compose (cold-start budget {}s)",
                 profile, service, maxWaitSecs);
-            var proc = new ProcessBuilder("docker", "compose", "-f",
-                compose.toAbsolutePath().toString(),
-                "--profile", profile, "up", "-d", service)
-                .redirectErrorStream(true).start();
+            var proc = ContainersWeStarted.up(compose, profile, service);
             proc.waitFor(60, TimeUnit.SECONDS);
             int iters = Math.max(1, maxWaitSecs / 2);
             for (int i = 0; i < iters; i++) {

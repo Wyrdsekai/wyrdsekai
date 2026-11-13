@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.javalin.router.JavalinDefaultRoutingApi;
 import org.wyrdsekai.common.model.AppVersion;
 import org.wyrdsekai.core.inference.InferenceRouter;
+import org.wyrdsekai.core.body.BodyMap;
 import org.wyrdsekai.core.body.Quiesce;
 import org.wyrdsekai.core.vault.Vault;
 import org.wyrdsekai.common.util.Json;
@@ -212,6 +213,11 @@ public final class HealthRoutes {
             // The inference queue in plain numbers — what the in-fiction "threads of
             // thought are tangled" line hides from the steward.
             response.put("inference", InferenceRouter.snapshot().asMap());
+            // The brain this node thinks with on this machine: the brainstem starts it when the node
+            // has run without it for a while (BodyMap.ownBrainHere).
+            var body = BodyMap.get();
+            var brain = body == null ? null : body.ownBrainHere(Instant.now());
+            if (brain != null) response.put("brain", brain);
             var appVer = AppVersion.get();
             response.put("version", appVer.version());
             response.put("buildHash", appVer.buildHash());

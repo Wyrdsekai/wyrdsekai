@@ -17,7 +17,9 @@ check() {   # <label> <condition...>
 has() { [[ " $(cat "$1") " == *" $2 "* ]]; }   # <args file> <argument sequence>
 hasnt() { ! has "$@"; }
 
-printf '#!/bin/sh\nprintf "%%s " "$@" > "%s/args"\n' "$T" > "$T/stub"; chmod +x "$T/stub"
+# Asked for --help, the stub answers like a server that knows --load-mode when STUB_LOAD_MODE is set,
+# and like an older one when it is not.
+printf '#!/bin/sh\nif [ "$1" = --help ]; then [ -n "${STUB_LOAD_MODE:-}" ] && echo "-lm, --load-mode MODE"; exit 0; fi\nprintf "%%s " "$@" > "%s/args"\n' "$T" > "$T/stub"; chmod +x "$T/stub"
 mkdir -p "$T/adapters/brain" "$T/adapters/brainwrite/mia"
 : > "$T/adapters/brain/species.gguf"; : > "$T/adapters/brain/work.gguf"; : > "$T/adapters/brainwrite/mia/current.gguf"
 
@@ -37,8 +39,17 @@ brain() {   # [VAR=value ...] — the compose environment passes every unset var
 brain
 check "compose default: two slots"                                  has "$T/args" "--parallel 2 --kv-unified"
 check "compose default: the pool is the 32768 window, not doubled"  has "$T/args" "--ctx-size 32768"
-check "compose default: the floor is still adapter 0"               has "$T/args" "--lora-scaled $T/adapters/brain/species.gguf:1.0 --lora-scaled $T/adapters/brain/work.gguf:0.0 --lora-scaled $T/adapters/brainwrite/mia/current.gguf:0.0"
+check "compose default: the floor is still adapter 0"               has "$T/args" "--lora-scaled $T/adapters/brain/species.gguf:0.0 --lora-scaled $T/adapters/brain/work.gguf:0.0 --lora-scaled $T/adapters/brainwrite/mia/current.gguf:0.0"
 check "compose default: residency flag kept"                        has "$T/args" "--n-cpu-moe 24"
+# Kept in RAM: newer llama.cpp images refuse --mlock (it became --load-mode) and the brain never
+# started on them (2026-11-12); the server is asked which it knows.
+check "compose default: an older server is told --mlock"           has "$T/args" "--mlock"
+brain STUB_LOAD_MODE=1
+check "compose default: a newer server is told --load-mode"       has "$T/args" "--load-mode mmap+mlock"
+check "compose default: a newer server is never told --mlock"     hasnt "$T/args" "--mlock"
+brain STUB_LOAD_MODE=1 LLAMA_BRAIN_MLOCK=0
+check "compose: kept off, neither is said"                       bash -c "! grep -q -E -- '--mlock|--load-mode' \"$T/args\""
+brain
 brain LLAMA_BRAIN_PARALLEL=1
 check "compose LLAMA_BRAIN_PARALLEL=1: one slot"                    has "$T/args" "--parallel 1 --kv-unified"
 check "compose LLAMA_BRAIN_PARALLEL=1: same window"                 has "$T/args" "--ctx-size 32768"
@@ -74,7 +85,7 @@ _start_brain_native; wait
 check "macOS native: two slots"                     has "$T/args" "-np 2 --kv-unified"
 check "macOS native: the 32768 window"              has "$T/args" "-c 32768"
 check "macOS native: no single-slot leftover"       hasnt "$T/args" "-np 1"
-check "macOS native: the floor is still adapter 0"  has "$T/args" "--lora-scaled $T/adapters/brain/species.gguf:1.0"
+check "macOS native: the floor is still adapter 0"  has "$T/args" "--lora-scaled $T/adapters/brain/species.gguf:0.0"
 
 # ── the e2e harness serves the brain the way the product does ──
 check "e2e harness: two slots on the shared pool" grep -q -- '-c 32768 .*--parallel 2 --kv-unified' "$HERE/scripts/training/brain/e2e_arm.sh"

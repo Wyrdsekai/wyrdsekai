@@ -17,8 +17,16 @@ command -v docker >/dev/null || { echo "skip: no docker"; exit 0; }
 [[ -f "$DATA/models/$MODEL" ]] || { echo "skip: no $DATA/models/$MODEL"; exit 0; }
 fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
+# The build box runs a node of its own whose brain has the product's container name. The test's
+# brain gets a name of its own, so neither touches the other: the node's brainstem took the
+# test's brain for its own and moved it, and the test would have removed the node's (2026-11-12).
+TEST_CONTAINER=wyrdsekai-llama-brain-vulkan-test
+OVERRIDE="$(mktemp --suffix=.yml)"
+printf 'services:\n  llama-brain-vulkan:\n    container_name: %s\n' "$TEST_CONTAINER" > "$OVERRIDE"
+export COMPOSE_FILE="$HERE/docker-compose.yml:$OVERRIDE"
 cleanup() {
     cd "$HERE" && LLAMA_PORT=$PORT WYRDSEKAI_DATA="$DATA" docker compose --profile brain-vulkan rm -sf llama-brain-vulkan >/dev/null 2>&1 || true
+    rm -f "$OVERRIDE"
 }
 log() { echo "     [wyrd] $*"; }; warn() { echo "     [warn] $*"; }
 trap cleanup EXIT
@@ -40,6 +48,7 @@ cd "$HERE"
 # The launcher's compose helper and what it leans on, lifted from bin/wyrd; the environment is what
 # _start_brain_compose exports before it calls the helper.
 eval "$(sed -n '/^BRAIN_CONTAINER=/p;/^BRAIN_FILE_MB=/p;/^BRAIN_LAYERS=/p' "$HERE/bin/wyrd")"
+BRAIN_CONTAINER="$TEST_CONTAINER"   # what the helper looks at before it starts the service
 for fn in _drm_gpu_kind _brain_gpu_kind _amd_card_dir _brain_compose_up _brain_single_mem_limit _ensure_nvidia_container_runtime; do
     eval "$(sed -n "/^${fn}() {/,/^}/p" "$HERE/bin/wyrd")"
 done
@@ -47,13 +56,13 @@ export LLAMA_PORT=$PORT WYRDSEKAI_DATA="$DATA" LLAMA_BRAIN_MODEL="$MODEL" LLAMA_
 export LLAMA_BRAIN_MEM_LIMIT="$(_brain_single_mem_limit gpu-full "$(_brain_gpu_kind)")"
 echo "     kind $(_brain_gpu_kind), cap $LLAMA_BRAIN_MEM_LIMIT"
 if ! _brain_compose_up "$(_brain_gpu_kind)"; then echo "FAIL compose up"; exit 1; fi
-check 'the Vulkan service is the one running' '[[ "$(docker inspect -f "{{index .Config.Labels \"com.docker.compose.service\"}}" wyrdsekai-llama-brain 2>/dev/null)" == "llama-brain-vulkan" ]]'
-check 'the mapped file is not pinned twice' '[[ "$(docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" wyrdsekai-llama-brain | grep ^LLAMA_BRAIN_MLOCK=)" == "LLAMA_BRAIN_MLOCK=0" ]]'
+check 'the Vulkan service is the one running' '[[ "$(docker inspect -f "{{index .Config.Labels \"com.docker.compose.service\"}}" "$BRAIN_CONTAINER" 2>/dev/null)" == "llama-brain-vulkan" ]]'
+check 'the mapped file is not pinned twice' '[[ "$(docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" "$BRAIN_CONTAINER" | grep ^LLAMA_BRAIN_MLOCK=)" == "LLAMA_BRAIN_MLOCK=0" ]]'
 t0=$(date +%s)
 for _ in $(seq 1 60); do curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null && break; sleep 5; done
 ready=$(( $(date +%s) - t0 ))
 check "healthy within four minutes (${ready}s)" '[[ $ready -lt 240 ]] && curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null'
-logs="$(docker logs wyrdsekai-llama-brain 2>&1)"
+logs="$(docker logs "$BRAIN_CONTAINER" 2>&1)"
 # The server's own log names no device on this image; the device list in step 1 is the evidence,
 # and the memory the container holds says where the weights went: on a GPU with the system's
 # memory they are charged to it (tens of GB), on a card they are not.
@@ -63,7 +72,8 @@ if [[ -f "$DATA/adapters/brain/species.gguf" || -f "$DATA/adapters/brain/honesty
 fi
 n_ctx="$(curl -sf -m 5 "http://127.0.0.1:$PORT/props" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("default_generation_settings",{}).get("n_ctx",0))' 2>/dev/null || echo 0)"
 check "/props says the window ($n_ctx)" '[[ "$n_ctx" -ge 8192 ]]'
-# Every adapter on disk is held by the server, the floor at 1.0: llama.cpp now calls repeated
+# Every adapter on disk is held by the server, the floor first and at rest (it loads at 0 and a
+# request raises it, since 2026-10-22): llama.cpp now calls repeated
 # --lora-scaled deprecated ("only last value will be used") while still loading them all; the day
 # it means it, this is where it shows.
 want=0; for a in species honesty styled work; do [[ -f "$DATA/adapters/brain/$a.gguf" ]] && want=$((want+1)); done
@@ -72,7 +82,7 @@ for n in "$DATA"/adapters/brainwrite/*/current.gguf; do [[ -f "$n" ]] && want=$(
 held="$(curl -sf -m 5 "http://127.0.0.1:$PORT/lora-adapters" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d), (d[0].get("scale") if d else "-"))' 2>/dev/null || echo "0 -")"
 echo "     adapters held: ${held%% *} of $want wanted, the floor at ${held#* }"
 check 'every adapter on disk is held by the server' '[[ "${held%% *}" -ge "$want" && "$want" -gt 0 ]]'
-check 'the floor is adapter 0 at 1.0' '[[ "${held#* }" == "1.0" ]]'
+check 'the floor is adapter 0, at rest' '[[ "${held#* }" == "0.0" ]]'
 
 echo "== 4. a turn, measured"
 para="The household keeps a quiet record of the day: who came in, what was said, what she made of it, and what she set aside for later. "

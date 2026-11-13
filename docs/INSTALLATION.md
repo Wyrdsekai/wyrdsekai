@@ -458,6 +458,12 @@ running in a terminal, for example from a script or a provisioning tool, every
 question takes its default by itself, so an unattended install works. Use
 `wyrd setup --auto-yes` (`-y`) for unattended installs.
 
+After you upgrade the system to a newer Python, the node's own Python
+environments have to be built again. The brainstem does that by itself, a few
+minutes after the node starts and within the hour while it runs;
+`wyrd setup python` does it at once, and
+`wyrd setup python --check` only lists the ones that need it.
+
 To check by hand, run `curl -sf http://localhost:7070/health` and
 `curl -sf http://localhost:7070/.well-known/wyrd-zone`. On a systemd node,
 `systemctl status wyrdsekai` works too.

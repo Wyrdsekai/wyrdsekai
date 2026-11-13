@@ -261,7 +261,13 @@ services:
           all|on) ARGS="$$ARGS --cpu-moe"; echo "[brain] MoE residency: all experts -> system RAM" ;;
           *) ARGS="$$ARGS --n-cpu-moe $${LLAMA_CPU_MOE}"; echo "[brain] MoE residency: first $${LLAMA_CPU_MOE} layers' experts -> system RAM" ;;
         esac
-        if [ "$${LLAMA_BRAIN_MLOCK:-1}" = "1" ]; then ARGS="$$ARGS --mlock"; fi
+        # Keep the model in RAM. Newer llama.cpp images (from 2026-10) replaced --mlock with
+        # --load-mode and refuse --mlock, so a brain made from a freshly pulled image never
+        # started; the server is asked which one it knows.
+        if [ "$${LLAMA_BRAIN_MLOCK:-1}" = "1" ]; then
+          if /app/llama-server --help 2>&1 | grep -q -- '--load-mode'; then ARGS="$$ARGS --load-mode mmap+mlock"
+          else ARGS="$$ARGS --mlock"; fi
+        fi
         # Adapter 0 is the floor: the species floor (brain/species.gguf) when the node has it, else
         # the honesty adapter. Its scale on working turns is the product's WYRDSEKAI_REGISTER_FLOOR_WORK
         # (0 for the species floor, 1 for the honesty adapter unless set).

@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -146,7 +147,15 @@ public final class RoomAdminRoutes {
         if (requireSteward(ctx) == null) return;
         var item = ctx.queryParam("item");
         if (item == null || item.isBlank()) { ctx.status(400).json(new ErrorResponse("item=<name> is required")); return; }
-        var done = HouseholdItems.putAway(item.strip());
+        var name = item.strip();
+        var why = ctx.queryParam("why");
+        var done = HouseholdItems.putAway(name);
+        boolean moved = done.isPresent() && done.get().contains(" is put away.");
+        if (done.isEmpty() && why != null && !why.isBlank() && HouseholdItems.isAway(name)) {
+            done = Optional.of(name + " is already put away; she is told why.");
+            moved = true;
+        }
+        if (moved) HouseholdItems.tellPutAway(name, why);
         if (done.isEmpty()) {
             ctx.status(404).json(Map.of("ok", false, "message", "No household item called '" + item + "'. wyrd items made lists the made ones; "
                 + "put away by name only what is in the items folder."));
