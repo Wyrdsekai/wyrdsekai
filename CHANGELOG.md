@@ -4,6 +4,14 @@ All notable changes to Wyrdsekai are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.20] — 2026-11-14
+
+### Fixed
+
+- **Your companion's brain keeps its place on the graphics card after a night's learning.** On systems with a newer shell (Ubuntu 26.04, for one), the brain came back from each night's learning with the whole model in system memory instead of shared with the card. Replies were slow, and on a machine with little memory to spare the brain was stopped again and again. Now it comes back the way it was planned. A node already in that state moves its brain back on its own within minutes of the update.
+- **A night's learning restarts the right brain on AMD and Intel graphics.** After a night's learning the node restarted the brain the way it does for an NVIDIA card, whatever card the machine had.
+- **Relearning how to read what is said to your companions no longer trips over another run's files.** Each run now works in a folder of its own and clears it after; before, a leftover from an earlier run by another user stopped it.
+
 ## [0.5.19] — 2026-11-12
 
 ### Added

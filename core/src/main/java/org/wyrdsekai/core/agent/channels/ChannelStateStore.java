@@ -155,13 +155,14 @@ public final class ChannelStateStore {
     }
 
     /**
-     * Delete dedup-ledger entries older than {@code ageMs}. Returns the
+     * Delete dedup-ledger entries at least {@code ageMs} old (0 clears them all, an entry of
+     * this very millisecond included). Returns the
      * row count deleted. Safe-default: a week ({@code 7L * 86_400_000})
      * keeps even a paused channel's dedup window valid.
      */
     public int pruneProcessedOlderThan(long ageMs) {
         var threshold = System.currentTimeMillis() - ageMs;
-        var sql = "DELETE FROM channel_processed WHERE processed_at < ?";
+        var sql = "DELETE FROM channel_processed WHERE processed_at <= ?";
         try (var conn = DriverManager.getConnection(jdbcUrl);
              var st = conn.prepareStatement(sql)) {
             st.setLong(1, threshold);

@@ -2,16 +2,23 @@ package org.wyrdsekai.core.recipe;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Executes a {@link RecipeManifest} ( outer runner). Sequential with id-indexed
@@ -32,6 +39,8 @@ import java.util.Set;
  * gates, and rollback, and delegates actual work to the command runner / dispatcher.
  */
 public final class RecipeRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(RecipeRunner.class);
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -96,13 +105,47 @@ public final class RecipeRunner {
         ResourceProbe REAL = ResourceProbes::detect;
     }
 
+    /** The run's own scratch folder, made for it and removed when it ends: {@code {{run_scratch}}}. */
+    public static final String RUN_SCRATCH = "run_scratch";
+
+    /**
+     * Run a recipe. Its steps share a scratch folder of their own, made before the first step and
+     * removed after the last (rollbacks included). Steps that wrote to fixed names in /tmp met
+     * another run's files there: on the build box the node's night retrain, as root, left
+     * /tmp/task_present.onnx and the release bake could not replace it (2026-11-14); two runs at
+     * once would have read each other's.
+     */
     public RecipeRun run(RecipeManifest manifest, Map<String, Object> params) {
+        Path scratch = null;
+        try {
+            scratch = Files.createTempDirectory("wyrdsekai-recipe-");
+        } catch (IOException e) {
+            log.warn("recipe {}: no scratch folder ({}); steps that name {{{{run_scratch}}}} will fail",
+                manifest.recipe(), e.toString());
+        }
+        try {
+            return runIn(manifest, params, scratch);
+        } finally {
+            if (scratch != null) removeScratch(scratch);
+        }
+    }
+
+    private static void removeScratch(Path scratch) {
+        try (Stream<Path> s = Files.walk(scratch)) {
+            for (var p : s.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+        } catch (IOException e) {
+            log.debug("recipe scratch {} not removed: {}", scratch, e.toString());
+        }
+    }
+
+    private RecipeRun runIn(RecipeManifest manifest, Map<String, Object> params, Path scratch) {
         RecipeContext ctx = new RecipeContext();
         // Seed what the node knows about itself first (lowest precedence), then the
         // declared param defaults, then the caller's values. A default may name a
         // runtime fact ("{{agent_classifier_dir}}") and is resolved against what is
         // already seeded; a caller's value is taken as given.
         ctx.putAll(RecipeRuntimeFacts.ofThisProcess());
+        if (scratch != null) ctx.put(RUN_SCRATCH, scratch.toString());
         if (params != null) {
             ctx.putAll(RecipeRuntimeFacts.ofAgent(
                     params.get(RecipeRuntimeFacts.AGENT_DID) instanceof String did ? did : null));

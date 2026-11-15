@@ -97,7 +97,7 @@ public final class ConversationTurnStore {
                      + "WHERE companion_did = ? AND bondholder_did = ? "
                      + "  AND turn_role = ? AND ts_ms >= ? "
                      + "  AND length(content) >= ? "
-                     + "ORDER BY ts_ms DESC LIMIT ?")) {
+                     + "ORDER BY ts_ms DESC, id DESC LIMIT ?")) {
             ps.setString(1, companionDid);
             ps.setString(2, bondholderDid);
             ps.setString(3, ROLE_HEARD);
@@ -130,7 +130,7 @@ public final class ConversationTurnStore {
                  "SELECT id, turn_role, content, ts_ms, room_id "
                      + "FROM conversation_turns "
                      + "WHERE companion_did = ? AND bondholder_did = ? AND ts_ms >= ? "
-                     + "ORDER BY ts_ms DESC LIMIT ?")) {
+                     + "ORDER BY ts_ms DESC, id DESC LIMIT ?")) {
             ps.setString(1, companionDid);
             ps.setString(2, bondholderDid);
             ps.setLong(3, sinceMs);
@@ -161,7 +161,7 @@ public final class ConversationTurnStore {
                  "SELECT id, turn_role, content, ts_ms, room_id "
                      + "FROM conversation_turns "
                      + "WHERE bondholder_did = ? "
-                     + "ORDER BY ts_ms DESC LIMIT ?")) {
+                     + "ORDER BY ts_ms DESC, id DESC LIMIT ?")) {
             ps.setString(1, bondholderDid);
             ps.setInt(2, Math.max(1, maxRows));
             try (ResultSet rs = ps.executeQuery()) {

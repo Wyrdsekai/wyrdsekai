@@ -93,9 +93,12 @@ card_share() {
     (( now - last < CARD_EVERY )) && return 0
     write_state card_looked "$now"
     grep -qE '^WYRDSEKAI_SERVING_PROFILE=(single-sparse|sparse-drive)' "$CONFIG_FILE" 2>/dev/null || return 0
-    local have; have="$(docker inspect wyrdsekai-llama-brain --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -E '^LLAMA_CPU_MOE=' | cut -d= -f2)"
-    [[ -z "$have" ]] && return 0                      # her brain is not up: nothing to move
-    case "$have" in 0|none) have=gpu-full ;; on) have=all ;; esac
+    local benv; benv="$(docker inspect wyrdsekai-llama-brain --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)"
+    [[ -z "$benv" ]] && return 0                      # her brain is not up: nothing to move
+    # A brain that was given no plan runs with every expert in system RAM. Read as "not up", it was
+    # never moved back onto the card, and it took the node's memory (2026-11-14).
+    local have; have="$(printf '%s\n' "$benv" | grep -E '^LLAMA_CPU_MOE=' | cut -d= -f2)"
+    case "$have" in 0|none) have=gpu-full ;; ""|on) have=all ;; esac
     local others want; others="$("$WYRD" brain others-mb 2>/dev/null)"; want="$("$WYRD" brain plan-value 2>/dev/null)"
     [[ "$others" =~ ^[0-9]+$ ]] || return 0
     [[ "$want" == "not-viable" ]] && want=all

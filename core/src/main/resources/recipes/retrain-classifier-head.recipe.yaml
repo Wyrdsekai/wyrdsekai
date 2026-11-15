@@ -114,10 +114,10 @@ params:
     default: 1
   setfit_encoder_path:
     type: string
-    # /tmp/setfit-encoder-q8.onnx lives outside the source tree on purpose
-    # — it's scratch space for the recipe run. The deploy-encoder step
+    # The encoder is written in the run's own scratch folder ({{run_scratch}}, made
+    # for the run and removed after it), outside the source tree on purpose. The deploy-encoder step
     # promotes the file to core/src/main/resources/models/.
-    default: /tmp/setfit-encoder-q8.onnx
+    default: "{{run_scratch}}/setfit-encoder-q8.onnx"
   max_overrouting_misses_per_lang_map:
     type: string
     # PER-LANGUAGE non-regression thresholds, e.g. "en:16,es:16,ja:8".
@@ -213,10 +213,10 @@ steps:
       fi ; \
       ( SETFIT_PY=scripts/training/.venv-setfit/bin/python; [ -x "$SETFIT_PY" ] || SETFIT_PY=python3; \
         "$SETFIT_PY" scripts/classifier/train_setfit.py \
-          --output-dir /tmp/setfit \
+          --output-dir {{run_scratch}}/setfit \
           --epochs {{setfit_epochs}} 1>&2 \
         && "$SETFIT_PY" scripts/classifier/export_setfit_encoder_onnx.py \
-          --encoder /tmp/setfit/encoder \
+          --encoder {{run_scratch}}/setfit/encoder \
           --output {{setfit_encoder_path}} \
           --quantize int8 1>&2 \
         && printf '{"setfit_encoder_path": "%s", "setfit_pretrained": true}\n' "{{setfit_encoder_path}}" \
@@ -228,18 +228,18 @@ steps:
     # otherwise train_classifier.py falls back to its bundled default
     # (PARAPHRASE_L12 at core/src/main/resources/models/...).
     command: |-
-      rm -f /tmp/{{head}}.onnx /tmp/{{head}}.labels.json /tmp/{{head}}.val-accuracy.json ; \
+      rm -f {{run_scratch}}/{{head}}.onnx {{run_scratch}}/{{head}}.labels.json {{run_scratch}}/{{head}}.val-accuracy.json ; \
       EMBED_FLAG="" ; \
       if [ -f "{{setfit_encoder_path}}" ]; then \
         EMBED_FLAG="--embedding {{setfit_encoder_path}} --embedding-label paraphrase-multilingual-MiniLM-L12-v2-setfit" ; \
       fi ; \
       python scripts/classifier/train_classifier.py \
         --corpus core/src/main/resources/classifier/bootstrap/{{head}}/expanded.jsonl \
-        --output /tmp/{{head}}.onnx \
-        --labels-output /tmp/{{head}}.labels.json \
+        --output {{run_scratch}}/{{head}}.onnx \
+        --labels-output {{run_scratch}}/{{head}}.labels.json \
         --classifier {{classifier}} \
         $EMBED_FLAG 1>&2 \
-      && SIDE=/tmp/{{head}}.val-accuracy.json python3 -c 'import json,os; d=json.load(open(os.environ["SIDE"])); print(json.dumps({"val_accuracy": d["accuracy"]}))'
+      && SIDE={{run_scratch}}/{{head}}.val-accuracy.json python3 -c 'import json,os; d=json.load(open(os.environ["SIDE"])); print(json.dumps({"val_accuracy": d["accuracy"]}))'
 
   - id: gate-accuracy
     kind: GATE
@@ -284,8 +284,8 @@ steps:
         -cp "{{runtime_classpath}}" \
         org.wyrdsekai.core.agent.classifier.ProbeHeadMain \
         --head {{head}} \
-        --classifier /tmp/{{head}}.onnx \
-        --labels /tmp/{{head}}.labels.json \
+        --classifier {{run_scratch}}/{{head}}.onnx \
+        --labels {{run_scratch}}/{{head}}.labels.json \
         --max-misses {{max_overrouting_misses}} \
         $PERLANG_FLAG
 
@@ -346,9 +346,9 @@ steps:
         rm -f "$P.$f.bak" "$P.$f.none" ; \
         if [ -f "$P.$f" ]; then cp -f "$P.$f" "$P.$f.bak" ; else touch "$P.$f.none" ; fi ; \
       done ; \
-      cp -f /tmp/{{head}}.onnx "$P.onnx" ; \
-      if [ -f /tmp/{{head}}.labels.json ]; then cp -f /tmp/{{head}}.labels.json "$P.labels.json" ; fi ; \
-      if [ -f /tmp/{{head}}.val-accuracy.json ]; then cp -f /tmp/{{head}}.val-accuracy.json "$P.val-accuracy.json" ; fi
+      cp -f {{run_scratch}}/{{head}}.onnx "$P.onnx" ; \
+      if [ -f {{run_scratch}}/{{head}}.labels.json ]; then cp -f {{run_scratch}}/{{head}}.labels.json "$P.labels.json" ; fi ; \
+      if [ -f {{run_scratch}}/{{head}}.val-accuracy.json ]; then cp -f {{run_scratch}}/{{head}}.val-accuracy.json "$P.val-accuracy.json" ; fi
     rollback: |-
       P="{{pretrained_dir}}/{{head}}" ; \
       for f in onnx labels.json val-accuracy.json; do \

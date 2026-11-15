@@ -1529,10 +1529,13 @@ _brain_vram_available_mb() {   # [total_mb others_mb cap_mb] — measured when n
     echo "$avail"
 }
 # The plan the running brain container was started with (its LLAMA_CPU_MOE), or "" when it is not up.
+# A container that was given no plan runs the service's default, every expert in system RAM: that
+# is "all", not "not up", or nothing could ever move it back (2026-11-14).
 _brain_current_plan() {
-    local v; v="$(docker inspect wyrdsekai-llama-brain --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -E '^LLAMA_CPU_MOE=' | cut -d= -f2)"
-    [[ -z "$v" ]] && { echo ""; return; }
-    case "$v" in 0|none) echo gpu-full ;; on) echo all ;; *) echo "$v" ;; esac
+    local env; env="$(docker inspect wyrdsekai-llama-brain --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)" || { echo ""; return; }
+    [[ -z "$env" ]] && { echo ""; return; }
+    local v; v="$(printf '%s\n' "$env" | grep -E '^LLAMA_CPU_MOE=' | cut -d= -f2)"
+    case "$v" in 0|none) echo gpu-full ;; ""|on|all) echo all ;; *) echo "$v" ;; esac
 }
 # The plan in a person's words: how much of the card she uses and what others hold there.
 _brain_plan_words() {   # <plan> <avail_mb> <others_mb> <cap_mb>
@@ -16617,9 +16620,19 @@ _do_sleepwrite_brain() {
             _start_brain_native || true
             return 0
         fi
+        # The start exports the plan, the model and the cap, and the recreate reads them. With an
+        # assignment in front of the call, bash 5.3 drops what the function exported when it
+        # returns: the recreate ran with no plan, the service's default put every expert in system
+        # RAM with the whole file pinned, and the kernel killed her brain for memory every ten
+        # minutes (a household node on Ubuntu 26.04, 2026-11-14). No assignment in front; the
+        # service for this kind of GPU; and when the start could not plan, the brain that is
+        # running is restarted as it is, which is enough to pick up the adapter.
         ( cd "$PROJECT_ROOT" 2>/dev/null || cd /opt/wyrdsekai
-          LLAMA_CPU_MOE="${LLAMA_CPU_MOE:-}" _start_brain_compose >/dev/null 2>&1 || true
-          docker compose --profile brain up -d --force-recreate llama-brain )
+          if _start_brain_compose >/dev/null 2>&1; then
+              _brain_compose_up "$(_brain_gpu_kind)" --force-recreate >/dev/null 2>&1
+          else
+              docker restart "$BRAIN_CONTAINER" >/dev/null 2>&1 || true
+          fi )
     }
     _brain_guard() {
         local scale="${WYRDSEKAI_CONVERSATION_ADAPTER_SCALE:-0.3}"

@@ -45,13 +45,13 @@ class TheProbeRunsOnTheNodesOwnClasspathTest {
                 .map(s -> (RecipeStep.Shell) s)
                 .findFirst().orElseThrow();
 
-        // The recipe trains into /tmp/<head>.*; point the same command at the
+        // The recipe trains into the run's own scratch folder; point the same command at the
         // shipped head instead so nothing outside this test's folder is touched.
         Path onnx = tmp.resolve(HEAD + ".onnx");
         Path labels = tmp.resolve(HEAD + ".labels.json");
         Files.copy(pretrained.resolve(HEAD + ".onnx"), onnx);
         Files.copy(pretrained.resolve(HEAD + ".labels.json"), labels);
-        String stepText = probe.command().replace("/tmp/{{head}}", tmp.resolve("{{head}}").toString());
+        String stepText = probe.command().replace("{{run_scratch}}/{{head}}", tmp.resolve("{{head}}").toString());
 
         var ctx = new RecipeContext(RecipeRuntimeFacts.ofThisProcess());
         ctx.putAll(Map.of(
